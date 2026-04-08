@@ -2577,7 +2577,7 @@ def test_prepare_content_for_openai_image_content() -> None:
     result = client._prepare_content_for_openai("user", image_content_basic)
     assert result["type"] == "input_image"
     assert result["detail"] == "auto"
-    assert result["file_id"] is None
+    assert "file_id" not in result
 
 
 def test_prepare_content_for_openai_audio_content() -> None:

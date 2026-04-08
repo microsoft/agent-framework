@@ -186,18 +186,18 @@ class Runner:
                 """Inner loop to deliver a single message through an edge runner."""
                 return await edge_runner.send_message(message, self._state, self._ctx)
 
+            async def _deliver_messages_for_edge_runner(edge_runner: EdgeRunner) -> None:
+                # Preserve message order per edge runner (and therefore per routed target path)
+                # while still allowing parallelism across different edge runners.
+                for message in source_messages:
+                    await _deliver_message_inner(edge_runner, message)
+
             # Route all messages through normal workflow edges
             associated_edge_runners = self._edge_runner_map.get(source_executor_id, [])
             if not associated_edge_runners:
                 # This is expected for terminal nodes (e.g., EndWorkflow, last action in workflow)
                 logger.debug(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
                 return
-
-            async def _deliver_messages_for_edge_runner(edge_runner: EdgeRunner) -> None:
-                # Preserve message order per edge runner (and therefore per routed target path)
-                # while still allowing parallelism across different edge runners.
-                for message in source_messages:
-                    await _deliver_message_inner(edge_runner, message)
 
             tasks = [_deliver_messages_for_edge_runner(edge_runner) for edge_runner in associated_edge_runners]
             await asyncio.gather(*tasks)

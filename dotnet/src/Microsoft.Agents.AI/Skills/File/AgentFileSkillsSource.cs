@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -31,8 +32,15 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
     private const string SkillFileName = "SKILL.md";
     private const int MaxSearchDepth = 2;
 
+    // "." means the skill directory root itself (no sub-folder descent constraint)
+    private const string RootFolderIndicator = ".";
+
     private static readonly string[] s_defaultScriptExtensions = [".py", ".js", ".sh", ".ps1", ".cs", ".csx"];
     private static readonly string[] s_defaultResourceExtensions = [".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt"];
+
+    // Standard sub-folder names per https://agentskills.io/specification#directory-structure
+    private static readonly string[] s_defaultScriptFolders = ["scripts"];
+    private static readonly string[] s_defaultResourceFolders = ["references", "assets"];
 
     // Matches YAML frontmatter delimited by "---" lines. Group 1 = content between delimiters.
     // Multiline makes ^/$ match line boundaries; Singleline makes . match newlines across the block.
@@ -55,6 +63,8 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
     private readonly IEnumerable<string> _skillPaths;
     private readonly HashSet<string> _allowedResourceExtensions;
     private readonly HashSet<string> _allowedScriptExtensions;
+    private readonly IReadOnlyList<string> _scriptFolders;
+    private readonly IReadOnlyList<string> _resourceFolders;
     private readonly AgentFileSkillScriptRunner? _scriptRunner;
     private readonly ILogger _logger;
 
@@ -88,22 +98,28 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         ILoggerFactory? loggerFactory = null)
     {
         this._skillPaths = Throw.IfNull(skillPaths);
+        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<AgentFileSkillsSource>();
 
-        var resolvedOptions = options ?? new AgentFileSkillsSourceOptions();
-
-        ValidateExtensions(resolvedOptions.AllowedResourceExtensions);
-        ValidateExtensions(resolvedOptions.AllowedScriptExtensions);
+        ValidateExtensions(options?.AllowedResourceExtensions);
+        ValidateExtensions(options?.AllowedScriptExtensions);
 
         this._allowedResourceExtensions = new HashSet<string>(
-            resolvedOptions.AllowedResourceExtensions ?? s_defaultResourceExtensions,
+            options?.AllowedResourceExtensions ?? s_defaultResourceExtensions,
             StringComparer.OrdinalIgnoreCase);
 
         this._allowedScriptExtensions = new HashSet<string>(
-            resolvedOptions.AllowedScriptExtensions ?? s_defaultScriptExtensions,
+            options?.AllowedScriptExtensions ?? s_defaultScriptExtensions,
             StringComparer.OrdinalIgnoreCase);
 
+        this._scriptFolders = options?.ScriptFolders is not null
+            ? [.. ValidateAndNormalizeFolderNames(options.ScriptFolders, this._logger)]
+            : s_defaultScriptFolders;
+
+        this._resourceFolders = options?.ResourceFolders is not null
+            ? [.. ValidateAndNormalizeFolderNames(options.ResourceFolders, this._logger)]
+            : s_defaultResourceFolders;
+
         this._scriptRunner = scriptRunner;
-        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<AgentFileSkillsSource>();
     }
 
     /// <inheritdoc/>
@@ -179,8 +195,13 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
             return null;
         }
 
-        var resources = this.DiscoverResourceFiles(skillDirectoryFullPath, frontmatter.Name);
-        var scripts = this.DiscoverScriptFiles(skillDirectoryFullPath, frontmatter.Name);
+        // Append a trailing separator so path-containment checks don't false-match
+        // sibling directories. e.g. "/skills/myskill" matches "/skills/myskill-evil/",
+        // but "/skills/myskill/" does not.
+        string normalizedSkillDirectoryFullPath = skillDirectoryFullPath + Path.DirectorySeparatorChar;
+
+        var resources = this.DiscoverResourceFiles(normalizedSkillDirectoryFullPath, frontmatter.Name);
+        var scripts = this.DiscoverScriptFiles(normalizedSkillDirectoryFullPath, frontmatter.Name);
 
         return new AgentFileSkill(
             frontmatter: frontmatter,
@@ -282,147 +303,213 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
     }
 
     /// <summary>
-    /// Scans a skill directory for resource files matching the configured extensions.
+    /// Scans configured resource folders within a skill directory for resource files matching the configured extensions.
     /// </summary>
     /// <remarks>
-    /// Recursively walks <paramref name="skillDirectoryFullPath"/> and collects files whose extension
-    /// matches the allowed set, excluding <c>SKILL.md</c> itself. Each candidate
-    /// is validated against path-traversal and symlink-escape checks; unsafe files are skipped with
-    /// a warning.
+    /// By default, scans <c>references/</c> and <c>assets/</c> sub-folders as specified by the
+    /// <see href="https://agentskills.io/specification">Agent Skills specification</see>.
+    /// Configure <see cref="AgentFileSkillsSourceOptions.ResourceFolders"/> to scan different or
+    /// additional directories, including <c>"."</c> for the skill root itself.
+    /// Each file is validated against path-traversal and symlink-escape checks; unsafe files are skipped.
     /// </remarks>
     private List<AgentFileSkillResource> DiscoverResourceFiles(string skillDirectoryFullPath, string skillName)
     {
-        string normalizedSkillDirectoryFullPath = skillDirectoryFullPath + Path.DirectorySeparatorChar;
-
         var resources = new List<AgentFileSkillResource>();
 
+        foreach (string folder in this._resourceFolders.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            bool isRootFolder = string.Equals(folder, RootFolderIndicator, StringComparison.Ordinal);
+
+            // GetFullPath normalizes mixed separators (e.g. "C:\skill\scripts/f1" → "C:\skill\scripts\f1")
+            string targetDirectory = isRootFolder
+                ? skillDirectoryFullPath
+                : Path.GetFullPath(Path.Combine(skillDirectoryFullPath, folder)) + Path.DirectorySeparatorChar;
+
+            if (!Directory.Exists(targetDirectory))
+            {
+                continue;
+            }
+
+            // Directory-level symlink check: skip if targetDirectory (or any intermediate
+            // segment) is a reparse point. The root folder is excluded — it's a caller-supplied
+            // trusted path, and the security boundary guards files within it, not the path itself.
+            if (!isRootFolder && HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
+            {
+                if (this._logger.IsEnabled(LogLevel.Warning))
+                {
+                    LogResourceSymlinkFolder(this._logger, skillName, SanitizePathForLog(folder));
+                }
+
+                continue;
+            }
+
 #if NET
-        var enumerationOptions = new EnumerationOptions
-        {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            AttributesToSkip = FileAttributes.ReparsePoint,
-        };
+            var enumerationOptions = new EnumerationOptions
+            {
+                RecurseSubdirectories = false,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.ReparsePoint,
+            };
 
-        foreach (string filePath in Directory.EnumerateFiles(skillDirectoryFullPath, "*", enumerationOptions))
+            foreach (string filePath in Directory.EnumerateFiles(targetDirectory, "*", enumerationOptions))
 #else
-        foreach (string filePath in Directory.EnumerateFiles(skillDirectoryFullPath, "*", SearchOption.AllDirectories))
+            foreach (string filePath in Directory.EnumerateFiles(targetDirectory, "*", SearchOption.TopDirectoryOnly))
 #endif
-        {
-            string fileName = Path.GetFileName(filePath);
-
-            // Exclude SKILL.md itself
-            if (string.Equals(fileName, SkillFileName, StringComparison.OrdinalIgnoreCase))
             {
-                continue;
-            }
+                string fileName = Path.GetFileName(filePath);
 
-            // Filter by extension
-            string extension = Path.GetExtension(filePath);
-            if (string.IsNullOrEmpty(extension) || !this._allowedResourceExtensions.Contains(extension))
-            {
-                if (this._logger.IsEnabled(LogLevel.Debug))
+                // Exclude SKILL.md itself
+                if (string.Equals(fileName, SkillFileName, StringComparison.OrdinalIgnoreCase))
                 {
-                    LogResourceSkippedExtension(this._logger, skillName, SanitizePathForLog(filePath), extension);
+                    continue;
                 }
 
-                continue;
-            }
-
-            // Normalize the enumerated path to guard against non-canonical forms
-            string resolvedFilePath = Path.GetFullPath(filePath);
-
-            // Path containment check
-            if (!resolvedFilePath.StartsWith(normalizedSkillDirectoryFullPath, StringComparison.OrdinalIgnoreCase))
-            {
-                if (this._logger.IsEnabled(LogLevel.Warning))
+                // Filter by extension
+                string extension = Path.GetExtension(filePath);
+                if (string.IsNullOrEmpty(extension) || !this._allowedResourceExtensions.Contains(extension))
                 {
-                    LogResourcePathTraversal(this._logger, skillName, SanitizePathForLog(filePath));
+                    if (this._logger.IsEnabled(LogLevel.Debug))
+                    {
+                        LogResourceSkippedExtension(this._logger, skillName, SanitizePathForLog(filePath), extension);
+                    }
+
+                    continue;
                 }
 
-                continue;
-            }
+                // Normalize the enumerated path to guard against non-canonical forms.
+                // e.g. "references/../../../etc/shadow" → "/etc/shadow"
+                string resolvedFilePath = Path.GetFullPath(filePath);
 
-            // Symlink check
-            if (HasSymlinkInPath(resolvedFilePath, normalizedSkillDirectoryFullPath))
-            {
-                if (this._logger.IsEnabled(LogLevel.Warning))
+                // Path containment: reject if the resolved path escapes the target folder.
+                // e.g. "/etc/shadow".StartsWith("/skills/myskill/references/") → false → skip
+                if (!resolvedFilePath.StartsWith(targetDirectory, StringComparison.OrdinalIgnoreCase))
                 {
-                    LogResourceSymlinkEscape(this._logger, skillName, SanitizePathForLog(filePath));
+                    if (this._logger.IsEnabled(LogLevel.Warning))
+                    {
+                        LogResourcePathTraversal(this._logger, skillName, SanitizePathForLog(filePath));
+                    }
+
+                    continue;
                 }
 
-                continue;
-            }
+                // Per-file symlink check: detects if the file (or any intermediate segment)
+                // is a reparse point. e.g. "references/secret.md" → symlink to "/etc/shadow"
+                if (HasSymlinkInPath(resolvedFilePath, targetDirectory))
+                {
+                    if (this._logger.IsEnabled(LogLevel.Warning))
+                    {
+                        LogResourceSymlinkEscape(this._logger, skillName, SanitizePathForLog(filePath));
+                    }
 
-            // Compute relative path and normalize to forward slashes
-            string relativePath = NormalizePath(resolvedFilePath.Substring(normalizedSkillDirectoryFullPath.Length));
-            resources.Add(new AgentFileSkillResource(relativePath, resolvedFilePath));
+                    continue;
+                }
+
+                // Compute relative path and normalize separators.
+                // e.g. "/skills/myskill/references/guide.md" → "references/guide.md"
+                string relativePath = NormalizePath(resolvedFilePath.Substring(skillDirectoryFullPath.Length));
+
+                resources.Add(new AgentFileSkillResource(relativePath, resolvedFilePath));
+            }
         }
 
         return resources;
     }
 
     /// <summary>
-    /// Scans a skill directory for script files matching the configured extensions.
+    /// Scans configured script folders within a skill directory for script files matching the configured extensions.
     /// </summary>
     /// <remarks>
-    /// Recursively walks the skill directory and collects files whose extension
-    /// matches the allowed set. Each candidate is validated against path-traversal
-    /// and symlink-escape checks; unsafe files are skipped with a warning.
+    /// By default, scans the <c>scripts/</c> sub-folder as specified by the
+    /// <see href="https://agentskills.io/specification">Agent Skills specification</see>.
+    /// Configure <see cref="AgentFileSkillsSourceOptions.ScriptFolders"/> to scan different or
+    /// additional directories, including <c>"."</c> for the skill root itself.
+    /// Each file is validated against path-traversal and symlink-escape checks; unsafe files are skipped.
     /// </remarks>
     private List<AgentFileSkillScript> DiscoverScriptFiles(string skillDirectoryFullPath, string skillName)
     {
-        string normalizedSkillDirectoryFullPath = skillDirectoryFullPath + Path.DirectorySeparatorChar;
         var scripts = new List<AgentFileSkillScript>();
 
+        foreach (string folder in this._scriptFolders.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            bool isRootFolder = string.Equals(folder, RootFolderIndicator, StringComparison.Ordinal);
+
+            // GetFullPath normalizes mixed separators (e.g. "C:\skill\scripts/f1" → "C:\skill\scripts\f1")
+            string targetDirectory = isRootFolder
+                ? skillDirectoryFullPath
+                : Path.GetFullPath(Path.Combine(skillDirectoryFullPath, folder)) + Path.DirectorySeparatorChar;
+
+            if (!Directory.Exists(targetDirectory))
+            {
+                continue;
+            }
+
+            // Directory-level symlink check: skip if targetDirectory (or any intermediate
+            // segment) is a reparse point. The root folder is excluded — it's a caller-supplied
+            // trusted path, and the security boundary guards files within it, not the path itself.
+            if (!isRootFolder && HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
+            {
+                if (this._logger.IsEnabled(LogLevel.Warning))
+                {
+                    LogScriptSymlinkFolder(this._logger, skillName, SanitizePathForLog(folder));
+                }
+
+                continue;
+            }
+
 #if NET
-        var enumerationOptions = new EnumerationOptions
-        {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            AttributesToSkip = FileAttributes.ReparsePoint,
-        };
+            var enumerationOptions = new EnumerationOptions
+            {
+                RecurseSubdirectories = false,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.ReparsePoint,
+            };
 
-        foreach (string filePath in Directory.EnumerateFiles(skillDirectoryFullPath, "*", enumerationOptions))
+            foreach (string filePath in Directory.EnumerateFiles(targetDirectory, "*", enumerationOptions))
 #else
-        foreach (string filePath in Directory.EnumerateFiles(skillDirectoryFullPath, "*", SearchOption.AllDirectories))
+            foreach (string filePath in Directory.EnumerateFiles(targetDirectory, "*", SearchOption.TopDirectoryOnly))
 #endif
-        {
-            // Filter by extension
-            string extension = Path.GetExtension(filePath);
-            if (string.IsNullOrEmpty(extension) || !this._allowedScriptExtensions.Contains(extension))
             {
-                continue;
-            }
-
-            // Normalize the enumerated path to guard against non-canonical forms
-            string resolvedFilePath = Path.GetFullPath(filePath);
-
-            // Path containment check
-            if (!resolvedFilePath.StartsWith(normalizedSkillDirectoryFullPath, StringComparison.OrdinalIgnoreCase))
-            {
-                if (this._logger.IsEnabled(LogLevel.Warning))
+                // Filter by extension
+                string extension = Path.GetExtension(filePath);
+                if (string.IsNullOrEmpty(extension) || !this._allowedScriptExtensions.Contains(extension))
                 {
-                    LogScriptPathTraversal(this._logger, skillName, SanitizePathForLog(filePath));
+                    continue;
                 }
 
-                continue;
-            }
+                // Normalize the enumerated path to guard against non-canonical forms.
+                // e.g. "scripts/../../../etc/shadow" → "/etc/shadow"
+                string resolvedFilePath = Path.GetFullPath(filePath);
 
-            // Symlink check
-            if (HasSymlinkInPath(resolvedFilePath, normalizedSkillDirectoryFullPath))
-            {
-                if (this._logger.IsEnabled(LogLevel.Warning))
+                // Path containment: reject if the resolved path escapes the target folder.
+                // e.g. "/etc/shadow".StartsWith("/skills/myskill/scripts/") → false → skip
+                if (!resolvedFilePath.StartsWith(targetDirectory, StringComparison.OrdinalIgnoreCase))
                 {
-                    LogScriptSymlinkEscape(this._logger, skillName, SanitizePathForLog(filePath));
+                    if (this._logger.IsEnabled(LogLevel.Warning))
+                    {
+                        LogScriptPathTraversal(this._logger, skillName, SanitizePathForLog(filePath));
+                    }
+
+                    continue;
                 }
 
-                continue;
-            }
+                // Per-file symlink check: detects if the file (or any intermediate segment)
+                // is a reparse point. e.g. "scripts/run.py" → symlink to "/etc/shadow"
+                if (HasSymlinkInPath(resolvedFilePath, targetDirectory))
+                {
+                    if (this._logger.IsEnabled(LogLevel.Warning))
+                    {
+                        LogScriptSymlinkEscape(this._logger, skillName, SanitizePathForLog(filePath));
+                    }
 
-            // Compute relative path and normalize to forward slashes
-            string relativePath = NormalizePath(resolvedFilePath.Substring(normalizedSkillDirectoryFullPath.Length));
-            scripts.Add(new AgentFileSkillScript(relativePath, resolvedFilePath, this._scriptRunner));
+                    continue;
+                }
+
+                // Compute relative path and normalize separators.
+                // e.g. "/skills/myskill/scripts/parsepdf.py" → "scripts/parsepdf.py"
+                string relativePath = NormalizePath(resolvedFilePath.Substring(skillDirectoryFullPath.Length));
+
+                scripts.Add(new AgentFileSkillScript(relativePath, resolvedFilePath, this._scriptRunner));
+            }
         }
 
         return scripts;
@@ -431,14 +518,14 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
     /// <summary>
     /// Checks whether any segment in the path (relative to the directory) is a symlink.
     /// </summary>
-    private static bool HasSymlinkInPath(string fullPath, string normalizedDirectoryPath)
+    private static bool HasSymlinkInPath(string pathToCheck, string trustedBasePath)
     {
-        string relativePath = fullPath.Substring(normalizedDirectoryPath.Length);
+        string relativePath = pathToCheck.Substring(trustedBasePath.Length);
         string[] segments = relativePath.Split(
-            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
             StringSplitOptions.RemoveEmptyEntries);
 
-        string currentPath = normalizedDirectoryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string currentPath = trustedBasePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
         foreach (string segment in segments)
         {
@@ -454,19 +541,26 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
     }
 
     /// <summary>
-    /// Normalizes a relative path by replacing backslashes with forward slashes
-    /// and trimming a leading "./" prefix.
+    /// Normalizes a relative path or folder name by stripping a leading "./"/".\",
+    /// trimming trailing directory separators, and replacing backslashes with forward
+    /// slashes.
     /// </summary>
     private static string NormalizePath(string path)
     {
+        // Strip leading "./" or ".\"
+        if (path.StartsWith("./", StringComparison.Ordinal) ||
+            path.StartsWith(".\\", StringComparison.Ordinal))
+        {
+            path = path.Substring(2);
+        }
+
+        // Trim trailing directory separators
+        path = path.TrimEnd('/', '\\');
+
+        // Normalize all separators to forward slashes
         if (path.IndexOf('\\') >= 0)
         {
             path = path.Replace('\\', '/');
-        }
-
-        if (path.StartsWith("./", StringComparison.Ordinal))
-        {
-            path = path.Substring(2);
         }
 
         return path;
@@ -508,6 +602,46 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         }
     }
 
+    private static IEnumerable<string> ValidateAndNormalizeFolderNames(IEnumerable<string> folders, ILogger logger)
+    {
+        foreach (string folder in folders)
+        {
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                throw new ArgumentException("Folder names must not be null or whitespace.", nameof(folders));
+            }
+
+            // "." is valid — it means the skill root directory.
+            if (string.Equals(folder, RootFolderIndicator, StringComparison.Ordinal))
+            {
+                yield return folder;
+                continue;
+            }
+
+            // Reject absolute paths and any path segments that escape upward.
+            if (Path.IsPathRooted(folder) || ContainsParentTraversalSegment(folder))
+            {
+                LogFolderNameSkippedInvalid(logger, folder);
+                continue;
+            }
+
+            yield return NormalizePath(folder);
+        }
+    }
+
+    private static bool ContainsParentTraversalSegment(string folder)
+    {
+        foreach (string segment in folder.Split('/', '\\'))
+        {
+            if (segment == "..")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     [LoggerMessage(LogLevel.Information, "Discovered {Count} potential skills")]
     private static partial void LogSkillsDiscovered(ILogger logger, int count);
 
@@ -532,6 +666,9 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
     [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourcePath}' is a symlink that resolves outside the skill directory")]
     private static partial void LogResourceSymlinkEscape(ILogger logger, string skillName, string resourcePath);
 
+    [LoggerMessage(LogLevel.Warning, "Skipping resource folder '{FolderName}' in skill '{SkillName}': folder path contains a symlink")]
+    private static partial void LogResourceSymlinkFolder(ILogger logger, string skillName, string folderName);
+
     [LoggerMessage(LogLevel.Debug, "Skipping file '{FilePath}' in skill '{SkillName}': extension '{Extension}' is not in the allowed list")]
     private static partial void LogResourceSkippedExtension(ILogger logger, string skillName, string filePath, string extension);
 
@@ -540,4 +677,10 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
     [LoggerMessage(LogLevel.Warning, "Skipping script in skill '{SkillName}': '{ScriptPath}' is a symlink that resolves outside the skill directory")]
     private static partial void LogScriptSymlinkEscape(ILogger logger, string skillName, string scriptPath);
+
+    [LoggerMessage(LogLevel.Warning, "Skipping script folder '{FolderName}' in skill '{SkillName}': folder path contains a symlink")]
+    private static partial void LogScriptSymlinkFolder(ILogger logger, string skillName, string folderName);
+
+    [LoggerMessage(LogLevel.Warning, "Skipping invalid folder name '{FolderName}': must be a relative path with no '..' segments")]
+    private static partial void LogFolderNameSkippedInvalid(ILogger logger, string folderName);
 }

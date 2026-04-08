@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 
@@ -374,9 +375,68 @@ public sealed class AgentClassSkillTests
         {
         }
 
-        public override Task<object?> RunAsync(AgentSkill skill, Extensions.AI.AIFunctionArguments arguments, CancellationToken cancellationToken = default)
+        public override Task<object?> RunAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default)
             => Task.FromResult<object?>("script-result");
     }
 
     #endregion
+
+    [Fact]
+    public async Task CreateScript_WithSerializerOptions_DeserializesCustomInputTypeAsync()
+    {
+        // Arrange
+        var skill = new CustomTypeSkill();
+        var jso = SkillTestJsonContext.Default.Options;
+
+        // Act — pass a custom type as JSON; the JSO enables deserialization
+        var script = skill.Scripts![0];
+        var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "test", MaxResults = 5 }, jso);
+        var args = new AIFunctionArguments { ["request"] = inputJson };
+        var result = await script.RunAsync(skill, args, CancellationToken.None);
+
+        // Assert — the custom input type was deserialized and the response was produced
+        Assert.NotNull(result);
+        var resultText = result!.ToString()!;
+        Assert.Contains("result for test", resultText);
+        Assert.Contains("5", resultText);
+    }
+
+    [Fact]
+    public async Task CreateResource_WithSerializerOptions_SerializesReturnsCustomTypeAsync()
+    {
+        // Arrange
+        var skill = new CustomTypeSkill();
+
+        // Act
+        var result = await skill.Resources![0].ReadAsync();
+
+        // Assert — the custom type was returned successfully
+        Assert.NotNull(result);
+        Assert.Contains("dark", result!.ToString()!);
+    }
+
+    private sealed class CustomTypeSkill : AgentClassSkill
+    {
+        public override AgentSkillFrontmatter Frontmatter { get; } = new("custom-type-skill", "Skill with custom-typed scripts and resources.");
+
+        protected override string Instructions => "Body.";
+
+        public override IReadOnlyList<AgentSkillResource>? Resources =>
+        [
+            CreateResource("config", () => new SkillConfig
+            {
+                Theme = "dark",
+                Verbose = true
+            }, serializerOptions: SkillTestJsonContext.Default.Options),
+        ];
+
+        public override IReadOnlyList<AgentSkillScript>? Scripts =>
+        [
+            CreateScript("Lookup", (LookupRequest request) => new LookupResponse
+            {
+                Items = [$"result for {request.Query}"],
+                TotalCount = request.MaxResults,
+            }, serializerOptions: SkillTestJsonContext.Default.Options),
+        ];
+    }
 }

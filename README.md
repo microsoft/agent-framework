@@ -28,7 +28,7 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
 Python
 
 ```bash
-pip install agent-framework --pre
+pip install agent-framework
 # This will install all sub-packages, see `python/packages` for individual packages.
 # It may take a minute on first install on Windows.
 ```
@@ -90,7 +90,7 @@ Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-commu
 Create a simple Azure Responses Agent that writes a haiku about the Microsoft Agent Framework
 
 ```python
-# pip install agent-framework --pre
+# pip install agent-framework
 # Use `az login` to authenticate with Azure CLI
 import os
 import asyncio
@@ -120,38 +120,38 @@ if __name__ == "__main__":
 ```
 
 ### Basic Agent - .NET
+Create a simple Agent, using Microsoft Foundry with token-based auth, that writes a haiku about the Microsoft Agent Framework
+
+```c#
+// dotnet add package Microsoft.Agents.AI.Foundry
+// Use `az login` to authenticate with Azure CLI
+using Azure.AI.Projects;
+using Azure.Identity;
+using System;
+using Azure.AI.Projects;
+using Azure.Identity;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+
+var agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(model: deploymentName, name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+
+Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
+```
 
 Create a simple Agent, using OpenAI Responses, that writes a haiku about the Microsoft Agent Framework
 
 ```c#
-// dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
-using Microsoft.Agents.AI;
+// dotnet add package Microsoft.Agents.AI.OpenAI
+using System;
 using OpenAI;
 using OpenAI.Responses;
 
 // Replace the <apikey> with your OpenAI API key.
 var agent = new OpenAIClient("<apikey>")
-    .GetResponsesClient("gpt-4o-mini")
-    .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
-
-Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
-```
-
-Create a simple Agent, using Microsoft Foundry with token-based auth, that writes a haiku about the Microsoft Agent Framework
-
-```c#
-// dotnet add package Microsoft.Agents.AI.AzureAI --prerelease
-// dotnet add package Azure.Identity
-// Use `az login` to authenticate with Azure CLI
-using Azure.AI.Projects;
-using Azure.Identity;
-using Microsoft.Agents.AI;
-
-var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-
-var agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
-    .AsAIAgent(model: deploymentName, name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+    .GetResponsesClient()
+    .AsAIAgent(model: "gpt-5.4-mini", name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
@@ -207,4 +207,9 @@ The samples typically read configuration from environment variables. Common requ
 
 ## Important Notes
 
-If you use the Microsoft Agent Framework to build applications that operate with third-party servers or agents, you do so at your own risk. We recommend reviewing all data being shared with third-party servers or agents and being cognizant of third-party practices for retention and location of data. It is your responsibility to manage whether your data will flow outside of your organization's Azure compliance and geographic boundaries and any related implications.
+> [!IMPORTANT]
+> If you use Microsoft Agent Framework to build applications that operate with any third-party servers, agents, code, or non-Azure Direct models (“Third-Party Systems”), you do so at your own risk. Third-Party Systems are Non-Microsoft Products under the Microsoft Product Terms and are governed by their own third-party license terms. You are responsible for any usage and associated costs.
+>
+>We recommend reviewing all data being shared with and received from Third-Party Systems and being cognizant of third-party practices for handling, sharing, retention and location of data. It is your responsibility to manage whether your data will flow outside of your organization’s Azure compliance and geographic boundaries and any related implications, and that appropriate permissions, boundaries and approvals are provisioned.
+> 
+>You are responsible for carefully reviewing and testing applications you build using Microsoft Agent Framework in the context of your specific use cases, and making all appropriate decisions and customizations. This includes implementing your own responsible AI mitigations such as metaprompt, content filters, or other safety systems, and ensuring your applications meet appropriate quality, reliability, security, and trustworthiness standards. See also: [Transparency FAQ](./TRANSPARENCY_FAQ.md)

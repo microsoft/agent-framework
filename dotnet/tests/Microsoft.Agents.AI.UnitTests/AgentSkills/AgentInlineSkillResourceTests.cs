@@ -140,6 +140,21 @@ public sealed class AgentInlineSkillResourceTests
     }
 
     [Fact]
+    public async Task ReadAsync_WithSerializerOptions_SerializesReturnCustomTypeAsync()
+    {
+        // Arrange — delegate resource returns a custom type; the JSO includes a source-generated context for it
+        var jso = SkillTestJsonContext.Default.Options;
+        var resource = new AgentInlineSkillResource("config", () => new SkillConfig { Theme = "dark", Verbose = true }, serializerOptions: jso);
+
+        // Act
+        var result = await resource.ReadAsync();
+
+        // Assert — the custom type was returned successfully
+        Assert.NotNull(result);
+        Assert.Contains("dark", result!.ToString()!);
+    }
+
+    [Fact]
     public async Task ReadAsync_SupportsCancellationTokenAsync()
     {
         // Arrange
