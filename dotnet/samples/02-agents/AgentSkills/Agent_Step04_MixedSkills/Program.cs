@@ -22,7 +22,7 @@ using OpenAI.Responses;
 // --- Configuration ---
 string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // --- 1. Code-Defined Skill: volume-converter ---
 var volumeConverterSkill = new AgentInlineSkill(
