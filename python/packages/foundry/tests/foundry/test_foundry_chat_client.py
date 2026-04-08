@@ -715,6 +715,7 @@ async def test_integration_web_search() -> None:
 
 @pytest.mark.flaky
 @pytest.mark.integration
+@pytest.mark.xfail(reason="Azure AI Foundry stopped accepting array-format output in function_call_output ~2026-04-03")
 @skip_if_foundry_integration_tests_disabled
 @_with_foundry_debug()
 async def test_integration_tool_rich_content_image() -> None:

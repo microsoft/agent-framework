@@ -68,7 +68,7 @@ Order strategies from **least aggressive** to **most aggressive**. The pipeline 
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"  # Required
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"                       # Optional, defaults to gpt-4o-mini
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"                      # Optional, defaults to gpt-5.4-mini
 ```
 
 ## Running the Sample
@@ -110,7 +110,7 @@ IEnumerable<ChatMessage> compacted = await CompactionProvider.CompactAsync(
 The `SummarizationCompactionStrategy` accepts any `IChatClient`. Use a smaller, cheaper model to reduce summarization cost:
 
 ```csharp
-IChatClient summarizerChatClient = openAIClient.GetChatClient("gpt-4o-mini").AsIChatClient();
+IChatClient summarizerChatClient = openAIClient.GetChatClient("gpt-5.4-mini").AsIChatClient();
 new SummarizationCompactionStrategy(summarizerChatClient, CompactionTriggers.TokensExceed(4000))
 ```
 

@@ -110,6 +110,27 @@ public sealed class FoundryAgent : DelegatingAIAgent
     #region Convenience methods
 
     /// <summary>
+    /// Creates a new agent session instance using an existing conversation identifier to continue that conversation.
+    /// </summary>
+    /// <param name="conversationId">The identifier of an existing conversation to continue.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>
+    /// A value task representing the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance configured to work with the specified conversation.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// This method creates an <see cref="AgentSession"/> that relies on server-side chat history storage, where the chat history
+    /// is maintained by the underlying AI service rather than by a local <see cref="ChatHistoryProvider"/>.
+    /// </para>
+    /// <para>
+    /// Agent sessions created with this method will only work with <see cref="FoundryAgent"/>
+    /// instances that support server-side conversation storage through their underlying <see cref="IChatClient"/>.
+    /// </para>
+    /// </remarks>
+    public ValueTask<AgentSession> CreateSessionAsync(string conversationId, CancellationToken cancellationToken = default)
+        => ((ChatClientAgent)this.InnerAgent).CreateSessionAsync(conversationId, cancellationToken);
+
+    /// <summary>
     /// Creates a server-side conversation session that appears in the Foundry Project UI.
     /// </summary>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>

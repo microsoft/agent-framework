@@ -25,7 +25,7 @@ public static class Program
         // Set up the Azure AI Project client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
             ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
         var aiProjectClient = new AIProjectClient(new Uri(endpoint), new AzureCliCredential());
 
         // Create agents
