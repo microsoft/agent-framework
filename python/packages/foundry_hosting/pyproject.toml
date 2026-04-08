@@ -1,10 +1,10 @@
 [project]
-name = "agent-framework-core"
-description = "Microsoft Agent Framework for building AI Agents with Python. This is the core package that has all the core abstractions and implementations."
+name = "agent-framework-foundry-hosting"
+description = "Foundry Local integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0"
+version = "1.0.0b260402"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -12,7 +12,7 @@ urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=ta
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 5 - Production/Stable",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -23,39 +23,10 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "typing-extensions>=4.15.0,<5",
-    "pydantic>=2,<3",
-    "python-dotenv>=1,<2",
-    "opentelemetry-api>=1.39.0,<2",
-]
-
-[project.optional-dependencies]
-all = [
-    "mcp>=1.24.0,<2",
-    "agent-framework-a2a",
-    "agent-framework-ag-ui",
-    "agent-framework-azure-ai-search",
-    "agent-framework-azure-cosmos",
-    "agent-framework-anthropic",
-    "agent-framework-openai",
-    "agent-framework-claude",
-    "agent-framework-azurefunctions",
-    "agent-framework-bedrock",
-    "agent-framework-chatkit",
-    "agent-framework-copilotstudio",
-    "agent-framework-declarative",
-    "agent-framework-devui",
-    "agent-framework-durabletask",
-    "agent-framework-foundry",
-    "agent-framework-foundry-local",
-    "agent-framework-foundry-hosting",
-    "agent-framework-github-copilot; python_version >= '3.11'",
-    "agent-framework-lab",
-    "agent-framework-mem0",
-    "agent-framework-ollama",
-    "agent-framework-orchestrations",
-    "agent-framework-purview",
-    "agent-framework-redis",
+    "agent-framework-core>=1.0.0,<2",
+    "azure-ai-agentserver-core==2.0.0a20260331006",
+    "azure-ai-agentserver-responses==1.0.0a20260331006",
+    "azure-ai-agentserver-invocations==1.0.0a20260331006"
 ]
 
 [tool.uv]
@@ -70,7 +41,7 @@ environments = [
 fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
-testpaths = ['tests']
+testpaths = 'tests'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -80,22 +51,22 @@ markers = [
     "integration: marks tests as integration tests that require external services",
 ]
 
+[tool.ruff]
+extend = "../../pyproject.toml"
+
 [tool.coverage.run]
 omit = [
     "**/__init__.py"
 ]
 
-[tool.ruff]
-extend = "../../pyproject.toml"
-
 [tool.pyright]
 extends = "../../pyproject.toml"
-include = ["agent_framework", "tests/workflow"]
+include = ["agent_framework_foundry_hosting"]
+exclude = ['tests']
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
 strict = true
-incremental = false
 python_version = "3.10"
 ignore_missing_imports = true
 disallow_untyped_defs = true
@@ -108,7 +79,7 @@ disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 
 [tool.bandit]
-targets = ["agent_framework"]
+targets = ["agent_framework_foundry_hosting"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
@@ -117,14 +88,11 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks.mypy]
 help = "Run MyPy for this package."
-cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_foundry_hosting"
 
 [tool.poe.tasks.test]
 help = "Run the default unit test suite for this package."
-cmd = 'pytest -m "not integration" --cov=agent_framework --cov-report=term-missing:skip-covered -n auto --dist worksteal tests'
-
-[tool.flit.module]
-name = "agent_framework"
+cmd = 'pytest -m "not integration" --cov=agent_framework_foundry_hosting --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

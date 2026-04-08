@@ -1,0 +1,8 @@
+kind: hosted
+name: echo-agent-responses-streaming
+protocols:
+  - protocol: responses
+    version: v0.1.0
+resources:
+  cpu: "0.25"
+  memory: 0.5Gi
