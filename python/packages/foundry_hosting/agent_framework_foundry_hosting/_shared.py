@@ -1,9 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework import ChatOptions, Content, Message
+from agent_framework import Content, Message
 from azure.ai.agentserver.responses.models import (
     ComputerScreenshotContent,
-    CreateResponse,
     FunctionCallOutputItemParam,
     MessageContent,
     MessageContentInputFileContent,
@@ -24,27 +23,6 @@ from azure.ai.agentserver.responses.models import (
     TextContent,
 )
 from typing_extensions import Sequence, cast
-
-
-def extract_chat_options(request: CreateResponse) -> ChatOptions:
-    """Extracts chat options from a CreateResponse request.
-
-    Args:
-        request (CreateResponse): The CreateResponse request object containing the chat options.
-
-    Returns:
-        ChatOptions: The extracted chat options.
-    """
-    options = ChatOptions()
-
-    if request.temperature is not None:
-        options["temperature"] = request.temperature
-    if request.top_p is not None:
-        options["top_p"] = request.top_p
-    if request.max_output_tokens is not None:
-        options["max_tokens"] = request.max_output_tokens
-
-    return options
 
 
 def to_messages(history: Sequence[OutputItem]) -> list[Message]:

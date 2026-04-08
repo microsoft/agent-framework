@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterable
 
-from agent_framework import Agent, HistoryProvider, Message
+from agent_framework import BaseAgent, HistoryProvider, Message, SupportsAgentRun
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseEventStream,
@@ -14,7 +14,7 @@ from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import CreateResponse, get_input_text
 from typing_extensions import Any, Sequence
 
-from ._shared import extract_chat_options, to_messages
+from ._shared import to_messages
 
 
 class ResponsesHostContextProvider(HistoryProvider):
@@ -55,7 +55,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
     def __init__(
         self,
-        agent: Agent,
+        agent: BaseAgent,
         *,
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
@@ -77,6 +77,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             from the hosting infrastructure.
         """
         super().__init__(prefix=prefix, options=options, provider=provider, **kwargs)
+
+        if not isinstance(agent, SupportsAgentRun):
+            raise TypeError("Agent must support the SupportsAgentRun interface")
 
         self.agent = agent
         self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
@@ -122,13 +125,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         yield text_content.emit_added()
 
         # Invoke the MAF agent
-        chat_options = extract_chat_options(request)
         full_text = ""
-        async for update in self.agent.run(
-            input_items,
-            options=chat_options,
-            stream=True,
-        ):
+        async for update in self.agent.run(input_items, stream=True):
             full_text += update.text
             yield text_content.emit_delta(update.text)
 
