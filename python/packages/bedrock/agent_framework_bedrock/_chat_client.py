@@ -411,14 +411,14 @@ class BedrockChatClient(
                     # Omit toolConfig entirely so the model won't attempt tool calls.
                     tool_config = None
                 case "auto":
-                    tool_config = tool_config or {}
-                    tool_config["toolChoice"] = {"auto": {}}
+                    if tool_config and "tools" in tool_config:
+                        tool_config["toolChoice"] = {"auto": {}}
                 case "required":
-                    tool_config = tool_config or {}
-                    if required_name := tool_mode.get("required_function_name"):
-                        tool_config["toolChoice"] = {"tool": {"name": required_name}}
-                    else:
-                        tool_config["toolChoice"] = {"any": {}}
+                    if tool_config and "tools" in tool_config:
+                        if required_name := tool_mode.get("required_function_name"):
+                            tool_config["toolChoice"] = {"tool": {"name": required_name}}
+                        else:
+                            tool_config["toolChoice"] = {"any": {}}
                 case _:
                     raise ValueError(f"Unsupported tool mode for Bedrock: {tool_mode.get('mode')}")
         if tool_config:
