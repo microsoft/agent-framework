@@ -15,7 +15,7 @@ Key features:
 Before running this sample, ensure you have:
 
 1. An Azure OpenAI endpoint configured
-2. A deployment of a chat model (e.g., gpt-4o-mini)
+2. A deployment of a chat model (e.g., gpt-5.4-mini)
 3. Azure CLI installed and authenticated
 
 **Note**: This sample uses `DefaultAzureCredential` for authentication, which probes multiple sources automatically. For local development, make sure you're logged in with `az login` and have access to the Azure OpenAI resource.
@@ -28,8 +28,8 @@ Set the following environment variables:
 # Replace with your Azure OpenAI endpoint
 $env:AZURE_OPENAI_ENDPOINT="https://your-openai-resource.openai.azure.com/"
 
-# Optional, defaults to gpt-4o-mini
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+# Optional, defaults to gpt-5.4-mini
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 ## How It Works

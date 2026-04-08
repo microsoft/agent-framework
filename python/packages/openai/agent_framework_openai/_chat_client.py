@@ -265,6 +265,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
     STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
+    SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 
@@ -1353,16 +1354,17 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 return ret
             case "data" | "uri":
                 if content.has_top_level_media_type("image"):
-                    return {
+                    result: dict[str, Any] = {
                         "type": "input_image",
                         "image_url": content.uri,
                         "detail": content.additional_properties.get("detail", "auto")
                         if content.additional_properties
                         else "auto",
-                        "file_id": content.additional_properties.get("file_id", None)
-                        if content.additional_properties
-                        else None,
                     }
+                    file_id = content.additional_properties.get("file_id") if content.additional_properties else None
+                    if file_id:
+                        result["file_id"] = file_id
+                    return result
                 if content.has_top_level_media_type("audio"):
                     if content.media_type and "wav" in content.media_type:
                         format = "wav"
@@ -1444,7 +1446,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     }
                 # call_id for the result needs to be the same as the call_id for the function call
                 output: str | list[dict[str, Any]] = content.result or ""
-                if content.items and any(item.type in ("data", "uri") for item in content.items):
+                if (
+                    self.SUPPORTS_RICH_FUNCTION_OUTPUT
+                    and content.items
+                    and any(item.type in ("data", "uri") for item in content.items)
+                ):
                     output_parts: list[dict[str, Any]] = []
                     for item in content.items:
                         if item.type == "text":
