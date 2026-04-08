@@ -124,14 +124,14 @@ public sealed class FoundryLocalChatClient : DelegatingChatClient
         // 4. Download and load model if requested
         if (options.PrepareModel)
         {
-            if (!await model.IsCachedAsync().ConfigureAwait(false))
+            if (!await model.IsCachedAsync(cancellationToken).ConfigureAwait(false))
             {
                 await model.DownloadAsync().ConfigureAwait(false);
             }
 
-            if (!await model.IsLoadedAsync().ConfigureAwait(false))
+            if (!await model.IsLoadedAsync(cancellationToken).ConfigureAwait(false))
             {
-                await model.LoadAsync().ConfigureAwait(false);
+                await model.LoadAsync(cancellationToken).ConfigureAwait(false);
             }
         }
 
