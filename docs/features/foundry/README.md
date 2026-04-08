@@ -71,7 +71,7 @@ client = FoundryChatClient(
     credential=AzureCliCredential(),
 )
 
-response = await client.complete(messages=["Hello!"])
+response = await client.get_response(messages=["Hello!"])
 print(response.message.content)
 ```
 
