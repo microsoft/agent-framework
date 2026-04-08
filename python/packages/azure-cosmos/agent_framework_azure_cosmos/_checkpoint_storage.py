@@ -51,7 +51,9 @@ class CosmosCheckpointStorage:
     if they do not already exist. The container uses partition key
     ``/workflow_name``.
 
-    Example using managed identity / RBAC::
+    Example using managed identity / RBAC:
+
+    .. code-block:: python
 
         from azure.identity.aio import DefaultAzureCredential
         from agent_framework_azure_cosmos import CosmosCheckpointStorage
@@ -63,7 +65,9 @@ class CosmosCheckpointStorage:
             container_name="checkpoints",
         )
 
-    Example using account key::
+    Example using account key:
+
+    .. code-block:: python
 
         storage = CosmosCheckpointStorage(
             endpoint="https://my-account.documents.azure.com:443/",
@@ -72,7 +76,9 @@ class CosmosCheckpointStorage:
             container_name="checkpoints",
         )
 
-    Then use with a workflow builder::
+    Then use with a workflow builder:
+
+    .. code-block:: python
 
         workflow = WorkflowBuilder(
             start_executor=start,
