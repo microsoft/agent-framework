@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 
@@ -80,7 +80,7 @@ public sealed class FoundryLocalClientOptions
     /// </exception>
     internal string ResolveModel()
     {
-        var model = Model ?? Environment.GetEnvironmentVariable("FOUNDRY_LOCAL_MODEL");
+        var model = this.Model ?? Environment.GetEnvironmentVariable("FOUNDRY_LOCAL_MODEL");
 
         if (string.IsNullOrWhiteSpace(model))
         {

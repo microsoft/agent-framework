@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.ClientModel;
@@ -50,9 +50,9 @@ public sealed class FoundryLocalChatClient : DelegatingChatClient
     private FoundryLocalChatClient(IChatClient innerClient, FoundryLocalManager manager, string modelId)
         : base(innerClient)
     {
-        Manager = manager;
-        ModelId = modelId;
-        _metadata = new ChatClientMetadata("microsoft.foundry.local", defaultModelId: modelId);
+        this.Manager = manager;
+        this.ModelId = modelId;
+        this._metadata = new ChatClientMetadata("microsoft.foundry.local", defaultModelId: modelId);
     }
 
     /// <summary>
@@ -174,9 +174,9 @@ public sealed class FoundryLocalChatClient : DelegatingChatClient
     public override object? GetService(Type serviceType, object? serviceKey = null)
     {
         return (serviceKey is null && serviceType == typeof(ChatClientMetadata))
-            ? _metadata
+            ? this._metadata
             : (serviceKey is null && serviceType == typeof(FoundryLocalManager))
-            ? Manager
+            ? this.Manager
             : base.GetService(serviceType, serviceKey);
     }
 }
