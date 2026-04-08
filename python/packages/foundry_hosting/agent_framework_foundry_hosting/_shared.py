@@ -4,6 +4,7 @@ from agent_framework import ChatOptions, Content, Message
 from azure.ai.agentserver.responses.models import (
     ComputerScreenshotContent,
     CreateResponse,
+    FunctionCallOutputItemParam,
     MessageContent,
     MessageContentInputFileContent,
     MessageContentInputImageContent,
@@ -13,7 +14,6 @@ from azure.ai.agentserver.responses.models import (
     MessageContentRefusalContent,
     OutputItem,
     OutputItemFunctionToolCall,
-    OutputItemFunctionToolCallOutput,
     OutputItemMessage,
     OutputItemOutputMessage,
     OutputItemReasoningItem,
@@ -92,7 +92,7 @@ def _to_message(item: OutputItem) -> Message:
         )
 
     if item.type == "function_call_output":
-        fco = cast(OutputItemFunctionToolCallOutput, item)
+        fco = cast(FunctionCallOutputItemParam, item)
         output = fco.output if isinstance(fco.output, str) else str(fco.output)
         return Message(
             role="tool",

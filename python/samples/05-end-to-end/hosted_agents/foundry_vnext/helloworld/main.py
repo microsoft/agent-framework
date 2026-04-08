@@ -4,7 +4,8 @@
 import os
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, ResponsesHost
+from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
+from azure.ai.agentserver.responses import InMemoryResponseProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -25,7 +26,7 @@ def main():
         instructions="You are a friendly assistant. Keep your answers brief.",
     )
 
-    server = ResponsesHost(agent)
+    server = ResponsesHostServer(agent, provider=InMemoryResponseProvider())
     server.run()
 
 

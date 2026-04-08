@@ -4,9 +4,13 @@ import asyncio
 from collections.abc import AsyncIterable
 
 from agent_framework import Agent, HistoryProvider, Message
-from azure.ai.agentserver.core import AgentHost
-from azure.ai.agentserver.responses import ResponseContext, ResponseEventStream
-from azure.ai.agentserver.responses.hosting import ResponseHandler
+from azure.ai.agentserver.responses import (
+    ResponseContext,
+    ResponseEventStream,
+    ResponseProviderProtocol,
+    ResponsesServerOptions,
+)
+from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import CreateResponse, get_input_text
 from typing_extensions import Any, Sequence
 
@@ -14,7 +18,14 @@ from ._shared import extract_chat_options, to_messages
 
 
 class ResponsesHostContextProvider(HistoryProvider):
+    """A history provider that retrieves messages from a ResponseContext."""
+
     def __init__(self, context: ResponseContext):
+        """Initialize a ResponsesHostContextProvider.
+
+        Args:
+            context: The ResponseContext to retrieve messages from.
+        """
         super().__init__("responses-host", load_messages=True)
         self.context = context
 
@@ -25,7 +36,7 @@ class ResponsesHostContextProvider(HistoryProvider):
         state: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[Message]:
-        history = await self.context.get_history_async()
+        history = await self.context.get_history()
         return to_messages(history)
 
     async def save_messages(
@@ -39,20 +50,36 @@ class ResponsesHostContextProvider(HistoryProvider):
         pass
 
 
-class ResponsesHost(AgentHost):
-    def __init__(self, agent: Agent, **kwargs: Any) -> None:
-        application_insights_connection_string = kwargs.pop("application_insights_connection_string", None)
-        graceful_shutdown_timeout = kwargs.pop("graceful_shutdown_timeout", None)
-        log_level = kwargs.pop("log_level", None)
-        super().__init__(
-            application_insights_connection_string=application_insights_connection_string,
-            graceful_shutdown_timeout=graceful_shutdown_timeout,
-            log_level=log_level,
-        )
+class ResponsesHostServer(ResponsesAgentServerHost):
+    """A responses server host for an agent."""
+
+    def __init__(
+        self,
+        agent: Agent,
+        *,
+        prefix: str = "",
+        options: ResponsesServerOptions | None = None,
+        provider: ResponseProviderProtocol | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize a ResponsesHostServer.
+
+        Args:
+            agent: The agent to handle responses for.
+            prefix: The URL prefix for the server.
+            options: Optional server options.
+            provider: Optional response provider.
+            **kwargs: Additional keyword arguments.
+
+        Note:
+            If the agent has a history provider with `load_messages=True`, it will be
+            replaced with a `ResponsesHostContextProvider` that will retrieve history
+            from the hosting infrastructure.
+        """
+        super().__init__(prefix=prefix, options=options, provider=provider, **kwargs)
 
         self.agent = agent
-        self.response_handler = ResponseHandler(self)
-        self.response_handler.create_handler(self._handle_create)  # type: ignore
+        self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
 
     async def _handle_create(
         self,
@@ -74,17 +101,21 @@ class ResponsesHost(AgentHost):
         else:
             self.agent.context_providers[history_provider_idx[0]] = ResponsesHostContextProvider(context)
 
-        stream = ResponseEventStream(
-            response_id=context.response_id,
-            model=getattr(request, "model", None),
-        )
+        input_items = get_input_text(request)
+
+        stream = ResponseEventStream(response_id=context.response_id, model=request.model)
 
         yield stream.emit_created()
         yield stream.emit_in_progress()
 
-        input_items = get_input_text(request)
+        if request.stream is None or request.stream is False:
+            # Run the agent in non-streaming mode
+            response = await self.agent.run(input_items, stream=False)
+            for item in stream.output_item_message(response.text):
+                yield item
+            yield stream.emit_completed()
 
-        # Start the response
+        # Start the streaming response
         message_item = stream.add_output_item_message()
         yield message_item.emit_added()
         text_content = message_item.add_text_content()

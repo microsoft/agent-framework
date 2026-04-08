@@ -32,7 +32,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "RawFoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_foundry_target": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_traces": ("agent_framework_foundry", "agent-framework-foundry"),
-    "ResponsesHost": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "ResponsesHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
 }
 
 
