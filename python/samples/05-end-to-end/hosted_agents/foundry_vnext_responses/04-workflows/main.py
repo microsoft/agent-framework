@@ -33,6 +33,10 @@ def main():
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
         name="writer",
+        # History will be managed by the hosting infrastructure, thus there
+        # is no need to store history by the service. Learn more at:
+        # https://developers.openai.com/api/reference/resources/responses/methods/create
+        default_options={"store": False},
     )
 
     reviewer_agent = Agent(
@@ -43,6 +47,10 @@ def main():
             "Provide the feedback in the most concise manner possible."
         ),
         name="reviewer",
+        # History will be managed by the hosting infrastructure, thus there
+        # is no need to store history by the service. Learn more at:
+        # https://developers.openai.com/api/reference/resources/responses/methods/create
+        default_options={"store": False},
     )
 
     workflow_agent = (

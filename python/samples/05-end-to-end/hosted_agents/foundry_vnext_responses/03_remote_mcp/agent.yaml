@@ -1,5 +1,5 @@
 kind: hosted
-name: echo-agent-responses-streaming
+name: agent-framework-agent-with-remote-mcp-tools
 protocols:
   - protocol: responses
     version: v0.1.0

@@ -19,26 +19,13 @@ def main():
         credential=AzureCliCredential(),
     )
 
-    github_pat = os.getenv("GITHUB_PAT")
-    if not github_pat:
-        raise ValueError(
-            "GITHUB_PAT environment variable must be set. Create a token at https://github.com/settings/tokens"
-        )
-
-    github_mcp_tool = client.get_mcp_tool(
-        name="GitHub",
-        url="https://api.githubcopilot.com/mcp/",
-        headers={
-            "Authorization": f"Bearer {github_pat}",
-        },
-        approval_mode="never_require",
-    )
-
     agent = Agent(
         client=client,
-        name="HelloAgent",
         instructions="You are a friendly assistant. Keep your answers brief.",
-        tools=[github_mcp_tool],
+        # History will be managed by the hosting infrastructure, thus there
+        # is no need to store history by the service. Learn more at:
+        # https://developers.openai.com/api/reference/resources/responses/methods/create
+        default_options={"store": False},
     )
 
     server = ResponsesHostServer(agent, provider=InMemoryResponseProvider())
