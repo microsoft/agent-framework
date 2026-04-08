@@ -58,6 +58,20 @@ public static class Program
             {
                 Console.WriteLine($"Workflow completed with result: {outputEvent.Data}");
             }
+
+            if (evt is WorkflowErrorEvent workflowError)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                Console.ResetColor();
+            }
+
+            if (evt is ExecutorFailedEvent executorFailed)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                Console.ResetColor();
+            }
         }
 
         if (checkpoints.Count == 0)
@@ -85,6 +99,20 @@ public static class Program
             if (evt is WorkflowOutputEvent workflowOutputEvt)
             {
                 Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
+            }
+
+            if (evt is WorkflowErrorEvent workflowError)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                Console.ResetColor();
+            }
+
+            if (evt is ExecutorFailedEvent executorFailed)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                Console.ResetColor();
             }
         }
     }
