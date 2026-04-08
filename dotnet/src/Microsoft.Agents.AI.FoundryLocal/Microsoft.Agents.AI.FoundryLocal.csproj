@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net9.0 only -->
-    <TargetFrameworks>net9.0</TargetFrameworks>
+    <!-- Foundry Local SDK requires net8.0+ — use core TFMs only (no netstandard2.0/net472) -->
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <!-- The Foundry Local SDK includes native binaries that require a runtime identifier -->
     <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-arm64</RuntimeIdentifiers>
     <IsReleased>false</IsReleased>
