@@ -33,6 +33,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "evaluate_foundry_target": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_traces": ("agent_framework_foundry", "agent-framework-foundry"),
     "ResponsesHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "InvocationsHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
 }
 
 

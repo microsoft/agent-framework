@@ -81,7 +81,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if not isinstance(agent, SupportsAgentRun):
             raise TypeError("Agent must support the SupportsAgentRun interface")
 
-        self.agent = agent
+        self._agent = agent
         self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
 
     async def _handle_create(
@@ -92,17 +92,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     ) -> AsyncIterable[dict[str, Any]]:
         # Replace or add a history provider that has `load_messages=True`
         history_provider_idx: list[int] = []
-        for i, provider in enumerate(self.agent.context_providers):
+        for i, provider in enumerate(self._agent.context_providers):
             if isinstance(provider, HistoryProvider) and provider.load_messages:
                 history_provider_idx.append(i)
 
         if not history_provider_idx:
-            self.agent.context_providers.append(ResponsesHostContextProvider(context))
+            self._agent.context_providers.append(ResponsesHostContextProvider(context))
         elif len(history_provider_idx) > 1:
             # There shouldn't be more than one history provider with `load_messages=True`
             raise RuntimeError("There shouldn't be more than one history provider with `load_messages=True`")
         else:
-            self.agent.context_providers[history_provider_idx[0]] = ResponsesHostContextProvider(context)
+            self._agent.context_providers[history_provider_idx[0]] = ResponsesHostContextProvider(context)
 
         input_items = get_input_text(request)
 
@@ -111,9 +111,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         yield stream.emit_created()
         yield stream.emit_in_progress()
 
+        # Add reasoning
+
         if request.stream is None or request.stream is False:
             # Run the agent in non-streaming mode
-            response = await self.agent.run(input_items, stream=False)
+            response = await self._agent.run(input_items, stream=False)
             for item in stream.output_item_message(response.text):
                 yield item
             yield stream.emit_completed()
@@ -126,7 +128,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         # Invoke the MAF agent
         full_text = ""
-        async for update in self.agent.run(input_items, stream=True):
+        async for update in self._agent.run(input_items, stream=True):
             full_text += update.text
             yield text_content.emit_delta(update.text)
 

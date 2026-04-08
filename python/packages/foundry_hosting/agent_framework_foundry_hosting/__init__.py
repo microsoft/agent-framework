@@ -2,6 +2,7 @@
 
 import importlib.metadata
 
+from ._invocations import InvocationsHostServer
 from ._responses import ResponsesHostServer
 
 try:
@@ -9,4 +10,4 @@ try:
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
-__all__ = ["ResponsesHostServer"]
+__all__ = ["InvocationsHostServer", "ResponsesHostServer"]
