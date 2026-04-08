@@ -4,6 +4,7 @@ using System;
 
 namespace Microsoft.Agents.AI.FoundryLocal.UnitTests;
 
+[Collection("EnvironmentVariables")]
 public class FoundryLocalClientOptionsTests
 {
     [Fact]

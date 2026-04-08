@@ -106,6 +106,13 @@ public sealed class FoundryLocalChatClient : DelegatingChatClient
             await FoundryLocalManager.CreateAsync(config, logger, cancellationToken).ConfigureAwait(false);
         }
 
+        if (!FoundryLocalManager.IsInitialized)
+        {
+            throw new InvalidOperationException(
+                "FoundryLocalManager is not initialized. Enable Bootstrap to initialize it automatically, " +
+                "or initialize FoundryLocalManager manually before creating a FoundryLocalChatClient.");
+        }
+
         var manager = FoundryLocalManager.Instance;
 
         // 3. Get catalog and resolve model
