@@ -62,8 +62,7 @@ public static class Program
                 Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
                 Console.ResetColor();
             }
-
-            if (evt is ExecutorFailedEvent executorFailed)
+            else if (evt is ExecutorFailedEvent executorFailed)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
@@ -101,8 +100,7 @@ public static class Program
                 Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
                 Console.ResetColor();
             }
-
-            if (evt is ExecutorFailedEvent executorFailed)
+            else if (evt is ExecutorFailedEvent executorFailed)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
