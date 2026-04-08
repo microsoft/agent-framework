@@ -13,11 +13,16 @@ The Agent Framework provides two primary integration points for Azure AI Foundry
 
 ### FoundryAgent — Connect to Existing Agents
 
-Use `FoundryAgent` (recommended) or `RawFoundryAgent` when:
+Use `FoundryAgent` (recommended) when:
 
 - You have an existing **PromptAgent** or **HostedAgent** in Foundry
 - You want the agent's predefined behavior, tools, and instructions
-- You need middleware, telemetry, and function invocation support
+- You need agent-level middleware, telemetry, and function invocation support
+
+Use `RawFoundryAgent` when:
+
+- You want the lower-level agent wrapper without agent-level middleware/telemetry layers
+- You want to provide a custom client via `client_type` parameter
 
 **Required parameters:**
 - `project_endpoint` — The Foundry project endpoint URL
@@ -49,11 +54,17 @@ agent = FoundryAgent(
 
 ### FoundryChatClient — Direct Model Access
 
-Use `FoundryChatClient` (recommended) or `RawFoundryChatClient` when:
+Use `FoundryChatClient` (recommended) when:
 
 - You want to chat directly with a model deployment through Foundry
 - You don't need a pre-configured agent — you provide the instructions
 - You want full control over the chat interaction
+- You need chat middleware, telemetry, and function invocation support
+
+Use `RawFoundryChatClient` when:
+
+- You want the lower-level chat client without wrapper layers
+- You want to build a custom client via subclassing
 
 **Required parameters:**
 - `project_endpoint` — The Foundry project endpoint URL
@@ -62,6 +73,7 @@ Use `FoundryChatClient` (recommended) or `RawFoundryChatClient` when:
 
 **Example:**
 ```python
+from agent_framework import Message
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
@@ -71,8 +83,8 @@ client = FoundryChatClient(
     credential=AzureCliCredential(),
 )
 
-response = await client.get_response(messages=["Hello!"])
-print(response.message.content)
+response = await client.get_response(messages=[Message(user_content="Hello!")])
+print(response.text)
 ```
 
 ## When to Use Each
@@ -84,7 +96,7 @@ print(response.message.content)
 | Chat directly with a model deployment without an agent wrapper | `FoundryChatClient` |
 | Build a custom agent experience with your own instructions | `FoundryChatClient` + `Agent` |
 | Need full middleware/telemetry support | Use `FoundryAgent` or `FoundryChatClient` (not raw variants) |
-| Need minimal overhead, custom client subclass | Use `RawFoundryAgent` or `RawFoundryChatClient` |
+| Need minimal overhead, custom client subclass | Use `RawFoundryChatClient`, or for agent connections provide a raw agent chat client via `client_type=RawFoundryAgentChatClient` |
 
 ## Raw vs. Recommended Variants
 
@@ -92,15 +104,17 @@ Each class has both a **raw** and **recommended** variant:
 
 | Recommended | Raw | Description |
 | --- | --- | --- |
-| `FoundryAgent` | `RawFoundryAgent` | Agent wrapper with full middleware and telemetry |
-| `FoundryChatClient` | `RawFoundryChatClient` | Chat client with full middleware and telemetry |
+| `FoundryAgent` | `RawFoundryAgent` | Connects to an existing Foundry agent, but without the additional **agent-level** middleware and telemetry layers that `FoundryAgent` adds |
+| `FoundryChatClient` | `RawFoundryChatClient` | Chat client variant without the recommended wrapper's middleware and telemetry layers |
 
-The raw variants (`RawFoundryAgent`, `RawFoundryChatClient`) omit:
-- Chat or agent middleware layers
-- Telemetry (OpenTelemetry)
-- Function invocation support
+The raw variants are lower-level building blocks, but they are not identical:
 
-Use raw variants when you need to build a custom client with specific middleware layers via subclassing.
+- `RawFoundryAgent` still defaults to an internal client stack that includes function invocation, chat middleware, and chat telemetry. Compared to `FoundryAgent`, it omits the extra **agent-level** middleware and telemetry layers.
+- `RawFoundryChatClient` is the lower-level chat client variant when you do not want the recommended wrapper layers.
+
+If you truly need a raw Foundry agent chat client, use `client_type=RawFoundryAgentChatClient`.
+
+Use raw variants when you need lower-level control or want to build a custom client composition via subclassing.
 
 ## Environment Variables
 
