@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Override default test TFMs — constrained by Microsoft.AI.Foundry.Local SDK -->
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-arm64</RuntimeIdentifiers>
+    <NoWarn>$(NoWarn);OPENAI001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.FoundryLocal\Microsoft.Agents.AI.FoundryLocal.csproj" />
+  </ItemGroup>
+
+</Project>
