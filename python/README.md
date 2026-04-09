@@ -9,10 +9,10 @@ We recommend two common installation paths depending on your use case.
 If you are exploring or developing locally, install the entire framework with all sub-packages:
 
 ```bash
-pip install agent-framework --pre
+pip install agent-framework
 ```
 
-This installs the core and every integration package, making sure that all features are available without additional steps. The `--pre` flag is required while Agent Framework is in preview. This is the simplest way to get started.
+This installs the core and every integration package, making sure that all features are available without additional steps. This is the simplest way to get started.
 
 ### 2. Selective install
 
@@ -22,19 +22,19 @@ If you only need specific integrations, you can install at a more granular level
 # Core only
 # includes Azure OpenAI and OpenAI support by default
 # also includes workflows and orchestrations
-pip install agent-framework-core --pre
+pip install agent-framework-core
 
 # Core + Azure AI Foundry integration
-pip install agent-framework-foundry --pre
+pip install agent-framework-foundry
 
-# Core + Microsoft Copilot Studio integration
+# Core + Microsoft Copilot Studio integration (preview package)
 pip install agent-framework-copilotstudio --pre
 
 # Core + both Microsoft Copilot Studio and Azure AI Foundry integration
-pip install agent-framework-microsoft agent-framework-foundry --pre
+pip install --pre agent-framework-copilotstudio agent-framework-foundry
 ```
 
-This selective approach is useful when you know which integrations you need, and it is the recommended way to set up lightweight environments.
+This selective approach is useful when you know which integrations you need, and it is the recommended way to set up lightweight environments. Released packages such as `agent-framework`, `agent-framework-core`, and `agent-framework-foundry` no longer require `--pre`, while preview connectors such as `agent-framework-copilotstudio` still do.
 
 Supported Platforms:
 
@@ -51,7 +51,7 @@ OPENAI_MODEL=...
 ...
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...
-AZURE_OPENAI_DEPLOYMENT_NAME=...
+AZURE_OPENAI_MODEL=...
 ...
 FOUNDRY_PROJECT_ENDPOINT=...
 FOUNDRY_MODEL=...
@@ -249,7 +249,7 @@ For more advanced orchestration patterns including Sequential, Concurrent, Group
 
 - [Getting Started with Agents](samples/02-agents): Basic agent creation and tool usage
 - [Chat Client Examples](samples/02-agents/chat_client): Direct chat client usage patterns
-- [Azure AI Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure-ai): Azure AI integration
+- [Foundry Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/foundry): Microsoft Foundry integration
 - [Workflow Samples](samples/03-workflows): Advanced multi-agent patterns
 
 ## Agent Framework Documentation

@@ -51,7 +51,7 @@ dotnet run --urls "http://localhost:5002;https://localhost:5012" --agentType "lo
 
 ### Configuring for use with Azure AI Agents
 
-You must create the agents in an Azure AI Foundry project and then provide the project endpoint and agents ids. The instructions for each agent are as follows:
+You must create the agents in a Microsoft Foundry project and then provide the project endpoint and agent IDs. The instructions for each agent are as follows:
 
 - Invoice Agent
     ```
@@ -206,7 +206,7 @@ Sample output from the A2A client:
 ```
 A2AClient> dotnet run
 info: HostClientAgent[0]
-      Initializing Agent Framework agent with model: gpt-4o-mini
+      Initializing Agent Framework agent with model: gpt-5.4-mini
 
 User (:q or quit to exit): Customer is disputing transaction TICKET-XYZ987 as they claim the received fewer t-shirts than ordered.
 

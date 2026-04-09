@@ -67,12 +67,12 @@ async def run_single_task():
     assistant_client = OpenAIChatClient(
         base_url="https://api.openai.com/v1",
         api_key="your-api-key",
-        model_id="gpt-4o"
+        model="gpt-4o"
     )
     user_client = OpenAIChatClient(
         base_url="https://api.openai.com/v1",
         api_key="your-api-key",
-        model_id="gpt-4o-mini"
+        model="gpt-4o-mini"
     )
 
     # Get a task and run it

@@ -11,10 +11,10 @@ Key features:
 
 Before running this sample, ensure you have:
 
-1. An Azure AI Foundry project set up
+1. A Microsoft Foundry project set up
 2. A deep research model deployment (e.g., o3-deep-research)
-3. A model deployment (e.g., gpt-4o)
-4. A Bing Connection configured in your Azure AI Foundry project
+3. A model deployment (e.g., gpt-5.4-mini)
+4. A Bing Connection configured in your Microsoft Foundry project
 5. Azure CLI installed and authenticated
 
 **Important**: Please visit the following documentation for detailed setup instructions:
@@ -29,14 +29,14 @@ Pay special attention to the purple `Note` boxes in the Azure documentation.
 /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>/connections/<connection-name>
 ```
 
-You can find this in the Azure AI Foundry portal under **Management > Connected resources**, or retrieve it programmatically via the connections API (`.id` property).
+You can find this in the Microsoft Foundry portal under **Management > Connected resources**, or retrieve it programmatically via the connections API (`.id` property).
 
 ## Environment Variables
 
 Set the following environment variables:
 
 ```powershell
-# Replace with your Azure AI Foundry project endpoint
+# Replace with your Microsoft Foundry project endpoint
 $env:AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/"
 
 # Replace with your Bing Grounding connection ID (full ARM resource URI)
@@ -45,5 +45,5 @@ $env:AZURE_AI_BING_CONNECTION_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/pr
 # Optional, defaults to o3-deep-research
 $env:AZURE_AI_REASONING_DEPLOYMENT_NAME="o3-deep-research"
 
-# Optional, defaults to gpt-4o
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o"
+# Optional, defaults to gpt-5.4-mini
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"

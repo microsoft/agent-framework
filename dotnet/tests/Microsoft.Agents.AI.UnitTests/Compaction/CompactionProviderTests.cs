@@ -362,5 +362,86 @@ public sealed class CompactionProviderTests
         Assert.Single(state.MessageGroups);
     }
 
+    [Fact]
+    public async Task InvokingAsyncMarksOnlyPreviouslySeenMessagesAsChatHistoryAsync()
+    {
+        // Arrange — no-compaction strategy so we can observe marking behavior only
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
+        CompactionProvider provider = new(strategy);
+
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+
+        // --- First invocation: [Q1, A1, Q2] ---
+        ChatMessage q1 = new(ChatRole.User, "Q1");
+        ChatMessage a1 = new(ChatRole.Assistant, "A1");
+        ChatMessage q2 = new(ChatRole.User, "Q2");
+
+        AIContextProvider.InvokingContext context1 = new(
+            mockAgent.Object,
+            session,
+            new AIContext { Messages = new List<ChatMessage> { q1, a1, q2 } });
+
+        AIContext result1 = await provider.InvokingAsync(context1);
+
+        // Assert — on first invocation, no messages should be marked as ChatHistory
+        List<ChatMessage> resultList1 = [.. result1.Messages!];
+        Assert.Equal(3, resultList1.Count);
+        foreach (ChatMessage message in resultList1)
+        {
+            Assert.NotEqual(AgentRequestMessageSourceType.ChatHistory, message.GetAgentRequestMessageSourceType());
+        }
+
+        // --- Second invocation: [Q1, A1, Q2, A2, Q3] ---
+        ChatMessage a2 = new(ChatRole.Assistant, "A2");
+        ChatMessage q3 = new(ChatRole.User, "Q3");
+
+        AIContextProvider.InvokingContext context2 = new(
+            mockAgent.Object,
+            session,
+            new AIContext { Messages = new List<ChatMessage> { q1, a1, q2, a2, q3 } });
+
+        AIContext result2 = await provider.InvokingAsync(context2);
+
+        // Assert — messages from the first invocation should be marked as ChatHistory,
+        // while new messages should not.
+        List<ChatMessage> resultList2 = [.. result2.Messages!];
+        Assert.Equal(5, resultList2.Count);
+
+        // Q1, A1, Q2 were already in the provider state — they should be ChatHistory
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, resultList2[0].GetAgentRequestMessageSourceType());
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, resultList2[1].GetAgentRequestMessageSourceType());
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, resultList2[2].GetAgentRequestMessageSourceType());
+
+        // A2, Q3 are new to the provider — they should NOT be ChatHistory
+        Assert.NotEqual(AgentRequestMessageSourceType.ChatHistory, resultList2[3].GetAgentRequestMessageSourceType());
+        Assert.NotEqual(AgentRequestMessageSourceType.ChatHistory, resultList2[4].GetAgentRequestMessageSourceType());
+
+        // --- Third invocation: [Q1, A1, Q2, A2, Q3, A3, Q4] ---
+        ChatMessage a3 = new(ChatRole.Assistant, "A3");
+        ChatMessage q4 = new(ChatRole.User, "Q4");
+
+        AIContextProvider.InvokingContext context3 = new(
+            mockAgent.Object,
+            session,
+            new AIContext { Messages = new List<ChatMessage> { q1, a1, q2, a2, q3, a3, q4 } });
+
+        AIContext result3 = await provider.InvokingAsync(context3);
+
+        // Assert — all previously seen messages should be ChatHistory, only brand-new ones should not
+        List<ChatMessage> resultList3 = [.. result3.Messages!];
+        Assert.Equal(7, resultList3.Count);
+
+        // Q1, A1, Q2, A2, Q3 were already in the provider state — they should be ChatHistory
+        for (int i = 0; i < 5; i++)
+        {
+            Assert.Equal(AgentRequestMessageSourceType.ChatHistory, resultList3[i].GetAgentRequestMessageSourceType());
+        }
+
+        // A3, Q4 are new — they should NOT be ChatHistory
+        Assert.NotEqual(AgentRequestMessageSourceType.ChatHistory, resultList3[5].GetAgentRequestMessageSourceType());
+        Assert.NotEqual(AgentRequestMessageSourceType.ChatHistory, resultList3[6].GetAgentRequestMessageSourceType());
+    }
+
     private sealed class TestAgentSession : AgentSession;
 }

@@ -54,15 +54,15 @@ async def build_semantic_kernel_agents() -> list[ChatCompletionAgent | OpenAIAss
         instructions=(
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
-        service=OpenAIChatCompletion(ai_model_id="gpt-4o-mini-search-preview"),
+        service=OpenAIChatCompletion(ai_model="gpt-4o-mini-search-preview"),
     )
 
     client = OpenAIAssistantAgent.create_client()
     code_interpreter_tool, code_interpreter_tool_resources = OpenAIAssistantAgent.configure_code_interpreter_tool()
     openai_settings = OpenAISettings()
-    model_id = openai_settings.chat_model_id if openai_settings.chat_model_id else "gpt-5"
+    model = openai_settings.chat_model if openai_settings.chat_model else "gpt-5"
     definition = await client.beta.assistants.create(  # pyright: ignore[reportDeprecated]
-        model=model_id,
+        model=model,
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",

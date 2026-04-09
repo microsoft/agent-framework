@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""New-pattern Mem0 context provider using BaseContextProvider.
+"""New-pattern Mem0 context provider using ContextProvider.
 
 This module provides ``Mem0ContextProvider``, built on the new
-:class:`BaseContextProvider` hooks pattern.
+:class:`ContextProvider` hooks pattern.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework import Message
-from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
+from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
 from mem0 import AsyncMemory, AsyncMemoryClient
 
 if sys.version_info >= (3, 11):
@@ -33,8 +33,8 @@ class _MemorySearchResponse_v1_1(TypedDict):
 _MemorySearchResponse_v2 = list[dict[str, Any]]
 
 
-class Mem0ContextProvider(BaseContextProvider):
-    """Mem0 context provider using the new BaseContextProvider hooks pattern.
+class Mem0ContextProvider(ContextProvider):
+    """Mem0 context provider using the new ContextProvider hooks pattern.
 
     Integrates Mem0 for persistent semantic memory, searching and storing
     memories via the Mem0 API.
@@ -131,7 +131,7 @@ class Mem0ContextProvider(BaseContextProvider):
         if line_separated_memories:
             context.extend_messages(
                 self.source_id,
-                [Message(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")],
+                [Message(role="user", contents=[f"{self.context_prompt}\n{line_separated_memories}"])],
             )
 
     async def after_run(

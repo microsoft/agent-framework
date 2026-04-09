@@ -17,7 +17,7 @@ See the [README.md](../README.md) file in the parent directory for more informat
 This sample uses Azure OpenAI credentials:
 
 - `AZURE_OPENAI_ENDPOINT`
-- `AZURE_OPENAI_DEPLOYMENT_NAME`
+- `AZURE_OPENAI_MODEL`
 
 ## Running the Sample
 

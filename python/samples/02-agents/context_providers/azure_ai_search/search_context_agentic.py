@@ -100,7 +100,7 @@ async def main() -> None:
             credential=AzureCliCredential() if not search_key else None,
             mode="agentic",
             azure_openai_resource_url=azure_openai_resource_url,
-            model_model=model_deployment,
+            model_deployment_name=model_deployment,
             # Optional: Configure retrieval behavior
             knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
             retrieval_reasoning_effort="minimal",  # or "medium", "low"
@@ -110,13 +110,12 @@ async def main() -> None:
     # Create agent with search context provider
     async with (
         search_provider,
-        FoundryChatClient(
-            project_endpoint=project_endpoint,
-            model_model=model_deployment,
-            credential=AzureCliCredential(),
-        ) as client,
         Agent(
-            client=client,
+            client=FoundryChatClient(
+                project_endpoint=project_endpoint,
+                model=model_deployment,
+                credential=AzureCliCredential(),
+            ),
             name="SearchAgent",
             instructions=(
                 "You are a helpful assistant with advanced reasoning capabilities. "

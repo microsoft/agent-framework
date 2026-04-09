@@ -124,6 +124,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = False  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,
@@ -477,15 +478,14 @@ class FoundryChatClient(  # type: ignore[misc]
         - ``FOUNDRY_MODEL`` to provide the Foundry model deployment name.
 
     Keyword Args:
-        project_endpoint: The Foundry project endpoint URL.
-            Can also be set via environment variable ``FOUNDRY_PROJECT_ENDPOINT``.
-        project_client: An existing AIProjectClient to use.
-        model: The model deployment name.
-            Can also be set via environment variable ``FOUNDRY_MODEL``.
-        model_id: Deprecated alias for ``model``.
-        credential: Azure credential or token provider for authentication.
-        allow_preview: Enables preview opt-in on internally-created AIProjectClient.
-        env_file_path: Path to .env file for settings.
+            project_endpoint: The Foundry project endpoint URL.
+                Can also be set via environment variable ``FOUNDRY_PROJECT_ENDPOINT``.
+            project_client: An existing AIProjectClient to use.
+            model: The model deployment name.
+                Can also be set via environment variable ``FOUNDRY_MODEL``.
+            credential: Azure credential or token provider for authentication.
+            allow_preview: Enables preview opt-in on internally-created AIProjectClient.
+            env_file_path: Path to .env file for settings.
         env_file_encoding: Encoding for .env file.
         instruction_role: The role to use for 'instruction' messages.
         middleware: Optional sequence of middleware.

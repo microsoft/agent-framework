@@ -105,7 +105,7 @@ class MockChatClient:
             self.call_count += 1
             if self.responses:
                 return self.responses.pop(0)
-            return ChatResponse(messages=Message(role="assistant", text="test response"))
+            return ChatResponse(messages=Message(role="assistant", contents=["test response"]))
 
         return _get()
 
@@ -127,9 +127,7 @@ class MockChatClient:
                 yield ChatResponseUpdate(contents=[Content.from_text("another update")], role="assistant")
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-            response_format = options.get("response_format")
-            output_format_type = response_format if isinstance(response_format, type) else None
-            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+            return ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
 
         return ResponseStream(_stream(), finalizer=_finalize)
 
@@ -188,7 +186,7 @@ class MockBaseChatClient(
         logger.debug(f"Running base chat client inner, with: {messages=}, {options=}, {kwargs=}")
         self.call_count += 1
         if not self.run_responses:
-            return ChatResponse(messages=Message(role="assistant", text=f"test response - {messages[-1].text}"))
+            return ChatResponse(messages=Message(role="assistant", contents=[f"test response - {messages[-1].text}"]))
 
         response = self.run_responses.pop(0)
 
@@ -196,7 +194,7 @@ class MockBaseChatClient(
             return ChatResponse(
                 messages=Message(
                     role="assistant",
-                    text="I broke out of the function invocation loop...",
+                    contents=["I broke out of the function invocation loop..."],
                 ),
                 conversation_id=response.conversation_id,
             )
@@ -233,9 +231,7 @@ class MockBaseChatClient(
             await asyncio.sleep(0)
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-            response_format = options.get("response_format")
-            output_format_type = response_format if isinstance(response_format, type) else None
-            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+            return ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
 
         return ResponseStream(_stream(), finalizer=_finalize)
 

@@ -100,7 +100,7 @@ def search_flights(origin_airport_code: str, destination_airport_code: str, deta
 
 
 def create_chat_client() -> FoundryChatClient:
-    """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
+    """Create a FoundryChatClient using a Foundry project endpoint."""
     return FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["FOUNDRY_MODEL"],

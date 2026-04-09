@@ -20,7 +20,7 @@ internal static class HostAgentFactory
         // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         var aiProjectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
-        AgentRecord agentRecord = await aiProjectClient.Agents.GetAgentAsync(agentName);
+        ProjectsAgentRecord agentRecord = await aiProjectClient.AgentAdministrationClient.GetAgentAsync(agentName);
         AIAgent agent = aiProjectClient.AsAIAgent(agentRecord, tools: tools);
 
         AgentCard agentCard = agentType.ToUpperInvariant() switch

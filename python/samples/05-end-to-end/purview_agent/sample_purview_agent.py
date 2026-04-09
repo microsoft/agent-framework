@@ -12,7 +12,7 @@ Note: Caching is automatic and enabled by default.
 
 Environment variables:
 - AZURE_OPENAI_ENDPOINT (required)
-- AZURE_OPENAI_DEPLOYMENT_NAME (optional, defaults to gpt-4o-mini)
+- AZURE_OPENAI_MODEL (optional, defaults to gpt-4o-mini)
 - PURVIEW_CLIENT_APP_ID (required)
 - PURVIEW_USE_CERT_AUTH (optional, set to "true" for certificate auth)
 - PURVIEW_TENANT_ID (required if certificate auth)
@@ -143,7 +143,7 @@ async def run_with_agent_middleware() -> None:
         print("Skipping run: AZURE_OPENAI_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
+    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
     client = FoundryChatClient(model=deployment, endpoint=endpoint, credential=AzureCliCredential())
 
@@ -168,7 +168,9 @@ async def run_with_agent_middleware() -> None:
     print("First response (agent middleware):\n", first)
 
     second: AgentResponse = await agent.run(
-        Message(role="user", text="That was funny. Tell me another one.", additional_properties={"user_id": user_id})
+        Message(
+            role="user", contents=["That was funny. Tell me another one."], additional_properties={"user_id": user_id}
+        )
     )
     print("Second response (agent middleware):\n", second)
 
@@ -179,7 +181,7 @@ async def run_with_chat_middleware() -> None:
         print("Skipping chat middleware run: AZURE_OPENAI_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", default="gpt-4o-mini")
+    deployment = os.environ.get("AZURE_OPENAI_MODEL", default="gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
 
     client = FoundryChatClient(
@@ -206,7 +208,7 @@ async def run_with_chat_middleware() -> None:
     first: AgentResponse = await agent.run(
         Message(
             role="user",
-            text="Give me a short clean joke.",
+            contents=["Give me a short clean joke."],
             additional_properties={"user_id": user_id},
         )
     )
@@ -215,7 +217,7 @@ async def run_with_chat_middleware() -> None:
     second: AgentResponse = await agent.run(
         Message(
             role="user",
-            text="One more please.",
+            contents=["One more please."],
             additional_properties={"user_id": user_id},
         )
     )
@@ -229,7 +231,7 @@ async def run_with_custom_cache_provider() -> None:
         print("Skipping custom cache provider run: AZURE_OPENAI_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
+    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
     client = FoundryChatClient(model=deployment, endpoint=endpoint, credential=AzureCliCredential())
 
@@ -254,7 +256,9 @@ async def run_with_custom_cache_provider() -> None:
     print("Using SimpleDictCacheProvider")
 
     first: AgentResponse = await agent.run(
-        Message(role="user", text="Tell me a joke about a programmer.", additional_properties={"user_id": user_id})
+        Message(
+            role="user", contents=["Tell me a joke about a programmer."], additional_properties={"user_id": user_id}
+        )
     )
     print("First response (custom provider):\n", first)
 
@@ -269,7 +273,7 @@ async def run_with_custom_cache_provider() -> None:
         print("Skipping default cache run: AZURE_OPENAI_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
+    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
     client = FoundryChatClient(model=deployment, endpoint=endpoint, credential=AzureCliCredential())
 

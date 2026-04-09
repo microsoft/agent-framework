@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated
 from agent_framework import Message, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import get_tracer
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
@@ -90,12 +91,19 @@ async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = Fals
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_response([Message(role="user", text=message)], tools=get_weather, stream=True):
+        async for chunk in client.get_response(
+            [Message(role="user", contents=[message])],
+            stream=True,
+            options={"tools": [get_weather]},
+        ):
             if chunk.text:
                 print(chunk.text, end="")
         print("")
     else:
-        response = await client.get_response([Message(role="user", text=message)], tools=get_weather)
+        response = await client.get_response(
+            [Message(role="user", contents=[message])],
+            options={"tools": [get_weather]},
+        )
         print(f"Assistant: {response}")
 
 
@@ -103,7 +111,7 @@ async def main() -> None:
     with get_tracer().start_as_current_span("Zero Code", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
-        client = FoundryChatClient()
+        client = FoundryChatClient(credential=AzureCliCredential())
 
         await run_chat_client(client, stream=True)
         await run_chat_client(client, stream=False)

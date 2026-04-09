@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -113,6 +114,28 @@ public sealed class AgentInlineSkillScriptTests
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
             new AgentInlineSkillScript("my-script", null!));
+    }
+
+    [Fact]
+    public async Task RunAsync_WithSerializerOptions_MarshalsCustomTypesAsync()
+    {
+        // Arrange — script accepts a custom type; the JSO includes a source-generated context for it
+        var jso = SkillTestJsonContext.Default.Options;
+        var script = new AgentInlineSkillScript("lookup", (LookupRequest request) => new LookupResponse
+        {
+            Items = ["result-1", "result-2"],
+            TotalCount = request.MaxResults,
+        }, serializerOptions: jso);
+        var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
+        var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "test", MaxResults = 5 }, jso);
+        var args = new AIFunctionArguments { ["request"] = inputJson };
+
+        // Act
+        var result = await script.RunAsync(skill, args, CancellationToken.None);
+
+        // Assert — the custom input type was deserialized and the response was produced
+        Assert.NotNull(result);
+        Assert.Contains("5", result!.ToString()!);
     }
 
     [Fact]

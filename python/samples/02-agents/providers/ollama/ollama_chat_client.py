@@ -17,7 +17,7 @@ This sample demonstrates using the native Ollama Chat Client directly.
 
 Ensure to install Ollama and have a model running locally before running the sample.
 Not all Models support function calling, to test function calling try llama3.2
-Set the model to use via the OLLAMA_MODEL_ID environment variable or modify the code below.
+Set the model to use via the OLLAMA_MODEL environment variable or modify the code below.
 https://ollama.com/
 
 """
@@ -35,7 +35,7 @@ def get_time():
 async def main() -> None:
     client = OllamaChatClient()
     message = "What time is it? Use a tool call"
-    messages = [Message(role="user", text=message)]
+    messages = [Message(role="user", contents=[message])]
     stream = False
     print(f"User: {message}")
     if stream:

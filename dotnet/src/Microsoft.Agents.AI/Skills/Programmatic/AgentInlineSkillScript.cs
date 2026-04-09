@@ -26,17 +26,23 @@ internal sealed class AgentInlineSkillScript : AgentSkillScript
     /// <param name="name">The script name.</param>
     /// <param name="method">A method to execute when the script is invoked. Parameters are automatically deserialized from JSON.</param>
     /// <param name="description">An optional description of the script.</param>
-    public AgentInlineSkillScript(string name, Delegate method, string? description = null)
+    /// <param name="serializerOptions">
+    /// Optional <see cref="JsonSerializerOptions"/> used to marshal the delegate's parameters and return value.
+    /// When <see langword="null"/>, <see cref="AIJsonUtilities.DefaultOptions"/> is used.
+    /// </param>
+    public AgentInlineSkillScript(string name, Delegate method, string? description = null, JsonSerializerOptions? serializerOptions = null)
         : base(Throw.IfNullOrWhitespace(name), description)
     {
         Throw.IfNull(method);
-        this._function = AIFunctionFactory.Create(method, name: this.Name);
+
+        var options = new AIFunctionFactoryOptions { Name = this.Name, SerializerOptions = serializerOptions };
+        this._function = AIFunctionFactory.Create(method, options);
     }
 
     /// <summary>
     /// Gets the JSON schema describing the parameters accepted by this script, or <see langword="null"/> if not available.
     /// </summary>
-    public JsonElement? ParametersSchema => this._function.JsonSchema;
+    public override JsonElement? ParametersSchema => this._function.JsonSchema;
 
     /// <inheritdoc/>
     public override async Task<object?> RunAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default)
