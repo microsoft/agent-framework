@@ -91,7 +91,7 @@ Console.WriteLine($"Agent: {response.Text}");
 /// <summary>
 /// A temperature-converter skill defined as a C# class.
 /// </summary>
-internal sealed class TemperatureConverterSkill : AgentClassSkill
+internal sealed class TemperatureConverterSkill : AgentClassSkill<TemperatureConverterSkill>
 {
     private IReadOnlyList<AgentSkillResource>? _resources;
     private IReadOnlyList<AgentSkillScript>? _scripts;
@@ -113,7 +113,7 @@ internal sealed class TemperatureConverterSkill : AgentClassSkill
     /// <inheritdoc/>
     public override IReadOnlyList<AgentSkillResource>? Resources => this._resources ??=
     [
-        CreateResource(
+        this.CreateResource(
             "temperature-conversion-formulas",
             """
             # Temperature Conversion Formulas
@@ -130,7 +130,7 @@ internal sealed class TemperatureConverterSkill : AgentClassSkill
     /// <inheritdoc/>
     public override IReadOnlyList<AgentSkillScript>? Scripts => this._scripts ??=
     [
-        CreateScript("convert-temperature", ConvertTemperature),
+        this.CreateScript("convert-temperature", ConvertTemperature),
     ];
 
     private static string ConvertTemperature(double value, string from, string to)

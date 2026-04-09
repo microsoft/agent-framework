@@ -116,7 +116,7 @@ Console.WriteLine($"Agent: {response.Text}");
 /// in both its resource and script functions. This enables clean separation of
 /// concerns and testability while retaining the class-based skill pattern.
 /// </remarks>
-internal sealed class WeightConverterSkill : AgentClassSkill
+internal sealed class WeightConverterSkill : AgentClassSkill<WeightConverterSkill>
 {
     private IReadOnlyList<AgentSkillResource>? _resources;
     private IReadOnlyList<AgentSkillScript>? _scripts;
@@ -138,7 +138,7 @@ internal sealed class WeightConverterSkill : AgentClassSkill
     /// <inheritdoc/>
     public override IReadOnlyList<AgentSkillResource>? Resources => this._resources ??=
     [
-        CreateResource("weight-table", (IServiceProvider serviceProvider) =>
+        this.CreateResource("weight-table", (IServiceProvider serviceProvider) =>
         {
             var service = serviceProvider.GetRequiredService<ConversionService>();
             return service.GetWeightTable();
@@ -148,7 +148,7 @@ internal sealed class WeightConverterSkill : AgentClassSkill
     /// <inheritdoc/>
     public override IReadOnlyList<AgentSkillScript>? Scripts => this._scripts ??=
     [
-        CreateScript("convert", (double value, double factor, IServiceProvider serviceProvider) =>
+        this.CreateScript("convert", (double value, double factor, IServiceProvider serviceProvider) =>
         {
             var service = serviceProvider.GetRequiredService<ConversionService>();
             return service.Convert(value, factor);
