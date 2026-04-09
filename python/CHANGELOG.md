@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-02
+
+### Added
+
+- **repo**: Add `PACKAGE_STATUS.md` to track lifecycle status of all Python packages ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+
+### Changed
+
+- **agent-framework**, **agent-framework-core**, **agent-framework-openai**, **agent-framework-foundry**: [BREAKING] Promote from `1.0.0rc6` to `1.0.0` (Production/Stable) ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **agent-framework-core**, **agent-framework-openai**, **agent-framework-foundry**: [BREAKING] Dependency floors now require released `>=1.0.0,<2` packages, breaking compatibility with older RC installs ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **agent-framework-a2a**, **agent-framework-ag-ui**, **agent-framework-anthropic**, **agent-framework-azure-ai-search**, **agent-framework-azure-cosmos**, **agent-framework-azurefunctions**, **agent-framework-bedrock**, **agent-framework-chatkit**, **agent-framework-claude**, **agent-framework-copilotstudio**, **agent-framework-declarative**, **agent-framework-devui**, **agent-framework-durabletask**, **agent-framework-foundry-local**, **agent-framework-github-copilot**, **agent-framework-lab**, **agent-framework-mem0**, **agent-framework-ollama**, **agent-framework-orchestrations**, **agent-framework-purview**, **agent-framework-redis**: Bump beta versions from `1.0.0b260330` to `1.0.0b260402` ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **docs**: Update install instructions to drop `--pre` flag for released packages ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+
+### Removed
+
+- **agent-framework-core**: [BREAKING] Remove deprecated `BaseContextProvider` and `BaseHistoryProvider` aliases ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **agent-framework-core**: [BREAKING] Remove deprecated `text` parameter from `Message` constructor ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+
+### Fixed
+
+- **agent-framework-core**, **agent-framework-openai**, **agent-framework-foundry**, **agent-framework-azurefunctions**, **agent-framework-devui**, **agent-framework-orchestrations**, **agent-framework-azure-ai-search**: Migrate message construction from `Message(text=...)` to `Message(contents=[...])` throughout codebase ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **agent-framework-devui**: Accept legacy payload formats (`text`, `message`, `content`, `input`, `data`) and convert to framework-native `Message(contents=...)` ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **samples**: Fix Foundry samples to use env vars consistently and update install guidance ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+
 ## [1.0.0rc6] - 2026-03-30
 
 ### Added
@@ -846,7 +870,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc6...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0...HEAD
+[1.0.0]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc6...python-1.0.0
 [1.0.0rc6]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc5...python-1.0.0rc6
 [1.0.0rc5]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc4...python-1.0.0rc5
 [1.0.0rc4]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc3...python-1.0.0rc4

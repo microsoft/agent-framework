@@ -45,7 +45,7 @@ ChatClientAgent
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"  # Required
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"                       # Optional, defaults to gpt-4o-mini
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"                      # Optional, defaults to gpt-5.4-mini
 ```
 
 ## Running the Sample

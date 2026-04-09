@@ -4,6 +4,8 @@ The [Neo4j GraphRAG context provider](https://github.com/neo4j-labs/neo4j-maf-pr
 
 This sample keeps setup lightweight by using a pre-built Neo4j fulltext index plus a graph-enrichment query.
 
+For full documentation, see the [Neo4j GraphRAG integration guide on Microsoft Learn](https://learn.microsoft.com/agent-framework/integrations/neo4j-graphrag).
+
 ## Example
 
 | File | Description |

@@ -1957,6 +1957,8 @@ class ContinuationToken(TypedDict):
 def _parse_structured_response_value(text: str, response_format: Any | None) -> Any | None:
     if response_format is None:
         return None
+    if not text:
+        return None
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
         return response_format.model_validate_json(text)
     if isinstance(response_format, Mapping):

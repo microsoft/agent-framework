@@ -52,6 +52,8 @@ Once comfortable with these, explore the rest of the samples below.
 | Checkpointed Sub-Workflow      | [checkpoint/sub_workflow_checkpoint.py](./checkpoint/sub_workflow_checkpoint.py)                                           | Save and resume a sub-workflow that pauses for human approval                                      |
 | Handoff + Tool Approval Resume | [orchestrations/handoff_with_tool_approval_checkpoint_resume.py](./orchestrations/handoff_with_tool_approval_checkpoint_resume.py) | Handoff workflow that captures tool-call approvals in checkpoints and resumes with human decisions |
 | Workflow as Agent Checkpoint   | [checkpoint/workflow_as_agent_checkpoint.py](./checkpoint/workflow_as_agent_checkpoint.py)                                 | Enable checkpointing when using workflow.as_agent() with checkpoint_storage parameter              |
+| Cosmos DB Checkpoint Storage   | [checkpoint/cosmos_workflow_checkpointing.py](./checkpoint/cosmos_workflow_checkpointing.py)                               | Use `CosmosCheckpointStorage` for durable workflow checkpointing backed by Azure Cosmos DB NoSQL   |
+| Cosmos DB + Foundry Checkpoint | [checkpoint/cosmos_workflow_checkpointing_foundry.py](./checkpoint/cosmos_workflow_checkpointing_foundry.py)               | Multi-agent workflow using `FoundryChatClient` with `CosmosCheckpointStorage` for durable pause/resume |
 
 ### composition
 
