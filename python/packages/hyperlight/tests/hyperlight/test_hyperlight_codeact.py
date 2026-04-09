@@ -7,7 +7,6 @@ import importlib.metadata
 import importlib.util
 import inspect
 import json
-import os
 import sys
 import threading
 from collections.abc import Awaitable, Callable, Mapping, MutableSequence
@@ -33,10 +32,6 @@ from agent_framework_hyperlight import _execute_code_tool as execute_code_module
 
 
 def _hyperlight_integration_skip_reason() -> str | None:
-    enabled = os.getenv("RUN_HYPERLIGHT_INTEGRATION_TESTS", "").strip().lower()
-    if enabled not in {"1", "true", "yes"}:
-        return "Set RUN_HYPERLIGHT_INTEGRATION_TESTS=true to enable Hyperlight integration tests."
-
     if sys.version_info >= (3, 14):
         return (
             "Hyperlight integration tests require Python < 3.14 because hyperlight-sandbox-backend-wasm is unsupported."
