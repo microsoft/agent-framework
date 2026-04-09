@@ -37,6 +37,11 @@ def _hyperlight_integration_skip_reason() -> str | None:
     if enabled not in {"1", "true", "yes"}:
         return "Set RUN_HYPERLIGHT_INTEGRATION_TESTS=true to enable Hyperlight integration tests."
 
+    if sys.version_info >= (3, 14):
+        return (
+            "Hyperlight integration tests require Python < 3.14 because hyperlight-sandbox-backend-wasm is unsupported."
+        )
+
     if sys.platform not in {"linux", "win32"}:
         return "Hyperlight integration tests require Linux or Windows runners."
 

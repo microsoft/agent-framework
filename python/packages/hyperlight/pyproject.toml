@@ -19,13 +19,12 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
 dependencies = [
     "agent-framework-core>=1.0.0,<2",
     "hyperlight-sandbox>=0.3.0,<0.4",
-    "hyperlight-sandbox-backend-wasm>=0.3.0,<0.4 ; sys_platform == 'linux' or sys_platform == 'win32'",
+    "hyperlight-sandbox-backend-wasm>=0.3.0,<0.4 ; (sys_platform == 'linux' or sys_platform == 'win32') and python_version < '3.14'",
     "hyperlight-sandbox-python-guest>=0.3.0,<0.4",
 ]
 

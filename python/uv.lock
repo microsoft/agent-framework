@@ -553,7 +553,7 @@ source = { editable = "packages/hyperlight" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "hyperlight-sandbox", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "hyperlight-sandbox-backend-wasm", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "hyperlight-sandbox-backend-wasm", marker = "(python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')" },
     { name = "hyperlight-sandbox-python-guest", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -561,7 +561,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "hyperlight-sandbox", specifier = ">=0.3.0,<0.4" },
-    { name = "hyperlight-sandbox-backend-wasm", marker = "sys_platform == 'linux' or sys_platform == 'win32'", specifier = ">=0.3.0,<0.4" },
+    { name = "hyperlight-sandbox-backend-wasm", marker = "(python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')", specifier = ">=0.3.0,<0.4" },
     { name = "hyperlight-sandbox-python-guest", specifier = ">=0.3.0,<0.4" },
 ]
 
