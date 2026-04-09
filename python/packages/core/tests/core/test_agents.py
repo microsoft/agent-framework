@@ -865,7 +865,6 @@ async def test_context_provider_can_inspect_runtime_tools_from_run(
         options=None,
         compaction_strategy=None,
         tokenizer=None,
-        legacy_kwargs={},
         function_invocation_kwargs=None,
         client_kwargs=None,
     )
@@ -895,7 +894,6 @@ async def test_context_provider_can_remove_runtime_tools_from_run(
         options=None,
         compaction_strategy=None,
         tokenizer=None,
-        legacy_kwargs={},
         function_invocation_kwargs=None,
         client_kwargs=None,
     )
