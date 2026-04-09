@@ -1,0 +1,382 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+from __future__ import annotations
+
+import asyncio
+import importlib.metadata
+import importlib.util
+import inspect
+import json
+import os
+import sys
+import threading
+from collections.abc import Awaitable, Callable, Mapping, MutableSequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import pytest
+from agent_framework import (
+    Agent,
+    BaseChatClient,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
+    FunctionInvocationLayer,
+    Message,
+    ResponseStream,
+    tool,
+)
+
+from agent_framework_hyperlight import FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
+from agent_framework_hyperlight import _execute_code_tool as execute_code_module
+
+
+def _hyperlight_integration_skip_reason() -> str | None:
+    enabled = os.getenv("RUN_HYPERLIGHT_INTEGRATION_TESTS", "").strip().lower()
+    if enabled not in {"1", "true", "yes"}:
+        return "Set RUN_HYPERLIGHT_INTEGRATION_TESTS=true to enable Hyperlight integration tests."
+
+    if sys.platform not in {"linux", "win32"}:
+        return "Hyperlight integration tests require Linux or Windows runners."
+
+    if importlib.util.find_spec("hyperlight_sandbox") is None:
+        return "hyperlight-sandbox is not installed."
+
+    if importlib.util.find_spec("python_guest") is None:
+        return "hyperlight-sandbox-python-guest is not installed."
+
+    try:
+        importlib.metadata.version("hyperlight-sandbox-backend-wasm")
+    except importlib.metadata.PackageNotFoundError:
+        return "hyperlight-sandbox-backend-wasm is not installed."
+
+    return None
+
+
+skip_if_hyperlight_integration_tests_disabled = pytest.mark.skipif(
+    (reason := _hyperlight_integration_skip_reason()) is not None,
+    reason=reason or "Hyperlight integration tests are disabled.",
+)
+
+
+@tool(approval_mode="never_require")
+def compute(a: int, b: int) -> int:
+    return a + b
+
+
+@tool(approval_mode="always_require")
+def dangerous_compute(a: int, b: int) -> int:
+    return a * b
+
+
+@dataclass(slots=True)
+class _FakeResult:
+    success: bool
+    stdout: str = ""
+    stderr: str = ""
+
+
+def _run_in_thread(callback: Callable[[], Any]) -> Any:
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def _runner() -> None:
+        try:
+            result["value"] = callback()
+        except BaseException as exc:
+            error["value"] = exc
+
+    thread = threading.Thread(target=_runner)
+    thread.start()
+    thread.join()
+
+    if "value" in error:
+        raise error["value"]
+
+    return result.get("value")
+
+
+class _FakeSandbox:
+    instances: list[_FakeSandbox] = []
+
+    def __init__(
+        self,
+        *,
+        input_dir: str | None = None,
+        output_dir: str | None = None,
+        temp_output: bool = False,
+        backend: str = "wasm",
+        module: str | None = None,
+        module_path: str | None = None,
+        heap_size: str | None = None,
+        stack_size: str | None = None,
+    ) -> None:
+        self.input_dir = input_dir
+        self.output_dir = output_dir
+        self.registered_tools: dict[str, Any] = {}
+        self.allowed_domains: list[tuple[str, list[str] | None]] = []
+        self.restore_calls: list[Any] = []
+        self.output_files: list[str] = []
+        _FakeSandbox.instances.append(self)
+
+    def register_tool(self, name_or_tool: Any, callback: Any | None = None) -> None:
+        if callback is None:
+            raise AssertionError("Expected callback registration for sandbox tools.")
+        self.registered_tools[str(name_or_tool)] = callback
+
+    def allow_domain(self, target: str, methods: list[str] | None = None) -> None:
+        self.allowed_domains.append((target, methods))
+
+    def _invoke_tool(self, name: str, **kwargs: Any) -> Any:
+        callback = self.registered_tools[name]
+        if inspect.iscoroutinefunction(callback):
+            return _run_in_thread(lambda: asyncio.run(callback(**kwargs)))
+
+        result = callback(**kwargs)
+        if inspect.isawaitable(result):
+            return _run_in_thread(lambda: asyncio.run(result))
+        return result
+
+    def run(self, code: str) -> _FakeResult:
+        if code == "None":
+            return _FakeResult(success=True)
+        if code == "create-output":
+            if self.output_dir is None:
+                raise AssertionError("Expected output directory for create-output test.")
+            Path(self.output_dir, "report.txt").write_text("artifact", encoding="utf-8")
+            self.output_files = ["report.txt"]
+            return _FakeResult(success=True, stdout="done\n")
+        if 'call_tool("compute", a=20, b=22)' in code:
+            total = self._invoke_tool("compute", a=20, b=22)
+            return _FakeResult(success=True, stdout=f"{total}\n")
+        return _FakeResult(success=False, stderr="sandbox boom")
+
+    def snapshot(self) -> str:
+        return "snapshot"
+
+    def restore(self, snapshot: Any) -> None:
+        self.restore_calls.append(snapshot)
+
+    def get_output_files(self) -> list[str]:
+        return list(self.output_files)
+
+
+class _FakeRuntime:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, str]] = []
+
+    def execute(self, *, config: Any, code: str) -> list[Content]:
+        self.calls.append((config, code))
+        return [Content.from_text("ok")]
+
+
+class _FakeSessionContext:
+    def __init__(self, *, tools: list[Any] | None = None) -> None:
+        self.options: dict[str, Any] = {}
+        if tools is not None:
+            self.options["tools"] = tools
+        self.instructions: list[tuple[str, str]] = []
+        self.tools: list[tuple[str, list[Any]]] = []
+
+    def extend_instructions(self, source_id: str, instructions: str) -> None:
+        self.instructions.append((source_id, instructions))
+
+    def extend_tools(self, source_id: str, tools: list[Any]) -> None:
+        self.tools.append((source_id, tools))
+
+
+class _FakeCodeActChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    def __init__(self) -> None:
+        FunctionInvocationLayer.__init__(self)
+        BaseChatClient.__init__(self)
+        self.call_count = 0
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: MutableSequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            raise AssertionError("Streaming is not used in this integration test.")
+
+        async def _get_response() -> ChatResponse:
+            self.call_count += 1
+
+            if self.call_count == 1:
+                return ChatResponse(
+                    messages=Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="execute_code_call",
+                                name="execute_code",
+                                arguments={
+                                    "code": 'total = call_tool("compute", a=20, b=22)\nprint(total)',
+                                },
+                            )
+                        ],
+                    )
+                )
+
+            function_results = [
+                content for message in messages for content in message.contents if content.type == "function_result"
+            ]
+            assert len(function_results) == 1
+
+            result_content = function_results[0]
+            assert result_content.call_id == "execute_code_call"
+
+            code_result = next(
+                item for item in result_content.items or [] if item.type == "code_interpreter_tool_result"
+            )
+            text_output = next(item for item in code_result.outputs or [] if item.type == "text")
+            assert text_output.text == "42\n"
+            assert result_content.exception is None
+
+            return ChatResponse(messages=Message(role="assistant", contents=["The sandbox returned 42."]))
+
+        return _get_response()
+
+
+def test_execute_code_tool_updates_approval_with_managed_tools() -> None:
+    execute_code = HyperlightExecuteCodeTool(tools=[compute], _registry=_FakeRuntime())
+    assert execute_code.approval_mode == "never_require"
+
+    execute_code.add_tools([dangerous_compute])
+    assert execute_code.approval_mode == "always_require"
+
+
+def test_execute_code_tool_requires_enabled_capabilities(tmp_path: Path) -> None:
+    execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
+    mount = FileMount(host_path=tmp_path, mount_path="/input/data")
+
+    with pytest.raises(ValueError, match="filesystem_mode"):
+        execute_code.add_file_mounts(mount)
+
+    with pytest.raises(ValueError, match="network_mode"):
+        execute_code.add_allowed_domains("api.example.com")
+
+
+def test_execute_code_tool_description_contains_call_tool_guidance(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    (workspace_root / "notes.txt").write_text("hello", encoding="utf-8")
+    mount_file = tmp_path / "data.json"
+    mount_file.write_text('{"hello": "world"}', encoding="utf-8")
+
+    execute_code = HyperlightExecuteCodeTool(
+        tools=[compute],
+        filesystem_mode="read_write",
+        workspace_root=workspace_root,
+        file_mounts=[FileMount(host_path=mount_file, mount_path="/input/data/data.json")],
+        network_mode="allow_list",
+        allowed_domains=["https://api.example.com/v1"],
+        allowed_http_methods=["get"],
+        _registry=_FakeRuntime(),
+    )
+
+    description = execute_code.description
+
+    assert "call_tool(name, **kwargs)" in description
+    assert "compute" in description
+    assert "/input/data/data.json" in description
+    assert "/output" in description
+    assert "api.example.com" in description
+    assert "GET" in description
+
+
+async def test_execute_code_tool_executes_with_structured_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+
+    execute_code = HyperlightExecuteCodeTool(
+        tools=[compute],
+        filesystem_mode="read_write",
+        network_mode="allow_list",
+        allowed_domains=["api.example.com"],
+        allowed_http_methods=["get"],
+    )
+
+    result = await execute_code.invoke(arguments={"code": "create-output"})
+
+    assert result[0].type == "code_interpreter_tool_result"
+    assert result[0].outputs is not None
+    assert result[0].outputs[0].type == "text"
+    assert result[0].outputs[0].text == "done\n"
+    assert any(item.type == "data" for item in result[0].outputs)
+    assert _FakeSandbox.instances[0].allowed_domains == [("api.example.com", ["GET"])]
+    assert "compute" in _FakeSandbox.instances[0].registered_tools
+
+
+async def test_execute_code_tool_failure_returns_error_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+
+    execute_code = HyperlightExecuteCodeTool()
+    result = await execute_code.invoke(arguments={"code": "fail"})
+
+    assert result[0].type == "code_interpreter_tool_result"
+    assert result[0].outputs is not None
+    assert result[0].outputs[0].type == "error"
+    assert result[0].outputs[0].error_details == "sandbox boom"
+
+
+async def test_provider_injects_run_scoped_execute_code_tool() -> None:
+    runtime = _FakeRuntime()
+    provider = HyperlightCodeActProvider(tools=[compute], _registry=runtime)
+    context = _FakeSessionContext(tools=[dangerous_compute])
+    state: dict[str, Any] = {}
+
+    await provider.before_run(agent=object(), session=None, context=context, state=state)
+
+    assert context.options["tools"] == [dangerous_compute]
+    assert len(context.instructions) == 1
+    assert len(context.tools) == 1
+
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+    assert run_tool.approval_mode == "never_require"
+    assert [tool_obj.name for tool_obj in run_tool.get_tools()] == ["compute"]
+    assert "dangerous_compute" not in context.instructions[0][1]
+    assert "compute" not in context.instructions[0][1]
+    assert "Filesystem capabilities:" not in context.instructions[0][1]
+    assert state[provider.source_id]["tool_names"] == ["compute"]
+    assert state[provider.source_id]["approval_mode"] == "never_require"
+    json.dumps(state)
+
+    provider.remove_tool("compute")
+    assert [tool_obj.name for tool_obj in run_tool.get_tools()] == ["compute"]
+
+
+async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+
+    client = _FakeCodeActChatClient()
+    provider = HyperlightCodeActProvider(tools=[compute])
+    agent = Agent(client=client, context_providers=[provider])
+
+    response = await agent.run("Use the sandbox to add 20 and 22.")
+
+    assert response.text == "The sandbox returned 42."
+    assert client.call_count == 2
+    assert len(_FakeSandbox.instances) == 1
+    assert "compute" in _FakeSandbox.instances[0].registered_tools
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_hyperlight_integration_tests_disabled
+async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> None:
+    client = _FakeCodeActChatClient()
+    provider = HyperlightCodeActProvider(tools=[compute])
+    agent = Agent(client=client, context_providers=[provider])
+
+    response = await agent.run("Use the sandbox to add 20 and 22.")
+
+    assert response.text == "The sandbox returned 42."
+    assert client.call_count == 2

@@ -4,7 +4,7 @@ This document describes the Python realization of the CodeAct design in
 [`docs/decisions/0024-codeact-integration.md`](../../decisions/0024-codeact-integration.md).
 
 This document is intentionally focused on the Python design and public API surface.
-The initial public Python type described here is `HyperlightCodeActContextProvider`. Future Python backends, such as Monty, should follow the same conceptual model with their own concrete provider types rather than through a public abstract base class or a public executor parameter.
+The initial public Python type described here is `HyperlightCodeActProvider`. Future Python backends, such as Monty, should follow the same conceptual model with their own concrete provider types rather than through a public abstract base class or a public executor parameter.
 
 ## What is the goal of this feature?
 
@@ -24,7 +24,7 @@ Implementation-free outcome:
 ## What is the problem being solved?
 
 - Today, the easiest way to prototype CodeAct is to infer or reshape the agent's direct tool surface, which is fragile and hard to reason about.
-- In Python, runtime tools and agent-default tools are reachable through awkward internal-looking surfaces, making tool provenance unreliable as an API contract.
+- In Python, inferring a CodeAct tool surface from generic agent tool configuration is fragile and hard to reason about.
 - There is no first-class Python design that simultaneously covers Hyperlight-backed CodeAct now, future backend-specific providers such as Monty, and both tool-enabled and interpreter modes.
 - Sandbox capabilities such as file access and network access need a portable configuration model instead of ad hoc backend-specific wiring.
 - Approval behavior needs to be explicit and configurable, especially when CodeAct and direct tool calling may both be available.
@@ -146,17 +146,18 @@ Caching rules:
 ```python
 @dataclass(frozen=True)
 class FileMount:
-    host_path: Path
+    host_path: str | Path
     mount_path: str
-    mode: Literal["read_only", "read_write"] = "read_only"
 
 
-class HyperlightCodeActContextProvider(ContextProvider):
+class HyperlightCodeActProvider(ContextProvider):
     def __init__(
         self,
-        source_id: str = "codeact",
+        source_id: str = "hyperlight_codeact",
         *,
-        module: str | Path,
+        backend: str = "wasm",
+        module: str | None = "python_guest.path",
+        module_path: str | None = None,
         tools: ToolTypes | None = None,
         approval_mode: Literal["always_require", "never_require"] = "never_require",
         filesystem_mode: Literal["none", "read_only", "read_write"] = "none",
@@ -169,42 +170,52 @@ class HyperlightCodeActContextProvider(ContextProvider):
 
     def add_tools(self, tools: ToolTypes | Sequence[ToolTypes]) -> None: ...
     def get_tools(self) -> Sequence[ToolTypes]: ...
-    def remove_tools(self, tool_names: str | Sequence[str]) -> None: ...
+    def remove_tool(self, name: str) -> None: ...
     def clear_tools(self) -> None: ...
     def add_file_mounts(self, mounts: FileMount | Sequence[FileMount]) -> None: ...
     def get_file_mounts(self) -> Sequence[FileMount]: ...
-    def remove_file_mounts(self, mount_paths: str | Sequence[str]) -> None: ...
+    def remove_file_mount(self, mount_path: str) -> None: ...
     def clear_file_mounts(self) -> None: ...
     def add_allowed_domains(self, domains: str | Sequence[str]) -> None: ...
     def get_allowed_domains(self) -> Sequence[str]: ...
-    def remove_allowed_domains(self, domains: str | Sequence[str]) -> None: ...
+    def remove_allowed_domain(self, domain: str) -> None: ...
     def clear_allowed_domains(self) -> None: ...
     def add_allowed_http_methods(self, methods: str | Sequence[str]) -> None: ...
     def get_allowed_http_methods(self) -> Sequence[str]: ...
-    def remove_allowed_http_methods(self, methods: str | Sequence[str]) -> None: ...
+    def remove_allowed_http_method(self, method: str) -> None: ...
     def clear_allowed_http_methods(self) -> None: ...
 ```
 
 No public abstract `CodeActContextProvider` base or public `executor=` parameter is required for the initial Python API.
 
+The initial alpha package also exports a standalone `HyperlightExecuteCodeTool`
+for direct-tool scenarios where a provider is not needed. That standalone tool
+should advertise `call_tool(...)`, the registered sandbox tools, and capability
+state through its own `description` rather than requiring separate agent
+instructions.
+
 Provider modes:
-- If no CodeAct-managed tools are configured, `HyperlightCodeActContextProvider` uses interpreter-style behavior.
-- If one or more CodeAct-managed tools are configured, `HyperlightCodeActContextProvider` uses tool-enabled behavior.
+- If no CodeAct-managed tools are configured, `HyperlightCodeActProvider` uses interpreter-style behavior.
+- If one or more CodeAct-managed tools are configured, `HyperlightCodeActProvider` uses tool-enabled behavior.
 
 #### Python provider implementation contract
 
 The concrete provider plugs into the existing Python `ContextProvider` surface from `agent_framework._sessions`.
 
-Required lifecycle hooks:
+Required lifecycle hook:
 - `before_run(*, agent, session, context, state) -> None`
+
+Optional lifecycle hook:
 - `after_run(*, agent, session, context, state) -> None`
 
 `before_run(...)` is responsible for:
-- snapshotting the current CodeAct-managed tool registry and capability settings into `state`,
+- snapshotting the current CodeAct-managed tool registry and capability settings for the run,
 - computing the effective approval requirement for `execute_code` from the provider default and the snapshotted tool registry,
-- building CodeAct instructions,
+- adding a short CodeAct guidance block,
 - adding `execute_code` to the run through `SessionContext.extend_tools(...)`,
 - and wiring any backend-specific execution state needed for the run.
+
+If the provider stores anything in `state`, that value must stay JSON-serializable.
 
 `after_run(...)` is responsible for any backend-specific cleanup or post-processing that must happen after the model invocation completes.
 
@@ -219,9 +230,9 @@ If shared internal helpers are introduced later for multiple concrete providers,
 
 #### Runtime behavior
 
-- `before_run(...)` adds CodeAct instructions through `SessionContext.extend_instructions(...)`.
+- `before_run(...)` adds a short CodeAct guidance block through `SessionContext.extend_instructions(...)`.
 - `before_run(...)` adds `execute_code` through `SessionContext.extend_tools(...)`.
-- `before_run(...)` builds Hyperlight-specific instructions from the current CodeAct tool registry and capability configuration.
+- The detailed `call_tool(...)`, sandbox-tool, and capability guidance is carried by `execute_code.description`.
 - `execute_code` invokes the configured Hyperlight sandbox guest.
 - If the current CodeAct tool registry is non-empty, the runtime injects `call_tool(...)` bound to the provider-owned tool registry.
 - The provider does not inspect or mutate `Agent.default_options["tools"]` or `context.options["tools"]` to determine its CodeAct tool set.
@@ -231,7 +242,7 @@ If shared internal helpers are introduced later for multiple concrete providers,
 #### Backend integration
 
 Initial public provider:
-- `HyperlightCodeActContextProvider`
+- `HyperlightCodeActProvider`
 
 Backend-specific notes:
 - **Hyperlight**
@@ -239,14 +250,14 @@ Backend-specific notes:
   - File access maps naturally to Hyperlight Sandbox's read-only `/input` and writable `/output` capability model.
   - Network access is denied by default and is enabled through allow-listed domains plus HTTP verbs.
 - **Monty**
-  - A future `MontyCodeActContextProvider` should be a separate public type rather than a `HyperlightCodeActContextProvider` mode.
+  - A future `MontyCodeActProvider` should be a separate public type rather than a `HyperlightCodeActProvider` mode.
   - Monty does not expose built-in filesystem or network access directly inside the interpreter.
   - File and URL access are mediated through host-provided external functions, so a Monty provider would need to translate provider settings into virtual files and allow-checked callbacks.
   - Monty setup may also include backend-specific inputs such as `script_name`, optional type-check stubs, or restored snapshots.
 
 #### Capability handling
 
-Capabilities are first-class `HyperlightCodeActContextProvider` init parameters and, for collection-shaped state, provider-managed CRUD surfaces:
+Capabilities are first-class `HyperlightCodeActProvider` init parameters and, for collection-shaped state, provider-managed CRUD surfaces:
 - `filesystem_mode`
 - `workspace_root`
 - `file_mounts`
@@ -275,10 +286,10 @@ Backends may implement stricter semantics than these top-level settings. For exa
 Backend execution output should be translated into existing AF `Content` values rather than a custom `CodeActExecutionResult` type.
 
 Use the existing content model from `agent_framework._types`, for example:
+- `Content.from_code_interpreter_tool_result(outputs=[...])` to surface the overall result of sandboxed code execution,
 - `Content.from_text(...)` for plain textual output,
 - `Content.from_data(...)` or `Content.from_uri(...)` for generated files or binary artifacts,
 - `Content.from_error(...)` for execution failures,
-- `Content.from_shell_command_output(...)` when stdout/stderr/exit status need to stay structured,
 - and `Content.from_function_result(..., result=list[Content])` when surfacing the final result of `execute_code` through the normal tool result path.
 
 #### `execute_code` input contract
@@ -303,8 +314,7 @@ Execution failures should surface readable error text and structured error `Cont
 ### Tool-enabled CodeAct mode
 
 ```python
-codeact = HyperlightCodeActContextProvider(
-    module="python_guest.path",
+codeact = HyperlightCodeActProvider(
     tools=[fetch_docs, query_data],
     filesystem_mode="read_write",
     workspace_root="./workdir",
@@ -325,8 +335,7 @@ agent = Agent(
 ### Standard code interpreter mode
 
 ```python
-code_interpreter = HyperlightCodeActContextProvider(
-    module="python_guest.path",
+code_interpreter = HyperlightCodeActProvider(
     filesystem_mode="read_only",
     workspace_root="./data",
     network_mode="none",

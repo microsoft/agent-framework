@@ -846,7 +846,7 @@ async def test_context_provider_can_inspect_runtime_tools_from_run(
 ) -> None:
     seen_tools: list[Any] = []
 
-    class RuntimeToolsProvider(BaseContextProvider):
+    class RuntimeToolsProvider(ContextProvider):
         def __init__(self) -> None:
             super().__init__(source_id="runtime-tools")
 
@@ -876,7 +876,7 @@ async def test_context_provider_can_inspect_runtime_tools_from_run(
 async def test_context_provider_can_remove_runtime_tools_from_run(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    class RuntimeToolsProvider(BaseContextProvider):
+    class RuntimeToolsProvider(ContextProvider):
         def __init__(self) -> None:
             super().__init__(source_id="runtime-tools")
 

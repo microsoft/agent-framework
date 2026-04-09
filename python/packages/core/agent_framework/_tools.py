@@ -89,6 +89,7 @@ logger = logging.getLogger("agent_framework")
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
+ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
@@ -270,7 +271,7 @@ class FunctionTool(SerializationMixin):
         *,
         name: str,
         description: str = "",
-        approval_mode: Literal["always_require", "never_require"] | None = None,
+        approval_mode: ApprovalMode | None = None,
         kind: str | None = None,
         max_invocations: int | None = None,
         max_invocation_exceptions: int | None = None,
@@ -1030,7 +1031,7 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
-    approval_mode: Literal["always_require", "never_require"] | None = None,
+    approval_mode: ApprovalMode | None = None,
     kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
@@ -1046,7 +1047,7 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
-    approval_mode: Literal["always_require", "never_require"] | None = None,
+    approval_mode: ApprovalMode | None = None,
     kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
@@ -1061,7 +1062,7 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
-    approval_mode: Literal["always_require", "never_require"] | None = None,
+    approval_mode: ApprovalMode | None = None,
     kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,

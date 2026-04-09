@@ -55,7 +55,7 @@ The agent's direct tool surface remains separate. If a tool should be available 
 - Good, because the same provider structure can support either an all-or-nothing tool surface or a mixed side-by-side tool surface.
 - Good, because users can keep some tools direct-only while allowing other tools to be used from inside CodeAct.
 - Good, because a provider-owned CodeAct tool registry avoids mutating or inferring the agent's direct tool surface and can work consistently in both SDKs.
-- Good, because the same conceptual design can remain open to `HyperlightCodeActContextProvider`, a future `MontyCodeActContextProvider`, and other backend-specific providers over time.
+- Good, because the same conceptual design can remain open to `HyperlightCodeActProvider`, a future `MontyCodeActProvider`, and other backend-specific providers over time.
 - Good, because `execute_code` can evolve into multiple backend-specific runtime modes rather than being hard-wired to one Python-plus-tools mode.
 - Bad, because it is a bolt-on, which might make it less runtime efficient.
 
@@ -144,7 +144,7 @@ We standardize the **public concept** of CodeAct across SDKs while allowing each
 
 - Python uses a `ContextProvider`.
 - .NET uses an `AIContextProvider`.
-- The term **CodeAct context provider** is used throughout this ADR as a design concept, not as a required public base type. Public SDK APIs should prefer concrete backend-specific types such as `HyperlightCodeActContextProvider` rather than a public abstract `CodeActContextProvider` or a public `CodeActExecutor` parameter.
+- The term **CodeAct context provider** is used throughout this ADR as a design concept, not as a required public base type. Public SDK APIs should prefer concrete backend-specific types such as `HyperlightCodeActProvider` rather than a public abstract `CodeActContextProvider` or a public `CodeActExecutor` parameter.
 - CodeAct support should ship as an optional package in each SDK rather than as part of the core package, so users who do not need CodeAct do not take on its installation and dependency footprint.
 - There is no separate runtime setup object in the chosen design. Concrete providers manage their provider-owned CodeAct tool registry, file mounts, and outbound network allow-list configuration directly through CRUD-style methods on the provider itself.
 - At a high level, CodeAct is exposed through backend-specific context providers that contribute an `execute_code` tool, own the CodeAct-specific tool registry, and carry backend capability configuration such as filesystem and network access.
