@@ -266,9 +266,29 @@ def test_execute_code_tool_replaces_tools_with_the_same_name() -> None:
     assert execute_code.approval_mode == "always_require"
 
 
+def test_execute_code_tool_accepts_string_and_tuple_file_mounts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shorthand_file = tmp_path / "notes.txt"
+    shorthand_file.write_text("hello", encoding="utf-8")
+    explicit_file = tmp_path / "data.json"
+    explicit_file.write_text('{"hello": "world"}', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    execute_code = HyperlightExecuteCodeTool(filesystem_mode="read_only", _registry=_FakeRuntime())
+    execute_code.add_file_mounts("notes.txt")
+    execute_code.add_file_mounts((str(explicit_file), "data/data.json"))
+
+    assert execute_code.get_file_mounts() == [
+        FileMount(str(shorthand_file.resolve()), "/input/notes.txt"),
+        FileMount(str(explicit_file.resolve()), "/input/data/data.json"),
+    ]
+
+
 def test_execute_code_tool_requires_enabled_capabilities(tmp_path: Path) -> None:
     execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
-    mount = FileMount(host_path=tmp_path, mount_path="/input/data")
+    mount = (str(tmp_path), "data")
 
     with pytest.raises(ValueError, match="filesystem_mode"):
         execute_code.add_file_mounts(mount)
@@ -288,7 +308,7 @@ def test_execute_code_tool_description_contains_call_tool_guidance(tmp_path: Pat
         tools=[compute],
         filesystem_mode="read_write",
         workspace_root=workspace_root,
-        file_mounts=[FileMount(host_path=mount_file, mount_path="/input/data/data.json")],
+        file_mounts=[FileMount(str(mount_file), "data/data.json")],
         network_mode="allow_list",
         allowed_domains=["https://api.example.com/v1"],
         allowed_http_methods=["get"],

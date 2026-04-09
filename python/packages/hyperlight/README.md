@@ -18,9 +18,13 @@ create the sandbox.
 - `HyperlightCodeActProvider`
 - `HyperlightExecuteCodeTool`
 - `FileMount`
+- `FileMountInput`
 
 ## Notes
 
 - This package is intentionally separate from `agent-framework-core` so CodeAct
   usage and installation remain optional.
 - Alpha-package samples live under `packages/hyperlight/samples/`.
+- `file_mounts` accepts a single string shorthand, an explicit `(host_path,
+  mount_path)` pair, or a `FileMount` named tuple. Use the explicit two-value
+  form when the host path differs from the sandbox path.

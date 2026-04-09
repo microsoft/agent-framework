@@ -6,7 +6,7 @@ import importlib.metadata
 
 from ._execute_code_tool import HyperlightExecuteCodeTool
 from ._provider import HyperlightCodeActProvider
-from ._types import FileMount, FilesystemMode, NetworkMode
+from ._types import FileMount, FileMountInput, FilesystemMode, NetworkMode
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -15,6 +15,7 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "FileMount",
+    "FileMountInput",
     "FilesystemMode",
     "HyperlightCodeActProvider",
     "HyperlightExecuteCodeTool",

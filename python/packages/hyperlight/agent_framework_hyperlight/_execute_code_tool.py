@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Protocol, TypeGuard, cast
 from urllib.parse import urlparse
 
 from agent_framework import Content, FunctionTool
@@ -19,7 +19,7 @@ from agent_framework._tools import ApprovalMode, normalize_tools
 from pydantic import BaseModel, Field
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
-from ._types import FileMount, FilesystemMode, NetworkMode
+from ._types import FileMount, FileMountInput, FilesystemMode, NetworkMode
 
 DEFAULT_HYPERLIGHT_BACKEND = "wasm"
 DEFAULT_HYPERLIGHT_MODULE = "python_guest.path"
@@ -150,6 +150,30 @@ def _resolve_workspace_root(value: str | Path | None) -> Path | None:
     if not resolved_path.is_dir():
         raise ValueError("workspace_root must point to an existing directory.")
     return resolved_path
+
+
+def _is_file_mount_pair(value: Any) -> TypeGuard[FileMount | tuple[str, str]]:
+    if not isinstance(value, tuple):
+        return False
+
+    value_tuple = cast(tuple[Any, ...], value)
+    if len(value_tuple) != 2:
+        return False
+
+    host_path, mount_path = value_tuple
+    return isinstance(host_path, str) and isinstance(mount_path, str)
+
+
+def _normalize_file_mount_input(file_mount: FileMountInput) -> _StoredFileMount:
+    if isinstance(file_mount, str):
+        host_path, mount_path = file_mount, file_mount
+    else:
+        host_path, mount_path = file_mount
+
+    return _StoredFileMount(
+        host_path=_resolve_existing_path(host_path),
+        mount_path=_normalize_mount_path(mount_path),
+    )
 
 
 def _normalize_domain(target: str) -> str:
@@ -394,7 +418,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         approval_mode: ApprovalMode | None = None,
         filesystem_mode: FilesystemMode = "none",
         workspace_root: str | Path | None = None,
-        file_mounts: FileMount | Sequence[FileMount] | None = None,
+        file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         network_mode: NetworkMode = "none",
         allowed_domains: str | Sequence[str] | None = None,
         allowed_http_methods: str | Sequence[str] | None = None,
@@ -488,19 +512,19 @@ class HyperlightExecuteCodeTool(FunctionTool):
             self._managed_tools = []
             self._refresh_approval_mode()
 
-    def add_file_mounts(self, file_mounts: FileMount | Sequence[FileMount]) -> None:
-        """Add one or more file mounts under `/input`."""
+    def add_file_mounts(self, file_mounts: FileMountInput | Sequence[FileMountInput]) -> None:
+        """Add one or more file mounts under `/input`.
+
+        A single string uses the same relative path on the host and in the sandbox.
+        Use a two-string tuple or `FileMount` when those paths differ.
+        """
         if self._filesystem_mode == "none":
             raise ValueError("File mounts require filesystem_mode to be 'read_only' or 'read_write'.")
 
-        mounts = [file_mounts] if isinstance(file_mounts, FileMount) else list(file_mounts)
-        normalized_mounts = [
-            _StoredFileMount(
-                host_path=_resolve_existing_path(mount.host_path),
-                mount_path=_normalize_mount_path(mount.mount_path),
-            )
-            for mount in mounts
-        ]
+        mounts = (
+            [file_mounts] if isinstance(file_mounts, str) or _is_file_mount_pair(file_mounts) else list(file_mounts)
+        )
+        normalized_mounts = [_normalize_file_mount_input(mount) for mount in mounts]
 
         with self._state_lock:
             for mount in normalized_mounts:
@@ -510,7 +534,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         """Return the configured file mounts."""
         with self._state_lock:
             return [
-                FileMount(host_path=mount.host_path, mount_path=_display_mount_path(mount.mount_path))
+                FileMount(host_path=str(mount.host_path), mount_path=_display_mount_path(mount.mount_path))
                 for mount in self._file_mounts.values()
             ]
 

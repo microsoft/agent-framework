@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple, TypeAlias
 
 FilesystemMode = Literal["none", "read_only", "read_write"]
 NetworkMode = Literal["none", "allow_list"]
 
 
-@dataclass(frozen=True, slots=True)
-class FileMount:
+class FileMount(NamedTuple):
     """Map a host file or directory into the sandbox input tree."""
 
-    host_path: str | Path
+    host_path: str
     mount_path: str
+
+
+FileMountInput: TypeAlias = str | tuple[str, str] | FileMount

@@ -144,10 +144,11 @@ Caching rules:
 #### Core types
 
 ```python
-@dataclass(frozen=True)
-class FileMount:
-    host_path: str | Path
+class FileMount(NamedTuple):
+    host_path: str
     mount_path: str
+
+FileMountInput = str | tuple[str, str] | FileMount
 
 
 class HyperlightCodeActProvider(ContextProvider):
@@ -162,7 +163,7 @@ class HyperlightCodeActProvider(ContextProvider):
         approval_mode: Literal["always_require", "never_require"] = "never_require",
         filesystem_mode: Literal["none", "read_only", "read_write"] = "none",
         workspace_root: Path | None = None,
-        file_mounts: Sequence[FileMount] = (),
+        file_mounts: Sequence[FileMountInput] = (),
         network_mode: Literal["none", "allow_list"] = "none",
         allowed_domains: Sequence[str] = (),
         allowed_http_methods: Sequence[str] = (),
@@ -172,7 +173,7 @@ class HyperlightCodeActProvider(ContextProvider):
     def get_tools(self) -> Sequence[ToolTypes]: ...
     def remove_tool(self, name: str) -> None: ...
     def clear_tools(self) -> None: ...
-    def add_file_mounts(self, mounts: FileMount | Sequence[FileMount]) -> None: ...
+    def add_file_mounts(self, mounts: FileMountInput | Sequence[FileMountInput]) -> None: ...
     def get_file_mounts(self) -> Sequence[FileMount]: ...
     def remove_file_mount(self, mount_path: str) -> None: ...
     def clear_file_mounts(self) -> None: ...
@@ -185,6 +186,11 @@ class HyperlightCodeActProvider(ContextProvider):
     def remove_allowed_http_method(self, method: str) -> None: ...
     def clear_allowed_http_methods(self) -> None: ...
 ```
+
+`file_mounts` accepts three equivalent input forms:
+- `"data/report.csv"` uses the same relative path on the host and in the sandbox.
+- `("fixtures/users.json", "data/users.json")` uses distinct host and sandbox paths.
+- `FileMount("fixtures/users.json", "data/users.json")` is the named-tuple form of the explicit pair.
 
 No public abstract `CodeActContextProvider` base or public `executor=` parameter is required for the initial Python API.
 

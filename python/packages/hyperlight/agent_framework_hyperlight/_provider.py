@@ -10,7 +10,7 @@ from agent_framework import AgentSession, ContextProvider, FunctionTool, Session
 from agent_framework._tools import ApprovalMode
 
 from ._execute_code_tool import HyperlightExecuteCodeTool, SandboxRuntime
-from ._types import FileMount, FilesystemMode, NetworkMode
+from ._types import FileMount, FileMountInput, FilesystemMode, NetworkMode
 
 
 class HyperlightCodeActProvider(ContextProvider):
@@ -26,7 +26,7 @@ class HyperlightCodeActProvider(ContextProvider):
         approval_mode: ApprovalMode | None = None,
         filesystem_mode: FilesystemMode = "none",
         workspace_root: str | Path | None = None,
-        file_mounts: FileMount | Sequence[FileMount] | None = None,
+        file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         network_mode: NetworkMode = "none",
         allowed_domains: str | Sequence[str] | None = None,
         allowed_http_methods: str | Sequence[str] | None = None,
@@ -70,7 +70,7 @@ class HyperlightCodeActProvider(ContextProvider):
         """Remove all provider-owned sandbox tools."""
         self._execute_code_tool.clear_tools()
 
-    def add_file_mounts(self, file_mounts: FileMount | Sequence[FileMount]) -> None:
+    def add_file_mounts(self, file_mounts: FileMountInput | Sequence[FileMountInput]) -> None:
         """Add provider-managed file mounts."""
         self._execute_code_tool.add_file_mounts(file_mounts)
 
