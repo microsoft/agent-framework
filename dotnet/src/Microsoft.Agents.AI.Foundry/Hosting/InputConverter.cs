@@ -37,6 +37,27 @@ internal static class InputConverter
     }
 
     /// <summary>
+    /// Converts resolved SDK <see cref="Item"/> input items into <see cref="ChatMessage"/> instances.
+    /// </summary>
+    /// <param name="items">The resolved input items from the SDK context.</param>
+    /// <returns>A list of chat messages.</returns>
+    public static List<ChatMessage> ConvertItemsToMessages(IReadOnlyList<Item> items)
+    {
+        var messages = new List<ChatMessage>();
+
+        foreach (var item in items)
+        {
+            var message = ConvertInputItemToMessage(item);
+            if (message is not null)
+            {
+                messages.Add(message);
+            }
+        }
+
+        return messages;
+    }
+
+    /// <summary>
     /// Converts resolved SDK <see cref="OutputItem"/> history/input items into <see cref="ChatMessage"/> instances.
     /// </summary>
     /// <param name="items">The resolved output items from the SDK context.</param>

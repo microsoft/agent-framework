@@ -66,10 +66,10 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         }
 
         // Load and convert current input items
-        var inputItems = await context.GetInputItemsAsync(cancellationToken).ConfigureAwait(false);
+        var inputItems = await context.GetInputItemsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         if (inputItems.Count > 0)
         {
-            messages.AddRange(InputConverter.ConvertOutputItemsToMessages(inputItems));
+            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems));
         }
         else
         {

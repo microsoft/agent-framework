@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -43,8 +43,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -82,8 +82,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -116,8 +116,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -164,8 +164,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -203,8 +203,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -241,8 +241,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -277,8 +277,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -310,8 +310,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -343,8 +343,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -396,8 +396,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new OutputItem[] { historyItem });
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -431,20 +431,15 @@ public class AgentFrameworkResponseHandlerTests
                   content = new[] { new { type = "input_text", text = "Raw input" } } }
         });
 
-        var inputItem = new OutputItemMessage(
-            id: "input_1",
-            role: MessageRole.Assistant,
-            content: [new MessageContentOutputTextContent(
-                "Resolved input",
-                Array.Empty<Annotation>(),
-                Array.Empty<LogProb>())],
-            status: MessageStatus.Completed);
+        var inputItem = new ItemMessage(
+            MessageRole.Assistant,
+            [new MessageContentInputTextContent("Resolved input")]);
 
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new OutputItem[] { inputItem });
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Item[] { inputItem });
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -481,8 +476,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -521,8 +516,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -558,8 +553,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act — collect all events
         var events = new List<ResponseStreamEvent>();
@@ -600,8 +595,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -636,8 +631,8 @@ public class AgentFrameworkResponseHandlerTests
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
