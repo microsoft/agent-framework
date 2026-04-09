@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.AGUI.Shared;
 using Microsoft.Extensions.AI;
@@ -777,4 +778,271 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     #endregion State Delta Tests
+
+    #region AsAGUIEventStreamAsync Protocol Conformance Tests
+
+    // ---- Helpers ----
+
+    private static async Task<List<BaseEvent>> RunStreamAsync(
+        IEnumerable<ChatResponseUpdate> updates,
+        string threadId = "thread1",
+        string runId = "run1")
+    {
+        var events = new List<BaseEvent>();
+        await foreach (BaseEvent evt in updates
+            .ToAsyncEnumerableAsync()
+            .AsAGUIEventStreamAsync(threadId, runId, AGUIJsonSerializerContext.Default.Options))
+        {
+            events.Add(evt);
+        }
+        return events;
+    }
+
+    /// <summary>Builds a tool-metadata JsonObject that points to a ui:// resource URI.</summary>
+    private static JsonObject BuildToolMetadata(string resourceUri) =>
+        new() { ["ui"] = new JsonObject { ["resourceUri"] = resourceUri } };
+
+    // ---- Lifecycle ----
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_FirstEvent_IsRunStartedAsync()
+    {
+        List<BaseEvent> events = await RunStreamAsync([]);
+        Assert.IsType<RunStartedEvent>(events[0]);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_LastEvent_IsRunFinishedAsync()
+    {
+        List<BaseEvent> events = await RunStreamAsync([]);
+        Assert.IsType<RunFinishedEvent>(events[^1]);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_RunStartedEvent_EchoesThreadIdAndRunIdAsync()
+    {
+        List<BaseEvent> events = await RunStreamAsync([], "my-thread", "my-run");
+        var runStarted = Assert.IsType<RunStartedEvent>(events[0]);
+        Assert.Equal("my-thread", runStarted.ThreadId);
+        Assert.Equal("my-run", runStarted.RunId);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_RunFinishedEvent_EchoesThreadIdAndRunIdAsync()
+    {
+        List<BaseEvent> events = await RunStreamAsync([], "my-thread", "my-run");
+        var runFinished = Assert.IsType<RunFinishedEvent>(events[^1]);
+        Assert.Equal("my-thread", runFinished.ThreadId);
+        Assert.Equal("my-run", runFinished.RunId);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_NormalFlow_ContainsNoRunErrorAsync()
+    {
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, [new TextContent("hi")]) { MessageId = "msg1" }
+        ];
+        List<BaseEvent> events = await RunStreamAsync(updates);
+        Assert.DoesNotContain(events, e => e is RunErrorEvent);
+    }
+
+    // ---- Tool call ordering ----
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_FunctionCallContent_EmitsToolCallStartArgsDeltaEndInOrderAsync()
+    {
+        var functionCall = new FunctionCallContent("call_1", "get-time", null);
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, [functionCall]) { MessageId = "msg1" }
+        ];
+        List<BaseEvent> events = await RunStreamAsync(updates);
+
+        int startIdx = events.FindIndex(e => e is ToolCallStartEvent);
+        int argsIdx = events.FindIndex(e => e is ToolCallArgsEvent);
+        int endIdx = events.FindIndex(e => e is ToolCallEndEvent);
+
+        Assert.True(startIdx >= 0, "Expected TOOL_CALL_START");
+        Assert.True(argsIdx > startIdx, "TOOL_CALL_ARGS must follow TOOL_CALL_START");
+        Assert.True(endIdx > argsIdx, "TOOL_CALL_END must follow TOOL_CALL_ARGS");
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_FunctionCallContent_ToolCallIdIsConsistentAcrossStartArgsDeltaEndAsync()
+    {
+        var functionCall = new FunctionCallContent("call_1", "get-time", null);
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, [functionCall]) { MessageId = "msg1" }
+        ];
+        List<BaseEvent> events = await RunStreamAsync(updates);
+
+        var start = events.OfType<ToolCallStartEvent>().Single();
+        var args = events.OfType<ToolCallArgsEvent>().Single();
+        var end = events.OfType<ToolCallEndEvent>().Single();
+
+        Assert.Equal(start.ToolCallId, args.ToolCallId);
+        Assert.Equal(start.ToolCallId, end.ToolCallId);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_FullToolCallSequence_ToolCallResultAppearsAfterToolCallEndAsync()
+    {
+        var functionCall = new FunctionCallContent("call_1", "get-time", null);
+        var functionResult = new FunctionResultContent("call_1", new TextContent("2026-04-10T18:00:00Z"));
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, [functionCall]) { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.Tool, [functionResult]) { MessageId = "msg2" }
+        ];
+        List<BaseEvent> events = await RunStreamAsync(updates);
+
+        int endIdx = events.FindIndex(e => e is ToolCallEndEvent);
+        int resultIdx = events.FindIndex(e => e is ToolCallResultEvent);
+
+        Assert.True(endIdx >= 0, "Expected TOOL_CALL_END");
+        Assert.True(resultIdx > endIdx, "TOOL_CALL_RESULT must come after TOOL_CALL_END");
+    }
+
+    // ---- TOOL_CALL_RESULT content format ----
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_FunctionResultWithTextContent_ContentIsJsonEncodedStringAsync()
+    {
+        const string Timestamp = "2026-04-10T18:27:48Z";
+        var functionResult = new FunctionResultContent("call_1", new TextContent(Timestamp));
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Tool, [functionResult]) { MessageId = "msg1" }
+        ];
+        List<BaseEvent> events = await RunStreamAsync(updates);
+
+        ToolCallResultEvent result = events.OfType<ToolCallResultEvent>().Single();
+        // TextContent is serialized as a JSON-encoded string so Content is always valid JSON.
+        using var doc = JsonDocument.Parse(result.Content!);
+        Assert.Equal(JsonValueKind.String, doc.RootElement.ValueKind);
+        Assert.Equal(Timestamp, doc.RootElement.GetString());
+    }
+
+    // ---- Activity snapshot ----
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_FunctionResultWithToolMetadata_EmitsActivitySnapshotAfterResultAsync()
+    {
+        var textContent = new TextContent("2026-04-10T18:27:48Z")
+        {
+            AdditionalProperties = new() { ["ToolMetadata"] = BuildToolMetadata("ui://get-time.html") }
+        };
+        var functionResult = new FunctionResultContent("call_1", textContent);
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Tool, [functionResult]) { MessageId = "msg1" }
+        ];
+        List<BaseEvent> events = await RunStreamAsync(updates);
+
+        int resultIdx = events.FindIndex(e => e is ToolCallResultEvent);
+        int snapshotIdx = events.FindIndex(e => e is ActivitySnapshotEvent);
+
+        Assert.True(resultIdx >= 0, "Expected TOOL_CALL_RESULT");
+        Assert.True(snapshotIdx > resultIdx, "ACTIVITY_SNAPSHOT must follow TOOL_CALL_RESULT");
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_ActivitySnapshot_HasMcpAppsActivityTypeAndResourceUriAsync()
+    {
+        const string ResourceUri = "ui://get-time.html";
+        var textContent = new TextContent("2026-04-10T18:27:48Z")
+        {
+            AdditionalProperties = new() { ["ToolMetadata"] = BuildToolMetadata(ResourceUri) }
+        };
+        var functionResult = new FunctionResultContent("call_1", textContent);
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Tool, [functionResult]) { MessageId = "msg1" }
+        ];
+        List<BaseEvent> events = await RunStreamAsync(updates);
+
+        ActivitySnapshotEvent snapshot = Assert.IsType<ActivitySnapshotEvent>(
+            events.Single(e => e is ActivitySnapshotEvent));
+
+        Assert.Equal("mcp-apps", snapshot.ActivityType);
+        Assert.True(snapshot.Replace);
+        Assert.NotNull(snapshot.Content);
+        Assert.Equal(ResourceUri, snapshot.Content.Value.GetProperty("resourceUri").GetString());
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_ActivitySnapshot_ResultContainsTextContentItemAsync()
+    {
+        const string Timestamp = "2026-04-10T18:27:48Z";
+        const string ResourceUri = "ui://get-time.html";
+        var textContent = new TextContent(Timestamp)
+        {
+            AdditionalProperties = new() { ["ToolMetadata"] = BuildToolMetadata(ResourceUri) }
+        };
+        var functionResult = new FunctionResultContent("call_1", textContent);
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Tool, [functionResult]) { MessageId = "msg1" }
+        ];
+        List<BaseEvent> events = await RunStreamAsync(updates);
+
+        ActivitySnapshotEvent snapshot = (ActivitySnapshotEvent)events.Single(e => e is ActivitySnapshotEvent);
+        JsonElement resultContent = snapshot.Content!.Value
+            .GetProperty("result")
+            .GetProperty("content");
+
+        Assert.Equal(JsonValueKind.Array, resultContent.ValueKind);
+        JsonElement textItem = resultContent.EnumerateArray()
+            .First(i => i.TryGetProperty("type", out var t) && t.GetString() == "text");
+        Assert.Equal(Timestamp, textItem.GetProperty("text").GetString());
+    }
+
+    // ---- Text message nesting ----
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_TextContent_EmitsProperlyNestedTextMessageEventsAsync()
+    {
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, [new TextContent("Hello")]) { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.Assistant, [new TextContent(" World")]) { MessageId = "msg1" }
+        ];
+        List<BaseEvent> events = await RunStreamAsync(updates);
+
+        int startIdx = events.FindIndex(e => e is TextMessageStartEvent);
+        int endIdx = events.FindLastIndex(e => e is TextMessageEndEvent);
+
+        Assert.True(startIdx >= 0, "Expected TEXT_MESSAGE_START");
+        Assert.True(endIdx > startIdx, "TEXT_MESSAGE_END must follow TEXT_MESSAGE_START");
+
+        for (int i = 0; i < events.Count; i++)
+        {
+            if (events[i] is TextMessageContentEvent)
+            {
+                Assert.True(
+                    i > startIdx && i < endIdx,
+                    $"TEXT_MESSAGE_CONTENT at index {i} is outside START ({startIdx}) / END ({endIdx})");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_TextContent_StartAndEndCountsMatchAsync()
+    {
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, [new TextContent("A")]) { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.Assistant, [new TextContent("B")]) { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.Assistant, [new TextContent("C")]) { MessageId = "msg1" }
+        ];
+        List<BaseEvent> events = await RunStreamAsync(updates);
+
+        int starts = events.Count(e => e is TextMessageStartEvent);
+        int ends = events.Count(e => e is TextMessageEndEvent);
+        Assert.Equal(starts, ends);
+    }
+
+    #endregion AsAGUIEventStreamAsync Protocol Conformance Tests
 }

@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
   </ItemGroup>
 
   <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible($(TargetFramework), 'net10.0'))">
