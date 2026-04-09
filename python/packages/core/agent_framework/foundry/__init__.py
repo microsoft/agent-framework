@@ -2,23 +2,35 @@
 
 """Foundry integration namespace for optional Agent Framework connectors.
 
-This module lazily re-exports objects from cloud Foundry and Foundry Local connector packages.
+This module lazily re-exports objects from:
+- ``agent-framework-anthropic``
+- ``agent-framework-foundry``
+- ``agent-framework-foundry-local``
 """
 
 import importlib
 from typing import Any
 
 _IMPORTS: dict[str, tuple[str, str]] = {
+    "AnthropicFoundryClient": ("agent_framework_anthropic", "agent-framework-anthropic"),
     "FoundryAgent": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatOptions": ("agent_framework_foundry", "agent-framework-foundry"),
+    "FoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
+    "FoundryEmbeddingOptions": ("agent_framework_foundry", "agent-framework-foundry"),
+    "FoundryEmbeddingSettings": ("agent_framework_foundry", "agent-framework-foundry"),
+    "FoundryEvals": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryMemoryProvider": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryLocalChatOptions": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalClient": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalSettings": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
+    "RawAnthropicFoundryClient": ("agent_framework_anthropic", "agent-framework-anthropic"),
     "RawFoundryAgent": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryAgentChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
+    "RawFoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
+    "evaluate_foundry_target": ("agent_framework_foundry", "agent-framework-foundry"),
+    "evaluate_traces": ("agent_framework_foundry", "agent-framework-foundry"),
 }
 
 

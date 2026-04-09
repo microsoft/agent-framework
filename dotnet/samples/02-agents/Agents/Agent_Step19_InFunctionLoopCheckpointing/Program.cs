@@ -1,15 +1,16 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how the ChatClientAgent persists chat history after each individual
-// call to the AI service.
+// call to the AI service, using the RequirePerServiceCallChatHistoryPersistence option.
 // When an agent uses tools, FunctionInvokingChatClient may loop multiple times
 // (service call → tool execution → service call), and intermediate messages (tool calls and
 // results) are persisted after each service call. This allows you to inspect or recover them
 // even if the process is interrupted mid-loop, but may also result in chat history that is not
 // yet finalized (e.g., tool calls without results) being persisted, which may be undesirable in some cases.
 //
-// To opt into end-of-run persistence instead (atomic run semantics), set
-// PersistChatHistoryAtEndOfRun = true on ChatClientAgentOptions.
+// To use end-of-run persistence instead (atomic run semantics), remove the
+// RequirePerServiceCallChatHistoryPersistence = true setting (or set it to false). End-of-run
+// persistence is the default behavior.
 //
 // The sample runs two multi-turn conversations: one using non-streaming (RunAsync) and one
 // using streaming (RunStreamingAsync), to demonstrate correct behavior in both modes.
@@ -22,7 +23,7 @@ using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 var store = Environment.GetEnvironmentVariable("AZURE_OPENAI_RESPONSES_STORE") ?? "false";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
@@ -53,7 +54,7 @@ static string GetTime([Description("The city name.")] string city) =>
         _ => $"{city}: time data not available."
     };
 
-// Create the agent — per-service-call persistence is the default behavior.
+// Create the agent — per-service-call persistence is enabled via RequirePerServiceCallChatHistoryPersistence.
 // The in-memory ChatHistoryProvider is used by default when the service does not require service stored chat
 // history, so for those cases, we can inspect the chat history via session.TryGetInMemoryChatHistory().
 IChatClient chatClient = string.Equals(store, "TRUE", StringComparison.OrdinalIgnoreCase) ?
@@ -63,6 +64,7 @@ AIAgent agent = chatClient.AsAIAgent(
     new ChatClientAgentOptions
     {
         Name = "WeatherAssistant",
+        RequirePerServiceCallChatHistoryPersistence = true,
         ChatOptions = new()
         {
             Instructions = "You are a helpful assistant. When asked about multiple cities, call the appropriate tool for each city.",

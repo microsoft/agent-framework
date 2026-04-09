@@ -51,9 +51,9 @@ class EchoAgent(BaseAgent):
         super().__init__(
             name=name,
             description=description,
-            echo_prefix=echo_prefix,  # type: ignore
             **kwargs,
         )
+        self.echo_prefix = echo_prefix
 
     def run(
         self,

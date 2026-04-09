@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260319"
+version = "1.0.0b260402"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,18 +22,18 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "agent-framework-core>=1.0.0rc5",
+  "agent-framework-core>=1.0.0,<2",
 ]
 
 [project.optional-dependencies]
 # GAIA benchmark module dependencies
- gaia = [
-   "pydantic>=2.0.0",
-   "opentelemetry-api>=1.39.0",
-   "opentelemetry-sdk>=1.39.0,<2",
-   "tqdm>=4.60.0",
-   "huggingface-hub>=0.20.0",
-   "orjson>=3.10.7,<4",
+gaia = [
+  "pydantic>=2.0.0",
+  "opentelemetry-api>=1.39.0",
+  "opentelemetry-sdk>=1.39.0,<2",
+  "tqdm>=4.60.0",
+  "huggingface-hub>=0.20.0",
+  "orjson>=3.10.7,<4",
   "pyarrow>=18.0.0",  # For reading parquet files
 ]
 
@@ -57,19 +57,19 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv==0.10.9",
-    "ruff==0.15.5",
+    "uv==0.11.3",
+    "ruff==0.15.8",
     "pytest==9.0.2",
-    "mypy==1.19.1",
+    "mypy==1.20.0",
     "pyright==1.1.408",
     #tasks
     "poethepoet==0.42.1",
-    "rich==13.7.1",
-    "tomli==2.4.0",
+    "rich>=13.7.1,<15.0.0",
+    "tomli==2.4.1",
     "tomli-w==1.2.0",
     # tau2 from source (not available on PyPI)
     "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
-    "prek==0.3.4",
+    "prek==0.3.8",
 ]
 
 [project.scripts]

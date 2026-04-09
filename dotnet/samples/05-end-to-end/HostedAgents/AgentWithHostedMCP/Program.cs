@@ -15,7 +15,7 @@ using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Create an MCP tool that can be called without approval.
 AITool mcpTool = new HostedMcpServerTool(serverName: "microsoft_learn", serverAddress: "https://learn.microsoft.com/api/mcp")

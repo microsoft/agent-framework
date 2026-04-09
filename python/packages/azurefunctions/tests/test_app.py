@@ -357,7 +357,7 @@ class TestAgentEntityOperations:
         """Test that entity can run agent operation."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
-            return_value=AgentResponse(messages=[Message(role="assistant", text="Test response")])
+            return_value=AgentResponse(messages=[Message(role="assistant", contents=["Test response"])])
         )
 
         entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="test-conv-123"))
@@ -374,7 +374,9 @@ class TestAgentEntityOperations:
     async def test_entity_stores_conversation_history(self) -> None:
         """Test that the entity stores conversation history."""
         mock_agent = Mock()
-        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message(role="assistant", text="Response 1")]))
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(messages=[Message(role="assistant", contents=["Response 1"])])
+        )
 
         entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="conv-1"))
 
@@ -406,7 +408,9 @@ class TestAgentEntityOperations:
     async def test_entity_increments_message_count(self) -> None:
         """Test that the entity increments the message count."""
         mock_agent = Mock()
-        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message(role="assistant", text="Response")]))
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(messages=[Message(role="assistant", contents=["Response"])])
+        )
 
         entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="conv-1"))
 
@@ -445,7 +449,9 @@ class TestAgentEntityFactory:
     def test_entity_function_handles_run_operation(self) -> None:
         """Test that the entity function handles the run operation."""
         mock_agent = Mock()
-        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message(role="assistant", text="Response")]))
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(messages=[Message(role="assistant", contents=["Response"])])
+        )
 
         entity_function = create_agent_entity(mock_agent)
 
@@ -470,7 +476,9 @@ class TestAgentEntityFactory:
     def test_entity_function_handles_run_agent_operation(self) -> None:
         """Test that the entity function handles the deprecated run_agent operation for backward compatibility."""
         mock_agent = Mock()
-        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message(role="assistant", text="Response")]))
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(messages=[Message(role="assistant", contents=["Response"])])
+        )
 
         entity_function = create_agent_entity(mock_agent)
 

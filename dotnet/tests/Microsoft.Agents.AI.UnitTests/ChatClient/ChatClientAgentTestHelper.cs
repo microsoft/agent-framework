@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
 /// Shared test helper for <see cref="ChatClientAgent"/> integration tests that verify
-/// end-to-end behavior with <see cref="ChatHistoryPersistingChatClient"/> and
+/// end-to-end behavior with <see cref="PerServiceCallChatHistoryPersistingChatClient"/> and
 /// <see cref="FunctionInvokingChatClient"/>.
 /// </summary>
 internal static class ChatClientAgentTestHelper

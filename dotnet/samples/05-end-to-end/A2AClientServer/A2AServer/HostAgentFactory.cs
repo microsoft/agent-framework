@@ -2,6 +2,7 @@
 
 using A2A;
 using Azure.AI.Projects;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -19,8 +20,8 @@ internal static class HostAgentFactory
         // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         var aiProjectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
-        AIAgent agent = await aiProjectClient
-            .GetAIAgentAsync(agentName, tools: tools);
+        ProjectsAgentRecord agentRecord = await aiProjectClient.AgentAdministrationClient.GetAgentAsync(agentName);
+        AIAgent agent = aiProjectClient.AsAIAgent(agentRecord, tools: tools);
 
         AgentCard agentCard = agentType.ToUpperInvariant() switch
         {

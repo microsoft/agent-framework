@@ -23,7 +23,8 @@ internal sealed class StreamingRunEventStream : IRunEventStream
     private readonly CancellationTokenSource _runLoopCancellation;
     private readonly bool _disableRunLoop;
     private Task? _runLoopTask;
-    private RunStatus _runStatus = RunStatus.NotStarted;
+    private volatile RunStatus _runStatus = RunStatus.NotStarted;
+
     private int _completionEpoch; // Tracks which completion signal belongs to which consumer iteration
 
     public StreamingRunEventStream(ISuperStepRunner stepRunner, bool disableRunLoop = false)
@@ -59,6 +60,10 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
         // Subscribe to events - they will flow directly to the channel as they're raised
         this._stepRunner.OutgoingEvents.EventRaised += OnEventRaisedAsync;
+
+        // Re-emit any pending external requests that were restored from a checkpoint
+        // before this subscription was active. For non-resume starts this is a no-op.
+        await this._stepRunner.RepublishPendingEventsAsync(linkedSource.Token).ConfigureAwait(false);
 
         // Start the session-level activity that spans the entire run loop lifetime.
         // Individual run-stage activities are nested within this session activity.
@@ -123,7 +128,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
                 // Wait for next input from the consumer
                 // Works for both Idle (no work) and PendingRequests (waiting for responses)
-                await this._inputWaiter.WaitForInputAsync(TimeSpan.FromSeconds(1), linkedSource.Token).ConfigureAwait(false);
+                await this._inputWaiter.WaitForInputAsync(linkedSource.Token).ConfigureAwait(false);
 
                 // When signaled, resume running
                 this._runStatus = RunStatus.Running;
@@ -205,7 +210,10 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Get the current epoch - we'll only respond to completion signals from this epoch or later
-        int myEpoch = Volatile.Read(ref this._completionEpoch) + 1;
+        int currentEpoch = Volatile.Read(ref this._completionEpoch);
+
+        bool expectingFreshWork = this._stepRunner.HasUnprocessedMessages || this._runStatus == RunStatus.Running;
+        int myEpoch = expectingFreshWork ? currentEpoch + 1 : currentEpoch;
 
         // Use custom async enumerable to avoid exceptions on cancellation.
         NonThrowingChannelReaderAsyncEnumerable<WorkflowEvent> eventStream = new(this._eventChannel.Reader);
@@ -279,10 +287,6 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         {
             // Discard each event (including InternalCompletionSignals)
         }
-
-        // After clearing, signal the run loop to continue if needed
-        // The run loop will send a new completion signal when it finishes processing from the restored state
-        this.SignalInput();
     }
 
     public async ValueTask StopAsync()

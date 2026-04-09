@@ -31,7 +31,7 @@ them to transfer control to each other based on the conversation context.
 Prerequisites:
     - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
     - `az login` (Azure CLI authentication)
-    - Environment variables configured for FoundryChatClient (AZURE_AI_MODEL_DEPLOYMENT_NAME)
+    - Environment variables configured for FoundryChatClient (FOUNDRY_MODEL)
 
 Key Concepts:
     - Auto-registered handoff tools: HandoffBuilder automatically creates handoff tools
@@ -80,6 +80,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
             "based on the problem described."
         ),
         name="triage_agent",
+        require_per_service_call_history_persistence=True,
     )
 
     # Refund specialist: Handles refund requests
@@ -89,6 +90,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[process_refund],
+        require_per_service_call_history_persistence=True,
     )
 
     # Order/shipping specialist: Resolves delivery issues
@@ -98,6 +100,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[check_order_status],
+        require_per_service_call_history_persistence=True,
     )
 
     # Return specialist: Handles return requests
@@ -107,6 +110,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[process_return],
+        require_per_service_call_history_persistence=True,
     )
 
     return triage_agent, refund_agent, order_agent, return_agent
@@ -159,7 +163,7 @@ async def main() -> None:
     # Initialize the Azure OpenAI chat client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -174,21 +178,20 @@ async def main() -> None:
     #   Without this, the default behavior continues requesting user input until max_turns
     #   is reached. Here we use a custom condition that checks if the conversation has ended
     #   naturally (when one of the agents says something like "you're welcome").
-    agent = Agent(
-        client=(
-            HandoffBuilder(
-                name="customer_support_handoff",
-                participants=[triage, refund, order, support],
-                # Custom termination: Check if one of the agents has provided a closing message.
-                # This looks for the last message containing "welcome", which indicates the
-                # conversation has concluded naturally.
-                termination_condition=lambda conversation: (
-                    len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
-                ),
-            )
-            .with_start_agent(triage)
-            .build()
-        ),
+    agent = (
+        HandoffBuilder(
+            name="customer_support_handoff",
+            participants=[triage, refund, order, support],
+            # Custom termination: Check if one of the agents has provided a closing message.
+            # This looks for the last message containing "welcome", which indicates the
+            # conversation has concluded naturally.
+            termination_condition=lambda conversation: (
+                len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
+            ),
+        )
+        .with_start_agent(triage)
+        .build()
+        .as_agent()
     )
 
     # Scripted user responses for reproducible demo
@@ -226,7 +229,7 @@ async def main() -> None:
             responses = {req_id: HandoffAgentUserRequest.create_response(user_response) for req_id in pending_requests}
 
         function_results = [
-            Content.from_function_result(call_id=req_id, result=response) for req_id, response in responses.items()
+            Content("function_result", call_id=req_id, result=response) for req_id, response in responses.items()
         ]
         response = await agent.run(Message("tool", function_results))
         pending_requests = handle_response_and_requests(response)

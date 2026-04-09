@@ -11,11 +11,31 @@ namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Fluent builder for constructing an <see cref="AgentSkillsProvider"/> backed by a composite source.
+/// Intended for advanced scenarios where the simple <see cref="AgentSkillsProvider"/> constructors are insufficient.
 /// </summary>
 /// <remarks>
+/// <para>
+/// For simple, single-source scenarios, prefer the <see cref="AgentSkillsProvider"/> constructors directly
+/// (e.g., passing a skill directory path or a set of skills). Use this builder when you need one or more
+/// of the following advanced capabilities:
+/// </para>
+/// <list type="bullet">
+///   <item><description><strong>Mixed skill types</strong> — combine file-based, code-defined (<see cref="AgentInlineSkill"/>),
+///   and class-based (<see cref="AgentClassSkill"/>) skills in a single provider.</description></item>
+///   <item><description><strong>Multiple file script runners</strong> — use different script runners for different
+///   file skill directories via per-source <c>scriptRunner</c> parameters on
+///   <see cref="UseFileSkill"/> / <see cref="UseFileSkills(IEnumerable{string}, AgentFileSkillsSourceOptions?, AgentFileSkillScriptRunner?)"/>.</description></item>
+///   <item><description><strong>Skill filtering</strong> — include or exclude skills using a predicate
+///   via <see cref="UseFilter"/>.</description></item>
+/// </list>
+/// <para>
+/// Example — combining file-based and code-defined skills:
+/// </para>
 /// <code>
 /// var provider = new AgentSkillsProviderBuilder()
 ///     .UseFileSkills("/path/to/skills")
+///     .UseSkills(myInlineSkill1, myInlineSkill2)
+///     .UseFileScriptRunner(SubprocessScriptRunner.RunAsync)
 ///     .Build();
 /// </code>
 /// </remarks>
@@ -62,6 +82,40 @@ public sealed class AgentSkillsProviderBuilder
                 ?? throw new InvalidOperationException($"File-based skill sources require a script runner. Call {nameof(this.UseFileScriptRunner)} or pass a runner to {nameof(this.UseFileSkill)}/{nameof(this.UseFileSkills)}.");
             return new AgentFileSkillsSource(skillPaths, resolvedRunner, options, loggerFactory);
         });
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a single skill.
+    /// </summary>
+    /// <param name="skill">The skill to add.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder UseSkill(AgentSkill skill)
+    {
+        return this.UseSkills(skill);
+    }
+
+    /// <summary>
+    /// Adds one or more skills.
+    /// </summary>
+    /// <param name="skills">The skills to add.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder UseSkills(params AgentSkill[] skills)
+    {
+        var source = new AgentInMemorySkillsSource(skills);
+        this._sourceFactories.Add((_, _) => source);
+        return this;
+    }
+
+    /// <summary>
+    /// Adds skills from the specified collection.
+    /// </summary>
+    /// <param name="skills">The skills to add.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder UseSkills(IEnumerable<AgentSkill> skills)
+    {
+        var source = new AgentInMemorySkillsSource(skills);
+        this._sourceFactories.Add((_, _) => source);
         return this;
     }
 

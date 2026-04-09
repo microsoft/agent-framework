@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentMiddlewareLayer,
-    BaseContextProvider,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
+    ContextProvider,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -50,8 +50,8 @@ else:
 if TYPE_CHECKING:
     from agent_framework import (
         Agent,
-        BaseContextProvider,
         ChatAndFunctionMiddlewareTypes,
+        ContextProvider,
         MiddlewareTypes,
         ToolTypes,
     )
@@ -224,8 +224,9 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         instructions: str | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        require_per_service_call_history_persistence: bool = False,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -246,6 +247,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
                 tools=function_tools,
                 context_providers=context_providers,
                 middleware=middleware,
+                require_per_service_call_history_persistence=require_per_service_call_history_persistence,
                 client_type=cast(type[RawFoundryAgentChatClient], self.__class__),
                 id=id,
                 name=self.agent_name if name is None else name,
@@ -290,6 +292,13 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
 
         # Inject agent reference
         run_options["extra_body"] = {"agent_reference": self._get_agent_reference()}
+
+        # Strip tools from request body - Foundry API rejects requests with both
+        # agent_reference and tools present. FunctionTools are invoked client-side
+        # by the function invocation layer, not sent to the service.
+        run_options.pop("tools", None)
+        run_options.pop("tool_choice", None)
+        run_options.pop("parallel_tool_calls", None)
 
         return run_options
 
@@ -468,7 +477,7 @@ class RawFoundryAgent(  # type: ignore[misc]
         project_client: AIProjectClient | None = None,
         allow_preview: bool | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         client_type: type[RawFoundryAgentChatClient] | None = None,
         env_file_path: str | None = None,
@@ -478,6 +487,7 @@ class RawFoundryAgent(  # type: ignore[misc]
         description: str | None = None,
         instructions: str | None = None,
         default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
+        require_per_service_call_history_persistence: bool = False,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -507,6 +517,8 @@ class RawFoundryAgent(  # type: ignore[misc]
             description: Optional local description for the local agent wrapper.
             instructions: Optional instructions for the local agent wrapper.
             default_options: Default chat options for the local agent wrapper.
+            require_per_service_call_history_persistence: Whether to require per-service-call
+                chat history persistence when using local history providers.
             function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level in-run compaction override.
             tokenizer: Optional agent-level tokenizer override.
@@ -548,6 +560,7 @@ class RawFoundryAgent(  # type: ignore[misc]
             default_options=cast(FoundryAgentOptionsT | None, default_options),
             context_providers=context_providers,
             middleware=middleware,
+            require_per_service_call_history_persistence=require_per_service_call_history_persistence,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
             additional_properties=dict(additional_properties) if additional_properties is not None else None,
@@ -661,7 +674,7 @@ class FoundryAgent(  # type: ignore[misc]
         project_client: AIProjectClient | None = None,
         allow_preview: bool | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         client_type: type[RawFoundryAgentChatClient] | None = None,
         env_file_path: str | None = None,
@@ -671,6 +684,7 @@ class FoundryAgent(  # type: ignore[misc]
         description: str | None = None,
         instructions: str | None = None,
         default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
+        require_per_service_call_history_persistence: bool = False,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -696,6 +710,8 @@ class FoundryAgent(  # type: ignore[misc]
             description: Optional local description for the local agent wrapper.
             instructions: Optional instructions for the local agent wrapper.
             default_options: Default chat options for the local agent wrapper.
+            require_per_service_call_history_persistence: Whether to require per-service-call
+                chat history persistence when using local history providers.
             function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level in-run compaction override.
             tokenizer: Optional agent-level tokenizer override.
@@ -719,6 +735,7 @@ class FoundryAgent(  # type: ignore[misc]
             description=description,
             instructions=instructions,
             default_options=default_options,
+            require_per_service_call_history_persistence=require_per_service_call_history_persistence,
             function_invocation_configuration=function_invocation_configuration,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,

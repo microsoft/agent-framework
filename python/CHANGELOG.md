@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0rc6] - 2026-03-30
+
+### Added
+
+- **agent-framework-openai**: New package extracted from core for OpenAI and Azure OpenAI provider support ([#4818](https://github.com/microsoft/agent-framework/pull/4818))
+- **agent-framework-foundry**: New package for Azure AI Foundry integration ([#4818](https://github.com/microsoft/agent-framework/pull/4818))
+- **agent-framework-core**: Support `structuredContent` in MCP tool results and fix sampling options type ([#4763](https://github.com/microsoft/agent-framework/pull/4763))
+- **agent-framework-core**: Include reasoning messages in `MESSAGES_SNAPSHOT` events ([#4844](https://github.com/microsoft/agent-framework/pull/4844))
+- **agent-framework-core**: [BREAKING] Add context mode to `AgentExecutor` ([#4668](https://github.com/microsoft/agent-framework/pull/4668))
+
+### Changed
+
+- **agent-framework-core**: [BREAKING] Remove deprecated kwargs compatibility paths ([#4858](https://github.com/microsoft/agent-framework/pull/4858))
+- **agent-framework-core**: [BREAKING] Reduce core dependencies and simplify optional integrations ([#4904](https://github.com/microsoft/agent-framework/pull/4904))
+- **agent-framework-openai**: [BREAKING] Provider-leading client design & OpenAI package extraction ([#4818](https://github.com/microsoft/agent-framework/pull/4818))
+- **agent-framework-openai**: [BREAKING] Fix OpenAI Azure routing and provider samples ([#4925](https://github.com/microsoft/agent-framework/pull/4925))
+- **agent-framework-azure-ai**: Deprecate Azure AI v1 (Persistent Agents API) helper methods ([#4804](https://github.com/microsoft/agent-framework/pull/4804))
+- **agent-framework-core**: Avoid duplicate agent response telemetry ([#4685](https://github.com/microsoft/agent-framework/pull/4685))
+- **agent-framework-devui**: Bump `flatted` from 3.3.3 to 3.4.2 in frontend ([#4805](https://github.com/microsoft/agent-framework/pull/4805))
+- **samples**: Move `ag_ui_workflow_handoff` demo from `demos/` to `05-end-to-end/` ([#4900](https://github.com/microsoft/agent-framework/pull/4900))
+
+### Fixed
+
+- **agent-framework-core**: Fix streaming path to emit `mcp_server_tool_result` on `output_item.done` instead of `output_item.added` ([#4821](https://github.com/microsoft/agent-framework/pull/4821))
+- **agent-framework-a2a**: Fix `A2AAgent` to surface message content from in-progress `TaskStatusUpdateEvents` ([#4798](https://github.com/microsoft/agent-framework/pull/4798))
+- **agent-framework-core**: Fix `PydanticSchemaGenerationError` when using `from __future__ import annotations` with `@tool` ([#4822](https://github.com/microsoft/agent-framework/pull/4822))
+- **samples**: Fix broken samples for GitHub Copilot, declarative, and Responses API ([#4915](https://github.com/microsoft/agent-framework/pull/4915))
+- **repo**: Fix: update PyRIT repository link from Azure/PyRIT to microsoft/PyRIT ([#4960](https://github.com/microsoft/agent-framework/pull/4960))
+
 ## [1.0.0rc5] - 2026-03-19
 
 ### Added
@@ -817,7 +846,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc5...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc6...HEAD
+[1.0.0rc6]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc5...python-1.0.0rc6
 [1.0.0rc5]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc4...python-1.0.0rc5
 [1.0.0rc4]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc3...python-1.0.0rc4
 [1.0.0rc3]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc2...python-1.0.0rc3

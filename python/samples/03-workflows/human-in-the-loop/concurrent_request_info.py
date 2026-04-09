@@ -18,7 +18,7 @@ Demonstrate:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for FoundryChatClient with required environment variables
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity (run az login before executing)
 """
 
@@ -85,13 +85,15 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
 
     system_msg = Message(
         "system",
-        text=(
-            "You are a synthesis expert. Consolidate the following analyst perspectives "
-            "into one cohesive, balanced summary (3-4 sentences). If human guidance is provided, "
-            "prioritize aspects as directed."
-        ),
+        contents=[
+            (
+                "You are a synthesis expert. Consolidate the following analyst perspectives "
+                "into one cohesive, balanced summary (3-4 sentences). If human guidance is provided, "
+                "prioritize aspects as directed."
+            )
+        ],
     )
-    user_msg = Message("user", text="\n\n".join(expert_sections) + guidance_text)
+    user_msg = Message("user", contents=["\n\n".join(expert_sections) + guidance_text])
 
     response = await _chat_client.get_response([system_msg, user_msg])
     return response.messages[-1].text if response.messages else ""
@@ -151,7 +153,7 @@ async def main() -> None:
     global _chat_client
     _chat_client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

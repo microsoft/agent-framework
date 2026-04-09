@@ -117,6 +117,36 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     }
 
     /// <summary>
+    /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class.
+    /// Duplicate skill names are automatically deduplicated (first occurrence wins).
+    /// </summary>
+    /// <param name="skills">The skills to include.</param>
+    public AgentSkillsProvider(params AgentSkill[] skills)
+        : this(skills as IEnumerable<AgentSkill>)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class.
+    /// Duplicate skill names are automatically deduplicated (first occurrence wins).
+    /// </summary>
+    /// <param name="skills">The skills to include.</param>
+    /// <param name="options">Optional provider configuration.</param>
+    /// <param name="loggerFactory">Optional logger factory.</param>
+    public AgentSkillsProvider(
+        IEnumerable<AgentSkill> skills,
+        AgentSkillsProviderOptions? options = null,
+        ILoggerFactory? loggerFactory = null)
+        : this(
+            new DeduplicatingAgentSkillsSource(
+                new AgentInMemorySkillsSource(Throw.IfNull(skills)),
+                loggerFactory),
+            options,
+            loggerFactory)
+    {
+    }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class
     /// from a custom <see cref="AgentSkillsSource"/>. Unlike other constructors, this one does not
     /// apply automatic deduplication, allowing callers to customize deduplication behavior via the source pipeline.

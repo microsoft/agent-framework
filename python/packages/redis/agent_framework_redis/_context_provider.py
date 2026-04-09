@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""New-pattern Redis context provider using BaseContextProvider.
+"""New-pattern Redis context provider using ContextProvider.
 
 This module provides ``RedisContextProvider``, built on the new
-:class:`BaseContextProvider` hooks pattern.
+:class:`ContextProvider` hooks pattern.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import numpy as np
 from agent_framework import Message
-from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
+from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
 from agent_framework.exceptions import (
     AgentException,
     IntegrationInvalidRequestException,
@@ -41,8 +41,8 @@ if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
 
-class RedisContextProvider(BaseContextProvider):
-    """Redis context provider using the new BaseContextProvider hooks pattern.
+class RedisContextProvider(ContextProvider):
+    """Redis context provider using the new ContextProvider hooks pattern.
 
     Stores context in Redis and retrieves scoped context via full-text or
     optional hybrid vector search.
@@ -136,7 +136,7 @@ class RedisContextProvider(BaseContextProvider):
         if line_separated_memories:
             context.extend_messages(
                 self.source_id,
-                [Message(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")],
+                [Message(role="user", contents=[f"{self.context_prompt}\n{line_separated_memories}"])],
             )
 
     @override

@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates a multi-agent workflow with Writer and Reviewer agents
-// using Azure AI Foundry AIProjectClient and the Agent Framework WorkflowBuilder.
+// using Microsoft Foundry AIProjectClient and the Agent Framework WorkflowBuilder.
 
 #pragma warning disable CA2252 // AIProjectClient and Agents API require opting into preview features
 
@@ -13,7 +13,7 @@ using Microsoft.Agents.AI.Workflows;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 Console.WriteLine($"Using Azure AI endpoint: {endpoint}");
 Console.WriteLine($"Using model deployment: {deploymentName}");

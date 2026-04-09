@@ -385,6 +385,45 @@ public class AgentResponseUpdateExtensionsTests
     }
 
     [Fact]
+    public void AsChatResponseUpdate_WithRawRepresentationNullMessageId_ReturnsRawDirectly()
+    {
+        // Arrange - RawRepresentation has null MessageId
+        ChatResponseUpdate originalChatResponseUpdate = new()
+        {
+            ResponseId = "original-update",
+            Contents = [new TextContent("Hello")]
+        };
+        AgentResponseUpdate agentResponseUpdate = new(originalChatResponseUpdate);
+
+        // Act
+        ChatResponseUpdate result = agentResponseUpdate.AsChatResponseUpdate();
+
+        // Assert - Returns the raw representation directly without mutation
+        Assert.Same(originalChatResponseUpdate, result);
+        Assert.Null(result.MessageId);
+    }
+
+    [Fact]
+    public void AsChatResponseUpdate_WithRawRepresentationExistingMessageId_PreservesOriginal()
+    {
+        // Arrange - RawRepresentation already has MessageId set by provider
+        ChatResponseUpdate originalChatResponseUpdate = new()
+        {
+            ResponseId = "original-update",
+            MessageId = "provider-message-id",
+            Contents = [new TextContent("Hello")]
+        };
+        AgentResponseUpdate agentResponseUpdate = new(originalChatResponseUpdate);
+
+        // Act
+        ChatResponseUpdate result = agentResponseUpdate.AsChatResponseUpdate();
+
+        // Assert - Provider's original MessageId should be preserved
+        Assert.Same(originalChatResponseUpdate, result);
+        Assert.Equal("provider-message-id", result.MessageId);
+    }
+
+    [Fact]
     public void AsChatResponseUpdate_WithoutRawRepresentation_CreatesNewChatResponseUpdate()
     {
         // Arrange

@@ -499,7 +499,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             ])
         )
         # Prepend instruction as system message
-        current_conversation.append(Message(role="user", text=instruction))
+        current_conversation.append(Message(role="user", contents=[instruction]))
 
         retry_attempts = self._retry_attempts
         while True:
@@ -515,7 +515,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                 current_conversation = [
                     Message(
                         role="user",
-                        text=f"Your input could not be parsed due to an error: {ex}. Please try again.",
+                        contents=[f"Your input could not be parsed due to an error: {ex}. Please try again."],
                     )
                 ]
 
