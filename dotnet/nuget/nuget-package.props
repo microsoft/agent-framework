@@ -8,7 +8,7 @@
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.260402.1</PackageVersion>
     <PackageVersion Condition="'$(IsReleased)' == 'true'">$(VersionPrefix)</PackageVersion>
     <!-- Branch-specific override to distinguish from mainline packages -->
-    <PackageVersion>0.9.0-hosted.260403.2</PackageVersion>
+    <PackageVersion>0.9.0-hosted.260409.1</PackageVersion>
     <GitTag>1.0.0</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>
