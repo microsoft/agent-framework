@@ -491,12 +491,12 @@ public sealed class AgentClassSkillTests
 
         public override IReadOnlyList<AgentSkillResource>? Resources =>
         [
-            CreateResource("test-resource", "resource content"),
+            this.CreateResource("test-resource", "resource content"),
         ];
 
         public override IReadOnlyList<AgentSkillScript>? Scripts =>
         [
-            CreateScript("TestScript", TestScript),
+            this.CreateScript("TestScript", TestScript),
         ];
 
         private static string TestScript(double value) =>
@@ -511,7 +511,7 @@ public sealed class AgentClassSkillTests
 
         public override IReadOnlyList<AgentSkillResource>? Resources =>
         [
-            CreateResource("data", "some data"),
+            this.CreateResource("data", "some data"),
         ];
     }
 
@@ -523,7 +523,7 @@ public sealed class AgentClassSkillTests
 
         public override IReadOnlyList<AgentSkillScript>? Scripts =>
         [
-            CreateScript("ToUpper", (string input) => input.ToUpperInvariant()),
+            this.CreateScript("ToUpper", (string input) => input.ToUpperInvariant()),
         ];
     }
 
@@ -547,13 +547,13 @@ public sealed class AgentClassSkillTests
         private IReadOnlyList<AgentSkillResource> CreateResources()
         {
             this.ResourceCreationCount++;
-            return [CreateResource("lazy-resource", "resource content")];
+            return [this.CreateResource("lazy-resource", "resource content")];
         }
 
         private IReadOnlyList<AgentSkillScript> CreateScripts()
         {
             this.ScriptCreationCount++;
-            return [CreateScript("LazyScript", () => "done")];
+            return [this.CreateScript("LazyScript", () => "done")];
         }
     }
 
@@ -565,7 +565,7 @@ public sealed class AgentClassSkillTests
 
         public override IReadOnlyList<AgentSkillResource>? Resources =>
         [
-            CreateResource("config", () => new SkillConfig
+            this.CreateResource("config", () => new SkillConfig
             {
                 Theme = "dark",
                 Verbose = true
@@ -574,7 +574,7 @@ public sealed class AgentClassSkillTests
 
         public override IReadOnlyList<AgentSkillScript>? Scripts =>
         [
-            CreateScript("Lookup", (LookupRequest request) => new LookupResponse
+            this.CreateScript("Lookup", (LookupRequest request) => new LookupResponse
             {
                 Items = [$"result for {request.Query}"],
                 TotalCount = request.MaxResults,
@@ -679,12 +679,12 @@ public sealed class AgentClassSkillTests
 
         public override IReadOnlyList<AgentSkillResource>? Resources =>
         [
-            CreateResource("manual-resource", "manual content"),
+            this.CreateResource("manual-resource", "manual content"),
         ];
 
         public override IReadOnlyList<AgentSkillScript>? Scripts =>
         [
-            CreateScript("ManualScript", () => "manual result"),
+            this.CreateScript("ManualScript", () => "manual result"),
         ];
     }
 
@@ -748,7 +748,7 @@ public sealed class AgentClassSkillTests
 
         public override IReadOnlyList<AgentSkillResource>? Resources =>
         [
-            CreateResource("config", () => new SkillConfig
+            this.CreateResource("config", () => new SkillConfig
             {
                 Theme = "dark",
                 Verbose = true,
@@ -757,7 +757,7 @@ public sealed class AgentClassSkillTests
 
         public override IReadOnlyList<AgentSkillScript>? Scripts =>
         [
-            CreateScript("Lookup", (LookupRequest request) => new LookupResponse
+            this.CreateScript("Lookup", (LookupRequest request) => new LookupResponse
             {
                 Items = [$"result for {request.Query}"],
                 TotalCount = request.MaxResults,
@@ -774,7 +774,7 @@ public sealed class AgentClassSkillTests
         // SerializerOptions is intentionally null — explicit JSO passed to CreateScript/CreateResource should be used.
         public override IReadOnlyList<AgentSkillResource>? Resources =>
         [
-            CreateResource("config", () => new SkillConfig
+            this.CreateResource("config", () => new SkillConfig
             {
                 Theme = "explicit-theme",
                 Verbose = false,
@@ -783,7 +783,7 @@ public sealed class AgentClassSkillTests
 
         public override IReadOnlyList<AgentSkillScript>? Scripts =>
         [
-            CreateScript("Lookup", (LookupRequest request) => new LookupResponse
+            this.CreateScript("Lookup", (LookupRequest request) => new LookupResponse
             {
                 Items = [$"result for {request.Query}"],
                 TotalCount = request.MaxResults,

@@ -216,7 +216,7 @@ public sealed class AgentInlineSkillResourceTests
     {
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
-            new AgentInlineSkillResource("my-res", (MethodInfo)null!, target: null));
+            new AgentInlineSkillResource("my-res", null!, target: null));
     }
 
     private static string StaticResourceHelper() => "static-resource-value";
