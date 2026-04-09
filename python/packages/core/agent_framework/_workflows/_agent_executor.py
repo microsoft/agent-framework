@@ -339,6 +339,13 @@ class AgentExecutor(Executor):
             ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
         )
 
+        if not self._cache:
+            logger.warning(
+                "AgentExecutor %s: Running agent with empty message cache. "
+                "This could lead to service error for some LLM providers.",
+                self.id,
+            )
+
         run_agent = cast(Callable[..., Awaitable[AgentResponse[Any]]], self._agent.run)
         response = await run_agent(
             self._cache,
@@ -370,6 +377,13 @@ class AgentExecutor(Executor):
         function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(
             ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
         )
+
+        if not self._cache:
+            logger.warning(
+                "AgentExecutor %s: Running agent with empty message cache. "
+                "This could lead to service error for some LLM providers.",
+                self.id,
+            )
 
         updates: list[AgentResponseUpdate] = []
         streamed_user_input_requests: list[Content] = []
