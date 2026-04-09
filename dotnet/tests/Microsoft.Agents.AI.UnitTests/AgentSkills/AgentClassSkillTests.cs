@@ -555,6 +555,54 @@ public sealed class AgentClassSkillTests
         Assert.Contains("explicit-theme", result!.ToString()!);
     }
 
+    [Fact]
+    public void DuplicateResourceNames_FromProperties_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var skill = new DuplicateResourcePropertiesSkill();
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() => _ = skill.Resources);
+        Assert.Contains("data", ex.Message);
+        Assert.Contains("already has a resource", ex.Message);
+    }
+
+    [Fact]
+    public void DuplicateResourceNames_FromPropertyAndMethod_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var skill = new DuplicateResourcePropertyAndMethodSkill();
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() => _ = skill.Resources);
+        Assert.Contains("data", ex.Message);
+        Assert.Contains("already has a resource", ex.Message);
+    }
+
+    [Fact]
+    public void DuplicateResourceNames_FromMethods_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var skill = new DuplicateResourceMethodsSkill();
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() => _ = skill.Resources);
+        Assert.Contains("data", ex.Message);
+        Assert.Contains("already has a resource", ex.Message);
+    }
+
+    [Fact]
+    public void DuplicateScriptNames_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var skill = new DuplicateScriptsSkill();
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() => _ = skill.Scripts);
+        Assert.Contains("do-work", ex.Message);
+        Assert.Contains("already has a script", ex.Message);
+    }
+
     #region Test skill classes
 
     private sealed class MinimalClassSkill : AgentClassSkill<MinimalClassSkill>
@@ -923,6 +971,58 @@ public sealed class AgentClassSkillTests
         [AgentSkillResource("both-resource")]
         private static string GetData(IServiceProvider? sp, CancellationToken ct) => "from-both-method";
     }
+    private sealed class DuplicateResourcePropertiesSkill : AgentClassSkill<DuplicateResourcePropertiesSkill>
+    {
+        public override AgentSkillFrontmatter Frontmatter { get; } = new("dup-res-props", "Skill with duplicate resource property names.");
+
+        protected override string Instructions => "Body.";
+
+        [AgentSkillResource("data")]
+        public string Data1 => "value1";
+
+        [AgentSkillResource("data")]
+        public string Data2 => "value2";
+    }
+
+    private sealed class DuplicateResourcePropertyAndMethodSkill : AgentClassSkill<DuplicateResourcePropertyAndMethodSkill>
+    {
+        public override AgentSkillFrontmatter Frontmatter { get; } = new("dup-res-prop-method", "Skill with duplicate resource from property and method.");
+
+        protected override string Instructions => "Body.";
+
+        [AgentSkillResource("data")]
+        public string Data => "property-value";
+
+        [AgentSkillResource("data")]
+        private static string GetData() => "method-value";
+    }
+
+    private sealed class DuplicateResourceMethodsSkill : AgentClassSkill<DuplicateResourceMethodsSkill>
+    {
+        public override AgentSkillFrontmatter Frontmatter { get; } = new("dup-res-methods", "Skill with duplicate resource method names.");
+
+        protected override string Instructions => "Body.";
+
+        [AgentSkillResource("data")]
+        private static string GetData1() => "value1";
+
+        [AgentSkillResource("data")]
+        private static string GetData2() => "value2";
+    }
+
+    private sealed class DuplicateScriptsSkill : AgentClassSkill<DuplicateScriptsSkill>
+    {
+        public override AgentSkillFrontmatter Frontmatter { get; } = new("dup-scripts", "Skill with duplicate script names.");
+
+        protected override string Instructions => "Body.";
+
+        [AgentSkillScript("do-work")]
+        private static string DoWork1(string input) => input.ToUpperInvariant();
+
+        [AgentSkillScript("do-work")]
+        private static string DoWork2(string input) => input + "-suffix";
+    }
+#pragma warning restore IDE0051 // Remove unused private members
 
     #endregion
 }
