@@ -26,5 +26,6 @@ create the sandbox.
   usage and installation remain optional.
 - Alpha-package samples live under `packages/hyperlight/samples/`.
 - `file_mounts` accepts a single string shorthand, an explicit `(host_path,
-  mount_path)` pair, or a `FileMount` named tuple. Use the explicit two-value
-  form when the host path differs from the sandbox path.
+  mount_path)` pair, or a `FileMount` named tuple. The host-side path in the
+  explicit forms may be a `str` or `Path`. Use the explicit two-value form when
+  the host path differs from the sandbox path.

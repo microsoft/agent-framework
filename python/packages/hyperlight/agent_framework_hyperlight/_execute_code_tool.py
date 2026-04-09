@@ -19,7 +19,7 @@ from agent_framework._tools import ApprovalMode, normalize_tools
 from pydantic import BaseModel, Field
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
-from ._types import FileMount, FileMountInput, FilesystemMode, NetworkMode
+from ._types import FileMount, FileMountHostPath, FileMountInput, FilesystemMode, NetworkMode
 
 DEFAULT_HYPERLIGHT_BACKEND = "wasm"
 DEFAULT_HYPERLIGHT_MODULE = "python_guest.path"
@@ -152,7 +152,7 @@ def _resolve_workspace_root(value: str | Path | None) -> Path | None:
     return resolved_path
 
 
-def _is_file_mount_pair(value: Any) -> TypeGuard[FileMount | tuple[str, str]]:
+def _is_file_mount_pair(value: Any) -> TypeGuard[FileMount | tuple[FileMountHostPath, str]]:
     if not isinstance(value, tuple):
         return False
 
@@ -161,7 +161,7 @@ def _is_file_mount_pair(value: Any) -> TypeGuard[FileMount | tuple[str, str]]:
         return False
 
     host_path, mount_path = value_tuple
-    return isinstance(host_path, str) and isinstance(mount_path, str)
+    return isinstance(host_path, (str, Path)) and isinstance(mount_path, str)
 
 
 def _normalize_file_mount_input(file_mount: FileMountInput) -> _StoredFileMount:
@@ -521,10 +521,12 @@ class HyperlightExecuteCodeTool(FunctionTool):
         if self._filesystem_mode == "none":
             raise ValueError("File mounts require filesystem_mode to be 'read_only' or 'read_write'.")
 
-        mounts = (
-            [file_mounts] if isinstance(file_mounts, str) or _is_file_mount_pair(file_mounts) else list(file_mounts)
-        )
-        normalized_mounts = [_normalize_file_mount_input(mount) for mount in mounts]
+        if isinstance(file_mounts, str) or _is_file_mount_pair(file_mounts):
+            normalized_mounts = [_normalize_file_mount_input(file_mounts)]
+        else:
+            normalized_mounts = [
+                _normalize_file_mount_input(mount) for mount in cast(Sequence[FileMountInput], file_mounts)
+            ]
 
         with self._state_lock:
             for mount in normalized_mounts:
@@ -534,7 +536,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         """Return the configured file mounts."""
         with self._state_lock:
             return [
-                FileMount(host_path=str(mount.host_path), mount_path=_display_mount_path(mount.mount_path))
+                FileMount(host_path=mount.host_path, mount_path=_display_mount_path(mount.mount_path))
                 for mount in self._file_mounts.values()
             ]
 

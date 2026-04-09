@@ -145,10 +145,10 @@ Caching rules:
 
 ```python
 class FileMount(NamedTuple):
-    host_path: str
+    host_path: str | Path
     mount_path: str
 
-FileMountInput = str | tuple[str, str] | FileMount
+FileMountInput = str | tuple[str | Path, str] | FileMount
 
 
 class HyperlightCodeActProvider(ContextProvider):
@@ -189,8 +189,8 @@ class HyperlightCodeActProvider(ContextProvider):
 
 `file_mounts` accepts three equivalent input forms:
 - `"data/report.csv"` uses the same relative path on the host and in the sandbox.
-- `("fixtures/users.json", "data/users.json")` uses distinct host and sandbox paths.
-- `FileMount("fixtures/users.json", "data/users.json")` is the named-tuple form of the explicit pair.
+- `("fixtures/users.json", "data/users.json")` or `(Path("fixtures/users.json"), "data/users.json")` uses distinct host and sandbox paths.
+- `FileMount(Path("fixtures/users.json"), "data/users.json")` is the named-tuple form of the explicit pair.
 
 No public abstract `CodeActContextProvider` base or public `executor=` parameter is required for the initial Python API.
 

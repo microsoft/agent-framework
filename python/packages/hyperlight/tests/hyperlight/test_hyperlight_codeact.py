@@ -278,11 +278,11 @@ def test_execute_code_tool_accepts_string_and_tuple_file_mounts(
 
     execute_code = HyperlightExecuteCodeTool(filesystem_mode="read_only", _registry=_FakeRuntime())
     execute_code.add_file_mounts("notes.txt")
-    execute_code.add_file_mounts((str(explicit_file), "data/data.json"))
+    execute_code.add_file_mounts((explicit_file, "data/data.json"))
 
     assert execute_code.get_file_mounts() == [
-        FileMount(str(shorthand_file.resolve()), "/input/notes.txt"),
-        FileMount(str(explicit_file.resolve()), "/input/data/data.json"),
+        FileMount(shorthand_file.resolve(), "/input/notes.txt"),
+        FileMount(explicit_file.resolve(), "/input/data/data.json"),
     ]
 
 
