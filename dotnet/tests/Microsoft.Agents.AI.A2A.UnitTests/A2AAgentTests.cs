@@ -1208,7 +1208,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_WithDefaultOptions_SetsBlockingToTrueAsync()
+    public async Task RunAsync_WithDefaultOptions_SetsReturnImmediatelyToFalseAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -1222,11 +1222,11 @@ public sealed class A2AAgentTests : IDisposable
         // Assert
         Assert.NotNull(this._handler.CapturedSendMessageRequest);
         Assert.NotNull(this._handler.CapturedSendMessageRequest.Configuration);
-        Assert.True(this._handler.CapturedSendMessageRequest.Configuration.Blocking);
+        Assert.False(this._handler.CapturedSendMessageRequest.Configuration.ReturnImmediately);
     }
 
     [Fact]
-    public async Task RunAsync_WithAllowBackgroundResponsesTrue_SetsBlockingToFalseAsync()
+    public async Task RunAsync_WithAllowBackgroundResponsesTrue_SetsReturnImmediatelyToTrueAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -1243,11 +1243,11 @@ public sealed class A2AAgentTests : IDisposable
         // Assert
         Assert.NotNull(this._handler.CapturedSendMessageRequest);
         Assert.NotNull(this._handler.CapturedSendMessageRequest.Configuration);
-        Assert.False(this._handler.CapturedSendMessageRequest.Configuration.Blocking);
+        Assert.True(this._handler.CapturedSendMessageRequest.Configuration.ReturnImmediately);
     }
 
     [Fact]
-    public async Task RunAsync_WithAllowBackgroundResponsesFalse_SetsBlockingToTrueAsync()
+    public async Task RunAsync_WithAllowBackgroundResponsesFalse_SetsReturnImmediatelyToFalseAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -1263,11 +1263,11 @@ public sealed class A2AAgentTests : IDisposable
         // Assert
         Assert.NotNull(this._handler.CapturedSendMessageRequest);
         Assert.NotNull(this._handler.CapturedSendMessageRequest.Configuration);
-        Assert.True(this._handler.CapturedSendMessageRequest.Configuration.Blocking);
+        Assert.False(this._handler.CapturedSendMessageRequest.Configuration.ReturnImmediately);
     }
 
     [Fact]
-    public async Task RunAsync_WithNullOptions_SetsBlockingToTrueAsync()
+    public async Task RunAsync_WithNullOptions_SetsReturnImmediatelyToFalseAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
@@ -1281,11 +1281,11 @@ public sealed class A2AAgentTests : IDisposable
         // Assert
         Assert.NotNull(this._handler.CapturedSendMessageRequest);
         Assert.NotNull(this._handler.CapturedSendMessageRequest.Configuration);
-        Assert.True(this._handler.CapturedSendMessageRequest.Configuration.Blocking);
+        Assert.False(this._handler.CapturedSendMessageRequest.Configuration.ReturnImmediately);
     }
 
     [Fact]
-    public async Task RunStreamingAsync_SendMessageRequest_DoesNotSetBlockingConfigurationAsync()
+    public async Task RunStreamingAsync_SendMessageRequest_DoesNotSetReturnImmediatelyConfigurationAsync()
     {
         // Arrange
         this._handler.StreamingResponseToReturn = new StreamResponse

@@ -114,7 +114,7 @@ public sealed class A2AAgent : AIAgent
         {
             Message = CreateA2AMessage(typedSession, messages),
             Metadata = options?.AdditionalProperties?.ToA2AMetadata(),
-            Configuration = new SendMessageConfiguration { Blocking = options?.AllowBackgroundResponses is not true }
+            Configuration = new SendMessageConfiguration { ReturnImmediately = options?.AllowBackgroundResponses is true }
         };
 
         SendMessageResponse a2aResponse = await this._a2aClient.SendMessageAsync(sendParams, cancellationToken).ConfigureAwait(false);
