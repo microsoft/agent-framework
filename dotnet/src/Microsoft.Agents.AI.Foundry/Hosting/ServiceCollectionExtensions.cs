@@ -1,7 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Reflection;
+using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -89,6 +93,56 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         endpoints.MapResponsesServer(prefix);
+
+        if (endpoints is IApplicationBuilder app)
+        {
+            // Ensure the middleware is added to the pipeline
+            app.UseMiddleware<AgentFrameworkUserAgentMiddleware>();
+        }
+
         return endpoints;
+    }
+
+    private sealed class AgentFrameworkUserAgentMiddleware(RequestDelegate next)
+    {
+        private static readonly string s_userAgentValue = CreateUserAgentValue();
+
+        public async Task InvokeAsync(HttpContext context)
+        {
+            var headers = context.Request.Headers;
+            var userAgent = headers.UserAgent.ToString();
+
+            if (string.IsNullOrEmpty(userAgent))
+            {
+                headers.UserAgent = s_userAgentValue;
+            }
+            else if (!userAgent.Contains(s_userAgentValue, StringComparison.OrdinalIgnoreCase))
+            {
+                headers.UserAgent = $"{userAgent} {s_userAgentValue}";
+            }
+
+            await next(context).ConfigureAwait(false);
+        }
+
+        private static string CreateUserAgentValue()
+        {
+            const string Name = "agent-framework-dotnet";
+
+            if (typeof(AgentFrameworkUserAgentMiddleware).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion is string version)
+            {
+                int pos = version.IndexOf('+');
+                if (pos >= 0)
+                {
+                    version = version.Substring(0, pos);
+                }
+
+                if (version.Length > 0)
+                {
+                    return $"{Name}/{version}";
+                }
+            }
+
+            return Name;
+        }
     }
 }
