@@ -112,6 +112,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for item in stream.output_item_message(response.text):
                 yield item
             yield stream.emit_completed()
+            return
 
         # Start the streaming response
         message_item = stream.add_output_item_message()
@@ -120,13 +121,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         yield text_content.emit_added()
 
         # Invoke the MAF agent
-        full_text = ""
-        async for update in self._agent.run(messages, stream=True, options=chat_options):
-            full_text += update.text
-            yield text_content.emit_delta(update.text)
+        response_stream = self._agent.run(messages, stream=True, options=chat_options)
+        async for update in response_stream:
+            if update.text:
+                yield text_content.emit_delta(update.text)
 
         # Complete the message
-        yield text_content.emit_done(full_text)
+        final = await response_stream.get_final_response()
+        yield text_content.emit_done(final.text)
         yield message_item.emit_content_done(text_content)
         yield message_item.emit_done()
 
