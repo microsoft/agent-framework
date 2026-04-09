@@ -265,6 +265,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
     STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
+    SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 
@@ -289,7 +290,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL``.
+                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``.
             api_key: API key. When not provided explicitly, the constructor reads
                 ``OPENAI_API_KEY``. A callable API key is also supported.
             org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
@@ -331,7 +332,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``AZURE_OPENAI_RESPONSES_MODEL`` and then
+                reads ``AZURE_OPENAI_CHAT_MODEL`` and then
                 ``AZURE_OPENAI_MODEL``.
             azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
                 reads ``AZURE_OPENAI_ENDPOINT``.
@@ -380,8 +381,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL`` for OpenAI,
-                or ``AZURE_OPENAI_RESPONSES_MODEL`` and then ``AZURE_OPENAI_MODEL`` for Azure.
+                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI,
+                or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL`` for Azure.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -418,10 +419,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             2. Explicit OpenAI API key or ``OPENAI_API_KEY``
             3. Azure environment fallback
 
-            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_RESPONSES_MODEL``,
+            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_CHAT_MODEL``,
             ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
             reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
-            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_RESPONSES_MODEL``,
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_CHAT_MODEL``,
             ``AZURE_OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
         """
         settings, client, use_azure_client = load_openai_service_settings(
@@ -437,8 +438,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             client=async_client,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
-            openai_model_fields=("responses_model", "model"),
-            azure_model_fields=("responses_model", "model"),
+            openai_model_fields=("chat_model", "model"),
+            azure_model_fields=("chat_model", "model"),
             responses_mode=True,
         )
 
@@ -1353,16 +1354,17 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 return ret
             case "data" | "uri":
                 if content.has_top_level_media_type("image"):
-                    return {
+                    result: dict[str, Any] = {
                         "type": "input_image",
                         "image_url": content.uri,
                         "detail": content.additional_properties.get("detail", "auto")
                         if content.additional_properties
                         else "auto",
-                        "file_id": content.additional_properties.get("file_id", None)
-                        if content.additional_properties
-                        else None,
                     }
+                    file_id = content.additional_properties.get("file_id") if content.additional_properties else None
+                    if file_id:
+                        result["file_id"] = file_id
+                    return result
                 if content.has_top_level_media_type("audio"):
                     if content.media_type and "wav" in content.media_type:
                         format = "wav"
@@ -1444,7 +1446,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     }
                 # call_id for the result needs to be the same as the call_id for the function call
                 output: str | list[dict[str, Any]] = content.result or ""
-                if content.items and any(item.type in ("data", "uri") for item in content.items):
+                if (
+                    self.SUPPORTS_RICH_FUNCTION_OUTPUT
+                    and content.items
+                    and any(item.type in ("data", "uri") for item in content.items)
+                ):
                     output_parts: list[dict[str, Any]] = []
                     for item in content.items:
                         if item.type == "text":
@@ -2501,7 +2507,7 @@ class OpenAIChatClient(  # type: ignore[misc]
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL``.
+                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``.
             api_key: API key. When not provided explicitly, the constructor reads
                 ``OPENAI_API_KEY``. A callable API key is also supported.
             org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
@@ -2547,7 +2553,7 @@ class OpenAIChatClient(  # type: ignore[misc]
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``AZURE_OPENAI_RESPONSES_MODEL`` and then
+                reads ``AZURE_OPENAI_CHAT_MODEL`` and then
                 ``AZURE_OPENAI_MODEL``.
             azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
                 reads ``AZURE_OPENAI_ENDPOINT``.
@@ -2600,8 +2606,8 @@ class OpenAIChatClient(  # type: ignore[misc]
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL`` for OpenAI
-                routing, or ``AZURE_OPENAI_RESPONSES_MODEL`` and then
+                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI
+                routing, or ``AZURE_OPENAI_CHAT_MODEL`` and then
                 ``AZURE_OPENAI_MODEL`` for Azure routing.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
@@ -2641,10 +2647,10 @@ class OpenAIChatClient(  # type: ignore[misc]
             2. Explicit OpenAI API key or ``OPENAI_API_KEY``
             3. Azure environment fallback
 
-            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_RESPONSES_MODEL``,
+            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_CHAT_MODEL``,
             ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
             reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
-            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_RESPONSES_MODEL``,
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_CHAT_MODEL``,
             ``AZURE_OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
 
         Examples:

@@ -19,7 +19,7 @@ using Microsoft.Extensions.AI;
 // Get configuration from environment variables
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 Console.WriteLine($"Project Endpoint: {endpoint}");
 Console.WriteLine($"Model Deployment: {deploymentName}");
 // Simulated hotel data for Seattle

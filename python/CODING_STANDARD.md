@@ -325,14 +325,15 @@ python/
 │   │       ├── mem0/           # Lazy loads from agent-framework-mem0
 │   │       └── redis/          # Lazy loads from agent-framework-redis
 │   │
-│   ├── azure-ai/               # agent-framework-azure-ai
+│   ├── foundry/                # agent-framework-foundry
 │   │   ├── pyproject.toml
 │   │   ├── tests/
-│   │   └── agent_framework_azure_ai/
+│   │   └── agent_framework_foundry/
 │   │       ├── __init__.py     # Public exports
-│   │       ├── _chat_client.py # AzureAIClient implementation
-│   │       ├── _client.py      # AzureAIAgentClient implementation
-│   │       ├── _shared.py      # AzureAISettings and shared utilities
+│   │       ├── _chat_client.py # FoundryChatClient implementation
+│   │       ├── _agent.py       # FoundryAgent implementation
+│   │       ├── _embedding_client.py # FoundryEmbeddingClient implementation
+│   │       ├── _memory_provider.py # Foundry memory implementation
 │   │       └── py.typed        # PEP 561 marker
 │   ├── anthropic/              # agent-framework-anthropic
 │   ├── bedrock/                # agent-framework-bedrock
@@ -345,9 +346,9 @@ python/
 Provider folders in the core package use `__getattr__` to lazy load classes from their respective connector packages. This allows users to import from a consistent location while only loading dependencies when needed:
 
 ```python
-# In agent_framework/azure/__init__.py
+# In agent_framework/foundry/__init__.py
 _IMPORTS: dict[str, tuple[str, str]] = {
-    "AzureAIAgentClient": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
+    "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     # ...
 }
 
@@ -419,7 +420,7 @@ pip install agent-framework-core[all]
 pip install agent-framework
 
 # Install specific connector (pulls in core as dependency)
-pip install agent-framework-azure-ai
+pip install agent-framework-foundry
 ```
 
 ## Documentation

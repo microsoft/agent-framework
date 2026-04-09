@@ -19,7 +19,7 @@ Set the following environment variables:
 
 ```powershell
 $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
 $env:AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID="your-connection-id"  # The full ARM resource URI, e.g., "/subscriptions/.../connections/your-bing-connection"
 $env:AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME="your-instance-name"  # The Bing Custom Search configuration name (from Azure portal)
 ```

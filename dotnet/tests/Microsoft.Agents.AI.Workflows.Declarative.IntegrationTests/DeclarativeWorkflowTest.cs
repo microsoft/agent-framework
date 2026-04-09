@@ -41,7 +41,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private static string GetWorkflowPath(string workflowFileName, bool isSample) =>
         isSample
-            ? Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName)
+            ? Path.Combine(GetRepoFolder(), "declarative-agents", "workflow-samples", workflowFileName)
             : Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName);
 
     protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions, TInput input, bool useJsonCheckpoint)

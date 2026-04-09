@@ -29,7 +29,7 @@ internal static class TestDataUtil
     /// <summary>
     /// Gets the agent response JSON with optional placeholder replacements applied.
     /// </summary>
-    public static string GetAgentResponseJson(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    public static string GetAgentResponseJson(string? agentName = null, ProjectsAgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
     {
         var json = s_agentResponseJson;
         json = ApplyAgentName(json, agentName);
@@ -42,7 +42,7 @@ internal static class TestDataUtil
     /// <summary>
     /// Gets the agent version response JSON with optional placeholder replacements applied.
     /// </summary>
-    public static string GetAgentVersionResponseJson(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    public static string GetAgentVersionResponseJson(string? agentName = null, ProjectsAgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
     {
         var json = s_agentVersionResponseJson;
         json = ApplyAgentName(json, agentName);
@@ -55,7 +55,7 @@ internal static class TestDataUtil
     /// <summary>
     /// Gets the agent version response JSON with empty version and ID fields for testing hosted agents like MCP agents.
     /// </summary>
-    public static string GetAgentVersionResponseJsonWithEmptyVersion(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    public static string GetAgentVersionResponseJsonWithEmptyVersion(string? agentName = null, ProjectsAgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
     {
         var json = s_agentVersionResponseJson;
         json = ApplyAgentName(json, agentName);
@@ -71,7 +71,7 @@ internal static class TestDataUtil
     /// <summary>
     /// Gets the agent response JSON with empty version and ID fields in the latest version for testing hosted agents like MCP agents.
     /// </summary>
-    public static string GetAgentResponseJsonWithEmptyVersion(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    public static string GetAgentResponseJsonWithEmptyVersion(string? agentName = null, ProjectsAgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
     {
         var json = s_agentResponseJson;
         json = ApplyAgentName(json, agentName);
@@ -87,7 +87,7 @@ internal static class TestDataUtil
     /// <summary>
     /// Gets the agent version response JSON with whitespace-only version and ID fields for testing hosted agents like MCP agents.
     /// </summary>
-    public static string GetAgentVersionResponseJsonWithWhitespaceVersion(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    public static string GetAgentVersionResponseJsonWithWhitespaceVersion(string? agentName = null, ProjectsAgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
     {
         var json = s_agentVersionResponseJson;
         json = ApplyAgentName(json, agentName);
@@ -103,7 +103,7 @@ internal static class TestDataUtil
     /// <summary>
     /// Gets the agent response JSON with whitespace-only version and ID fields in the latest version for testing hosted agents like MCP agents.
     /// </summary>
-    public static string GetAgentResponseJsonWithWhitespaceVersion(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    public static string GetAgentResponseJsonWithWhitespaceVersion(string? agentName = null, ProjectsAgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
     {
         var json = s_agentResponseJson;
         json = ApplyAgentName(json, agentName);
@@ -119,7 +119,7 @@ internal static class TestDataUtil
     /// <summary>
     /// Gets the OpenAI default response JSON with optional placeholder replacements applied.
     /// </summary>
-    public static string GetOpenAIDefaultResponseJson(string? agentName = null, AgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
+    public static string GetOpenAIDefaultResponseJson(string? agentName = null, ProjectsAgentDefinition? agentDefinition = null, string? instructions = null, string? description = null)
     {
         var json = s_openAIDefaultResponseJson;
         json = ApplyAgentName(json, agentName);
@@ -138,7 +138,7 @@ internal static class TestDataUtil
         return json;
     }
 
-    private static string ApplyAgentDefinition(string json, AgentDefinition? definition)
+    private static string ApplyAgentDefinition(string json, ProjectsAgentDefinition? definition)
     {
         return (definition is not null)
             ? json.Replace(AgentDefinitionPlaceholder, ModelReaderWriter.Write(definition).ToString())

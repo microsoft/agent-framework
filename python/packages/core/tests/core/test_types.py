@@ -39,6 +39,7 @@ from agent_framework._types import (
     _get_data_bytes,
     _get_data_bytes_as_str,
     _parse_content_list,
+    _parse_structured_response_value,
     _validate_uri,
     add_usage_details,
     validate_tool_mode,
@@ -699,7 +700,7 @@ def test_ai_content_serialization(args: dict):
 def test_chat_message_text():
     """Test the Message class to ensure it initializes correctly with text content."""
     # Create a Message with a role and text content
-    message = Message(role="user", text="Hello, how are you?")
+    message = Message(role="user", contents=["Hello, how are you?"])
 
     # Check the type and content
     assert message.role == "user"
@@ -730,7 +731,7 @@ def test_chat_message_contents():
 
 
 def test_chat_message_with_chatrole_instance():
-    m = Message(role="user", text="hi")
+    m = Message(role="user", contents=["hi"])
     assert m.role == "user"
     assert m.text == "hi"
 
@@ -741,7 +742,7 @@ def test_chat_message_with_chatrole_instance():
 def test_chat_response():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
     # Create a Message
-    message = Message(role="assistant", text="I'm doing well, thank you!")
+    message = Message(role="assistant", contents=["I'm doing well, thank you!"])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message)
@@ -756,7 +757,7 @@ def test_chat_response():
 
 def test_chat_response_accepts_model_alias() -> None:
     """Test ChatResponse accepts model and exposes it through model alias."""
-    response = ChatResponse(messages=Message(role="assistant", text="Hello"), model="claude-test")
+    response = ChatResponse(messages=Message(role="assistant", contents=["Hello"]), model="claude-test")
 
     assert response.model == "claude-test"
     assert response.model == "claude-test"
@@ -769,7 +770,7 @@ class OutputModel(BaseModel):
 def test_chat_response_with_format():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
     # Create a Message
-    message = Message(role="assistant", text='{"response": "Hello"}')
+    message = Message(role="assistant", contents=['{"response": "Hello"}'])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message, response_format=OutputModel)
@@ -786,7 +787,7 @@ def test_chat_response_with_format():
 def test_chat_response_with_format_init():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
     # Create a Message
-    message = Message(role="assistant", text='{"response": "Hello"}')
+    message = Message(role="assistant", contents=['{"response": "Hello"}'])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message, response_format=OutputModel)
@@ -802,7 +803,7 @@ def test_chat_response_with_format_init():
 
 def test_chat_response_with_mapping_response_format() -> None:
     """ChatResponse.value should parse JSON when response_format is a mapping."""
-    message = Message(role="assistant", text='{"response": "Hello"}')
+    message = Message(role="assistant", contents=['{"response": "Hello"}'])
     response = ChatResponse(
         messages=message,
         response_format={"type": "object", "properties": {"response": {"type": "string"}}},
@@ -813,6 +814,32 @@ def test_chat_response_with_mapping_response_format() -> None:
     assert response.value["response"] == "Hello"
 
 
+def test_parse_structured_response_value_empty_text_with_pydantic_model() -> None:
+    """Empty text should return None instead of raising when response_format is a Pydantic model."""
+    result = _parse_structured_response_value("", OutputModel)
+    assert result is None
+
+
+def test_parse_structured_response_value_empty_text_with_mapping() -> None:
+    """Empty text should return None instead of raising when response_format is a mapping."""
+    result = _parse_structured_response_value("", {"type": "object"})
+    assert result is None
+
+
+def test_chat_response_value_with_empty_text_and_response_format() -> None:
+    """ChatResponse.value should return None when text is empty and response_format is set."""
+    message = Message(role="assistant", contents=[""])
+    response = ChatResponse(messages=message, response_format=OutputModel)
+    assert response.value is None
+
+
+def test_agent_response_value_with_empty_text_and_response_format() -> None:
+    """AgentResponse.value should return None when text is empty and response_format is set."""
+    message = Message(role="assistant", contents=[""])
+    response = AgentResponse(messages=message, response_format=OutputModel)
+    assert response.value is None
+
+
 def test_chat_response_value_raises_on_invalid_schema():
     """Test that value property raises ValidationError with field constraint details."""
 
@@ -821,7 +848,7 @@ def test_chat_response_value_raises_on_invalid_schema():
         name: str = Field(min_length=10)
         score: int = Field(gt=0, le=100)
 
-    message = Message(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    message = Message(role="assistant", contents=['{"id": 1, "name": "test", "score": -5}'])
     response = ChatResponse(messages=message, response_format=StrictSchema)
 
     with raises(ValidationError) as exc_info:
@@ -842,7 +869,7 @@ def test_agent_response_value_raises_on_invalid_schema():
         name: str = Field(min_length=10)
         score: int = Field(gt=0, le=100)
 
-    message = Message(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    message = Message(role="assistant", contents=['{"id": 1, "name": "test", "score": -5}'])
     response = AgentResponse(messages=message, response_format=StrictSchema)
 
     with raises(ValidationError) as exc_info:
@@ -1185,7 +1212,7 @@ def test_chat_options_and_tool_choice_required_specific_function() -> None:
 
 @fixture
 def chat_message() -> Message:
-    return Message(role="user", text="Hello")
+    return Message(role="user", contents=["Hello"])
 
 
 @fixture
@@ -1302,7 +1329,7 @@ def test_agent_run_response_created_at() -> None:
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     response = AgentResponse(
-        messages=[Message(role="assistant", text="Hello")],
+        messages=[Message(role="assistant", contents=["Hello"])],
         created_at=utc_timestamp,
     )
     assert response.created_at == utc_timestamp
@@ -1312,7 +1339,7 @@ def test_agent_run_response_created_at() -> None:
     now_utc = datetime.now(tz=timezone.utc)
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     response_with_now = AgentResponse(
-        messages=[Message(role="assistant", text="Hello")],
+        messages=[Message(role="assistant", contents=["Hello"])],
         created_at=formatted_utc,
     )
     assert response_with_now.created_at == formatted_utc
@@ -1466,7 +1493,7 @@ def test_chat_tool_mode_eq_with_string():
 
 @fixture
 def agent_run_response_async() -> AgentResponse:
-    return AgentResponse(messages=[Message(role="user", text="Hello")])
+    return AgentResponse(messages=[Message(role="user", contents=["Hello"])])
 
 
 async def test_agent_run_response_from_async_generator():
@@ -4065,6 +4092,90 @@ def test_oauth_consent_request_serialization_roundtrip():
     assert d["type"] == "oauth_consent_request"
     assert d["consent_link"] == "https://login.microsoftonline.com/consent"
     assert d["user_input_request"] is True
+
+
+# endregion
+
+
+# region prepend_instructions_to_messages tests
+
+
+def test_prepend_instructions_basic():
+    """Test that instructions are prepended as system message."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [Message("user", ["Hello"])]
+    result = prepend_instructions_to_messages(messages, "You are helpful.")
+    assert len(result) == 2
+    assert result[0].role == "system"
+    assert result[0].text == "You are helpful."
+    assert result[1].role == "user"
+
+
+def test_prepend_instructions_none():
+    """Test that None instructions returns messages unchanged."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [Message("user", ["Hello"])]
+    result = prepend_instructions_to_messages(messages, None)
+    assert result is messages
+
+
+def test_prepend_instructions_skips_duplicate():
+    """Test that duplicate system instructions are not prepended again."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["You are helpful."]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, "You are helpful.")
+    assert len(result) == 2
+    assert result[0].role == "system"
+    assert result[0].text == "You are helpful."
+    assert result[1].role == "user"
+
+
+def test_prepend_instructions_skips_duplicate_list():
+    """Test deduplication with a list of instructions."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["First instruction"]),
+        Message("system", ["Second instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
+    assert len(result) == 3
+    assert result[0].text == "First instruction"
+    assert result[1].text == "Second instruction"
+    assert result[2].text == "Hello"
+
+
+def test_prepend_instructions_adds_when_different():
+    """Test that different instructions are still prepended."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["Old instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, "New instruction")
+    assert len(result) == 3
+    assert result[0].role == "system"
+    assert result[0].text == "New instruction"
+    assert result[1].text == "Old instruction"
+    assert result[2].text == "Hello"
+
+
+def test_prepend_instructions_custom_role():
+    """Test prepending with a custom role."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [Message("user", ["Hello"])]
+    result = prepend_instructions_to_messages(messages, "Be concise.", role="developer")
+    assert len(result) == 2
+    assert result[0].role == "developer"
 
 
 # endregion

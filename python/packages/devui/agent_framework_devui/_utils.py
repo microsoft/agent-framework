@@ -484,6 +484,43 @@ def parse_input_for_type(input_data: Any, target_type: type) -> Any:
     return input_data
 
 
+def _build_message_from_legacy_payload(input_data: str | dict[str, Any]) -> Message:
+    """Convert raw DevUI input into a framework Message.
+
+    This preserves DevUI compatibility for older payloads that still send
+    ``{"role": "...", "text": "..."}`` instead of the framework-native
+    ``{"role": "...", "contents": [...]}`` shape.
+    """
+    if isinstance(input_data, str):
+        return Message(role="user", contents=[input_data])
+
+    role = input_data.get("role", "user")
+    role = role if isinstance(role, str) else str(role)
+
+    if "contents" in input_data:
+        contents = input_data["contents"]
+    else:
+        contents = None
+        for field in ("text", "message", "content", "input", "data"):
+            if field in input_data:
+                contents = input_data[field]
+                break
+
+    if contents is None:
+        contents_list: list[Any] = []
+    elif isinstance(contents, list):
+        contents_list = contents  # type: ignore[reportUnknownVariableType]
+    else:
+        contents_list = [contents]
+
+    kwargs: dict[str, Any] = {}
+    for field in ("author_name", "message_id", "additional_properties", "raw_representation"):
+        if field in input_data:
+            kwargs[field] = input_data[field]
+
+    return Message(role=role, contents=contents_list, **kwargs)
+
+
 def _parse_string_input(input_str: str, target_type: type) -> Any:
     """Parse string input to target type.
 
@@ -531,6 +568,14 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
     # SerializationMixin (like Message)
     if is_serialization_mixin(target_type):
         try:
+            if target_type is Message:
+                if input_str.strip().startswith("{"):
+                    data = json.loads(input_str)
+                    parsed_dict = _string_key_dict(data)
+                    if parsed_dict is not None:
+                        return _build_message_from_legacy_payload(parsed_dict)
+                return _build_message_from_legacy_payload(input_str)
+
             # Try parsing as JSON dict first
             if input_str.strip().startswith("{"):
                 data = json.loads(input_str)
@@ -538,20 +583,10 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
                     return target_type.from_dict(data)  # type: ignore
                 return target_type(**data)  # type: ignore
 
-            # For Message specifically: create from text
-            # Try common field patterns
+            # Try other common fields
             common_fields = ["text", "message", "content"]
             sig = inspect.signature(target_type)
             params = list(sig.parameters.keys())
-
-            # If it has 'text' param, use it
-            if "text" in params:
-                try:
-                    return target_type(role="user", text=input_str)  # type: ignore
-                except Exception as e:
-                    logger.debug(f"Failed to create SerializationMixin with text field: {e}")
-
-            # Try other common fields
             for field in common_fields:
                 if field in params:
                     try:
@@ -631,6 +666,8 @@ def _parse_dict_input(input_dict: dict[str, Any], target_type: type) -> Any:
     # SerializationMixin
     if is_serialization_mixin(target_type):
         try:
+            if target_type is Message:
+                return _build_message_from_legacy_payload(input_dict)
             if hasattr(target_type, "from_dict"):
                 return target_type.from_dict(input_dict)  # type: ignore
             return target_type(**input_dict)  # type: ignore

@@ -21,6 +21,10 @@ This sample demonstrates using Anthropic with:
     You can also set additonal_chat_options with "additional_beta_flags" per request.
 - Creating an agent with the Code Interpreter tool and a Skill.
 - Catching and downloading generated files from the agent.
+
+Environment variables:
+- ANTHROPIC_API_KEY: Your Anthropic API key
+- ANTHROPIC_CHAT_MODEL_ID: The Anthropic model to use, such as "claude-sonnet-4-5-20250929"
 """
 
 

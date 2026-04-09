@@ -194,6 +194,7 @@ def _create_af_agents(client: OpenAIChatCompletionClient):
             "- handoff_to_order_status_agent for shipping/timeline questions\n"
             "- handoff_to_order_return_agent for returns"
         ),
+        require_per_service_call_history_persistence=True,
     )
     refund = Agent(
         client=client,
@@ -201,6 +202,7 @@ def _create_af_agents(client: OpenAIChatCompletionClient):
         instructions=(
             "Handle refunds. Ask for order id and reason. If shipping info is needed, hand off to order_status_agent."
         ),
+        require_per_service_call_history_persistence=True,
     )
     status = Agent(
         client=client,
@@ -208,6 +210,7 @@ def _create_af_agents(client: OpenAIChatCompletionClient):
         instructions=(
             "Provide order status, tracking, and timelines. If billing questions appear, hand off to refund_agent."
         ),
+        require_per_service_call_history_persistence=True,
     )
     returns = Agent(
         client=client,
@@ -215,6 +218,7 @@ def _create_af_agents(client: OpenAIChatCompletionClient):
         instructions=(
             "Coordinate returns, confirm addresses, and summarize next steps. Hand off to triage_agent if unsure."
         ),
+        require_per_service_call_history_persistence=True,
     )
     return triage, refund, status, returns
 
@@ -266,7 +270,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
             user_reply = next(scripted_iter)
         except StopIteration:
             user_reply = "Thanks, that's all."
-        responses = {request.request_id: [Message(role="user", text=user_reply)] for request in pending}
+        responses = {request.request_id: [Message(role="user", contents=[user_reply])] for request in pending}
         final_events = await _drain_events(workflow.run(stream=True, responses=responses))
         pending = _collect_handoff_requests(final_events)
 

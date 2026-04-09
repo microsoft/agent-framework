@@ -6,7 +6,7 @@ var builder = DistributedApplication.CreateBuilder(args);
 
 var azOpenAiResource = builder.AddParameterFromConfiguration("AzureOpenAIName", "AzureOpenAI:Name");
 var azOpenAiResourceGroup = builder.AddParameterFromConfiguration("AzureOpenAIResourceGroup", "AzureOpenAI:ResourceGroup");
-var chatModel = builder.AddAIModel("chat-model").AsAzureOpenAI("gpt-4o", o => o.AsExisting(azOpenAiResource, azOpenAiResourceGroup));
+var chatModel = builder.AddAIModel("chat-model").AsAzureOpenAI("gpt-5.4-mini", o => o.AsExisting(azOpenAiResource, azOpenAiResourceGroup));
 
 var agentHost = builder.AddProject<Projects.AgentWebChat_AgentHost>("agenthost")
     .WithHttpEndpoint(name: "devui")

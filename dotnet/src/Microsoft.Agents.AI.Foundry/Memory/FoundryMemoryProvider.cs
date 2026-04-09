@@ -9,6 +9,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
+using Azure.AI.Projects.Memory;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Compliance.Redaction;
 using Microsoft.Extensions.Logging;

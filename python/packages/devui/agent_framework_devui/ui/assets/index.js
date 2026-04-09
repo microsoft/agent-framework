@@ -481,7 +481,7 @@ services:
     environment:
       # OpenAI
       - OPENAI_API_KEY=\${OPENAI_API_KEY}
-      - OPENAI_CHAT_MODEL=\${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+      - OPENAI_CHAT_COMPLETION_MODEL=\${OPENAI_CHAT_COMPLETION_MODEL:-gpt-4o-mini}
       # Or Azure OpenAI
       - AZURE_OPENAI_API_KEY=\${AZURE_OPENAI_API_KEY}
       - AZURE_OPENAI_ENDPOINT=\${AZURE_OPENAI_ENDPOINT}
@@ -514,7 +514,7 @@ az acr build --registry myregistry \\
   --target-port 8080 \\
   --ingress 'external' \\
   --registry-server myregistry.azurecr.io \\
-  --env-vars OPENAI_API_KEY=secretref:openai-key OPENAI_CHAT_MODEL=gpt-4o-mini`})]
+  --env-vars OPENAI_API_KEY=secretref:openai-key OPENAI_CHAT_COMPLETION_MODEL=gpt-4o-mini`})]
   }), o.jsxs("div", {
     className: "border-l-2 border-primary pl-3", children: [o.jsxs("div", { className: "flex items-center gap-2 mb-1", children: [o.jsx("div", { className: "w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold", children: "5" }), o.jsx("h5", { className: "font-medium text-sm", children: "Get Application URL" })] }), o.jsx("pre", {
       className: "bg-muted p-2 rounded text-xs overflow-x-auto border mt-2", children: `az containerapp show --name ${r.toLowerCase()}-app \\

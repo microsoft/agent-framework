@@ -30,7 +30,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="$(MSBuildThisFileDirectory)..\..\..\..\..\workflow-samples\MathChat.yaml">
+    <None Include="$(MSBuildThisFileDirectory)..\..\..\..\..\declarative-agents\workflow-samples\MathChat.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>

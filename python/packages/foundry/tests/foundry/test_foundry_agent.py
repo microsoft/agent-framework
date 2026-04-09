@@ -200,6 +200,45 @@ async def test_raw_foundry_agent_chat_client_prepare_options_accepts_function_to
     assert result["extra_body"]["agent_reference"]["name"] == "test-agent"
 
 
+async def test_raw_foundry_agent_chat_client_prepare_options_strips_tools() -> None:
+    """Test that _prepare_options strips tools, tool_choice, and parallel_tool_calls from run_options."""
+
+    mock_project = MagicMock()
+    mock_openai = MagicMock()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    @tool(approval_mode="never_require")
+    def my_func() -> str:
+        """A test function."""
+
+        return "ok"
+
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={
+            "tools": [{"type": "function", "function": {"name": "my_func"}}],
+            "tool_choice": "auto",
+            "parallel_tool_calls": True,
+        },
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"tools": [my_func]},
+        )
+
+    assert "tools" not in result
+    assert "tool_choice" not in result
+    assert "parallel_tool_calls" not in result
+    assert "extra_body" in result
+    assert result["extra_body"]["agent_reference"]["name"] == "test-agent"
+
+
 def test_raw_foundry_agent_chat_client_check_model_presence_is_noop() -> None:
     """Test that _check_model_presence does nothing (model is on service)."""
 

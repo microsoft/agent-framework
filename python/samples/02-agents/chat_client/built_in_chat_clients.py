@@ -88,7 +88,7 @@ async def main(client_name: ClientName = "openai_chat") -> None:
     """Run a basic prompt using a selected built-in client."""
     client = get_client(client_name)
 
-    message = Message("user", text="What's the weather in Amsterdam and in Paris?")
+    message = Message("user", contents=["What's the weather in Amsterdam and in Paris?"])
     stream = os.getenv("STREAM", "false").lower() == "true"
     print(f"Client: {client_name}")
     print(f"User: {message.text}")

@@ -11,7 +11,7 @@ using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
@@ -19,10 +19,10 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYME
 var aiProjectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a server side agent and expose it as an AIAgent.
-AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
     "Joker",
-    new AgentVersionCreationOptions(
-        new PromptAgentDefinition(model: deploymentName)
+    new ProjectsAgentVersionCreationOptions(
+        new DeclarativeAgentDefinition(model: deploymentName)
         {
             Instructions = "You are good at telling jokes, and you always start each joke with 'Aye aye, captain!'.",
         })

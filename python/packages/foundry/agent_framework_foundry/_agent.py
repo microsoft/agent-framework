@@ -293,6 +293,13 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         # Inject agent reference
         run_options["extra_body"] = {"agent_reference": self._get_agent_reference()}
 
+        # Strip tools from request body - Foundry API rejects requests with both
+        # agent_reference and tools present. FunctionTools are invoked client-side
+        # by the function invocation layer, not sent to the service.
+        run_options.pop("tools", None)
+        run_options.pop("tool_choice", None)
+        run_options.pop("parallel_tool_calls", None)
+
         return run_options
 
     @override

@@ -37,7 +37,6 @@ ENFORCED_TARGETS: set[str] = {
     # Packages (sorted alphabetically)
     "packages.anthropic.agent_framework_anthropic",
     "packages.azure-ai-search.agent_framework_azure_ai_search",
-    "packages.azure-ai.agent_framework_azure_ai",
     "packages.core.agent_framework",
     "packages.core.agent_framework._workflows",
     "packages.foundry.agent_framework_foundry",

@@ -17,7 +17,7 @@ namespace Foundry.IntegrationTests;
 
 /// <summary>
 /// Integration tests for versioned <see cref="FoundryAgent"/> creation via
-/// <c>AIProjectClient.Agents.CreateAgentVersionAsync</c> and <c>AIProjectClient.AsAIAgent(AgentVersion)</c>.
+/// <c>AIProjectClient.AgentAdministrationClient.CreateAgentVersionAsync</c> and <c>AIProjectClient.AsAIAgent(ProjectsAgentVersion)</c>.
 /// </summary>
 public class FoundryVersionedAgentCreateTests
 {
@@ -32,10 +32,10 @@ public class FoundryVersionedAgentCreateTests
         const string AgentInstructions = "You are an integration test agent";
 
         // Act.
-        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+        var agentVersion = await this._client.AgentAdministrationClient.CreateAgentVersionAsync(
             AgentName,
-            new AgentVersionCreationOptions(
-                new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+            new ProjectsAgentVersionCreationOptions(
+                new DeclarativeAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
                 {
                     Instructions = AgentInstructions
                 })
@@ -53,17 +53,17 @@ public class FoundryVersionedAgentCreateTests
             Assert.Equal(AgentDescription, agent.Description);
             Assert.Equal(AgentInstructions, agent.GetService<ChatClientAgent>()!.Instructions);
 
-            var agentRecord = await this._client.Agents.GetAgentAsync(agent.Name);
+            var agentRecord = await this._client.AgentAdministrationClient.GetAgentAsync(agent.Name);
             Assert.NotNull(agentRecord);
             Assert.Equal(AgentName, agentRecord.Value.Name);
-            var definition = Assert.IsType<PromptAgentDefinition>(agentRecord.Value.GetLatestVersion().Definition);
+            var definition = Assert.IsType<DeclarativeAgentDefinition>(agentRecord.Value.GetLatestVersion().Definition);
             Assert.Equal(AgentDescription, agentRecord.Value.GetLatestVersion().Description);
             Assert.Equal(AgentInstructions, definition.Instructions);
         }
         finally
         {
             // Cleanup.
-            await this._client.Agents.DeleteAgentAsync(agent.Name);
+            await this._client.AgentAdministrationClient.DeleteAgentAsync(agent.Name);
         }
     }
 
@@ -95,15 +95,15 @@ public class FoundryVersionedAgentCreateTests
         var vectorStoreMetadata = await projectOpenAIClient.GetProjectVectorStoresClient().CreateVectorStoreAsync(options: new() { FileIds = { uploadedAgentFile.Id }, Name = "WordCodeLookup_VectorStore" });
 
         // Act — create agent version with FileSearch tool via native SDK, then wrap with AsAIAgent.
-        var definition = new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+        var definition = new DeclarativeAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions = AgentInstructions,
             Tools = { ResponseTool.CreateFileSearchTool(vectorStoreIds: [vectorStoreMetadata.Value.Id]) }
         };
 
-        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+        var agentVersion = await this._client.AgentAdministrationClient.CreateAgentVersionAsync(
             AgentName,
-            new AgentVersionCreationOptions(definition));
+            new ProjectsAgentVersionCreationOptions(definition));
 
         var agent = this._client.AsAIAgent(agentVersion);
 
@@ -117,7 +117,7 @@ public class FoundryVersionedAgentCreateTests
         finally
         {
             // Cleanup.
-            await this._client.Agents.DeleteAgentAsync(agent.Name);
+            await this._client.AgentAdministrationClient.DeleteAgentAsync(agent.Name);
             await projectOpenAIClient.GetProjectVectorStoresClient().DeleteVectorStoreAsync(vectorStoreMetadata.Value.Id);
             await projectOpenAIClient.GetProjectFilesClient().DeleteFileAsync(uploadedAgentFile.Id);
             File.Delete(searchFilePath);
@@ -149,15 +149,15 @@ public class FoundryVersionedAgentCreateTests
         );
 
         // Act — create agent version with CodeInterpreter tool via native SDK, then wrap with AsAIAgent.
-        var definition = new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+        var definition = new DeclarativeAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions = AgentInstructions,
             Tools = { ResponseTool.CreateCodeInterpreterTool(new CodeInterpreterToolContainer(CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([uploadedCodeFile.Id]))) }
         };
 
-        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+        var agentVersion = await this._client.AgentAdministrationClient.CreateAgentVersionAsync(
             AgentName,
-            new AgentVersionCreationOptions(definition));
+            new ProjectsAgentVersionCreationOptions(definition));
 
         var agent = this._client.AsAIAgent(agentVersion);
 
@@ -171,7 +171,7 @@ public class FoundryVersionedAgentCreateTests
         finally
         {
             // Cleanup.
-            await this._client.Agents.DeleteAgentAsync(agent.Name);
+            await this._client.AgentAdministrationClient.DeleteAgentAsync(agent.Name);
             await projectOpenAIClient.GetProjectFilesClient().DeleteFileAsync(uploadedCodeFile.Id);
             File.Delete(codeFilePath);
         }
@@ -252,14 +252,14 @@ public class FoundryVersionedAgentCreateTests
             Description = "Retrieve information about countries by currency code"
         };
 
-        var definition = new PromptAgentDefinition(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+        var definition = new DeclarativeAgentDefinition(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions = AgentInstructions,
-            Tools = { (ResponseTool)AgentTool.CreateOpenApiTool(openApiFunction) }
+            Tools = { (ResponseTool)ProjectsAgentTool.CreateOpenApiTool(openApiFunction) }
         };
 
-        AgentVersionCreationOptions creationOptions = new(definition);
-        AgentVersion agentVersion = await this._client.Agents.CreateAgentVersionAsync(AgentName, creationOptions);
+        ProjectsAgentVersionCreationOptions creationOptions = new(definition);
+        ProjectsAgentVersion agentVersion = await this._client.AgentAdministrationClient.CreateAgentVersionAsync(AgentName, creationOptions);
 
         try
         {
@@ -269,7 +269,7 @@ public class FoundryVersionedAgentCreateTests
             // Assert the agent was created correctly and retains version metadata.
             Assert.NotNull(agent);
             Assert.Equal(AgentName, agent.Name);
-            var retrievedVersion = agent.GetService<AgentVersion>();
+            var retrievedVersion = agent.GetService<ProjectsAgentVersion>();
             Assert.NotNull(retrievedVersion);
 
             // Step 3: Call RunAsync to trigger the server-side OpenAPI function.
@@ -301,7 +301,7 @@ public class FoundryVersionedAgentCreateTests
         finally
         {
             // Cleanup.
-            await this._client.Agents.DeleteAgentAsync(AgentName);
+            await this._client.AgentAdministrationClient.DeleteAgentAsync(AgentName);
         }
     }
 
@@ -317,15 +317,15 @@ public class FoundryVersionedAgentCreateTests
 
         // Create agent version with the function tool registered in the server-side definition,
         // then wrap with AsAIAgent passing the local AIFunction implementation.
-        var definition = new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+        var definition = new DeclarativeAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions = AgentInstructions,
         };
         definition.Tools.Add(weatherFunction.AsOpenAIResponseTool());
 
-        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+        var agentVersion = await this._client.AgentAdministrationClient.CreateAgentVersionAsync(
             AgentName,
-            new AgentVersionCreationOptions(definition));
+            new ProjectsAgentVersionCreationOptions(definition));
 
         FoundryAgent agent = this._client.AsAIAgent(agentVersion, tools: [weatherFunction]);
 
@@ -342,7 +342,7 @@ public class FoundryVersionedAgentCreateTests
         }
         finally
         {
-            await this._client.Agents.DeleteAgentAsync(agent.Name);
+            await this._client.AgentAdministrationClient.DeleteAgentAsync(agent.Name);
         }
     }
 }

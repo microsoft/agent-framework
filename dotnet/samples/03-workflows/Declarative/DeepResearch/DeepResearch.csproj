@@ -30,7 +30,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="$(MSBuildThisFileDirectory)..\..\..\..\..\workflow-samples\DeepResearch.yaml">
+    <None Include="$(MSBuildThisFileDirectory)..\..\..\..\..\declarative-agents\workflow-samples\DeepResearch.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include="wttr.json">

@@ -34,7 +34,6 @@
     <Project Path="samples/02-agents/AgentProviders/Agent_With_GoogleGemini/Agent_With_GoogleGemini.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_Ollama/Agent_With_Ollama.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_ONNX/Agent_With_ONNX.csproj" />
-    <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIAssistants/Agent_With_OpenAIAssistants.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
   </Folder>
@@ -107,6 +106,9 @@
     <File Path="samples/02-agents/AgentSkills/README.md" />
     <Project Path="samples/02-agents/AgentSkills/Agent_Step01_FileBasedSkills/Agent_Step01_FileBasedSkills.csproj" />
     <Project Path="samples/02-agents/AgentSkills/Agent_Step02_CodeDefinedSkills/Agent_Step02_CodeDefinedSkills.csproj" />
+    <Project Path="samples/02-agents/AgentSkills/Agent_Step03_ClassBasedSkills/Agent_Step03_ClassBasedSkills.csproj" />
+    <Project Path="samples/02-agents/AgentSkills/Agent_Step04_MixedSkills/Agent_Step04_MixedSkills.csproj" />
+    <Project Path="samples/02-agents/AgentSkills/Agent_Step05_SkillsWithDI/Agent_Step05_SkillsWithDI.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AGUI/Step05_StateManagement/">
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
@@ -214,12 +216,12 @@
     <Project Path="samples/03-workflows/Declarative/ToolApproval/ToolApproval.csproj" />
   </Folder>
   <Folder Name="/Samples/03-workflows/Declarative/Examples/">
-    <File Path="../workflow-samples/CustomerSupport.yaml" />
-    <File Path="../workflow-samples/DeepResearch.yaml" />
-    <File Path="../workflow-samples/Marketing.yaml" />
-    <File Path="../workflow-samples/MathChat.yaml" />
-    <File Path="../workflow-samples/README.md" />
-    <File Path="../workflow-samples/wttr.json" />
+    <File Path="../declarative-agents/workflow-samples/CustomerSupport.yaml" />
+    <File Path="../declarative-agents/workflow-samples/DeepResearch.yaml" />
+    <File Path="../declarative-agents/workflow-samples/Marketing.yaml" />
+    <File Path="../declarative-agents/workflow-samples/MathChat.yaml" />
+    <File Path="../declarative-agents/workflow-samples/README.md" />
+    <File Path="../declarative-agents/workflow-samples/wttr.json" />
   </Folder>
   <Folder Name="/Samples/03-workflows/SharedStates/">
     <Project Path="samples/03-workflows/SharedStates/SharedStates.csproj" />

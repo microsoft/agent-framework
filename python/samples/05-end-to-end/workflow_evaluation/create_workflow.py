@@ -106,11 +106,15 @@ class ResearchLead(Executor):
         messages = [
             Message(
                 role="system",
-                text="You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query.",
+                contents=[
+                    "You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query."
+                ],
             ),
             Message(
                 role="user",
-                text=f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings.",
+                contents=[
+                    f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings."
+                ],
             ),
         ]
 

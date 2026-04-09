@@ -77,6 +77,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
             "based on the problem described."
         ),
         name="triage_agent",
+        require_per_service_call_history_persistence=True,
     )
 
     # Refund specialist: Handles refund requests
@@ -86,6 +87,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[process_refund],
+        require_per_service_call_history_persistence=True,
     )
 
     # Order/shipping specialist: Resolves delivery issues
@@ -95,6 +97,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[check_order_status],
+        require_per_service_call_history_persistence=True,
     )
 
     # Return specialist: Handles return requests
@@ -104,6 +107,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[process_return],
+        require_per_service_call_history_persistence=True,
     )
 
     return triage_agent, refund_agent, order_agent, return_agent

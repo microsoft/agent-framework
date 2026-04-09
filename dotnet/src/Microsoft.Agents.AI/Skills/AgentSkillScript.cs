@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -35,6 +36,11 @@ public abstract class AgentSkillScript
     /// Gets the optional script description.
     /// </summary>
     public string? Description { get; }
+
+    /// <summary>
+    /// Gets the JSON schema describing the parameters accepted by this script, or <see langword="null"/> if not available.
+    /// </summary>
+    public virtual JsonElement? ParametersSchema => null;
 
     /// <summary>
     /// Runs the script with the given arguments.

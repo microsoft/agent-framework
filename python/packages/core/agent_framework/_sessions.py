@@ -13,16 +13,10 @@ This module provides the core types for the context provider pipeline:
 from __future__ import annotations
 
 import copy
-import sys
 import uuid
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, cast
-
-if sys.version_info >= (3, 13):
-    from warnings import deprecated  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import deprecated  # type: ignore # pragma: no cover
 
 from ._middleware import ChatContext, ChatMiddleware
 from ._types import AgentResponse, ChatResponse, Message, ResponseStream
@@ -696,30 +690,6 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             service_call_context=service_call_context,
             response=context.result,
         )
-
-
-@deprecated(
-    "BaseContextProvider is deprecated. Use ContextProvider instead.",
-    category=DeprecationWarning,
-)
-class BaseContextProvider(ContextProvider):
-    """Deprecated alias for :class:`ContextProvider`.
-
-    .. deprecated::
-        BaseContextProvider is deprecated. Use :class:`ContextProvider` instead.
-    """
-
-
-@deprecated(
-    "BaseHistoryProvider is deprecated. Use HistoryProvider instead.",
-    category=DeprecationWarning,
-)
-class BaseHistoryProvider(HistoryProvider):
-    """Deprecated alias for :class:`HistoryProvider`.
-
-    .. deprecated::
-        BaseHistoryProvider is deprecated. Use :class:`HistoryProvider` instead.
-    """
 
 
 class AgentSession:

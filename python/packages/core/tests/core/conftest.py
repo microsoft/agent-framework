@@ -105,7 +105,7 @@ class MockChatClient:
             self.call_count += 1
             if self.responses:
                 return self.responses.pop(0)
-            return ChatResponse(messages=Message(role="assistant", text="test response"))
+            return ChatResponse(messages=Message(role="assistant", contents=["test response"]))
 
         return _get()
 
@@ -186,7 +186,7 @@ class MockBaseChatClient(
         logger.debug(f"Running base chat client inner, with: {messages=}, {options=}, {kwargs=}")
         self.call_count += 1
         if not self.run_responses:
-            return ChatResponse(messages=Message(role="assistant", text=f"test response - {messages[-1].text}"))
+            return ChatResponse(messages=Message(role="assistant", contents=[f"test response - {messages[-1].text}"]))
 
         response = self.run_responses.pop(0)
 
@@ -194,7 +194,7 @@ class MockBaseChatClient(
             return ChatResponse(
                 messages=Message(
                     role="assistant",
-                    text="I broke out of the function invocation loop...",
+                    contents=["I broke out of the function invocation loop..."],
                 ),
                 conversation_id=response.conversation_id,
             )

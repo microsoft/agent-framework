@@ -102,8 +102,6 @@ from ._middleware import (
 )
 from ._sessions import (
     AgentSession,
-    BaseContextProvider,  # type: ignore[reportDeprecated]
-    BaseHistoryProvider,  # type: ignore[reportDeprecated]
     ContextProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
@@ -280,9 +278,7 @@ __all__ = [
     "Annotation",
     "BaseAgent",
     "BaseChatClient",
-    "BaseContextProvider",
     "BaseEmbeddingClient",
-    "BaseHistoryProvider",
     "Case",
     "CharacterEstimatorTokenizer",
     "ChatAndFunctionMiddlewareTypes",

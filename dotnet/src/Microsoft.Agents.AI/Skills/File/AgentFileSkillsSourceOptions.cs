@@ -30,4 +30,30 @@ public sealed class AgentFileSkillsSourceOptions
     /// <c>.ps1</c>, <c>.cs</c>, <c>.csx</c>.
     /// </summary>
     public IEnumerable<string>? AllowedScriptExtensions { get; set; }
+
+    /// <summary>
+    /// Gets or sets relative folder paths to scan for script files within each skill directory.
+    /// Values may be single-segment names (e.g., <c>"scripts"</c>) or multi-segment relative
+    /// paths (e.g., <c>"sub/scripts"</c>). Use <c>"."</c> to include files directly at the
+    /// skill root. Leading <c>"./"</c> prefixes, trailing separators, and backslashes are
+    /// normalized automatically; paths containing <c>".."</c> segments or absolute paths are
+    /// rejected.
+    /// When <see langword="null"/>, defaults to <c>scripts</c> (per the
+    /// <see href="https://agentskills.io/specification">Agent Skills specification</see>).
+    /// When set, replaces the defaults entirely.
+    /// </summary>
+    public IEnumerable<string>? ScriptFolders { get; set; }
+
+    /// <summary>
+    /// Gets or sets relative folder paths to scan for resource files within each skill directory.
+    /// Values may be single-segment names (e.g., <c>"references"</c>) or multi-segment relative
+    /// paths (e.g., <c>"sub/resources"</c>). Use <c>"."</c> to include files directly at the
+    /// skill root. Leading <c>"./"</c> prefixes, trailing separators, and backslashes are
+    /// normalized automatically; paths containing <c>".."</c> segments or absolute paths are
+    /// rejected.
+    /// When <see langword="null"/>, defaults to <c>references</c> and <c>assets</c> (per the
+    /// <see href="https://agentskills.io/specification">Agent Skills specification</see>).
+    /// When set, replaces the defaults entirely.
+    /// </summary>
+    public IEnumerable<string>? ResourceFolders { get; set; }
 }

@@ -25,7 +25,7 @@ public static class Program
         // Set up the Azure AI Project client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
             ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
         var aiProjectClient = new AIProjectClient(new Uri(endpoint), new AzureCliCredential());
 
         // Create agents
@@ -58,9 +58,9 @@ public static class Program
         finally
         {
             // Cleanup the agents created for the sample.
-            await aiProjectClient.Agents.DeleteAgentAsync(frenchAgent.Name);
-            await aiProjectClient.Agents.DeleteAgentAsync(spanishAgent.Name);
-            await aiProjectClient.Agents.DeleteAgentAsync(englishAgent.Name);
+            await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(frenchAgent.Name);
+            await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(spanishAgent.Name);
+            await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(englishAgent.Name);
         }
     }
 
@@ -76,10 +76,10 @@ public static class Program
         AIProjectClient aiProjectClient,
         string model)
     {
-        AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+        ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
             $"{targetLanguage} Translator",
-            new AgentVersionCreationOptions(
-                new PromptAgentDefinition(model: model)
+            new ProjectsAgentVersionCreationOptions(
+                new DeclarativeAgentDefinition(model: model)
                 {
                     Instructions = $"You are a translation assistant that translates the provided text to {targetLanguage}.",
                 }));

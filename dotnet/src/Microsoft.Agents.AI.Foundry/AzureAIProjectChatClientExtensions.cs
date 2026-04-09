@@ -38,7 +38,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
     /// <remarks>
     /// When instantiating a <see cref="ChatClientAgent"/> by using an <see cref="AgentReference"/>, minimal information will be available about the agent in the instance level, and any logic that relies
-    /// on <see cref="AIAgent.GetService{TService}(object?)"/> to retrieve information about the agent like <see cref="AgentVersion" /> will receive <see langword="null"/> as the result.
+    /// on <see cref="AIAgent.GetService{TService}(object?)"/> to retrieve information about the agent like <see cref="ProjectsAgentVersion" /> will receive <see langword="null"/> as the result.
     /// </remarks>
     public static FoundryAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
@@ -67,7 +67,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>
-    /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="AgentRecord"/>.
+    /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="ProjectsAgentRecord"/>.
     /// </summary>
     /// <param name="aiProjectClient">The client used to interact with Azure AI Agents. Cannot be <see langword="null"/>.</param>
     /// <param name="agentRecord">The agent record to be converted. The latest version will be used. Cannot be <see langword="null"/>.</param>
@@ -78,7 +78,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentRecord"/> is <see langword="null"/>.</exception>
     public static FoundryAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
-        AgentRecord agentRecord,
+        ProjectsAgentRecord agentRecord,
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         IServiceProvider? services = null)
@@ -100,7 +100,7 @@ public static partial class AzureAIProjectChatClientExtensions
     }
 
     /// <summary>
-    /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="AgentVersion"/>.
+    /// Uses an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AIProjectClient"/> and <see cref="ProjectsAgentVersion"/>.
     /// </summary>
     /// <param name="aiProjectClient">The client used to interact with Azure AI Agents. Cannot be <see langword="null"/>.</param>
     /// <param name="agentVersion">The agent version to be converted. Cannot be <see langword="null"/>.</param>
@@ -111,7 +111,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentVersion"/> is <see langword="null"/>.</exception>
     public static FoundryAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
-        AgentVersion agentVersion,
+        ProjectsAgentVersion agentVersion,
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         IServiceProvider? services = null)
@@ -206,7 +206,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <summary>Creates a <see cref="ChatClientAgent"/> with the specified options.</summary>
     private static ChatClientAgent CreateChatClientAgent(
         AIProjectClient aiProjectClient,
-        AgentVersion agentVersion,
+        ProjectsAgentVersion agentVersion,
         ChatClientAgentOptions agentOptions,
         Func<IChatClient, IChatClient>? clientFactory,
         IServiceProvider? services)
@@ -249,7 +249,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
     private static ChatClientAgent AsChatClientAgent(
         AIProjectClient aiProjectClient,
-        AgentVersion agentVersion,
+        ProjectsAgentVersion agentVersion,
         ChatClientAgentOptions agentOptions,
         Func<IChatClient, IChatClient>? clientFactory,
         IServiceProvider? services)
@@ -258,7 +258,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
     private static ChatClientAgent AsChatClientAgent(
         AIProjectClient aiProjectClient,
-        AgentRecord agentRecord,
+        ProjectsAgentRecord agentRecord,
         ChatClientAgentOptions agentOptions,
         Func<IChatClient, IChatClient>? clientFactory,
         IServiceProvider? services)
@@ -293,14 +293,14 @@ public static partial class AzureAIProjectChatClientExtensions
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with a auto-generated ChatClientAgentOptions from the specified configuration parameters.</summary>
     private static ChatClientAgent AsChatClientAgent(
-        AIProjectClient AIProjectClient,
-        AgentVersion agentVersion,
+        AIProjectClient aiProjectClient,
+        ProjectsAgentVersion agentVersion,
         IList<AITool>? tools,
         Func<IChatClient, IChatClient>? clientFactory,
         bool requireInvocableTools,
         IServiceProvider? services)
         => AsChatClientAgent(
-            AIProjectClient,
+            aiProjectClient,
             agentVersion,
             CreateChatClientAgentOptions(agentVersion, new ChatOptions() { Tools = tools }, requireInvocableTools),
             clientFactory,
@@ -308,21 +308,21 @@ public static partial class AzureAIProjectChatClientExtensions
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with a auto-generated ChatClientAgentOptions from the specified configuration parameters.</summary>
     private static ChatClientAgent AsChatClientAgent(
-        AIProjectClient AIProjectClient,
-        AgentRecord agentRecord,
+        AIProjectClient aiProjectClient,
+        ProjectsAgentRecord agentRecord,
         IList<AITool>? tools,
         Func<IChatClient, IChatClient>? clientFactory,
         bool requireInvocableTools,
         IServiceProvider? services)
         => AsChatClientAgent(
-            AIProjectClient,
+            aiProjectClient,
             agentRecord,
             CreateChatClientAgentOptions(agentRecord.GetLatestVersion(), new ChatOptions() { Tools = tools }, requireInvocableTools),
             clientFactory,
             services);
 
     /// <summary>
-    /// This method creates <see cref="ChatClientAgentOptions"/> for the specified <see cref="AgentVersion"/> and the provided tools.
+    /// This method creates <see cref="ChatClientAgentOptions"/> for the specified <see cref="ProjectsAgentVersion"/> and the provided tools.
     /// </summary>
     /// <param name="agentVersion">The agent version.</param>
     /// <param name="chatOptions">The <see cref="ChatOptions"/> to use when interacting with the agent.</param>
@@ -334,12 +334,12 @@ public static partial class AzureAIProjectChatClientExtensions
     /// This method rebuilds the agent options from the agent definition returned by the version and combine with the in-proc tools when provided
     /// this ensures that all required tools are provided and the definition of the agent options are consistent with the agent definition coming from the server.
     /// </remarks>
-    private static ChatClientAgentOptions CreateChatClientAgentOptions(AgentVersion agentVersion, ChatOptions? chatOptions, bool requireInvocableTools)
+    private static ChatClientAgentOptions CreateChatClientAgentOptions(ProjectsAgentVersion agentVersion, ChatOptions? chatOptions, bool requireInvocableTools)
     {
         var agentDefinition = agentVersion.Definition;
 
         List<AITool>? agentTools = null;
-        if (agentDefinition is PromptAgentDefinition { Tools: { Count: > 0 } definitionTools })
+        if (agentDefinition is DeclarativeAgentDefinition { Tools: { Count: > 0 } definitionTools })
         {
             // Check if no tools were provided while the agent definition requires in-proc tools.
             if (requireInvocableTools && chatOptions?.Tools is not { Count: > 0 } && definitionTools.Any(t => t is FunctionTool))
@@ -395,7 +395,7 @@ public static partial class AzureAIProjectChatClientExtensions
             Description = agentVersion.Description,
         };
 
-        if (agentDefinition is PromptAgentDefinition promptAgentDefinition)
+        if (agentDefinition is DeclarativeAgentDefinition promptAgentDefinition)
         {
             agentOptions.ChatOptions ??= chatOptions?.Clone() ?? new();
             agentOptions.ChatOptions.Instructions = promptAgentDefinition.Instructions;

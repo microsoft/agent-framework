@@ -196,6 +196,48 @@ public class FoundryAgentTests
 
     #endregion
 
+    #region CreateSessionAsync tests
+
+    [Fact]
+    public async Task CreateSessionAsync_WithConversationId_ReturnsChatClientAgentSessionAsync()
+    {
+        // Arrange
+        FoundryAgent agent = new(
+            s_testEndpoint,
+            new FakeAuthenticationTokenProvider(),
+            model: "gpt-4o-mini",
+            instructions: "Test");
+
+        const string ConversationId = "test-conversation-id";
+
+        // Act
+        AgentSession session = await agent.CreateSessionAsync(ConversationId);
+
+        // Assert
+        ChatClientAgentSession chatSession = Assert.IsType<ChatClientAgentSession>(session);
+        Assert.Equal(ConversationId, chatSession.ConversationId);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_WithoutConversationId_ReturnsChatClientAgentSessionWithoutConversationIdAsync()
+    {
+        // Arrange
+        FoundryAgent agent = new(
+            s_testEndpoint,
+            new FakeAuthenticationTokenProvider(),
+            model: "gpt-4o-mini",
+            instructions: "Test");
+
+        // Act
+        AgentSession session = await agent.CreateSessionAsync();
+
+        // Assert
+        ChatClientAgentSession chatSession = Assert.IsType<ChatClientAgentSession>(session);
+        Assert.Null(chatSession.ConversationId);
+    }
+
+    #endregion
+
     #region Functional tests
 
     [Fact]

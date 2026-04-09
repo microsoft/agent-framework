@@ -40,7 +40,7 @@ class SerializationProtocol(Protocol):
 
 
             # Message implements SerializationProtocol via SerializationMixin
-            user_msg = Message(role="user", text="What's the weather like today?")
+            user_msg = Message(role="user", contents=["What's the weather like today?"])
 
             # Serialize to dictionary - automatic type identification and nested serialization
             msg_dict = user_msg.to_dict()

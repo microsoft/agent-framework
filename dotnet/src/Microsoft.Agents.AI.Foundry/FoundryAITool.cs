@@ -17,12 +17,12 @@ namespace Microsoft.Agents.AI.Foundry;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This class wraps <see cref="AgentTool"/> (Azure.AI.Projects.OpenAI) and <see cref="ResponseTool"/> (OpenAI SDK) factory methods,
+/// This class wraps <see cref="ProjectsAgentTool"/> (Azure.AI.Projects.Agents) and <see cref="ResponseTool"/> (OpenAI SDK) factory methods,
 /// returning <see cref="AITool"/> directly — eliminating the need for manual casting and <c>.AsAITool()</c> calls.
 /// </para>
 /// <para>
 /// Instead of writing:
-/// <c>((ResponseTool)AgentTool.CreateOpenApiTool(definition)).AsAITool()</c>
+/// <c>((ResponseTool)ProjectsAgentTool.CreateOpenApiTool(definition)).AsAITool()</c>
 /// You can write:
 /// <c>FoundryAITool.CreateOpenApiTool(definition)</c>
 /// </para>
@@ -37,7 +37,7 @@ public static class FoundryAITool
     /// <returns>An <see cref="AITool"/> wrapping the provided response tool.</returns>
     public static AITool FromResponseTool(ResponseTool responseTool) => responseTool.AsAITool();
 
-    // --- Azure.AI.Projects.OpenAI AgentTool factories ---
+    // --- Azure.AI.Projects.OpenAI ProjectsAgentTool factories ---
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for OpenAPI tool invocations.
@@ -45,7 +45,7 @@ public static class FoundryAITool
     /// <param name="definition">The OpenAPI function definition specifying the API endpoint, schema, and authentication.</param>
     /// <returns>An <see cref="AITool"/> that calls the specified OpenAPI endpoint.</returns>
     public static AITool CreateOpenApiTool(OpenApiFunctionDefinition definition)
-        => ((ResponseTool)AgentTool.CreateOpenApiTool(definition)).AsAITool();
+        => ((ResponseTool)ProjectsAgentTool.CreateOpenApiTool(definition)).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for Bing Grounding search.
@@ -53,7 +53,7 @@ public static class FoundryAITool
     /// <param name="options">The Bing Grounding search configuration options.</param>
     /// <returns>An <see cref="AITool"/> for Bing Grounding search.</returns>
     public static AITool CreateBingGroundingTool(BingGroundingSearchToolOptions options)
-        => ((ResponseTool)AgentTool.CreateBingGroundingTool(options)).AsAITool();
+        => ((ResponseTool)ProjectsAgentTool.CreateBingGroundingTool(options)).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for Bing Custom Search.
@@ -61,7 +61,7 @@ public static class FoundryAITool
     /// <param name="parameters">The Bing Custom Search configuration parameters.</param>
     /// <returns>An <see cref="AITool"/> for Bing Custom Search.</returns>
     public static AITool CreateBingCustomSearchTool(BingCustomSearchToolOptions parameters)
-        => ((ResponseTool)AgentTool.CreateBingCustomSearchTool(parameters)).AsAITool();
+        => ((ResponseTool)ProjectsAgentTool.CreateBingCustomSearchTool(parameters)).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for Microsoft Fabric data agent.
@@ -69,7 +69,7 @@ public static class FoundryAITool
     /// <param name="options">The Fabric data agent configuration options.</param>
     /// <returns>An <see cref="AITool"/> for Microsoft Fabric.</returns>
     public static AITool CreateMicrosoftFabricTool(FabricDataAgentToolOptions options)
-        => ((ResponseTool)AgentTool.CreateMicrosoftFabricTool(options)).AsAITool();
+        => ((ResponseTool)ProjectsAgentTool.CreateMicrosoftFabricTool(options)).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for SharePoint grounding.
@@ -77,7 +77,7 @@ public static class FoundryAITool
     /// <param name="options">The SharePoint grounding configuration options.</param>
     /// <returns>An <see cref="AITool"/> for SharePoint grounding.</returns>
     public static AITool CreateSharepointTool(SharePointGroundingToolOptions options)
-        => ((ResponseTool)AgentTool.CreateSharepointTool(options)).AsAITool();
+        => ((ResponseTool)ProjectsAgentTool.CreateSharepointTool(options)).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for Azure AI Search.
@@ -85,7 +85,7 @@ public static class FoundryAITool
     /// <param name="options">Optional Azure AI Search configuration options.</param>
     /// <returns>An <see cref="AITool"/> for Azure AI Search.</returns>
     public static AITool CreateAzureAISearchTool(AzureAISearchToolOptions? options = null)
-        => ((ResponseTool)AgentTool.CreateAzureAISearchTool(options)).AsAITool();
+        => ((ResponseTool)ProjectsAgentTool.CreateAzureAISearchTool(options)).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for browser automation.
@@ -93,7 +93,7 @@ public static class FoundryAITool
     /// <param name="parameters">The browser automation configuration parameters.</param>
     /// <returns>An <see cref="AITool"/> for browser automation.</returns>
     public static AITool CreateBrowserAutomationTool(BrowserAutomationToolOptions parameters)
-        => ((ResponseTool)AgentTool.CreateBrowserAutomationTool(parameters)).AsAITool();
+        => ((ResponseTool)ProjectsAgentTool.CreateBrowserAutomationTool(parameters)).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for structured output capture.
@@ -101,7 +101,7 @@ public static class FoundryAITool
     /// <param name="outputs">The structured output definition.</param>
     /// <returns>An <see cref="AITool"/> for structured output capture.</returns>
     public static AITool CreateStructuredOutputsTool(StructuredOutputDefinition outputs)
-        => ((ResponseTool)AgentTool.CreateStructuredOutputsTool(outputs)).AsAITool();
+        => ((ResponseTool)ProjectsAgentTool.CreateStructuredOutputsTool(outputs)).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for Agent-to-Agent (A2A) communication.
@@ -110,7 +110,7 @@ public static class FoundryAITool
     /// <param name="agentCardPath">Optional path to the agent card.</param>
     /// <returns>An <see cref="AITool"/> for A2A communication.</returns>
     public static AITool CreateA2ATool(Uri baseUri, string? agentCardPath = null)
-        => AgentTool.CreateA2ATool(baseUri, agentCardPath).AsAITool();
+        => ProjectsAgentTool.CreateA2ATool(baseUri, agentCardPath).AsAITool();
 
     // --- OpenAI SDK ResponseTool factories ---
 

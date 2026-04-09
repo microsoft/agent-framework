@@ -79,7 +79,7 @@ def test_supports_web_search_only() -> None:
 
 
 def test_init_prefers_openai_chat_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
-    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model")
+    monkeypatch.setenv("OPENAI_CHAT_COMPLETION_MODEL", "test_chat_model")
 
     open_ai_chat_completion = OpenAIChatCompletionClient()
 
@@ -196,7 +196,7 @@ async def test_content_filter_exception_handling(
 ) -> None:
     """Test that content filter errors are properly handled."""
     client = OpenAIChatCompletionClient()
-    messages = [Message(role="user", text="test message")]
+    messages = [Message(role="user", contents=["test message"])]
 
     # Create a mock BadRequestError with content_filter code
     mock_response = MagicMock()
@@ -271,7 +271,7 @@ async def test_mcp_tool_dict_causes_api_rejection(openai_unit_test_env: dict[str
     rather than a silent no-op.
     """
     client = OpenAIChatCompletionClient()
-    messages = [Message(role="user", text="test message")]
+    messages = [Message(role="user", contents=["test message"])]
 
     mcp_tool = {
         "type": "mcp",
@@ -331,7 +331,7 @@ def get_weather(location: str) -> str:
 async def test_exception_message_includes_original_error_details() -> None:
     """Test that exception messages include original error details in the new format."""
     client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
-    messages = [Message(role="user", text="test message")]
+    messages = [Message(role="user", contents=["test message"])]
 
     mock_response = MagicMock()
     original_error_message = "Invalid API request format"
@@ -1183,7 +1183,7 @@ def test_prepare_options_without_model(openai_unit_test_env: dict[str, str]) -> 
     client = OpenAIChatCompletionClient()
     client.model = None  # Remove model
 
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
 
     with pytest.raises(ValueError, match="model must be a non-empty string"):
         client._prepare_options(messages, {})
@@ -1221,7 +1221,7 @@ def test_prepare_options_with_instructions(
     """Test that instructions are prepended as system message."""
     client = OpenAIChatCompletionClient()
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     options = {"instructions": "You are a helpful assistant."}
 
     prepared_options = client._prepare_options(messages, options)
@@ -1231,6 +1231,32 @@ def test_prepare_options_with_instructions(
     assert len(prepared_options["messages"]) == 2
     assert prepared_options["messages"][0]["role"] == "system"
     assert prepared_options["messages"][0]["content"] == "You are a helpful assistant."
+
+
+def test_prepare_options_with_instructions_no_duplicate(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that duplicate system message from instructions is not added again.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/5049
+    """
+    client = OpenAIChatCompletionClient()
+
+    # Simulate messages that already contain the system instruction
+    messages = [
+        Message(role="system", contents=["You are a helpful assistant."]),
+        Message(role="user", contents=["Hello"]),
+    ]
+    options = {"instructions": "You are a helpful assistant."}
+
+    prepared_options = client._prepare_options(messages, options)
+
+    # Should NOT duplicate the system message
+    assert "messages" in prepared_options
+    assert len(prepared_options["messages"]) == 2
+    assert prepared_options["messages"][0]["role"] == "system"
+    assert prepared_options["messages"][0]["content"] == "You are a helpful assistant."
+    assert prepared_options["messages"][1]["role"] == "user"
 
 
 def test_prepare_message_with_author_name(openai_unit_test_env: dict[str, str]) -> None:
@@ -1390,7 +1416,7 @@ def test_tool_choice_required_with_function_name(
     """Test that tool_choice with required mode and function name is correctly prepared."""
     client = OpenAIChatCompletionClient()
 
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
     options = {
         "tools": [get_weather],
         "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
@@ -1408,7 +1434,7 @@ def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) 
     """Test that response_format as dict is passed through directly."""
     client = OpenAIChatCompletionClient()
 
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
     custom_format = {
         "type": "json_schema",
         "json_schema": {"name": "Test", "schema": {"type": "object"}},
@@ -1477,7 +1503,7 @@ def test_prepare_options_removes_parallel_tool_calls_when_no_tools(
     """Test that parallel_tool_calls is removed when no tools are present."""
     client = OpenAIChatCompletionClient()
 
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
     options = {"allow_multiple_tool_calls": True}
 
     prepared_options = client._prepare_options(messages, options)
@@ -1490,7 +1516,7 @@ def test_prepare_options_excludes_conversation_id(openai_unit_test_env: dict[str
     """Test that conversation_id is excluded from prepared options for chat completions."""
     client = OpenAIChatCompletionClient()
 
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
     options = {"conversation_id": "12345", "temperature": 0.7}
 
     prepared_options = client._prepare_options(messages, options)
@@ -1506,7 +1532,7 @@ async def test_streaming_exception_handling(
 ) -> None:
     """Test that streaming errors are properly handled."""
     client = OpenAIChatCompletionClient()
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
 
     # Create a mock error during streaming
     mock_error = Exception("Streaming error")
@@ -1614,14 +1640,14 @@ async def test_integration_options(
     # Prepare test message
     if option_name.startswith("tools") or option_name.startswith("tool_choice"):
         # Use weather-related prompt for tool tests
-        messages = [Message(role="user", text="What is the weather in Seattle?")]
+        messages = [Message(role="user", contents=["What is the weather in Seattle?"])]
     elif option_name.startswith("response_format"):
         # Use prompt that works well with structured output
-        messages = [Message(role="user", text="The weather in Seattle is sunny")]
-        messages.append(Message(role="user", text="What is the weather in Seattle?"))
+        messages = [Message(role="user", contents=["The weather in Seattle is sunny"])]
+        messages.append(Message(role="user", contents=["What is the weather in Seattle?"]))
     else:
         # Generic prompt for simple options
-        messages = [Message(role="user", text="Say 'Hello World' briefly.")]
+        messages = [Message(role="user", contents=["Say 'Hello World' briefly."])]
 
     # Build options dict
     options: dict[str, Any] = {option_name: option_value}
@@ -1679,7 +1705,7 @@ async def test_integration_web_search() -> None:
             "messages": [
                 Message(
                     role="user",
-                    text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                    contents=["Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer."],
                 )
             ],
             "options": {
@@ -1711,7 +1737,7 @@ async def test_integration_web_search() -> None:
             "messages": [
                 Message(
                     role="user",
-                    text="What is the current weather? Do not ask for my current location.",
+                    contents=["What is the current weather? Do not ask for my current location."],
                 )
             ],
             "options": {

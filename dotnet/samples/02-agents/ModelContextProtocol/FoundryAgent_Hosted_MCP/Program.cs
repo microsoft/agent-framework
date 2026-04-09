@@ -12,7 +12,7 @@ using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var model = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4.1-mini";
+var model = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Get a client to create/retrieve server side agents with.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
@@ -31,10 +31,10 @@ var mcpTool = ResponseTool.CreateMcpTool(
     toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval));
 
 // Create a server side agent with the mcp tool, and expose it as an AIAgent.
-AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
     "MicrosoftLearnAgent",
-    new AgentVersionCreationOptions(
-        new PromptAgentDefinition(model: model)
+    new ProjectsAgentVersionCreationOptions(
+        new DeclarativeAgentDefinition(model: model)
         {
             Instructions = "You answer questions by searching the Microsoft Learn content only.",
             Tools = { mcpTool }
@@ -47,7 +47,7 @@ AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", session));
 
 // Cleanup for sample purposes.
-aiProjectClient.Agents.DeleteAgent(agent.Name);
+aiProjectClient.AgentAdministrationClient.DeleteAgent(agent.Name);
 
 // **** MCP Tool with Approval Required ****
 // *****************************************
@@ -61,10 +61,10 @@ var mcpToolWithApproval = ResponseTool.CreateMcpTool(
     toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
 
 // Create an agent with the MCP tool that requires approval.
-AgentVersion agentVersionWithApproval = await aiProjectClient.Agents.CreateAgentVersionAsync(
+ProjectsAgentVersion agentVersionWithApproval = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
     "MicrosoftLearnAgentWithApproval",
-    new AgentVersionCreationOptions(
-        new PromptAgentDefinition(model: model)
+    new ProjectsAgentVersionCreationOptions(
+        new DeclarativeAgentDefinition(model: model)
         {
             Instructions = "You answer questions by searching the Microsoft Learn content only.",
             Tools = { mcpToolWithApproval }

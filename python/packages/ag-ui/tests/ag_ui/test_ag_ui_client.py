@@ -67,8 +67,8 @@ class TestAGUIChatClient:
         """Test state extraction when no state is present."""
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
         messages = [
-            Message(role="user", text="Hello"),
-            Message(role="assistant", text="Hi there"),
+            Message(role="user", contents=["Hello"]),
+            Message(role="assistant", contents=["Hi there"]),
         ]
 
         result_messages, state = client.extract_state_from_messages(messages)
@@ -87,7 +87,7 @@ class TestAGUIChatClient:
         state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
         messages = [
-            Message(role="user", text="Hello"),
+            Message(role="user", contents=["Hello"]),
             Message(
                 role="user",
                 contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
@@ -125,8 +125,8 @@ class TestAGUIChatClient:
         """Test message conversion to AG-UI format."""
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
         messages = [
-            Message(role="user", text="What is the weather?"),
-            Message(role="assistant", text="Let me check.", message_id="msg_123"),
+            Message(role="user", contents=["What is the weather?"]),
+            Message(role="assistant", contents=["Let me check."], message_id="msg_123"),
         ]
 
         agui_messages = client.convert_messages_to_agui_format(messages)
@@ -173,7 +173,7 @@ class TestAGUIChatClient:
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [Message(role="user", text="Test message")]
+        messages = [Message(role="user", contents=["Test message"])]
         chat_options = ChatOptions()
 
         updates: list[ChatResponseUpdate] = []
@@ -206,7 +206,7 @@ class TestAGUIChatClient:
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [Message(role="user", text="Test message")]
+        messages = [Message(role="user", contents=["Test message"])]
         chat_options = {}
 
         response = await client.inner_get_response(messages=messages, options=chat_options)
@@ -249,7 +249,7 @@ class TestAGUIChatClient:
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [Message(role="user", text="Test with tools")]
+        messages = [Message(role="user", contents=["Test with tools"])]
         chat_options = ChatOptions(tools=[test_tool])
 
         response = await client.inner_get_response(messages=messages, options=chat_options)
@@ -273,7 +273,7 @@ class TestAGUIChatClient:
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [Message(role="user", text="Test server tool execution")]
+        messages = [Message(role="user", contents=["Test server tool execution"])]
 
         updates: list[ChatResponseUpdate] = []
         async for update in client.get_response(messages, stream=True):
@@ -315,7 +315,7 @@ class TestAGUIChatClient:
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [Message(role="user", text="Test server tool execution")]
+        messages = [Message(role="user", contents=["Test server tool execution"])]
 
         async for _ in client.get_response(
             messages, stream=True, options={"tool_choice": "auto", "tools": [client_tool]}
@@ -331,7 +331,7 @@ class TestAGUIChatClient:
         state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
         messages = [
-            Message(role="user", text="Hello"),
+            Message(role="user", contents=["Hello"]),
             Message(
                 role="user",
                 contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
@@ -388,7 +388,7 @@ class TestAGUIChatClient:
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [Message(role="user", text="Test")]
+        messages = [Message(role="user", contents=["Test"])]
         response = await client.inner_get_response(messages=messages, options={}, stream=False)
 
         assert response is not None
@@ -416,7 +416,7 @@ class TestAGUIChatClient:
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [Message(role="user", text="Test")]
+        messages = [Message(role="user", contents=["Test"])]
         updates: list[ChatResponseUpdate] = []
         async for update in client._inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]}):
             updates.append(update)
@@ -451,7 +451,7 @@ class TestAGUIChatClient:
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
         monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
-        messages = [Message(role="user", text="continue")]
+        messages = [Message(role="user", contents=["continue"])]
         options = {
             "available_interrupts": available_interrupts,
             "resume": resume_payload,

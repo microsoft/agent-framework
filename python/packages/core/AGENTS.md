@@ -136,7 +136,7 @@ from agent_framework import BaseChatClient, ChatResponse, Message
 class MyClient(BaseChatClient):
     async def _inner_get_response(self, *, messages, options, **kwargs) -> ChatResponse:
         # Call your LLM here
-        return ChatResponse(messages=[Message(role="assistant", text="Hi!")])
+        return ChatResponse(messages=[Message(role="assistant", contents=["Hi!"])])
 
     async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
         yield ChatResponseUpdate(...)
