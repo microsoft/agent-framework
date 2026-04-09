@@ -12,6 +12,7 @@
 
   <ItemGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETCoreApp'">
     <PackageReference Include="Azure.AI.AgentServer.Responses" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
   </ItemGroup>
 
   <!-- Hosting tests only compile on .NET Core TFMs -->
