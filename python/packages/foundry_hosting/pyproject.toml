@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-foundry-hosting"
-description = "Foundry Local integration for Microsoft Agent Framework."
+description = "Foundry Hosting integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=ta
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 4 - Beta",
+  "Development Status :: 4 - Alpha",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",

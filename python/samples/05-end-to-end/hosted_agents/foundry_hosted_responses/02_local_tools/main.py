@@ -4,7 +4,8 @@ import os
 from random import randint
 
 from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.ai.agentserver.responses import InMemoryResponseProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv

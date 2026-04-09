@@ -14,14 +14,14 @@ from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import CreateResponse, get_input_text
 from typing_extensions import Any, Sequence
 
-from ._shared import to_messages
+from ._message_converter import to_messages
 
 
-class ResponsesHostContextProvider(HistoryProvider):
+class ResponsesHostHistoryProvider(HistoryProvider):
     """A history provider that retrieves messages from a ResponseContext."""
 
     def __init__(self, context: ResponseContext):
-        """Initialize a ResponsesHostContextProvider.
+        """Initialize a ResponsesHostHistoryProvider.
 
         Args:
             context: The ResponseContext to retrieve messages from.
@@ -73,7 +73,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         Note:
             If the agent has a history provider with `load_messages=True`, it will be
-            replaced with a `ResponsesHostContextProvider` that will retrieve history
+            replaced with a `ResponsesHostHistoryProvider` that will retrieve history
             from the hosting infrastructure.
         """
         super().__init__(prefix=prefix, options=options, provider=provider, **kwargs)
@@ -97,12 +97,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 history_provider_idx.append(i)
 
         if not history_provider_idx:
-            self._agent.context_providers.append(ResponsesHostContextProvider(context))
+            self._agent.context_providers.append(ResponsesHostHistoryProvider(context))
         elif len(history_provider_idx) > 1:
             # There shouldn't be more than one history provider with `load_messages=True`
             raise RuntimeError("There shouldn't be more than one history provider with `load_messages=True`")
         else:
-            self._agent.context_providers[history_provider_idx[0]] = ResponsesHostContextProvider(context)
+            self._agent.context_providers[history_provider_idx[0]] = ResponsesHostHistoryProvider(context)
 
         input_items = get_input_text(request)
 

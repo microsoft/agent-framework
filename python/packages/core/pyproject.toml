@@ -48,7 +48,6 @@ all = [
     "agent-framework-durabletask",
     "agent-framework-foundry",
     "agent-framework-foundry-local",
-    "agent-framework-foundry-hosting",
     "agent-framework-github-copilot; python_version >= '3.11'",
     "agent-framework-lab",
     "agent-framework-mem0",

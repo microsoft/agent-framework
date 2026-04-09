@@ -20,7 +20,6 @@ from agent_framework_foundry import (
     evaluate_foundry_target,
     evaluate_traces,
 )
-from agent_framework_foundry_hosting import InvocationsHostServer, ResponsesHostServer
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
     FoundryLocalClient,
@@ -40,13 +39,11 @@ __all__ = [
     "FoundryLocalClient",
     "FoundryLocalSettings",
     "FoundryMemoryProvider",
-    "InvocationsHostServer",
     "RawAnthropicFoundryClient",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
     "RawFoundryChatClient",
     "RawFoundryEmbeddingClient",
-    "ResponsesHostServer",
     "evaluate_foundry_target",
     "evaluate_traces",
 ]
