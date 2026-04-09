@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework import AgentSession, BaseAgent, SupportsAgentRun
+from agent_framework._telemetry import append_to_user_agent
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -9,6 +10,8 @@ from typing_extensions import Any, AsyncGenerator, Optional
 
 class InvocationsHostServer(InvocationAgentServerHost):
     """An invocations server host for an agent."""
+
+    USER_AGENT_PREFIX = "foundry-hosting-invocations"
 
     def __init__(
         self,
@@ -35,6 +38,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
         if not isinstance(agent, SupportsAgentRun):
             raise TypeError("Agent must support the SupportsAgentRun interface")
 
+        append_to_user_agent(self.USER_AGENT_PREFIX)
         self._agent = agent
         self._stream = stream
         self._sessions: dict[str, AgentSession] = {}

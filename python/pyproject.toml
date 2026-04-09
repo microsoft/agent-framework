@@ -89,9 +89,6 @@ agent-framework-redis = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-claude = { workspace = true }
 agent-framework-orchestrations = { workspace = true }
-azure-ai-agentserver-responses = { git = "https://github.com/Azure/azure-sdk-for-python.git", branch = "agentserver/responses", subdirectory = "sdk/agentserver/azure-ai-agentserver-responses" }
-azure-ai-agentserver-invocations = { git = "https://github.com/Azure/azure-sdk-for-python.git", branch = "agentserver/responses", subdirectory = "sdk/agentserver/azure-ai-agentserver-invocations" }
-azure-ai-agentserver-core = { git = "https://github.com/Azure/azure-sdk-for-python.git", branch = "agentserver/responses", subdirectory = "sdk/agentserver/azure-ai-agentserver-core" }
 litellm = { url = "https://files.pythonhosted.org/packages/57/77/0c6eca2cb049793ddf8ce9cdcd5123a35666c4962514788c4fc90edf1d3b/litellm-1.82.1-py3-none-any.whl" }
 
 [tool.ruff]

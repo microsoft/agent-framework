@@ -4,7 +4,7 @@ description = "Foundry Hosting integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260402"
+version = "1.0.0a260402"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -28,6 +28,11 @@ dependencies = [
     "azure-ai-agentserver-responses",
     "azure-ai-agentserver-invocations"
 ]
+
+[tool.uv.sources]
+azure-ai-agentserver-responses = { git = "https://github.com/Azure/azure-sdk-for-python.git", branch = "agentserver/responses", subdirectory = "sdk/agentserver/azure-ai-agentserver-responses" }
+azure-ai-agentserver-invocations = { git = "https://github.com/Azure/azure-sdk-for-python.git", branch = "agentserver/responses", subdirectory = "sdk/agentserver/azure-ai-agentserver-invocations" }
+azure-ai-agentserver-core = { git = "https://github.com/Azure/azure-sdk-for-python.git", branch = "agentserver/responses", subdirectory = "sdk/agentserver/azure-ai-agentserver-core" }
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"

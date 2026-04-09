@@ -26,6 +26,28 @@ USER_AGENT_KEY: Final[str] = "User-Agent"
 HTTP_USER_AGENT: Final[str] = "agent-framework-python"
 AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"  # type: ignore[has-type]
 
+_user_agent_prefixes: list[str] = []
+
+
+def append_to_user_agent(prefix: str) -> None:
+    """Prepend a prefix to the agent framework user agent string.
+
+    This is useful for hosting layers that want to identify themselves in telemetry.
+    Duplicate prefixes are ignored.
+
+    Args:
+        prefix: The prefix to prepend (e.g. "foundry-hosting-responses").
+    """
+    if prefix and prefix not in _user_agent_prefixes:
+        _user_agent_prefixes.append(prefix)
+
+
+def _get_user_agent() -> str:
+    """Return the full user agent string including any prepended prefixes."""
+    if not _user_agent_prefixes:
+        return AGENT_FRAMEWORK_USER_AGENT
+    return f"{'/'.join(_user_agent_prefixes)}/{AGENT_FRAMEWORK_USER_AGENT}"
+
 
 def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None) -> dict[str, Any]:
     """Prepend "agent-framework" to the User-Agent in the headers.
@@ -57,12 +79,9 @@ def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None)
     """
     if not IS_TELEMETRY_ENABLED:
         return headers or {}
+    user_agent = _get_user_agent()
     if not headers:
-        return {USER_AGENT_KEY: AGENT_FRAMEWORK_USER_AGENT}
-    headers[USER_AGENT_KEY] = (
-        f"{AGENT_FRAMEWORK_USER_AGENT} {headers[USER_AGENT_KEY]}"
-        if USER_AGENT_KEY in headers
-        else AGENT_FRAMEWORK_USER_AGENT
-    )
+        return {USER_AGENT_KEY: user_agent}
+    headers[USER_AGENT_KEY] = f"{user_agent} {headers[USER_AGENT_KEY]}" if USER_AGENT_KEY in headers else user_agent
 
     return headers
