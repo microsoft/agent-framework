@@ -156,7 +156,7 @@ def _is_file_mount_pair(value: Any) -> TypeGuard[FileMount | tuple[FileMountHost
     if not isinstance(value, tuple):
         return False
 
-    value_tuple = cast(tuple[Any, ...], value)
+    value_tuple = cast(tuple[object, ...], value)
     if len(value_tuple) != 2:
         return False
 
@@ -165,10 +165,14 @@ def _is_file_mount_pair(value: Any) -> TypeGuard[FileMount | tuple[FileMountHost
 
 
 def _normalize_file_mount_input(file_mount: FileMountInput) -> _StoredFileMount:
+    host_path: FileMountHostPath
+    mount_path: str
     if isinstance(file_mount, str):
-        host_path, mount_path = file_mount, file_mount
+        host_path = file_mount
+        mount_path = file_mount
     else:
-        host_path, mount_path = file_mount
+        host_path = file_mount[0]
+        mount_path = file_mount[1]
 
     return _StoredFileMount(
         host_path=_resolve_existing_path(host_path),
