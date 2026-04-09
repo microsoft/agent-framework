@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 
@@ -407,6 +408,86 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
+    public void IndexerPropertyWithResourceAttribute_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var skill = new IndexerResourceSkill();
+
+        // Act & Assert — accessing Resources triggers discovery which should throw
+        var ex = Assert.Throws<InvalidOperationException>(() => skill.Resources);
+        Assert.Contains("indexer", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("IndexerResourceSkill", ex.Message);
+    }
+
+    [Fact]
+    public void ResourceMethodWithUnsupportedParameters_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var skill = new UnsupportedParamResourceMethodSkill();
+
+        // Act & Assert — accessing Resources triggers discovery which should throw
+        var ex = Assert.Throws<InvalidOperationException>(() => skill.Resources);
+        Assert.Contains("content", ex.Message);
+        Assert.Contains("String", ex.Message);
+    }
+
+    [Fact]
+    public async Task ResourceMethodWithServiceProviderParam_IsDiscoveredSuccessfullyAsync()
+    {
+        // Arrange
+        var skill = new ServiceProviderResourceMethodSkill();
+        var sp = new ServiceCollection().BuildServiceProvider();
+
+        // Act
+        var resources = skill.Resources;
+
+        // Assert
+        Assert.NotNull(resources);
+        Assert.Single(resources!);
+        Assert.Equal("sp-resource", resources![0].Name);
+
+        var value = await resources[0].ReadAsync(sp);
+        Assert.Equal("from-sp-method", value?.ToString());
+    }
+
+    [Fact]
+    public async Task ResourceMethodWithCancellationTokenParam_IsDiscoveredSuccessfullyAsync()
+    {
+        // Arrange
+        var skill = new CancellationTokenResourceMethodSkill();
+
+        // Act
+        var resources = skill.Resources;
+
+        // Assert
+        Assert.NotNull(resources);
+        Assert.Single(resources!);
+        Assert.Equal("ct-resource", resources![0].Name);
+
+        var value = await resources[0].ReadAsync();
+        Assert.Equal("from-ct-method", value?.ToString());
+    }
+
+    [Fact]
+    public async Task ResourceMethodWithBothServiceProviderAndCancellationToken_IsDiscoveredSuccessfullyAsync()
+    {
+        // Arrange
+        var skill = new BothParamsResourceMethodSkill();
+        var sp = new ServiceCollection().BuildServiceProvider();
+
+        // Act
+        var resources = skill.Resources;
+
+        // Assert
+        Assert.NotNull(resources);
+        Assert.Single(resources!);
+        Assert.Equal("both-resource", resources![0].Name);
+
+        var value = await resources[0].ReadAsync(sp);
+        Assert.Equal("from-both-method", value?.ToString());
+    }
+
+    [Fact]
     public async Task CreateScript_FallsBackToSerializerOptions_WhenNoExplicitJsoAsync()
     {
         // Arrange
@@ -789,6 +870,58 @@ public sealed class AgentClassSkillTests
                 TotalCount = request.MaxResults,
             }, serializerOptions: SkillTestJsonContext.Default.Options),
         ];
+    }
+
+    private sealed class IndexerResourceSkill : AgentClassSkill<IndexerResourceSkill>
+    {
+        public override AgentSkillFrontmatter Frontmatter { get; } = new("indexer-skill", "Skill with indexer resource.");
+
+        protected override string Instructions => "Body.";
+
+        private readonly Dictionary<string, string> _data = new() { ["key"] = "value" };
+
+        [AgentSkillResource("indexed")]
+        public string this[string key] => this._data[key];
+    }
+
+    private sealed class UnsupportedParamResourceMethodSkill : AgentClassSkill<UnsupportedParamResourceMethodSkill>
+    {
+        public override AgentSkillFrontmatter Frontmatter { get; } = new("unsupported-param-skill", "Skill with unsupported param resource method.");
+
+        protected override string Instructions => "Body.";
+
+        [AgentSkillResource("bad-resource")]
+        private static string GetData(string content) => content;
+    }
+
+    private sealed class ServiceProviderResourceMethodSkill : AgentClassSkill<ServiceProviderResourceMethodSkill>
+    {
+        public override AgentSkillFrontmatter Frontmatter { get; } = new("sp-param-skill", "Skill with IServiceProvider param resource method.");
+
+        protected override string Instructions => "Body.";
+
+        [AgentSkillResource("sp-resource")]
+        private static string GetData(IServiceProvider? sp) => "from-sp-method";
+    }
+
+    private sealed class CancellationTokenResourceMethodSkill : AgentClassSkill<CancellationTokenResourceMethodSkill>
+    {
+        public override AgentSkillFrontmatter Frontmatter { get; } = new("ct-param-skill", "Skill with CancellationToken param resource method.");
+
+        protected override string Instructions => "Body.";
+
+        [AgentSkillResource("ct-resource")]
+        private static string GetData(CancellationToken ct) => "from-ct-method";
+    }
+
+    private sealed class BothParamsResourceMethodSkill : AgentClassSkill<BothParamsResourceMethodSkill>
+    {
+        public override AgentSkillFrontmatter Frontmatter { get; } = new("both-param-skill", "Skill with both IServiceProvider and CancellationToken param resource method.");
+
+        protected override string Instructions => "Body.";
+
+        [AgentSkillResource("both-resource")]
+        private static string GetData(IServiceProvider? sp, CancellationToken ct) => "from-both-method";
     }
 
     #endregion

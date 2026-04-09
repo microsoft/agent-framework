@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 
@@ -233,6 +234,15 @@ public abstract class AgentClassSkill<
                 continue;
             }
 
+            // Indexer properties have getter parameters and cannot be used as resources
+            // because ReadAsync invokes the underlying AIFunction with no named arguments.
+            if (getter.GetParameters().Length > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Property '{property.Name}' on type '{selfType.Name}' is an indexer and cannot be used as a skill resource. " +
+                    "Remove the [AgentSkillResource] attribute or use a non-indexer property.");
+            }
+
             resources ??= [];
             resources.Add(new AgentInlineSkillResource(
                 name: attr.Name ?? property.Name,
@@ -251,6 +261,8 @@ public abstract class AgentClassSkill<
                 continue;
             }
 
+            ValidateResourceMethodParameters(method, selfType);
+
             resources ??= [];
             resources.Add(new AgentInlineSkillResource(
                 name: attr.Name ?? method.Name,
@@ -261,6 +273,22 @@ public abstract class AgentClassSkill<
         }
 
         return resources;
+    }
+
+    private static void ValidateResourceMethodParameters(MethodInfo method, Type skillType)
+    {
+        foreach (var param in method.GetParameters())
+        {
+            if (param.ParameterType != typeof(IServiceProvider) &&
+                param.ParameterType != typeof(CancellationToken))
+            {
+                throw new InvalidOperationException(
+                    $"Method '{method.Name}' on type '{skillType.Name}' has parameter '{param.Name}' of type " +
+                    $"'{param.ParameterType}' which cannot be supplied when reading a resource. " +
+                    "Resource methods may only accept IServiceProvider and/or CancellationToken parameters. " +
+                    "Remove the [AgentSkillResource] attribute or change the method signature.");
+            }
+        }
     }
 
     private List<AgentSkillScript>? DiscoverScripts()
