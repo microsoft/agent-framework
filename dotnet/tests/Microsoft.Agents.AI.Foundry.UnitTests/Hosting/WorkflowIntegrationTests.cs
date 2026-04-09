@@ -383,8 +383,8 @@ public class WorkflowIntegrationTests
         var mock = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
         mock.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
-        mock.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
+        mock.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
         return mock;
     }
 
