@@ -11,7 +11,7 @@ informed:
 
 ## Context and Problem Statement
 
-We need a architecture design that supports CodeAct in both Python and .NET. This is a necessary capability for the current generation of long running agents, which need to plan, iterate, transform tool outputs, and execute bounded code inside a controlled runtime instead of pushing every intermediate step back through the model. The design should preserve the same behavioral contract across SDKs, but it does not need to use the same internal extension point in each runtime. We also want to standardize on Hyperlight as the initial backend, using the existing Python package and an anticipated .NET binding package once it is available.
+We need an architecture design that supports CodeAct in both Python and .NET. This is a necessary capability for the current generation of long-running agents, which need to plan, iterate, transform tool outputs, and execute bounded code inside a controlled runtime instead of pushing every intermediate step back through the model. The design should preserve the same behavioral contract across SDKs, but it does not need to use the same internal extension point in each runtime. We also want to standardize on Hyperlight as the initial backend, using the existing Python package and an anticipated .NET binding package once it is available.
 
 Throughout this ADR, **CodeAct** is the primary term. **Code mode** and **programmatic tool calling** refer to the same capability. This ADR uses **CodeAct** consistently.
 

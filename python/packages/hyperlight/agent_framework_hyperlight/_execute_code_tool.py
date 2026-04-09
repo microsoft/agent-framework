@@ -109,20 +109,19 @@ def _passthrough_result_parser(result: Any) -> str:
 
 
 def _collect_tools(*tool_groups: Any) -> list[FunctionTool]:
-    tools: list[FunctionTool] = []
-    seen_names: set[str] = set()
+    tools_by_name: dict[str, FunctionTool] = {}
 
     for tool_group in tool_groups:
         normalized_group = normalize_tools(tool_group)
         for tool_obj in normalized_group:
             if not isinstance(tool_obj, FunctionTool):
                 continue
-            if tool_obj.name == "execute_code" or tool_obj.name in seen_names:
+            if tool_obj.name == "execute_code":
                 continue
-            seen_names.add(tool_obj.name)
-            tools.append(tool_obj)
+            tools_by_name.pop(tool_obj.name, None)
+            tools_by_name[tool_obj.name] = tool_obj
 
-    return tools
+    return list(tools_by_name.values())
 
 
 def _resolve_execute_code_approval_mode(

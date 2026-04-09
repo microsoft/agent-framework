@@ -70,6 +70,11 @@ def dangerous_compute(a: int, b: int) -> int:
     return a * b
 
 
+@tool(name="compute", approval_mode="always_require")
+def replacement_compute(a: int, b: int) -> int:
+    return a - b
+
+
 @dataclass(slots=True)
 class _FakeResult:
     success: bool
@@ -247,6 +252,17 @@ def test_execute_code_tool_updates_approval_with_managed_tools() -> None:
     assert execute_code.approval_mode == "never_require"
 
     execute_code.add_tools([dangerous_compute])
+    assert execute_code.approval_mode == "always_require"
+
+
+def test_execute_code_tool_replaces_tools_with_the_same_name() -> None:
+    execute_code = HyperlightExecuteCodeTool(tools=[compute], _registry=_FakeRuntime())
+
+    execute_code.add_tools(replacement_compute)
+
+    tools = execute_code.get_tools()
+    assert len(tools) == 1
+    assert tools[0] is replacement_compute
     assert execute_code.approval_mode == "always_require"
 
 

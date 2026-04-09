@@ -60,41 +60,41 @@ There is no separate runtime setup object in the Python design. CodeAct tools, f
 Preferred pattern:
 - `add_tools(...) -> None`
 - `get_tools() -> Sequence[ToolTypes]`
-- `remove_tools(...) -> None`
+- `remove_tool(...) -> None`
 - `clear_tools() -> None`
 - `add_file_mounts(...) -> None`
 - `get_file_mounts() -> Sequence[FileMount]`
-- `remove_file_mounts(...) -> None`
+- `remove_file_mount(...) -> None`
 - `clear_file_mounts() -> None`
 - `add_allowed_domains(...) -> None`
 - `get_allowed_domains() -> Sequence[str]`
-- `remove_allowed_domains(...) -> None`
+- `remove_allowed_domain(...) -> None`
 - `clear_allowed_domains() -> None`
 - `add_allowed_http_methods(...) -> None`
 - `get_allowed_http_methods() -> Sequence[str]`
-- `remove_allowed_http_methods(...) -> None`
+- `remove_allowed_http_method(...) -> None`
 - `clear_allowed_http_methods() -> None`
 
 Requirements:
 - The provider-owned CodeAct tool registry is keyed by tool name.
 - `add_tools(...)` adds new tools and replaces an existing provider-owned registration when the same tool name is added again.
 - `get_tools()` returns the provider's current configured CodeAct tool registry.
-- `remove_tools(...)` removes provider-owned CodeAct tools by name.
+- `remove_tool(...)` removes provider-owned CodeAct tools by name.
 - `clear_tools()` removes all provider-owned CodeAct tools.
 - File mounts are keyed by sandbox mount path.
 - `add_file_mounts(...)` adds new file mounts and replaces an existing mount when the same mount path is added again.
 - `get_file_mounts()` returns the provider's current configured file mounts.
-- `remove_file_mounts(...)` removes file mounts by mount path.
+- `remove_file_mount(...)` removes file mounts by mount path.
 - `clear_file_mounts()` removes all configured file mounts.
 - Allowed domains are keyed by normalized domain string.
 - `add_allowed_domains(...)` adds domains to the outbound allow list.
 - `get_allowed_domains()` returns the current outbound domain allow list.
-- `remove_allowed_domains(...)` removes domains from the outbound allow list.
+- `remove_allowed_domain(...)` removes domains from the outbound allow list.
 - `clear_allowed_domains()` removes all configured allowed domains.
 - Allowed HTTP methods are keyed by normalized method name.
 - `add_allowed_http_methods(...)` adds methods to the outbound method allow list.
 - `get_allowed_http_methods()` returns the current outbound method allow list.
-- `remove_allowed_http_methods(...)` removes methods from the outbound method allow list.
+- `remove_allowed_http_method(...)` removes methods from the outbound method allow list.
 - `clear_allowed_http_methods()` removes all configured allowed HTTP methods.
 - Tool, file-mount, and network-allow-list mutations affect subsequent runs only; runs already in progress keep the snapshot captured at run start.
 - The provider must snapshot its effective tool registry and capability state at the start of each run so concurrent execution remains deterministic.
