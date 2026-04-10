@@ -24,15 +24,21 @@ The following environment variables can be configured:
 | `GITHUB_COPILOT_TIMEOUT` | Request timeout in seconds | `60` |
 | `GITHUB_COPILOT_LOG_LEVEL` | CLI log level | `info` |
 
-### OpenTelemetry Environment Variables
+## Observability
 
-When using [`github_copilot_with_observability.py`](github_copilot_with_observability.py), the following OTel variables can be configured:
+`GitHubCopilotAgent` has OpenTelemetry tracing built-in. To enable it, call `configure_otel_providers()` before running the agent:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `http://localhost:4317`) | Console only |
-| `OTEL_SERVICE_NAME` | Service name shown in traces | `agent_framework` |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | Protocol: `grpc` or `http/protobuf` | `grpc` |
+```python
+from agent_framework.observability import configure_otel_providers
+from agent_framework_github_copilot import GitHubCopilotAgent
+
+configure_otel_providers(enable_console_exporters=True)
+
+async with GitHubCopilotAgent() as agent:
+    response = await agent.run("Hello!")
+```
+
+See the [observability samples](../../../02-agents/observability/) for full examples with OTLP exporters.
 
 ## Examples
 
@@ -40,7 +46,6 @@ When using [`github_copilot_with_observability.py`](github_copilot_with_observab
 |------|-------------|
 | [`github_copilot_basic.py`](github_copilot_basic.py) | The simplest way to create an agent using `GitHubCopilotAgent`. Demonstrates both streaming and non-streaming responses with function tools. |
 | [`github_copilot_with_session.py`](github_copilot_with_session.py) | Shows session management with automatic creation, persistence via session objects, and resuming sessions by ID. |
-| [`github_copilot_with_observability.py`](github_copilot_with_observability.py) | Shows how to enable OpenTelemetry tracing with `configure_otel_providers()`. Traces agent runs with spans and metrics sent to a configured OTLP backend or console. |
 | [`github_copilot_with_shell.py`](github_copilot_with_shell.py) | Shows how to enable shell command execution permissions. Demonstrates running system commands like listing files and getting system information. |
 | [`github_copilot_with_file_operations.py`](github_copilot_with_file_operations.py) | Shows how to enable file read and write permissions. Demonstrates reading file contents and creating new files. |
 | [`github_copilot_with_url.py`](github_copilot_with_url.py) | Shows how to enable URL fetching permissions. Demonstrates fetching and processing web content. |

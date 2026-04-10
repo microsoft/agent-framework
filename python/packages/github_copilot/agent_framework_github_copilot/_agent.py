@@ -831,6 +831,7 @@ class GitHubCopilotAgent(AgentTelemetryLayer, RawGitHubCopilotAgent[OptionsT], G
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
@@ -842,6 +843,7 @@ class GitHubCopilotAgent(AgentTelemetryLayer, RawGitHubCopilotAgent[OptionsT], G
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
@@ -852,6 +854,7 @@ class GitHubCopilotAgent(AgentTelemetryLayer, RawGitHubCopilotAgent[OptionsT], G
         *,
         stream: bool = False,
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
@@ -866,6 +869,7 @@ class GitHubCopilotAgent(AgentTelemetryLayer, RawGitHubCopilotAgent[OptionsT], G
             messages=messages,
             stream=stream,
             session=session,
+            middleware=middleware,
             options=options,
             **kwargs,
         )
