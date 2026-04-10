@@ -11,7 +11,7 @@ from typing_extensions import Any, AsyncGenerator, Optional
 class InvocationsHostServer(InvocationAgentServerHost):
     """An invocations server host for an agent."""
 
-    USER_AGENT_PREFIX = "foundry-hosting-invocations"
+    USER_AGENT_PREFIX = "foundry-hosting"
 
     def __init__(
         self,

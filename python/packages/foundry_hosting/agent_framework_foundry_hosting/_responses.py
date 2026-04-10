@@ -41,7 +41,7 @@ from typing_extensions import Any, Sequence, cast
 class ResponsesHostServer(ResponsesAgentServerHost):
     """A responses server host for an agent."""
 
-    USER_AGENT_PREFIX = "foundry-hosting-responses"
+    USER_AGENT_PREFIX = "foundry-hosting"
 
     def __init__(
         self,
