@@ -36,7 +36,7 @@ def append_to_user_agent(prefix: str) -> None:
     Duplicate prefixes are ignored.
 
     Args:
-        prefix: The prefix to prepend (e.g. "foundry-hosting-responses").
+        prefix: The prefix to prepend (e.g. "foundry-hosting").
     """
     if prefix and prefix not in _user_agent_prefixes:
         _user_agent_prefixes.append(prefix)
