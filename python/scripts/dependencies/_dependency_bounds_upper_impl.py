@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-# ruff: noqa: INP001, S404, S603
+# ruff: noqa: S404, S603
 
 """Raise dependency upper bounds, validate, and persist the latest passing set."""
 
@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import logging
 import os
 import re
 import shutil
@@ -22,15 +23,18 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import tomli
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.version import InvalidVersion, Version
+from rich import print
+
 from scripts.dependencies._dependency_bounds_runtime import (
     extend_command_with_runtime_tools,
     extend_command_with_task,
     next_zero_major_minor_boundary,
 )
-from packaging.requirements import InvalidRequirement, Requirement
-from packaging.version import InvalidVersion, Version
-from rich import print
-from scripts.task_runner import discover_projects, extract_poe_tasks
+from scripts.task_runner import discover_projects, extract_poe_tasks, project_filter_matches
+
+logger = logging.getLogger(__name__)
 
 CHECK_TASK_PRIORITY = ("check", "typing", "pyright", "mypy", "lint")
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
@@ -263,6 +267,12 @@ def _collect_dev_pin_replacements(
     project = data.get("project", {}) or {}
     optional_dependencies = project.get("optional-dependencies", {}) or {}
     dependency_groups = data.get("dependency-groups", {}) or {}
+    logger.debug(
+        "Collecting dev dependency replacements from %s with optional_dependencies=%s and dependency_groups=%s",
+        pyproject_file,
+        optional_dependencies.keys(),
+        dependency_groups.keys(),
+    )
     workspace_versions = _load_workspace_package_versions(str(pyproject_file.parent.parent.parent.resolve()))
 
     dev_requirements: list[str] = []
@@ -272,6 +282,7 @@ def _collect_dev_pin_replacements(
     dev_requirements.extend(
         requirement for requirement in (dependency_groups.get("dev", []) or []) if isinstance(requirement, str)
     )
+    logger.debug(f"Found {len(dev_requirements)} dev requirements in {pyproject_file}")
 
     seen_requirements: set[str] = set()
     replacements: dict[str, str] = {}
@@ -292,9 +303,10 @@ def _collect_dev_pin_replacements(
         if dependency_name.startswith("agent-framework"):
             latest_version = workspace_versions.get(dependency_name)
         else:
-            latest_version = _select_latest_dev_version(catalog.get_lock(dependency_name))
-            if latest_version is None:
-                latest_version = _select_latest_dev_version(catalog.get(dependency_name))
+            # Dev-tool refreshes should follow the selected version source (PyPI by default)
+            # instead of being pinned by the current lockfile. VersionCatalog already falls
+            # back to lock data when PyPI cannot be reached or --version-source=lock is used.
+            latest_version = _select_latest_dev_version(catalog.get(dependency_name))
         if latest_version is None:
             continue
 
@@ -1088,7 +1100,7 @@ def main() -> None:
         "--packages",
         nargs="*",
         default=None,
-        help="Optional package filters by workspace path (e.g., packages/core) or package name.",
+        help="Optional package filters by short name (for example core), workspace path, or package name.",
     )
     parser.add_argument(
         "--dependencies",
@@ -1153,7 +1165,11 @@ def main() -> None:
         project_section = package_config.get("project", {})
         optional_dependencies = project_section.get("optional-dependencies", {}) or {}
         dependency_groups = package_config.get("dependency-groups", {}) or {}
-        if package_filters and str(project_path) not in package_filters and package_name not in package_filters:
+        # Reuse the shared selector matcher so direct optimizer runs accept the
+        # same short-name package filters as the contributor-facing Poe tasks.
+        if package_filters and not any(
+            project_filter_matches(project_path, package_filter, [package_name]) for package_filter in package_filters
+        ):
             continue
         plans.append(
             PackagePlan(

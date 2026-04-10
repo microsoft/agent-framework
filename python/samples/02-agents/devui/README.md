@@ -16,76 +16,124 @@ DevUI is a sample application that provides:
 
 ## Quick Start
 
-### Option 1: In-Memory Mode (Simplest)
+### Option 1: In-Memory Mode (Programmatic Registration)
 
-Run a single sample directly. This demonstrates how to wrap agents and workflows programmatically without needing a directory structure:
+Run a single sample directly. This demonstrates how to register agents and workflows in code without using DevUI's directory discovery.
+
+This sample uses Azure AI Foundry. Before running it:
+
+1. Copy `.env.example` in this folder to `.env`, or export the same values in your shell
+2. Set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`
+3. Run `az login`
+
+Then start the sample:
 
 ```bash
 cd python/samples/02-agents/devui
 python in_memory_mode.py
 ```
 
-This opens your browser at http://localhost:8090 with pre-configured agents and a basic workflow.
+This opens your browser at http://localhost:8090 with two Foundry-backed agents and a simple text transformation workflow.
 
-### Option 2: Directory Discovery
+### Option 2: Directory Discovery with Shared Root `.env`
 
-Launch DevUI to discover all samples in this folder:
+Run the folder-level launcher to load `samples/02-agents/devui/.env` and then start DevUI with directory discovery for this folder:
 
 ```bash
 cd python/samples/02-agents/devui
-devui
+python main.py
 ```
 
-This starts the server at http://localhost:8080 with all agents and workflows available.
+This starts the server at http://localhost:8080 with all discoverable agents and workflows available. The root `.env` acts as shared fallback configuration for discovered samples.
+
+### Option 3: Directory Discovery with the `devui` CLI
+
+If you prefer the CLI directly, you can still launch DevUI from this folder:
+
+```bash
+cd python/samples/02-agents/devui
+devui .
+```
+
+DevUI discovery checks for a sample-specific `.env` first and then falls back to `.env` in `samples/02-agents/devui/`.
 
 ## Sample Structure
 
-Each agent/workflow follows a strict structure required by DevUI's discovery system:
+DevUI discovers samples from Python packages that export either `agent` or `workflow`.
+
+Typical agent layout:
 
 ```
 agent_name/
-├── __init__.py      # Must export: agent = Agent(...)
+├── __init__.py      # Must export: agent = ...
 ├── agent.py         # Agent implementation
-└── .env.example     # Example environment variables
+└── .env.example     # Optional example environment variables
+```
+
+Typical workflow layout:
+
+```
+workflow_name/
+├── __init__.py      # Must export: workflow = ...
+├── workflow.py      # Workflow implementation
+├── workflow.yaml    # Optional declarative definition
+└── .env.example     # Optional example environment variables
 ```
 
 ## Available Samples
 
 ### Agents
 
-| Sample                                           | Description                                                                                       | Features                                                                   | Required Environment Variables                                                                     |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| [**weather_agent_azure/**](weather_agent_azure/) | Weather agent using Azure OpenAI with API key authentication                                      | Azure OpenAI integration, function calling, mock weather tools             | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, `AZURE_OPENAI_ENDPOINT`              |
-| [**foundry_agent/**](foundry_agent/)             | Weather agent using Azure AI Agent (Foundry) with Azure CLI authentication (run `az login` first) | Azure AI Agent integration, Azure CLI authentication, mock weather tools   | `AZURE_AI_PROJECT_ENDPOINT`, `FOUNDRY_MODEL_DEPLOYMENT_NAME`                                       |
+| Sample | What it demonstrates | Required keys / auth |
+| ------ | -------------------- | -------------------- |
+| [**agent_weather/**](agent_weather/) | A richer Foundry-backed weather agent that shows chat middleware, function middleware, tool calling, and an approval-required tool alongside auto-approved tools. | `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, plus Azure CLI auth via `az login` |
+| [**agent_foundry/**](agent_foundry/) | A minimal Foundry-backed weather agent with current weather and forecast tools. Use this when you want the smallest possible directory-discovered agent sample. | `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, plus Azure CLI auth via `az login` |
 
 ### Workflows
 
-| Sample                                       | Description                                                       | Features                                                                                                                    | Required Environment Variables                                                        |
-| -------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| [**declarative/**](declarative/)             | Declarative YAML workflow with conditional branching              | YAML-based workflow definition, conditional logic, no Python code required                                                   | None - uses mock data                                                                 |
-| [**workflow_agents/**](workflow_agents/)     | Content review workflow with agents as executors                  | Agents as workflow nodes, conditional routing based on structured outputs, quality-based paths (Writer -> Reviewer -> Editor/Publisher) | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, `AZURE_OPENAI_ENDPOINT` |
-| [**spam_workflow/**](spam_workflow/)         | 5-step email spam detection workflow with branching logic         | Sequential execution, conditional branching (spam vs. legitimate), multiple executors, mock spam detection                  | None - uses mock data                                                                 |
-| [**fanout_workflow/**](fanout_workflow/)     | Advanced data processing workflow with parallel execution         | Fan-out/fan-in patterns, complex state management, multi-stage processing (validation -> transformation -> quality assurance) | None - uses mock data                                                                 |
+| Sample | What it demonstrates | Required keys / auth |
+| ------ | -------------------- | -------------------- |
+| [**workflow_declarative/**](workflow_declarative/) | A YAML-defined workflow loaded through `WorkflowFactory`, with nested age-based branching and no model client code. | None |
+| [**workflow_with_agents/**](workflow_with_agents/) | A content review workflow that uses agents as executors and routes based on structured review output (`Writer -> Reviewer -> Editor/Publisher -> Summarizer`). | `AZURE_OPENAI_ENDPOINT`, plus `AZURE_OPENAI_CHAT_MODEL` or `AZURE_OPENAI_MODEL`; Azure CLI auth via `az login`; `AZURE_OPENAI_API_VERSION` is optional |
+| [**workflow_spam/**](workflow_spam/) | A multi-step spam detection workflow with human-in-the-loop approval, branching for spam vs. legitimate messages, and a final reporting step. | None |
+| [**workflow_fanout/**](workflow_fanout/) | A larger fan-out/fan-in data processing workflow with parallel validation, multiple transformations, QA, aggregation, and demo failure toggles. | None |
 
 ### Standalone Examples
 
-| Sample                                     | Description                                                               | Features                                                                                                                        |
-| ------------------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| [**in_memory_mode.py**](in_memory_mode.py) | Demonstrates programmatic entity registration without directory structure | In-memory agent and workflow registration, multiple entities served from a single file, includes basic workflow, simplest way to get started |
+| Sample | What it demonstrates | Required keys / auth |
+| ------ | -------------------- | -------------------- |
+| [**in_memory_mode.py**](in_memory_mode.py) | Registers multiple entities directly in Python: two Foundry-backed agents plus a simple workflow, all served from one file without directory discovery. | `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, plus Azure CLI auth via `az login` |
 
 ## Environment Variables
 
-Each sample that requires API keys includes a `.env.example` file. To use:
+For samples that require external services:
 
-1. Copy `.env.example` to `.env` in the same directory
-2. Fill in your actual API keys
-3. DevUI automatically loads `.env` files from entity directories
+1. Copy `.env.example` to `.env`
+2. Fill in the required values
+3. Run `az login` for samples that use Azure CLI authentication
+
+Directory discovery checks `.env` files in this order:
+
+1. The entity directory itself, for example `agent_weather/.env`
+2. The root DevUI samples folder, `samples/02-agents/devui/.env`
+
+That means the root `.env.example` can hold shared defaults for multiple samples, while a sample-specific `.env` can override those values when needed.
+
+`in_memory_mode.py` and `main.py` both load `.env` from `samples/02-agents/devui/`, so the root `.env.example` in this folder is the right starting point for both commands.
 
 Alternatively, set environment variables globally:
 
 ```bash
-export OPENAI_API_KEY="your-key-here"
-export OPENAI_CHAT_MODEL_ID="gpt-4o"
+# Foundry-backed samples
+export FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
+export FOUNDRY_MODEL="gpt-4o"
+
+# Azure OpenAI workflow_with_agents sample
+export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com"
+export AZURE_OPENAI_CHAT_MODEL="gpt-4o"
+export AZURE_OPENAI_MODEL="gpt-4o"
+
+az login
 ```
 
 ## Using DevUI with Your Own Agents
@@ -145,7 +193,7 @@ curl http://localhost:8080/v1/entities
 
 ## Troubleshooting
 
-**Missing API keys**: Check your `.env` files or environment variables.
+**Missing credentials or settings**: Check your `.env` files, confirm the required variables for the sample you are running, and make sure `az login` has completed for Azure-authenticated samples.
 
 **Import errors**: Make sure you've installed the devui package:
 

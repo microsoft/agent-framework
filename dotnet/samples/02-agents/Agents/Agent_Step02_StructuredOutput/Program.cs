@@ -14,7 +14,7 @@ using SampleApp;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Create chat client to be used by chat client agents.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.

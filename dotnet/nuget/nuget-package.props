@@ -1,18 +1,21 @@
 <Project>
   <PropertyGroup>
     <!-- Central version prefix - applies to all nuget packages. -->
-    <VersionPrefix>1.0.0</VersionPrefix>
-    <RCNumber>4</RCNumber>
+    <VersionPrefix>1.1.0</VersionPrefix>
+    <RCNumber>1</RCNumber>
     <PackageVersion Condition="'$(IsReleaseCandidate)' == 'true'">$(VersionPrefix)-rc$(RCNumber)</PackageVersion>
-    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).260311.1</PackageVersion>
-    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.260311.1</PackageVersion>
-    <GitTag>1.0.0-rc4</GitTag>
+    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).260410.1</PackageVersion>
+    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.260410.1</PackageVersion>
+    <PackageVersion Condition="'$(IsReleased)' == 'true'">$(VersionPrefix)</PackageVersion>
+    <GitTag>1.1.0</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>
     <IsPackable>true</IsPackable>
 
     <!-- Package validation. Baseline Version should be the latest version available on NuGet. -->
-    <PackageValidationBaselineVersion>0.0.1</PackageValidationBaselineVersion>
+    <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion>
+    <!-- Enable validation for GA packages -->
+    <EnablePackageValidation Condition="'$(IsReleased)' == 'true'">true</EnablePackageValidation>
     <!-- Validate assembly attributes only for Publish builds -->
     <NoWarn Condition="'$(Configuration)' != 'Publish'">$(NoWarn);CP0003</NoWarn>
     <!-- Do not validate reference assemblies -->

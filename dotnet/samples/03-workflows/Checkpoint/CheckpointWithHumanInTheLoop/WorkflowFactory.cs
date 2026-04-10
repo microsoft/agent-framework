@@ -53,6 +53,8 @@ internal sealed class SignalWithNumber
 /// <summary>
 /// Executor that judges the guess and provides feedback.
 /// </summary>
+[SendsMessage(typeof(SignalWithNumber))]
+[YieldsOutput(typeof(string))]
 internal sealed class JudgeExecutor() : Executor<int>("Judge")
 {
     private readonly int _targetNumber;

@@ -49,7 +49,7 @@ class StubAgent(BaseAgent):
         return self._run_impl()
 
     async def _run_impl(self) -> AgentResponse:
-        response = Message(role="assistant", text=self._reply_text, author_name=self.name)
+        response = Message(role="assistant", contents=[self._reply_text], author_name=self.name)
         return AgentResponse(messages=[response])
 
     async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
@@ -89,10 +89,12 @@ class StubManagerAgent(Agent):
                 messages=[
                     Message(
                         role="assistant",
-                        text=(
-                            '{"terminate": false, "reason": "Selecting agent", '
-                            '"next_speaker": "agent", "final_message": null}'
-                        ),
+                        contents=[
+                            (
+                                '{"terminate": false, "reason": "Selecting agent", '
+                                '"next_speaker": "agent", "final_message": null}'
+                            )
+                        ],
                         author_name=self.name,
                     )
                 ],
@@ -110,10 +112,12 @@ class StubManagerAgent(Agent):
             messages=[
                 Message(
                     role="assistant",
-                    text=(
-                        '{"terminate": true, "reason": "Task complete", '
-                        '"next_speaker": null, "final_message": "agent manager final"}'
-                    ),
+                    contents=[
+                        (
+                            '{"terminate": true, "reason": "Task complete", '
+                            '"next_speaker": null, "final_message": "agent manager final"}'
+                        )
+                    ],
                     author_name=self.name,
                 )
             ],
@@ -141,12 +145,14 @@ class ConcatenatedJsonManagerAgent(Agent):
                 messages=[
                     Message(
                         role="assistant",
-                        text=(
-                            '{"terminate": false, "reason": "invalid candidate", '
-                            '"next_speaker": "unknown", "final_message": null} '
-                            '{"terminate": false, "reason": "pick known participant", '
-                            '"next_speaker": "agent", "final_message": null}'
-                        ),
+                        contents=[
+                            (
+                                '{"terminate": false, "reason": "invalid candidate", '
+                                '"next_speaker": "unknown", "final_message": null} '
+                                '{"terminate": false, "reason": "pick known participant", '
+                                '"next_speaker": "agent", "final_message": null}'
+                            )
+                        ],
                         author_name=self.name,
                     )
                 ]
@@ -156,10 +162,12 @@ class ConcatenatedJsonManagerAgent(Agent):
             messages=[
                 Message(
                     role="assistant",
-                    text=(
-                        '{"terminate": true, "reason": "Task complete", '
-                        '"next_speaker": null, "final_message": "concatenated manager final"}'
-                    ),
+                    contents=[
+                        (
+                            '{"terminate": true, "reason": "Task complete", '
+                            '"next_speaker": null, "final_message": "concatenated manager final"}'
+                        )
+                    ],
                     author_name=self.name,
                 )
             ]
@@ -189,7 +197,7 @@ class StubMagenticManager(MagenticManagerBase):
         self._round = 0
 
     async def plan(self, magentic_context: MagenticContext) -> Message:
-        return Message(role="assistant", text="plan", author_name="magentic_manager")
+        return Message(role="assistant", contents=["plan"], author_name="magentic_manager")
 
     async def replan(self, magentic_context: MagenticContext) -> Message:
         return await self.plan(magentic_context)
@@ -215,7 +223,7 @@ class StubMagenticManager(MagenticManagerBase):
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
-        return Message(role="assistant", text="final", author_name="magentic_manager")
+        return Message(role="assistant", contents=["final"], author_name="magentic_manager")
 
 
 async def test_group_chat_builder_basic_flow() -> None:
@@ -258,8 +266,8 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
 
     agent = workflow.as_agent(name="group-chat-agent")
     conversation = [
-        Message(role="user", text="kickoff", author_name="user"),
-        Message(role="assistant", text="noted", author_name="alpha"),
+        Message(role="user", contents=["kickoff"], author_name="user"),
+        Message(role="assistant", contents=["noted"], author_name="alpha"),
     ]
     response = await agent.run(conversation)
 
@@ -549,7 +557,7 @@ class TestConversationHandling:
 
     async def test_handle_chat_message_input(self) -> None:
         """Test handling Message input directly."""
-        task_message = Message(role="user", text="test message")
+        task_message = Message(role="user", contents=["test message"])
 
         def selector(state: GroupChatState) -> str:
             # Verify the task message was preserved in conversation
@@ -573,8 +581,8 @@ class TestConversationHandling:
     async def test_handle_conversation_list_input(self) -> None:
         """Test handling conversation list preserves context."""
         conversation = [
-            Message(role="system", text="system message"),
-            Message(role="user", text="user message"),
+            Message(role="system", contents=["system message"]),
+            Message(role="user", contents=["user message"]),
         ]
 
         def selector(state: GroupChatState) -> str:
@@ -913,10 +921,12 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                     messages=[
                         Message(
                             role="assistant",
-                            text=(
-                                '{"terminate": false, "reason": "Selecting alpha", '
-                                '"next_speaker": "alpha", "final_message": null}'
-                            ),
+                            contents=[
+                                (
+                                    '{"terminate": false, "reason": "Selecting alpha", '
+                                    '"next_speaker": "alpha", "final_message": null}'
+                                )
+                            ],
                             author_name=self.name,
                         )
                     ],
@@ -933,10 +943,12 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                 messages=[
                     Message(
                         role="assistant",
-                        text=(
-                            '{"terminate": true, "reason": "Task complete", '
-                            '"next_speaker": null, "final_message": "dynamic manager final"}'
-                        ),
+                        contents=[
+                            (
+                                '{"terminate": true, "reason": "Task complete", '
+                                '"next_speaker": null, "final_message": "dynamic manager final"}'
+                            )
+                        ],
                         author_name=self.name,
                     )
                 ],

@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;
@@ -58,7 +58,7 @@ internal sealed class Program
             agentDescription: "Searches documents on Microsoft Learn");
     }
 
-    private static PromptAgentDefinition DefineSearchAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineSearchAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =

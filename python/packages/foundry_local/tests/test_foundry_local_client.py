@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import SupportsChatGetResponse
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import SettingNotFoundError
+from agent_framework.foundry import FoundryLocalClient
 
-from agent_framework_foundry_local import FoundryLocalClient
 from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings
 
 # Settings Tests
@@ -17,7 +18,7 @@ def test_foundry_local_settings_init_from_env(foundry_local_unit_test_env: dict[
     """Test FoundryLocalSettings initialization from environment variables."""
     settings = load_settings(FoundryLocalSettings, env_prefix="FOUNDRY_LOCAL_")
 
-    assert settings["model_id"] == foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL_ID"]
+    assert settings["model"] == foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL"]
 
 
 def test_foundry_local_settings_init_with_explicit_values() -> None:
@@ -25,29 +26,29 @@ def test_foundry_local_settings_init_with_explicit_values() -> None:
     settings = load_settings(
         FoundryLocalSettings,
         env_prefix="FOUNDRY_LOCAL_",
-        model_id="custom-model-id",
+        model="custom-model-id",
     )
 
-    assert settings["model_id"] == "custom-model-id"
+    assert settings["model"] == "custom-model-id"
 
 
-@pytest.mark.parametrize("exclude_list", [["FOUNDRY_LOCAL_MODEL_ID"]], indirect=True)
-def test_foundry_local_settings_missing_model_id(foundry_local_unit_test_env: dict[str, str]) -> None:
-    """Test FoundryLocalSettings when model_id is missing raises error."""
-    with pytest.raises(SettingNotFoundError, match="Required setting 'model_id'"):
+@pytest.mark.parametrize("exclude_list", [["FOUNDRY_LOCAL_MODEL"]], indirect=True)
+def test_foundry_local_settings_missing_model(foundry_local_unit_test_env: dict[str, str]) -> None:
+    """Test FoundryLocalSettings when model is missing raises error."""
+    with pytest.raises(SettingNotFoundError, match="Required setting 'model'"):
         load_settings(
             FoundryLocalSettings,
             env_prefix="FOUNDRY_LOCAL_",
-            required_fields=["model_id"],
+            required_fields=["model"],
         )
 
 
 def test_foundry_local_settings_explicit_overrides_env(foundry_local_unit_test_env: dict[str, str]) -> None:
     """Test that explicit values override environment variables."""
-    settings = load_settings(FoundryLocalSettings, env_prefix="FOUNDRY_LOCAL_", model_id="override-model-id")
+    settings = load_settings(FoundryLocalSettings, env_prefix="FOUNDRY_LOCAL_", model="override-model-id")
 
-    assert settings["model_id"] == "override-model-id"
-    assert settings["model_id"] != foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL_ID"]
+    assert settings["model"] == "override-model-id"
+    assert settings["model"] != foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL"]
 
 
 # Client Initialization Tests
@@ -59,11 +60,20 @@ def test_foundry_local_client_init(mock_foundry_local_manager: MagicMock) -> Non
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ):
-        client = FoundryLocalClient(model_id="test-model-id")
+        client = FoundryLocalClient(model="test-model-id")
 
-        assert client.model_id == "test-model-id"
+        assert client.model == "test-model-id"
         assert client.manager is mock_foundry_local_manager
         assert isinstance(client, SupportsChatGetResponse)
+
+
+def test_foundry_local_client_get_response_uses_explicit_runtime_buckets() -> None:
+    """Foundry Local should expose explicit runtime buckets instead of raw kwargs."""
+    signature = inspect.signature(FoundryLocalClient.get_response)
+
+    assert "client_kwargs" in signature.parameters
+    assert "function_invocation_kwargs" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
 def test_foundry_local_client_init_with_bootstrap_false(mock_foundry_local_manager: MagicMock) -> None:
@@ -72,7 +82,7 @@ def test_foundry_local_client_init_with_bootstrap_false(mock_foundry_local_manag
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ) as mock_manager_class:
-        FoundryLocalClient(model_id="test-model-id", bootstrap=False)
+        FoundryLocalClient(model="test-model-id", bootstrap=False)
 
         mock_manager_class.assert_called_once_with(
             bootstrap=False,
@@ -86,7 +96,7 @@ def test_foundry_local_client_init_with_timeout(mock_foundry_local_manager: Magi
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ) as mock_manager_class:
-        FoundryLocalClient(model_id="test-model-id", timeout=60.0)
+        FoundryLocalClient(model="test-model-id", timeout=60.0)
 
         mock_manager_class.assert_called_once_with(
             bootstrap=True,
@@ -105,7 +115,7 @@ def test_foundry_local_client_init_model_not_found(mock_foundry_local_manager: M
         ),
         pytest.raises(ValueError, match="not found in Foundry Local"),
     ):
-        FoundryLocalClient(model_id="unknown-model")
+        FoundryLocalClient(model="unknown-model")
 
 
 def test_foundry_local_client_uses_model_info_id(mock_foundry_local_manager: MagicMock) -> None:
@@ -118,9 +128,9 @@ def test_foundry_local_client_uses_model_info_id(mock_foundry_local_manager: Mag
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ):
-        client = FoundryLocalClient(model_id="model-alias")
+        client = FoundryLocalClient(model="model-alias")
 
-        assert client.model_id == "resolved-model-id"
+        assert client.model == "resolved-model-id"
 
 
 def test_foundry_local_client_init_from_env(
@@ -133,7 +143,7 @@ def test_foundry_local_client_init_from_env(
     ):
         client = FoundryLocalClient()
 
-        assert client.model_id == foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL_ID"]
+        assert client.model == foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL"]
 
 
 def test_foundry_local_client_init_with_device(mock_foundry_local_manager: MagicMock) -> None:
@@ -144,18 +154,18 @@ def test_foundry_local_client_init_with_device(mock_foundry_local_manager: Magic
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ):
-        FoundryLocalClient(model_id="test-model-id", device=DeviceType.CPU)
+        FoundryLocalClient(model="test-model-id", device=DeviceType.CPU)
 
         mock_foundry_local_manager.get_model_info.assert_called_once_with(
-            alias_or_model_id="test-model-id",
+            "test-model-id",
             device=DeviceType.CPU,
         )
         mock_foundry_local_manager.download_model.assert_called_once_with(
-            alias_or_model_id="test-model-id",
+            "test-model-id",
             device=DeviceType.CPU,
         )
         mock_foundry_local_manager.load_model.assert_called_once_with(
-            alias_or_model_id="test-model-id",
+            "test-model-id",
             device=DeviceType.CPU,
         )
 
@@ -173,7 +183,7 @@ def test_foundry_local_client_init_model_not_found_with_device(mock_foundry_loca
         ),
         pytest.raises(ValueError, match="unknown-model:GPU.*not found"),
     ):
-        FoundryLocalClient(model_id="unknown-model", device=DeviceType.GPU)
+        FoundryLocalClient(model="unknown-model", device=DeviceType.GPU)
 
 
 def test_foundry_local_client_init_with_prepare_model_false(mock_foundry_local_manager: MagicMock) -> None:
@@ -182,7 +192,7 @@ def test_foundry_local_client_init_with_prepare_model_false(mock_foundry_local_m
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ):
-        FoundryLocalClient(model_id="test-model-id", prepare_model=False)
+        FoundryLocalClient(model="test-model-id", prepare_model=False)
 
         mock_foundry_local_manager.download_model.assert_not_called()
         mock_foundry_local_manager.load_model.assert_not_called()
@@ -194,13 +204,13 @@ def test_foundry_local_client_init_calls_download_and_load(mock_foundry_local_ma
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ):
-        FoundryLocalClient(model_id="test-model-id")
+        FoundryLocalClient(model="test-model-id")
 
         mock_foundry_local_manager.download_model.assert_called_once_with(
-            alias_or_model_id="test-model-id",
+            "test-model-id",
             device=None,
         )
         mock_foundry_local_manager.load_model.assert_called_once_with(
-            alias_or_model_id="test-model-id",
+            "test-model-id",
             device=None,
         )

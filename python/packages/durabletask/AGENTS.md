@@ -30,7 +30,7 @@ Durable execution support for long-running agent workflows using Azure Durable F
 
 ```python
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework_durabletask import DurableAIAgentClient, DurableAIAgentWorker
 from durabletask.client import TaskHubGrpcClient
 from durabletask.worker import TaskHubGrpcWorker
@@ -45,7 +45,7 @@ dt_worker = TaskHubGrpcWorker(host_address="localhost:4001")
 agent_worker = DurableAIAgentWorker(dt_worker)
 
 # Create a chat client for the agent
-chat_client = AzureOpenAIChatClient()
+chat_client = OpenAIChatCompletionClient()
 my_agent = Agent(client=chat_client, name="assistant")
 agent_worker.add_agent(my_agent)
 ```

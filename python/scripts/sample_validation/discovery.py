@@ -52,13 +52,18 @@ def _has_main_entrypoint_guard(path: Path) -> bool:
     )
 
 
-def discover_samples(samples_dir: Path, subdir: str | None = None) -> list[SampleInfo]:
+def discover_samples(
+    samples_dir: Path,
+    subdir: str | None = None,
+    exclude: list[str] | None = None,
+) -> list[SampleInfo]:
     """
     Find all Python sample files in the samples directory.
 
     Args:
         samples_dir: Root samples directory
         subdir: Optional subdirectory to filter to
+        exclude: Optional list of subdirectory paths (relative to the search directory) to exclude
 
     Returns:
         List of SampleInfo objects for each discovered sample
@@ -72,12 +77,21 @@ def discover_samples(samples_dir: Path, subdir: str | None = None) -> list[Sampl
     else:
         search_dir = samples_dir
 
+    # Resolve excluded paths to absolute for reliable comparison
+    exclude_paths = {(search_dir / exc).resolve() for exc in (exclude or [])}
+
     python_files: list[Path] = []
 
     # Walk through all subdirectories and find .py files
     for root, dirs, files in os.walk(search_dir):
-        # Skip directories that start with _ (like _sample_validation)
-        dirs[:] = [d for d in dirs if not d.startswith("_") and d != "__pycache__"]
+        # Skip directories that start with _, __pycache__, or excluded paths
+        dirs[:] = [
+            d
+            for d in dirs
+            if not d.startswith("_")
+            and d != "__pycache__"
+            and (Path(root) / d).resolve() not in exclude_paths
+        ]
 
         for file in files:
             # Skip files that start with _ and include only scripts with a main entrypoint guard
@@ -113,8 +127,10 @@ class DiscoverSamplesExecutor(Executor):
         print(f"🔍 Discovering samples in {self.config.samples_dir}")
         if self.config.subdir:
             print(f"   Filtering to subdirectory: {self.config.subdir}")
+        if self.config.exclude:
+            print(f"   Excluding: {', '.join(self.config.exclude)}")
 
-        samples = discover_samples(self.config.samples_dir, self.config.subdir)
+        samples = discover_samples(self.config.samples_dir, self.config.subdir, self.config.exclude)
         print(f"   Found {len(samples)} samples")
 
         await ctx.send_message(DiscoveryResult(samples=samples))

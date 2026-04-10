@@ -3,8 +3,8 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import FunctionInvocationContext, tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework import Agent, FunctionInvocationContext, tool
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 from pydantic import Field
 
@@ -43,7 +43,8 @@ def get_weather(
 
 
 async def main() -> None:
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="WeatherAgent",
         instructions="You are a helpful weather assistant.",
         tools=[get_weather],

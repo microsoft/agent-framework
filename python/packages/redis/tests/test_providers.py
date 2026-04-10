@@ -475,7 +475,7 @@ class TestRedisHistoryProviderClear:
 
 
 class TestRedisHistoryProviderBeforeAfterRun:
-    """Test before_run/after_run integration via BaseHistoryProvider defaults."""
+    """Test before_run/after_run integration via HistoryProvider defaults."""
 
     async def test_before_run_loads_history(self, mock_redis_client: MagicMock):
         msg = Message(role="user", contents=["old msg"])

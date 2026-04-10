@@ -7,12 +7,12 @@ using OpenAI;
 using OpenAI.Responses;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-4o-mini";
+var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-5.4-mini";
 
 AIAgent agent = new OpenAIClient(
     apiKey)
-     .GetResponsesClient(model)
-     .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+     .GetResponsesClient()
+     .AsAIAgent(model: model, instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));

@@ -16,7 +16,7 @@ from agent_framework import (
     WorkflowContext,
     executor,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -39,8 +39,8 @@ Show how to:
 - Compose agent backed executors with function style executors and yield the final output when the workflow completes.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
 """
@@ -109,7 +109,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     ctx.set_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message("user", text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", contents=[new_email.email_content])], should_respond=True)
     )
 
 
@@ -140,7 +140,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content by id from workflow state and forward it to the assistant.
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message("user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", contents=[email.email_content])], should_respond=True)
     )
 
 
@@ -162,11 +162,12 @@ async def handle_spam(detection: DetectionResult, ctx: WorkflowContext[Never, st
 
 def create_spam_detection_agent() -> Agent:
     """Creates a spam detection agent."""
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool) and reason (string)."
@@ -179,11 +180,12 @@ def create_spam_detection_agent() -> Agent:
 
 def create_email_assistant_agent() -> Agent:
     """Creates an email assistant agent."""
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         instructions=(
             "You are an email assistant that helps users draft responses to emails with professionalism. "
             "Return JSON with a single field 'response' containing the drafted reply."

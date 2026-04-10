@@ -27,7 +27,7 @@ Both approaches allow you to extend the framework for your specific use cases wh
 
 ## Understanding Raw Client Classes
 
-The framework provides `Raw...Client` classes (e.g., `RawOpenAIChatClient`, `RawOpenAIResponsesClient`, `RawAzureAIClient`) that are intermediate implementations without middleware, telemetry, or function invocation support.
+The framework provides `Raw...Client` classes (e.g., `RawOpenAIChatClient`, `RawOpenAIChatCompletionClient`, `RawFoundryChatClient`) that are intermediate implementations without middleware, telemetry, or function invocation support.
 
 ### Warning: Raw Clients Should Not Normally Be Used Directly
 
@@ -37,17 +37,17 @@ The framework provides `Raw...Client` classes (e.g., `RawOpenAIChatClient`, `Raw
 
 There is a defined ordering for applying layers that you should follow:
 
-1. **ChatMiddlewareLayer** - Should be applied **first** because it also prepares function middleware
-2. **FunctionInvocationLayer** - Handles tool/function calling loop
-3. **ChatTelemetryLayer** - Must be **inside** the function calling loop for correct per-call telemetry
+1. **FunctionInvocationLayer** - Handles the tool/function calling loop and should stay outermost
+2. **ChatMiddlewareLayer** - Wraps each model call in the loop and stays outside telemetry
+3. **ChatTelemetryLayer** - Must be inside the function calling loop so each model call gets its own telemetry span
 4. **Raw...Client** - The base implementation (e.g., `RawOpenAIChatClient`)
 
 Example of correct layer composition:
 
 ```python
 class MyCustomClient(
-    ChatMiddlewareLayer[TOptions],
     FunctionInvocationLayer[TOptions],
+    ChatMiddlewareLayer[TOptions],
     ChatTelemetryLayer[TOptions],
     RawOpenAIChatClient[TOptions],  # or BaseChatClient for custom implementations
     Generic[TOptions],
@@ -60,10 +60,10 @@ class MyCustomClient(
 
 For most use cases, use the fully-featured public client classes which already have all layers correctly composed:
 
-- `OpenAIChatClient` - OpenAI Chat completions with all layers
-- `OpenAIResponsesClient` - OpenAI Responses API with all layers
-- `AzureOpenAIChatClient` - Azure OpenAI Chat with all layers
-- `AzureOpenAIResponsesClient` - Azure OpenAI Responses with all layers
-- `AzureAIClient` - Azure AI Project with all layers
+- `OpenAIChatCompletionClient` - OpenAI Chat Completions API with all layers
+- `OpenAIChatClient` - OpenAI Responses API with all layers
+- `OpenAIChatCompletionClient` - Azure OpenAI Chat Completions with all layers
+- `OpenAIChatClient` - Azure OpenAI Responses with all layers
+- `FoundryChatClient` - Azure AI Foundry project-backed chat with all layers
 
 These clients handle the layer composition correctly and provide the full feature set out of the box.

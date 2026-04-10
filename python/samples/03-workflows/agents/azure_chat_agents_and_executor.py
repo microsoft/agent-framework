@@ -5,6 +5,7 @@ import os
 from typing import Final
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponseUpdate,
@@ -13,7 +14,7 @@ from agent_framework import (
     WorkflowContext,
     executor,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -35,8 +36,8 @@ Demonstrates:
 - Consuming an AgentExecutorResponse and forwarding an AgentExecutorRequest for the next agent.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -100,22 +101,24 @@ async def enrich_with_references(
 async def main() -> None:
     """Run the workflow and stream combined updates from both agents."""
     # Create the agents
-    research_agent = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    research_agent = Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name="research_agent",
         instructions=(
             "Produce a short, bullet-style briefing with two actionable ideas. Label the section as 'Initial Draft'."
         ),
     )
 
-    final_editor_agent = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    final_editor_agent = Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name="final_editor_agent",
         instructions=(
             "Use all conversation context (including external notes) to produce the final answer. "

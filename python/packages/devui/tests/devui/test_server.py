@@ -151,7 +151,7 @@ async def test_credential_cleanup() -> None:
     # Create mock chat client with credential
     mock_client = Mock()
     mock_client.async_credential = mock_credential
-    mock_client.model_id = "test-model"
+    mock_client.model = "test-model"
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
@@ -184,7 +184,7 @@ async def test_credential_cleanup_error_handling() -> None:
     # Create mock chat client with credential
     mock_client = Mock()
     mock_client.async_credential = mock_credential
-    mock_client.model_id = "test-model"
+    mock_client.model = "test-model"
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
@@ -219,7 +219,7 @@ async def test_multiple_credential_attributes() -> None:
     mock_client = Mock()
     mock_client.credential = mock_cred1
     mock_client.async_credential = mock_cred2
-    mock_client.model_id = "test-model"
+    mock_client.model = "test-model"
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client

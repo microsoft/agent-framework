@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -97,7 +97,7 @@ internal sealed class Program
             agentDescription: "Escalate agent for human support");
     }
 
-    private static PromptAgentDefinition DefineSelfServiceAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineSelfServiceAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -144,7 +144,7 @@ internal sealed class Program
                 }
         };
 
-    private static PromptAgentDefinition DefineTicketingAgent(IConfiguration configuration, TicketingPlugin plugin) =>
+    private static DeclarativeAgentDefinition DefineTicketingAgent(IConfiguration configuration, TicketingPlugin plugin) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -208,7 +208,7 @@ internal sealed class Program
                 }
         };
 
-    private static PromptAgentDefinition DefineTicketRoutingAgent(IConfiguration configuration, TicketingPlugin plugin) =>
+    private static DeclarativeAgentDefinition DefineTicketRoutingAgent(IConfiguration configuration, TicketingPlugin plugin) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -253,7 +253,7 @@ internal sealed class Program
                 }
         };
 
-    private static PromptAgentDefinition DefineWindowsSupportAgent(IConfiguration configuration, TicketingPlugin plugin) =>
+    private static DeclarativeAgentDefinition DefineWindowsSupportAgent(IConfiguration configuration, TicketingPlugin plugin) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -323,7 +323,7 @@ internal sealed class Program
                 }
         };
 
-    private static PromptAgentDefinition DefineResolutionAgent(IConfiguration configuration, TicketingPlugin plugin) =>
+    private static DeclarativeAgentDefinition DefineResolutionAgent(IConfiguration configuration, TicketingPlugin plugin) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -357,7 +357,7 @@ internal sealed class Program
             }
         };
 
-    private static PromptAgentDefinition TicketEscalationAgent(IConfiguration configuration, TicketingPlugin plugin) =>
+    private static DeclarativeAgentDefinition TicketEscalationAgent(IConfiguration configuration, TicketingPlugin plugin) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =

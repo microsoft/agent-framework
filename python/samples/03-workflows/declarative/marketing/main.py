@@ -16,13 +16,13 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
 from agent_framework.declarative import WorkflowFactory
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Copyright (c) Microsoft. All rights reserved.
+
 
 ANALYST_INSTRUCTIONS = """You are a product analyst. Analyze the given product and identify:
 1. Key features and benefits
@@ -54,21 +54,24 @@ Return the final polished version."""
 
 async def main() -> None:
     """Run the marketing workflow with real Azure AI agents."""
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    analyst_agent = client.as_agent(
+    analyst_agent = Agent(
+        client=client,
         name="AnalystAgent",
         instructions=ANALYST_INSTRUCTIONS,
     )
-    writer_agent = client.as_agent(
+    writer_agent = Agent(
+        client=client,
         name="WriterAgent",
         instructions=WRITER_INSTRUCTIONS,
     )
-    editor_agent = client.as_agent(
+    editor_agent = Agent(
+        client=client,
         name="EditorAgent",
         instructions=EDITOR_INSTRUCTIONS,
     )

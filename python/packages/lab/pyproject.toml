@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260311"
+version = "1.0.0b260409"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,7 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "agent-framework-core>=1.0.0rc4",
+  "agent-framework-core>=1.0.1,<2",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +30,7 @@ dependencies = [
 gaia = [
   "pydantic>=2.0.0",
   "opentelemetry-api>=1.39.0",
+  "opentelemetry-sdk>=1.39.0,<2",
   "tqdm>=4.60.0",
   "huggingface-hub>=0.20.0",
   "orjson>=3.10.7,<4",
@@ -56,19 +57,19 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv==0.10.9",
-    "ruff==0.15.5",
+    "uv==0.11.3",
+    "ruff==0.15.8",
     "pytest==9.0.2",
-    "mypy==1.19.1",
+    "mypy==1.20.0",
     "pyright==1.1.408",
     #tasks
     "poethepoet==0.42.1",
-    "rich==13.7.1",
-    "tomli==2.4.0",
+    "rich>=13.7.1,<15.0.0",
+    "tomli==2.4.1",
     "tomli-w==1.2.0",
     # tau2 from source (not available on PyPI)
     "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
-    "prek==0.3.4",
+    "prek==0.3.8",
 ]
 
 [project.scripts]
@@ -146,17 +147,45 @@ exclude_dirs = ["gaia/tests", "lightning/tests", "tau2/tests"]
 [tool.poe]
 include = "../../shared_tasks.toml"
 
-[tool.poe.tasks]
-mypy-gaia = "mypy --config-file $POE_ROOT/pyproject.toml gaia/agent_framework_lab_gaia"
-mypy-lightning = "mypy --config-file $POE_ROOT/pyproject.toml lightning/agent_framework_lab_lightning"
-mypy-tau2 = "mypy --config-file $POE_ROOT/pyproject.toml tau2/agent_framework_lab_tau2"
-mypy = ["mypy-gaia", "mypy-lightning", "mypy-tau2"]
-test = 'pytest -m "not integration and not resource_intensive" --cov-report=term-missing:skip-covered --junitxml=test-results.xml'
-test-gaia = "pytest gaia/tests --cov=agent_framework_lab_gaia --cov-report=term-missing:skip-covered"
-test-lightning = "pytest lightning/tests --cov=agent_framework_lab_lightning --cov-report=term-missing:skip-covered"
-test-tau2 = "pytest tau2/tests --cov=agent_framework_lab_tau2 --cov-report=term-missing:skip-covered"
-build = "echo 'Skipping build'"
-publish = "echo 'Skipping publish'"
+[tool.poe.tasks.mypy-gaia]
+help = "Run MyPy for the lab GAIA package."
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml gaia/agent_framework_lab_gaia"
+
+[tool.poe.tasks.mypy-lightning]
+help = "Run MyPy for the lab Lightning package."
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml lightning/agent_framework_lab_lightning"
+
+[tool.poe.tasks.mypy-tau2]
+help = "Run MyPy for the lab Tau2 package."
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml tau2/agent_framework_lab_tau2"
+
+[tool.poe.tasks.mypy]
+help = "Run MyPy across all lab subpackages."
+sequence = ["mypy-gaia", "mypy-lightning", "mypy-tau2"]
+
+[tool.poe.tasks.test]
+help = "Run the default lab unit test suite."
+cmd = 'pytest -m "not integration and not resource_intensive" --cov-report=term-missing:skip-covered --junitxml=test-results.xml'
+
+[tool.poe.tasks.test-gaia]
+help = "Run the GAIA lab test suite."
+cmd = "pytest gaia/tests --cov=agent_framework_lab_gaia --cov-report=term-missing:skip-covered"
+
+[tool.poe.tasks.test-lightning]
+help = "Run the Lightning lab test suite."
+cmd = "pytest lightning/tests --cov=agent_framework_lab_lightning --cov-report=term-missing:skip-covered"
+
+[tool.poe.tasks.test-tau2]
+help = "Run the Tau2 lab test suite."
+cmd = "pytest tau2/tests --cov=agent_framework_lab_tau2 --cov-report=term-missing:skip-covered"
+
+[tool.poe.tasks.build]
+help = "Skip build for the lab package."
+cmd = "echo 'Skipping build'"
+
+[tool.poe.tasks.publish]
+help = "Skip publish for the lab package."
+cmd = "echo 'Skipping publish'"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

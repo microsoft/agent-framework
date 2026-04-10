@@ -3,7 +3,7 @@
 // This sample shows how to use a chat history reducer to keep the context within model size limits.
 // Any implementation of Microsoft.Extensions.AI.IChatReducer can be used to customize how the chat history is reduced.
 // NOTE: this feature is only supported where the chat history is stored locally, such as with OpenAI Chat Completion.
-// Where the chat history is stored server side, such as with Azure Foundry Agents, the service must manage the chat history size.
+// Where the chat history is stored server side, such as with Microsoft Foundry Agents, the service must manage the chat history size.
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
@@ -12,7 +12,7 @@ using Microsoft.Extensions.AI;
 using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Construct the agent, and provide a factory to create an in-memory chat message store with a reducer that keeps only the last 2 non-system messages.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.

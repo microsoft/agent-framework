@@ -17,7 +17,7 @@
 //
 // Demonstrate:
 // - Using custom GroupChatManager with agents that have approval-required tools.
-// - Handling FunctionApprovalRequestContent in group chat scenarios.
+// - Handling ToolApprovalRequestContent in group chat scenarios.
 // - Multi-round group chat with tool approval interruption and resumption.
 
 using System.ComponentModel;
@@ -43,7 +43,7 @@ public static class Program
     private static async Task Main()
     {
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
@@ -101,16 +101,16 @@ public static class Program
             {
                 case RequestInfoEvent e:
                 {
-                    if (e.Request.TryGetDataAs(out FunctionApprovalRequestContent? approvalRequestContent))
+                    if (e.Request.TryGetDataAs(out ToolApprovalRequestContent? approvalRequestContent))
                     {
                         Console.WriteLine();
                         Console.WriteLine($"[APPROVAL REQUIRED] From agent: {e.Request.PortInfo.PortId}");
-                        Console.WriteLine($"  Tool: {approvalRequestContent.FunctionCall.Name}");
-                        Console.WriteLine($"  Arguments: {JsonSerializer.Serialize(approvalRequestContent.FunctionCall.Arguments)}");
+                        Console.WriteLine($"  Tool: {((FunctionCallContent)approvalRequestContent.ToolCall).Name}");
+                        Console.WriteLine($"  Arguments: {JsonSerializer.Serialize(((FunctionCallContent)approvalRequestContent.ToolCall).Arguments)}");
                         Console.WriteLine();
 
                         // Approve the tool call request
-                        Console.WriteLine($"Tool: {approvalRequestContent.FunctionCall.Name} approved");
+                        Console.WriteLine($"Tool: {((FunctionCallContent)approvalRequestContent.ToolCall).Name} approved");
                         await run.SendResponseAsync(e.Request.CreateResponse(approvalRequestContent.CreateResponse(approved: true)));
                     }
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentExecutorResponse,
     Content,
     Executor,
@@ -16,7 +17,7 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from typing_extensions import Never
@@ -51,8 +52,8 @@ Demonstrate:
 - Handling approval requests during workflow execution.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure AI Agent Service configured, along with the required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, request_info events (type='request_info'), and streaming runs.
 """
@@ -224,11 +225,12 @@ async def conclude_workflow(
 
 async def main() -> None:
     # Create agent
-    email_writer_agent = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    email_writer_agent = Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name="EmailWriter",
         instructions=("You are an excellent email assistant. You respond to incoming emails."),
         # tools with `approval_mode="always_require"` will trigger approval requests

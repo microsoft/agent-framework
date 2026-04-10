@@ -11,19 +11,19 @@
 """Side-by-side handoff orchestrations for Semantic Kernel and Agent Framework."""
 
 import asyncio
-import sys
-from collections.abc import AsyncIterable, Iterator, Sequence
-from typing import cast
+from collections.abc import AsyncIterable, Callable, Iterator, Sequence
 
 from agent_framework import (
+    Agent,
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from semantic_kernel.agents import Agent, ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
+from semantic_kernel.agents import Agent as SKAgent
+from semantic_kernel.agents import ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import (
@@ -34,11 +34,6 @@ from semantic_kernel.contents import (
     StreamingChatMessageContent,
 )
 from semantic_kernel.functions import kernel_function
-
-if sys.version_info >= (3, 12):
-    pass  # pragma: no cover
-else:
-    pass  # pragma: no cover
 
 # Load environment variables from .env file
 load_dotenv()
@@ -74,7 +69,7 @@ class OrderReturnPlugin:
         return f"Return for order {order_id} has been processed successfully (reason: {reason})."
 
 
-def build_semantic_kernel_agents() -> tuple[list[Agent], OrchestrationHandoffs]:
+def build_semantic_kernel_agents() -> tuple[list[SKAgent], OrchestrationHandoffs]:
     credential = AzureCliCredential()
 
     triage = ChatCompletionAgent(
@@ -148,7 +143,7 @@ def _sk_streaming_callback(message: StreamingChatMessageContent, is_final: bool)
         _sk_new_message = True
 
 
-def _make_sk_human_responder(script: Iterator[str]) -> callable:
+def _make_sk_human_responder(script: Iterator[str]) -> Callable[[], ChatMessageContent]:
     def _responder() -> ChatMessageContent:
         try:
             user_text = next(script)
@@ -189,8 +184,9 @@ async def run_semantic_kernel_example(initial_task: str, scripted_responses: Seq
 ######################################################################
 
 
-def _create_af_agents(client: AzureOpenAIChatClient):
-    triage = client.as_agent(
+def _create_af_agents(client: OpenAIChatCompletionClient):
+    triage = Agent(
+        client=client,
         name="triage_agent",
         instructions=(
             "You are a customer support triage agent. Route requests:\n"
@@ -198,24 +194,31 @@ def _create_af_agents(client: AzureOpenAIChatClient):
             "- handoff_to_order_status_agent for shipping/timeline questions\n"
             "- handoff_to_order_return_agent for returns"
         ),
+        require_per_service_call_history_persistence=True,
     )
-    refund = client.as_agent(
+    refund = Agent(
+        client=client,
         name="refund_agent",
         instructions=(
             "Handle refunds. Ask for order id and reason. If shipping info is needed, hand off to order_status_agent."
         ),
+        require_per_service_call_history_persistence=True,
     )
-    status = client.as_agent(
+    status = Agent(
+        client=client,
         name="order_status_agent",
         instructions=(
             "Provide order status, tracking, and timelines. If billing questions appear, hand off to refund_agent."
         ),
+        require_per_service_call_history_persistence=True,
     )
-    returns = client.as_agent(
+    returns = Agent(
+        client=client,
         name="order_return_agent",
         instructions=(
             "Coordinate returns, confirm addresses, and summarize next steps. Hand off to triage_agent if unsure."
         ),
+        require_per_service_call_history_persistence=True,
     )
     return triage, refund, status, returns
 
@@ -235,13 +238,12 @@ def _collect_handoff_requests(events: list[WorkflowEvent]) -> list[WorkflowEvent
 def _extract_final_conversation(events: list[WorkflowEvent]) -> list[Message]:
     for event in events:
         if event.type == "output":
-            data = cast(list[Message], event.data)
-            return data
+            return event.data
     return []
 
 
 async def run_agent_framework_example(initial_task: str, scripted_responses: Sequence[str]) -> str:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = OpenAIChatCompletionClient(credential=AzureCliCredential())
     triage, refund, status, returns = _create_af_agents(client)
 
     workflow = (
@@ -268,7 +270,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
             user_reply = next(scripted_iter)
         except StopIteration:
             user_reply = "Thanks, that's all."
-        responses = {request.request_id: [Message(role="user", text=user_reply)] for request in pending}
+        responses = {request.request_id: [Message(role="user", contents=[user_reply])] for request in pending}
         final_events = await _drain_events(workflow.run(stream=True, responses=responses))
         pending = _collect_handoff_requests(final_events)
 
@@ -277,7 +279,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
         return ""
 
     # Render final transcript succinctly.
-    lines = []
+    lines: list[str] = []
     for message in conversation:
         text = message.text or ""
         if not text.strip():

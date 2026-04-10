@@ -9,7 +9,7 @@ using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
@@ -17,8 +17,8 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-     .GetResponsesClient(deploymentName)
-     .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+     .GetResponsesClient()
+     .AsAIAgent(model: deploymentName, instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
@@ -29,8 +29,8 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
 AIAgent agentStoreFalse = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-     .GetResponsesClient(deploymentName)
-     .AsIChatClientWithStoredOutputDisabled()
+     .GetResponsesClient()
+     .AsIChatClientWithStoredOutputDisabled(model: deploymentName)
      .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.

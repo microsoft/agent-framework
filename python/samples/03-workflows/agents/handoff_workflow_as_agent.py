@@ -12,7 +12,7 @@ from agent_framework import (
     WorkflowAgent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -29,9 +29,9 @@ A handoff workflow defines a pattern that assembles agents in a mesh topology, a
 them to transfer control to each other based on the conversation context.
 
 Prerequisites:
-    - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+    - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
     - `az login` (Azure CLI authentication)
-    - Environment variables configured for AzureOpenAIResponsesClient (AZURE_AI_MODEL_DEPLOYMENT_NAME)
+    - Environment variables configured for FoundryChatClient (FOUNDRY_MODEL)
 
 Key Concepts:
     - Auto-registered handoff tools: HandoffBuilder automatically creates handoff tools
@@ -63,46 +63,54 @@ def process_return(order_number: Annotated[str, "Order number to process return 
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
-def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Agent, Agent]:
+def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent]:
     """Create and configure the triage and specialist agents.
 
     Args:
-        client: The AzureOpenAIResponsesClient to use for creating agents.
+        client: The FoundryChatClient to use for creating agents.
 
     Returns:
         Tuple of (triage_agent, refund_agent, order_agent, return_agent)
     """
     # Triage agent: Acts as the frontline dispatcher
-    triage_agent = client.as_agent(
+    triage_agent = Agent(
+        client=client,
         instructions=(
             "You are frontline support triage. Route customer issues to the appropriate specialist agents "
             "based on the problem described."
         ),
         name="triage_agent",
+        require_per_service_call_history_persistence=True,
     )
 
     # Refund specialist: Handles refund requests
-    refund_agent = client.as_agent(
+    refund_agent = Agent(
+        client=client,
         instructions="You process refund requests.",
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[process_refund],
+        require_per_service_call_history_persistence=True,
     )
 
     # Order/shipping specialist: Resolves delivery issues
-    order_agent = client.as_agent(
+    order_agent = Agent(
+        client=client,
         instructions="You handle order and shipping inquiries.",
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[check_order_status],
+        require_per_service_call_history_persistence=True,
     )
 
     # Return specialist: Handles return requests
-    return_agent = client.as_agent(
+    return_agent = Agent(
+        client=client,
         instructions="You manage product return requests.",
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
         tools=[process_return],
+        require_per_service_call_history_persistence=True,
     )
 
     return triage_agent, refund_agent, order_agent, return_agent
@@ -153,9 +161,9 @@ async def main() -> None:
     replace the scripted_responses with actual user input collection.
     """
     # Initialize the Azure OpenAI chat client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -183,7 +191,7 @@ async def main() -> None:
         )
         .with_start_agent(triage)
         .build()
-        .as_agent()  # Convert workflow to agent interface
+        .as_agent()
     )
 
     # Scripted user responses for reproducible demo
@@ -221,7 +229,7 @@ async def main() -> None:
             responses = {req_id: HandoffAgentUserRequest.create_response(user_response) for req_id in pending_requests}
 
         function_results = [
-            Content.from_function_result(call_id=req_id, result=response) for req_id, response in responses.items()
+            Content("function_result", call_id=req_id, result=response) for req_id, response in responses.items()
         ]
         response = await agent.run(Message("tool", function_results))
         pending_requests = handle_response_and_requests(response)

@@ -99,6 +99,10 @@ internal sealed class ParagraphCountingExecutor() : Executor<string, FileStats>(
     }
 }
 
+/// <summary>
+/// The aggregation executor collects results from both executors and yields the final output.
+/// </summary>
+[YieldsOutput(typeof(string))]
 internal sealed class AggregationExecutor() : Executor<FileStats>("AggregationExecutor")
 {
     private readonly List<FileStats> _messages = [];

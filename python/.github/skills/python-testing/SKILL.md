@@ -17,20 +17,27 @@ We run tests in two stages, for a PR each commit is tested with unit tests only 
 # Run tests for all packages in parallel
 uv run poe test
 
-# Run tests for a specific package
-uv run --directory packages/core poe test
+# Run tests for a specific workspace package
+uv run poe test -P core
 
-# Run all tests in a single pytest invocation (faster, uses pytest-xdist)
-uv run poe all-tests
+# Run all selected tests in a single pytest invocation
+uv run poe test -A
 
 # With coverage
-uv run poe all-tests-cov
+uv run poe test -A -C
+uv run poe test -P core -C
 
 # Run only unit tests (exclude integration tests)
-uv run poe all-tests -m "not integration"
+uv run poe test -A -m "not integration"
 
 # Run only integration tests
-uv run poe all-tests -m integration
+uv run poe test -A -m integration
+```
+
+Direct package execution still works when you need it:
+
+```bash
+uv run --directory packages/core poe test
 ```
 
 ## Test Configuration
@@ -38,7 +45,7 @@ uv run poe all-tests -m integration
 - **Async mode**: `asyncio_mode = "auto"` is enabled — do NOT use `@pytest.mark.asyncio`, but do mark tests with `async def` and use `await` for async calls
 - **Timeout**: Default 60 seconds per test
 - **Import mode**: `importlib` for cross-package isolation
-- **Parallelization**: Large packages (core, ag-ui, orchestrations, anthropic) use `pytest-xdist` (`-n auto --dist worksteal`) in their `poe test` task. The `all-tests` task also uses xdist across all packages.
+- **Parallelization**: Large packages (core, ag-ui, orchestrations, anthropic) use `pytest-xdist` (`-n auto --dist worksteal`) in their `poe test` task. The aggregate `uv run poe test -A` sweep also uses xdist across the selected packages.
 
 ## Test Directory Structure
 
@@ -117,7 +124,7 @@ The merge CI workflow (`python-merge-tests.yml`) splits integration tests into p
 - **Azure OpenAI integration** — runs when `packages/core/agent_framework/azure/` or core changes
 - **Misc integration** — Anthropic, Ollama, MCP tests; runs when their packages or core change
 - **Functions integration** — Azure Functions + Durable Task; runs when their packages or core change
-- **Azure AI integration** — runs when `packages/azure-ai/` or core changes
+- **Foundry integration** — runs when `packages/foundry/` or core changes
 
 Core infrastructure changes (e.g., `_agents.py`, `_types.py`) trigger all integration test jobs. Scheduled and manual runs always execute all jobs.
 

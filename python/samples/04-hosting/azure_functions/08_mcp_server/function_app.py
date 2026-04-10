@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Example showing how to configure AI agents with different trigger configurations.
+"""Example showing how to configure AI agents with different trigger configurations.
 
 This sample demonstrates how to configure agents to be accessible as both HTTP endpoints
 and Model Context Protocol (MCP) tools, enabling flexible integration patterns for AI agent
@@ -18,37 +17,48 @@ This sample creates three agents with different trigger configurations:
 - PlantAdvisor: Both HTTP and MCP tool triggers enabled
 
 Required environment variables:
-- AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint
-- AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: Your Azure OpenAI deployment name
+- FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
+- FOUNDRY_MODEL: Your Azure AI Foundry deployment name
 
 Authentication uses AzureCliCredential (Azure Identity).
 """
 
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+import os
+
+from agent_framework import Agent
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
-# Create Azure OpenAI Chat Client
+# Create Foundry chat client
 # This uses AzureCliCredential for authentication (requires 'az login')
-client = AzureOpenAIChatClient()
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["FOUNDRY_MODEL"],
+    credential=AzureCliCredential(),
+)
 
 # Define three AI agents with different roles
 # Agent 1: Joker - HTTP trigger only (default)
-agent1 = client.as_agent(
+agent1 = Agent(
+    client=client,
     name="Joker",
     instructions="You are good at telling jokes.",
 )
 
 # Agent 2: StockAdvisor - MCP tool trigger only
-agent2 = client.as_agent(
+agent2 = Agent(
+    client=client,
     name="StockAdvisor",
     instructions="Check stock prices.",
 )
 
 # Agent 3: PlantAdvisor - Both HTTP and MCP tool triggers
-agent3 = client.as_agent(
+agent3 = Agent(
+    client=client,
     name="PlantAdvisor",
     instructions="Recommend plants.",
     description="Get plant recommendations.",

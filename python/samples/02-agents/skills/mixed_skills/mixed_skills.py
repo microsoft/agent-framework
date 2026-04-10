@@ -4,6 +4,11 @@ import asyncio
 import json
 import os
 import sys
+
+# Uncomment this filter to suppress the experimental Skills warning before
+# using the sample's Skills APIs.
+# import warnings
+# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -13,7 +18,7 @@ from agent_framework import (
     Skill,
     SkillsProvider,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -107,13 +112,13 @@ def convert_volume(value: float, factor: float) -> str:
 
 async def main() -> None:
     """Run the combined skills demo."""
-    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    deployment = os.environ.get("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", "gpt-4o-mini")
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o-mini")
 
     # Create the chat client
-    client = AzureOpenAIResponsesClient(
+    client = FoundryChatClient(
         project_endpoint=endpoint,
-        deployment_name=deployment,
+        model=deployment,
         credential=AzureCliCredential(),
     )
 
@@ -137,8 +142,7 @@ async def main() -> None:
         print("Converting units")
         print("-" * 60)
         response = await agent.run(
-            "How many kilometers is a marathon (26.2 miles)? "
-            "And how many liters is a 5-gallon bucket?"
+            "How many kilometers is a marathon (26.2 miles)? And how many liters is a 5-gallon bucket?"
         )
         print(f"Agent: {response}\n")
 

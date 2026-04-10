@@ -27,15 +27,9 @@ class KeepLastUserTurnStrategy:
             group_annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
             group_id = group_annotation.get("id") if isinstance(group_annotation, dict) else None
             kind = group_annotation.get("kind") if isinstance(group_annotation, dict) else None
-            if (
-                isinstance(group_id, str)
-                and isinstance(kind, str)
-                and group_id not in group_kinds
-            ):
+            if isinstance(group_id, str) and isinstance(kind, str) and group_id not in group_kinds:
                 group_kinds[group_id] = kind
-        user_group_ids = [
-            group_id for group_id in group_ids if group_kinds.get(group_id) == "user"
-        ]
+        user_group_ids = [group_id for group_id in group_ids if group_kinds.get(group_id) == "user"]
         if not user_group_ids:
             return False
         keep_user_group_id = user_group_ids[-1]
@@ -56,11 +50,11 @@ class KeepLastUserTurnStrategy:
 
 def _messages() -> list[Message]:
     return [
-        Message(role="system", text="You are concise."),
-        Message(role="user", text="first request"),
-        Message(role="assistant", text="first response"),
-        Message(role="user", text="second request"),
-        Message(role="assistant", text="second response"),
+        Message(role="system", contents=["You are concise."]),
+        Message(role="user", contents=["first request"]),
+        Message(role="assistant", contents=["first response"]),
+        Message(role="user", contents=["second request"]),
+        Message(role="assistant", contents=["second response"]),
     ]
 
 

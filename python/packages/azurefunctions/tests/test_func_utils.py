@@ -206,7 +206,7 @@ class TestSerializationRoundtrip:
 
     def test_roundtrip_chat_message(self) -> None:
         """Test Message survives encode → decode roundtrip."""
-        original = Message(role="user", text="Hello")
+        original = Message(role="user", contents=["Hello"])
         encoded = serialize_value(original)
         decoded = deserialize_value(encoded)
 
@@ -216,7 +216,7 @@ class TestSerializationRoundtrip:
     def test_roundtrip_agent_executor_request(self) -> None:
         """Test AgentExecutorRequest with nested Messages roundtrips."""
         original = AgentExecutorRequest(
-            messages=[Message(role="user", text="Hi")],
+            messages=[Message(role="user", contents=["Hi"])],
             should_respond=True,
         )
         encoded = serialize_value(original)
@@ -231,7 +231,8 @@ class TestSerializationRoundtrip:
         """Test AgentExecutorResponse with nested AgentResponse roundtrips."""
         original = AgentExecutorResponse(
             executor_id="test_exec",
-            agent_response=AgentResponse(messages=[Message(role="assistant", text="Reply")]),
+            agent_response=AgentResponse(messages=[Message(role="assistant", contents=["Reply"])]),
+            full_conversation=[Message(role="assistant", contents=["Reply"])],
         )
         encoded = serialize_value(original)
         decoded = deserialize_value(encoded)
@@ -271,8 +272,8 @@ class TestSerializationRoundtrip:
     def test_roundtrip_list_of_objects(self) -> None:
         """Test list of typed objects roundtrips."""
         original = [
-            Message(role="user", text="Q"),
-            Message(role="assistant", text="A"),
+            Message(role="user", contents=["Q"]),
+            Message(role="assistant", contents=["A"]),
         ]
         encoded = serialize_value(original)
         decoded = deserialize_value(encoded)
@@ -283,7 +284,7 @@ class TestSerializationRoundtrip:
 
     def test_roundtrip_dict_of_objects(self) -> None:
         """Test dict with typed values roundtrips (used for shared state)."""
-        original = {"count": 42, "msg": Message(role="user", text="Hi")}
+        original = {"count": 42, "msg": Message(role="user", contents=["Hi"])}
         encoded = serialize_value(original)
         decoded = deserialize_value(encoded)
 

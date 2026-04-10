@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import dataclass
+from typing import Literal
 
 from agent_framework._agents import SupportsAgentRun
 from agent_framework._types import Message
@@ -72,7 +73,7 @@ class AgentRequestInfoResponse:
         Returns:
             AgentRequestInfoResponse instance.
         """
-        return AgentRequestInfoResponse(messages=[Message(role="user", text=text) for text in texts])
+        return AgentRequestInfoResponse(messages=[Message(role="user", contents=[text]) for text in texts])
 
     @staticmethod
     def approve() -> "AgentRequestInfoResponse":
@@ -117,18 +118,25 @@ class AgentApprovalExecutor(WorkflowExecutor):
     agent's output or send the final response to down stream executors in the orchestration.
     """
 
-    def __init__(self, agent: SupportsAgentRun) -> None:
+    def __init__(
+        self,
+        agent: SupportsAgentRun,
+        context_mode: Literal["full", "last_agent", "custom"] | None = None,
+    ) -> None:
         """Initialize the AgentApprovalExecutor.
 
         Args:
             agent: The agent protocol to use for generating responses.
+            context_mode: The mode for providing context to the agent.
         """
-        super().__init__(workflow=self._build_workflow(agent), id=resolve_agent_id(agent), propagate_request=True)
+        self._context_mode: Literal["full", "last_agent", "custom"] | None = context_mode
         self._description = agent.description
+
+        super().__init__(workflow=self._build_workflow(agent), id=resolve_agent_id(agent), propagate_request=True)
 
     def _build_workflow(self, agent: SupportsAgentRun) -> Workflow:
         """Build the internal workflow for the AgentApprovalExecutor."""
-        agent_executor = AgentExecutor(agent)
+        agent_executor = AgentExecutor(agent, context_mode=self._context_mode)
         request_info_executor = AgentRequestInfoExecutor(id="agent_request_info_executor")
 
         return (

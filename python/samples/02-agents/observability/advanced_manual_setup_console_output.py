@@ -6,13 +6,14 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Message, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import enable_instrumentation
-from agent_framework.openai import OpenAIChatClient
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.metrics import set_meter_provider
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogExporter
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogRecordExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import ConsoleMetricExporter, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -37,7 +38,7 @@ def setup_logging():
     # Create and set a global logger provider for the application.
     logger_provider = LoggerProvider(resource=resource)
     # Log processors are initialized with an exporter which is responsible
-    logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogRecordExporter()))
     # Sets the global default logger provider
     set_logger_provider(logger_provider)
     # Create a logging handler to write logging records, in OTLP format, to the exporter.
@@ -96,10 +97,16 @@ async def run_chat_client() -> None:
         stream: Whether to use streaming for the plugin
 
     Remarks:
-        When function calling is outside the open telemetry loop
-        each of the call to the model is handled as a seperate span,
-        while when the open telemetry is put last, a single span
-        is shown, which might include one or more rounds of function calling.
+        By default, the built-in non-`Raw...Client` chat clients already compose
+        the layers in this order:
+        `FunctionInvocationLayer -> ChatMiddlewareLayer -> ChatTelemetryLayer -> Raw/Base client`.
+
+        When `FunctionInvocationLayer` is outside `ChatTelemetryLayer`,
+        each call to the model is handled as a separate span.
+        Keep `ChatMiddlewareLayer` outside telemetry
+        so middleware latency does not skew those timings.
+        By contrast, when telemetry is placed outside the function loop,
+        a single span can cover one or more rounds of function calling.
 
         So for the scenario below, you should see the following:
 
@@ -109,11 +116,15 @@ async def run_chat_client() -> None:
         2 spans with gen_ai.operation.name=execute_tool
 
     """
-    client = OpenAIChatClient()
+    client = FoundryChatClient(credential=AzureCliCredential())
     message = "What's the weather in Amsterdam and in Paris?"
     print(f"User: {message}")
     print("Assistant: ", end="")
-    async for chunk in client.get_response([Message(role="user", text=message)], tools=get_weather, stream=True):
+    async for chunk in client.get_response(
+        [Message(role="user", contents=[message])],
+        stream=True,
+        options={"tools": [get_weather]},
+    ):
         if chunk.text:
             print(chunk.text, end="")
     print("")

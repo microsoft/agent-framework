@@ -23,10 +23,8 @@ jobs:
     environment: integration
     env:
       # Required configuration for get-started samples
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
     defaults:
       run:
         working-directory: python
@@ -41,33 +39,43 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 01-get-started --save-report --report-name 01-get-started
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-01-get-started
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents:
     name: Validate 02-agents
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      # Foundry configuration
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_EMBEDDING_MODEL: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME || vars.AZUREOPENAI__EMBEDDINGDEPLOYMENTNAME }}
       # OpenAI configuration
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      # GitHub MCP
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       # Observability
       ENABLE_INSTRUMENTATION: "true"
     defaults:
@@ -84,29 +92,152 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_MODEL=$AZURE_OPENAI_MODEL" >> .env
+          echo "AZURE_OPENAI_CHAT_COMPLETION_MODEL=$AZURE_OPENAI_CHAT_COMPLETION_MODEL" >> .env
+          echo "AZURE_OPENAI_CHAT_MODEL=$AZURE_OPENAI_CHAT_MODEL" >> .env
+          echo "AZURE_OPENAI_EMBEDDING_MODEL=$AZURE_OPENAI_EMBEDDING_MODEL" >> .env
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
+          echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
+          echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
+          echo "GITHUB_PAT=$GITHUB_PAT" >> .env
+
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents --save-report --report-name 02-agents
+          cd scripts && uv run python -m sample_validation --subdir 02-agents --exclude providers --save-report --report-name 02-agents
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-02-agents
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
-  validate-03-workflows:
-    name: Validate 03-workflows
+  validate-02-agents-openai:
+    name: Validate 02-agents/providers/openai
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      # Azure OpenAI configuration
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
+          echo "OPENAI_MODEL=$OPENAI_MODEL" >> .env
+          echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
+          echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/openai --save-report --report-name 02-agents-openai
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-report-02-agents-openai
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-azure:
+    name: Validate 02-agents/providers/azure
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_API_VERSION: ${{ vars.AZURE_OPENAI_API_VERSION || '' }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_MODEL=$AZURE_OPENAI_MODEL" >> .env
+          echo "AZURE_OPENAI_API_VERSION=$AZURE_OPENAI_API_VERSION" >> .env
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure --save-report --report-name 02-agents-azure
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-report-02-agents-azure
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-anthropic:
+    name: Validate 02-agents/providers/anthropic
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> .env
+          echo "ANTHROPIC_CHAT_MODEL=$ANTHROPIC_CHAT_MODEL" >> .env
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/anthropic --save-report --report-name 02-agents-anthropic
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-report-02-agents-anthropic
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-github-copilot:
+    name: Validate 02-agents/providers/github_copilot
+    runs-on: ubuntu-latest
+    environment: integration
     defaults:
       run:
         working-directory: python
@@ -123,27 +254,237 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 03-workflows --save-report --report-name 03-workflows
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/github_copilot --save-report --report-name 02-agents-github-copilot
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: validation-report-03-workflows
-          path: python/scripts/sample_validation/reports/
+          name: validation-report-02-agents-github-copilot
+          path: python/samples/sample_validation/reports/
 
-  validate-04-hosting:
-    name: Validate 04-hosting
-    if: false  # Temporarily disabled because of sample complexity
+  validate-02-agents-amazon:
+    name: Validate 02-agents/providers/amazon
+    if: false # Temporarily disabled - requires AWS credentials
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      # Azure OpenAI configuration
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      BEDROCK_CHAT_MODEL: ${{ vars.BEDROCK__CHATMODELID }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/amazon --save-report --report-name 02-agents-amazon
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-report-02-agents-amazon
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-ollama:
+    name: Validate 02-agents/providers/ollama
+    if: false # Temporarily disabled - requires local Ollama server
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      OLLAMA_MODEL: ${{ vars.OLLAMA__MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/ollama --save-report --report-name 02-agents-ollama
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-report-02-agents-ollama
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-foundry:
+    name: Validate 02-agents/providers/foundry
+    if: false # Temporarily disabled - provider folder also contains the local Foundry sample
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_AGENT_NAME || '' }}
+      FOUNDRY_AGENT_VERSION: ${{ vars.FOUNDRY_AGENT_VERSION || '' }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+          echo "FOUNDRY_AGENT_NAME=$FOUNDRY_AGENT_NAME" >> .env
+          echo "FOUNDRY_AGENT_VERSION=$FOUNDRY_AGENT_VERSION" >> .env
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/foundry --save-report --report-name 02-agents-foundry
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-report-02-agents-foundry
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-copilotstudio:
+    name: Validate 02-agents/providers/copilotstudio
+    if: false # Temporarily disabled - requires Copilot Studio setup
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      COPILOTSTUDIOAGENT__ENVIRONMENTID: ${{ secrets.COPILOTSTUDIOAGENT__ENVIRONMENTID }}
+      COPILOTSTUDIOAGENT__SCHEMANAME: ${{ secrets.COPILOTSTUDIOAGENT__SCHEMANAME }}
+      COPILOTSTUDIOAGENT__TENANTID: ${{ secrets.COPILOTSTUDIOAGENT__TENANTID }}
+      COPILOTSTUDIOAGENT__AGENTAPPID: ${{ secrets.COPILOTSTUDIOAGENT__AGENTAPPID }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "COPILOTSTUDIOAGENT__ENVIRONMENTID=$COPILOTSTUDIOAGENT__ENVIRONMENTID" >> .env
+          echo "COPILOTSTUDIOAGENT__SCHEMANAME=$COPILOTSTUDIOAGENT__SCHEMANAME" >> .env
+          echo "COPILOTSTUDIOAGENT__TENANTID=$COPILOTSTUDIOAGENT__TENANTID" >> .env
+          echo "COPILOTSTUDIOAGENT__AGENTAPPID=$COPILOTSTUDIOAGENT__AGENTAPPID" >> .env
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/copilotstudio --save-report --report-name 02-agents-copilotstudio
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-report-02-agents-copilotstudio
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-custom:
+    name: Validate 02-agents/providers/custom
+    runs-on: ubuntu-latest
+    environment: integration
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/custom --save-report --report-name 02-agents-custom
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-report-02-agents-custom
+          path: python/samples/sample_validation/reports/
+
+  validate-03-workflows:
+    name: Validate 03-workflows
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 03-workflows --save-report --report-name 03-workflows
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-report-03-workflows
+          path: python/samples/sample_validation/reports/
+
+  validate-04-hosting:
+    name: Validate 04-hosting
+    if: false # Temporarily disabled because of sample complexity
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # A2A configuration
       A2A_AGENT_HOST: http://localhost:5001/
     defaults:
@@ -165,31 +506,30 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 04-hosting --save-report --report-name 04-hosting
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-04-hosting
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-05-end-to-end:
     name: Validate 05-end-to-end
-    if: false  # Temporarily disabled because of sample complexity
+    if: false # Temporarily disabled because of sample complexity
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure AI Search (for evaluation samples)
       AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
       AZURE_SEARCH_API_KEY: ${{ secrets.AZURE_SEARCH_API_KEY }}
       AZURE_SEARCH_INDEX_NAME: ${{ secrets.AZURE_SEARCH_INDEX_NAME }}
       # Evaluation sample
-      AZURE_AI_MODEL_DEPLOYMENT_NAME_WORKFLOW: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_MODEL_WORKFLOW: ${{ vars.FOUNDRY_MODEL_WORKFLOW || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_MODEL_EVAL: ${{ vars.FOUNDRY_MODEL_EVAL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
     defaults:
       run:
         working-directory: python
@@ -209,27 +549,27 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 05-end-to-end --save-report --report-name 05-end-to-end
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-05-end-to-end
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-autogen-migration:
     name: Validate autogen-migration
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # OpenAI configuration
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
     defaults:
       run:
         working-directory: python
@@ -244,33 +584,46 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_MODEL=$AZURE_OPENAI_MODEL" >> .env
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
+          echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
+          echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
+
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir autogen-migration --save-report --report-name autogen-migration
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-autogen-migration
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-semantic-kernel-migration:
     name: Validate semantic-kernel-migration
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      # Azure OpenAI configuration
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      # Azure OpenAI configuration for AF
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      # OpenAI configuration
+      AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      # Azure OpenAI configuration for SK
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
+      # OpenAI key
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      # OpenAI configuration for SK
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       # Copilot Studio
       COPILOTSTUDIOAGENT__ENVIRONMENTID: ${{ secrets.COPILOTSTUDIOAGENT__ENVIRONMENTID }}
       COPILOTSTUDIOAGENT__SCHEMANAME: ${{ secrets.COPILOTSTUDIOAGENT__SCHEMANAME }}
@@ -290,13 +643,90 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_MODEL=$AZURE_OPENAI_MODEL" >> .env
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
+          echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
+          echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
+          echo "COPILOTSTUDIOAGENT__ENVIRONMENTID=$COPILOTSTUDIOAGENT__ENVIRONMENTID" >> .env
+          echo "COPILOTSTUDIOAGENT__SCHEMANAME=$COPILOTSTUDIOAGENT__SCHEMANAME" >> .env
+          echo "COPILOTSTUDIOAGENT__TENANTID=$COPILOTSTUDIOAGENT__TENANTID" >> .env
+          echo "COPILOTSTUDIOAGENT__AGENTAPPID=$COPILOTSTUDIOAGENT__AGENTAPPID" >> .env
+
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir semantic-kernel-migration --save-report --report-name semantic-kernel-migration
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-semantic-kernel-migration
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
+
+  aggregate-results:
+    name: Aggregate Results
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - validate-01-get-started
+      - validate-02-agents
+      - validate-02-agents-openai
+      - validate-02-agents-azure
+      - validate-02-agents-anthropic
+      - validate-02-agents-github-copilot
+      - validate-02-agents-amazon
+      - validate-02-agents-ollama
+      - validate-02-agents-foundry
+      - validate-02-agents-copilotstudio
+      - validate-02-agents-custom
+      - validate-03-workflows
+      - validate-04-hosting
+      - validate-05-end-to-end
+      - validate-autogen-migration
+      - validate-semantic-kernel-migration
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all validation reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: validation-report-*
+          path: reports/
+          merge-multiple: true
+
+      - name: Restore validation history
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: validation-history/
+          key: validation-history-${{ github.run_id }}
+          restore-keys: |
+            validation-history-
+
+      - name: Aggregate results and generate trend report
+        run: |
+          python3 python/scripts/sample_validation/aggregate.py \
+            reports/ \
+            validation-history/history.json \
+            trend-report.md
+
+      - name: Write trend report to job summary
+        run: cat trend-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save validation history
+        uses: actions/cache/save@v4
+        with:
+          path: validation-history/
+          key: validation-history-${{ github.run_id }}
+
+      - name: Upload trend report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-trend-report
+          path: trend-report.md
