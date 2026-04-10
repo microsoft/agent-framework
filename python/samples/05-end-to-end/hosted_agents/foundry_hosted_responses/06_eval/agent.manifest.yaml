@@ -1,0 +1,15 @@
+name: agent-framework-agent-with-eval
+description: >
+  An Agent Framework agent is evaluated on each response hosted by Foundry.
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Streaming
+template:
+  name: agent-framework-agent-with-eval
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: v0.1.0
