@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterable
 
-from agent_framework import Agent, ChatOptions, Content, HistoryProvider, Message
+from agent_framework import ChatOptions, Content, HistoryProvider, Message, RawAgent, SupportsAgentRun
 from agent_framework._telemetry import append_to_user_agent
 from azure.ai.agentserver.responses import (
     ResponseContext,
@@ -31,9 +31,9 @@ from azure.ai.agentserver.responses.models import (
     OutputMessageContent,
     OutputMessageContentOutputTextContent,
     OutputMessageContentRefusalContent,
+    ResponseStreamEvent,
     SummaryTextContent,
     TextContent,
-    get_input_text,
 )
 from typing_extensions import Any, Sequence, cast
 
@@ -45,11 +45,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
     def __init__(
         self,
-        agent: Agent,
+        agent: SupportsAgentRun,
         *,
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
-        provider: ResponseProviderProtocol | None = None,
+        store: ResponseProviderProtocol | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -58,44 +58,38 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             agent: The agent to handle responses for.
             prefix: The URL prefix for the server.
             options: Optional server options.
-            provider: Optional response provider.
+            store: Optional response store.
             **kwargs: Additional keyword arguments.
 
         Note:
             The agent must not have a history provider with `load_messages=True`,
             because history is managed by the hosting infrastructure.
         """
-        super().__init__(prefix=prefix, options=options, provider=provider, **kwargs)
+        super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
-        self._validate_agent(agent)
         self._agent = agent
-        self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
-
-        # Append the user agent prefix for telemetry purposes
-        append_to_user_agent(self.USER_AGENT_PREFIX)
-
-    def _validate_agent(self, agent: Agent) -> None:
-        """Validate the agent to ensure it does not have a history provider with `load_messages=True`.
-
-        History is managed by the hosting infrastructure.
-        """
-        for provider in agent.context_providers:
+        for provider in getattr(self._agent, "context_providers", []):
             if isinstance(provider, HistoryProvider) and provider.load_messages:
                 raise RuntimeError(
                     "There shouldn't be a history provider with `load_messages=True` already present. "
                     "History is managed by the hosting infrastructure."
                 )
 
+        self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
+
+        # Append the user agent prefix for telemetry purposes
+        append_to_user_agent(self.USER_AGENT_PREFIX)
+
     async def _handle_create(
         self,
         request: CreateResponse,
         context: ResponseContext,
         cancellation_signal: asyncio.Event,
-    ) -> AsyncIterable[dict[str, Any]]:
+    ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
-        input_items = get_input_text(request)
+        input_text = await context.get_input_text()
         history = await context.get_history()
-        messages = [*_to_messages(history), input_items]
+        messages = [*_to_messages(history), input_text]
 
         chat_options = _to_chat_options(request)
 
@@ -108,7 +102,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         if request.stream is None or request.stream is False:
             # Run the agent in non-streaming mode
-            response = await self._agent.run(messages, stream=False, options=chat_options)
+            if isinstance(self._agent, RawAgent):
+                raw_agent = cast("RawAgent[Any]", self._agent)  # pyright: ignore[reportUnknownMemberType]
+                response = await raw_agent.run(messages, stream=False, options=chat_options)
+            else:
+                response = await self._agent.run(messages, stream=False)
             for item in stream.output_item_message(response.text):
                 yield item
             yield stream.emit_completed()
@@ -121,15 +119,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         yield text_content.emit_added()
 
         # Invoke the MAF agent
-        response_stream = self._agent.run(messages, stream=True, options=chat_options)
+        if isinstance(self._agent, RawAgent):
+            raw_agent = cast("RawAgent[Any]", self._agent)  # pyright: ignore[reportUnknownMemberType]
+            response_stream = raw_agent.run(messages, stream=True, options=chat_options)
+        else:
+            response_stream = self._agent.run(messages, stream=True)
         async for update in response_stream:
             if update.text:
                 yield text_content.emit_delta(update.text)
 
         # Complete the message
-        final = await response_stream.get_final_response()
-        yield text_content.emit_done(final.text)
-        yield message_item.emit_content_done(text_content)
+        yield text_content.emit_text_done()
+        yield text_content.emit_done()
         yield message_item.emit_done()
 
         yield stream.emit_completed()
