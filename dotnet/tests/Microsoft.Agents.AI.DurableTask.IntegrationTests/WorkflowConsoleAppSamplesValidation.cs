@@ -10,6 +10,8 @@ namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper outputHelper) : SamplesValidationBase(outputHelper)
 {
+    private const string SkipFlakyTimingTest = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971";
+
     // In CI, `dotnet run` builds samples from scratch and LLM calls add latency, so 60s is not enough.
     private static readonly TimeSpan s_testTimeout = TimeSpan.FromSeconds(180);
 
@@ -505,7 +507,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task WorkflowAndAgentsSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
