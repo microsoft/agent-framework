@@ -32,7 +32,7 @@ public sealed class AgentFileSkillsSourceOptions
     public IEnumerable<string>? AllowedScriptExtensions { get; set; }
 
     /// <summary>
-    /// Gets or sets relative folder paths to scan for script files within each skill directory.
+    /// Gets or sets relative directory paths to scan for script files within each skill directory.
     /// Values may be single-segment names (e.g., <c>"scripts"</c>) or multi-segment relative
     /// paths (e.g., <c>"sub/scripts"</c>). Use <c>"."</c> to include files directly at the
     /// skill root. Leading <c>"./"</c> prefixes, trailing separators, and backslashes are
@@ -42,10 +42,10 @@ public sealed class AgentFileSkillsSourceOptions
     /// <see href="https://agentskills.io/specification">Agent Skills specification</see>).
     /// When set, replaces the defaults entirely.
     /// </summary>
-    public IEnumerable<string>? ScriptFolders { get; set; }
+    public IEnumerable<string>? ScriptDirectories { get; set; }
 
     /// <summary>
-    /// Gets or sets relative folder paths to scan for resource files within each skill directory.
+    /// Gets or sets relative directory paths to scan for resource files within each skill directory.
     /// Values may be single-segment names (e.g., <c>"references"</c>) or multi-segment relative
     /// paths (e.g., <c>"sub/resources"</c>). Use <c>"."</c> to include files directly at the
     /// skill root. Leading <c>"./"</c> prefixes, trailing separators, and backslashes are
@@ -55,5 +55,5 @@ public sealed class AgentFileSkillsSourceOptions
     /// <see href="https://agentskills.io/specification">Agent Skills specification</see>).
     /// When set, replaces the defaults entirely.
     /// </summary>
-    public IEnumerable<string>? ResourceFolders { get; set; }
+    public IEnumerable<string>? ResourceDirectories { get; set; }
 }
