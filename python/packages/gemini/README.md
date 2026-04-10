@@ -16,7 +16,7 @@ Obtain an API key from [Google AI Studio](https://aistudio.google.com/apikey) an
 
 ```bash
 export GEMINI_API_KEY="your-api-key"
-export GEMINI_CHAT_MODEL_ID="gemini-2.5-flash"
+export GEMINI_CHAT_MODEL="gemini-2.5-flash"
 ```
 
 ## Examples
