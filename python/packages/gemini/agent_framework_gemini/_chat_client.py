@@ -790,6 +790,14 @@ class RawGeminiChatClient(
                         raw_representation=part,
                     )
                 )
+            elif part.executable_code is not None:
+                if part.executable_code.code:
+                    contents.append(Content.from_text(text=part.executable_code.code, raw_representation=part))
+            elif part.code_execution_result is not None:
+                if part.code_execution_result.output:
+                    contents.append(Content.from_text(text=part.code_execution_result.output, raw_representation=part))
+            else:
+                logger.debug("Skipping unsupported response part from Gemini")
         return contents
 
     def _parse_usage(self, usage: types.GenerateContentResponseUsageMetadata | None) -> UsageDetails | None:

@@ -29,6 +29,8 @@ def _make_part(
     text: str | None = None,
     thought: bool = False,
     function_call: tuple[str, str, dict[str, Any]] | None = None,
+    executable_code: str | None = None,
+    code_execution_result: str | None = None,
 ) -> MagicMock:
     """Build a mock types.Part.
 
@@ -36,11 +38,15 @@ def _make_part(
         text: Text content of the part.
         thought: Whether this is a thinking/reasoning part.
         function_call: Tuple of (id, name, args) if this is a function call part.
+        executable_code: Source code string for a code execution part.
+        code_execution_result: Output string for a code execution result part.
     """
     part = MagicMock()
     part.text = text
     part.thought = thought
     part.function_response = None
+    part.executable_code = None
+    part.code_execution_result = None
 
     if function_call:
         mock_function_call = MagicMock()
@@ -48,6 +54,16 @@ def _make_part(
         part.function_call = mock_function_call
     else:
         part.function_call = None
+
+    if executable_code is not None:
+        mock_exec = MagicMock()
+        mock_exec.code = executable_code
+        part.executable_code = mock_exec
+
+    if code_execution_result is not None:
+        mock_result = MagicMock()
+        mock_result.output = code_execution_result
+        part.code_execution_result = mock_result
 
     return part
 
@@ -460,6 +476,65 @@ async def test_thinking_parts_are_silently_skipped() -> None:
 
     assert len(response.messages[0].contents) == 1
     assert response.messages[0].text == "The answer is 42."
+
+
+# code execution parts
+
+
+async def test_executable_code_part_is_included_as_text() -> None:
+    """executable_code parts are surfaced as text content so callers can see what code was run."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=_make_response([
+            _make_part(executable_code="print(sum(range(10)))"),
+            _make_part(code_execution_result="45"),
+            _make_part(text="The sum of 0 through 9 is 45."),
+        ])
+    )
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Sum 0 to 9")])])
+
+    texts = [c.text for c in response.messages[0].contents if c.text]
+    assert "print(sum(range(10)))" in texts
+    assert "45" in texts
+    assert "The sum of 0 through 9 is 45." in texts
+
+
+async def test_unknown_part_type_is_skipped() -> None:
+    """Parts with no recognised field set are silently skipped."""
+    client, mock = _make_gemini_client()
+    unknown_part = MagicMock()
+    unknown_part.thought = False
+    unknown_part.text = None
+    unknown_part.function_call = None
+    unknown_part.function_response = None
+    unknown_part.executable_code = None
+    unknown_part.code_execution_result = None
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([unknown_part, _make_part(text="Hi")]))
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    assert len(response.messages[0].contents) == 1
+    assert response.messages[0].text == "Hi"
+
+
+async def test_empty_executable_code_part_is_skipped() -> None:
+    """executable_code parts with no code string produce no Content entry."""
+    client, mock = _make_gemini_client()
+    mock_part = MagicMock()
+    mock_part.text = None
+    mock_part.thought = False
+    mock_part.function_call = None
+    mock_part.function_response = None
+    mock_part.code_execution_result = None
+    mock_part.executable_code = MagicMock()
+    mock_part.executable_code.code = ""
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([mock_part, _make_part(text="Done.")]))
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    assert len(response.messages[0].contents) == 1
+    assert response.messages[0].text == "Done."
 
 
 # generation config options
