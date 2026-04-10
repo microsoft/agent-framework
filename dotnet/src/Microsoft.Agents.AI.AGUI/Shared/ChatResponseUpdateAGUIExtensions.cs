@@ -393,6 +393,8 @@ internal static class ChatResponseUpdateAGUIExtensions
                 {
                     if (content is FunctionCallContent functionCallContent)
                     {
+                        Trace.TraceInformation("[AGUI-SSE] Emitting TOOL_CALL_START: CallId={0}, Name={1}", functionCallContent.CallId, functionCallContent.Name);
+
                         yield return new ToolCallStartEvent
                         {
                             ToolCallId = functionCallContent.CallId,
@@ -412,9 +414,43 @@ internal static class ChatResponseUpdateAGUIExtensions
                         {
                             ToolCallId = functionCallContent.CallId
                         };
+
+                        // Emit a CUSTOM event for tool calls that require human-in-the-loop approval.
+                        // The approval request ID is set by GitHubCopilotAgent's OnPermissionRequest wrapper.
+                        if (functionCallContent.AdditionalProperties?.TryGetValue("ag_ui_approval_request_id", out object? approvalId) == true
+                            && approvalId is string requestId)
+                        {
+                            var approvalPayload = new Dictionary<string, object?>
+                            {
+                                ["requestId"] = requestId,
+                                ["toolCallId"] = functionCallContent.CallId,
+                                ["toolCallName"] = functionCallContent.Name,
+                            };
+
+                            // Merge tool call arguments into the approval payload
+                            if (functionCallContent.Arguments is { } args)
+                            {
+                                foreach (var kvp in args)
+                                {
+                                    approvalPayload[kvp.Key] = kvp.Value;
+                                }
+                            }
+
+                            yield return new CustomEvent
+                            {
+                                Name = "tool_approval_requested",
+                                Value = JsonSerializer.SerializeToElement(
+                                    approvalPayload,
+                                    jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)))
+                            };
+
+                            Trace.TraceInformation("[AGUI-SSE] Emitted CUSTOM tool_approval_requested: RequestId={0}", requestId);
+                        }
                     }
                     else if (content is FunctionResultContent functionResultContent)
                     {
+                        Trace.TraceInformation("[AGUI-SSE] Emitting TOOL_CALL_RESULT: CallId={0}", functionResultContent.CallId);
+
                         yield return new ToolCallResultEvent
                         {
                             MessageId = chatResponse.MessageId,
@@ -422,6 +458,28 @@ internal static class ChatResponseUpdateAGUIExtensions
                             Content = SerializeResultContent(functionResultContent, jsonSerializerOptions) ?? "",
                             Role = AGUIRoles.Tool
                         };
+
+                        // Emit a CUSTOM event for completed tool approval decisions.
+                        if (functionResultContent.AdditionalProperties?.TryGetValue("ag_ui_approval_request_id", out object? completedId) == true
+                            && completedId is string completedRequestId)
+                        {
+                            var completedPayload = new Dictionary<string, object?>
+                            {
+                                ["requestId"] = completedRequestId,
+                                ["toolCallId"] = functionResultContent.CallId,
+                                ["result"] = functionResultContent.Result?.ToString(),
+                            };
+
+                            yield return new CustomEvent
+                            {
+                                Name = "tool_approval_completed",
+                                Value = JsonSerializer.SerializeToElement(
+                                    completedPayload,
+                                    jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)))
+                            };
+
+                            Trace.TraceInformation("[AGUI-SSE] Emitted CUSTOM tool_approval_completed: RequestId={0}, Result={1}", completedRequestId, functionResultContent.Result);
+                        }
                     }
                     else if (content is DataContent dataContent)
                     {

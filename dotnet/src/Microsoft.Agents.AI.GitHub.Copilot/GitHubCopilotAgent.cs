@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -22,6 +23,12 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 {
     private const string DefaultName = "GitHub Copilot Agent";
     private const string DefaultDescription = "An AI agent powered by GitHub Copilot";
+
+    /// <summary>
+    /// Key used in <see cref="FunctionCallContent"/> AdditionalProperties to mark a tool call
+    /// as requiring AG-UI human-in-the-loop approval. The value is the approval request ID.
+    /// </summary>
+    internal const string ApprovalRequestIdKey = "ag_ui_approval_request_id";
 
     private readonly CopilotClient _copilotClient;
     private readonly string? _id;
@@ -145,17 +152,45 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         // Ensure the client is started
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
-        // Create or resume a session with streaming enabled
+        // Create channel FIRST so it's available for the OnPermissionRequest closure
+        Channel<AgentResponseUpdate> channel = Channel.CreateUnbounded<AgentResponseUpdate>();
+
+        // Extract HITL approval registration delegate from run options, if provided by MapAGUI
+        Func<string, Task<bool>>? approvalRegistration = null;
+        if (options?.AdditionalProperties?.TryGetValue("ag_ui_pending_approval_store", out object? storeObj) == true
+            && storeObj is Func<string, Task<bool>> registrationFunc)
+        {
+            approvalRegistration = registrationFunc;
+            Trace.TraceInformation("[AGUI-Permission] HITL approval delegate found in AdditionalProperties — Phase 2 enabled");
+        }
+        else
+        {
+            Trace.TraceInformation("[AGUI-Permission] No HITL approval delegate — Phase 1 visibility-only mode");
+        }
+
+        // Wrap OnPermissionRequest to emit TOOL_CALL_* AG-UI events for MCP tool calls
+        bool hasPermissionHandler = this._sessionConfig?.OnPermissionRequest is not null;
+        Trace.TraceInformation("[AGUI-Permission] OnPermissionRequest handler present: {0}", hasPermissionHandler);
+
+        // Create or resume a session with streaming enabled, wrapping OnPermissionRequest
+        // to emit TOOL_CALL_* AG-UI events for MCP tool calls
         SessionConfig sessionConfig = this._sessionConfig != null
-            ? CopySessionConfig(this._sessionConfig)
+            ? CopySessionConfigWithPermissionEmitter(this._sessionConfig, channel.Writer, this.Id, approvalRegistration)
             : new SessionConfig { Streaming = true };
+
+        // Verify the copied config actually has the handler set
+        Trace.TraceInformation("[AGUI-Permission] SessionConfig after copy — OnPermissionRequest is {0}",
+            sessionConfig.OnPermissionRequest is not null ? "SET (wrapped)" : "NULL");
 
         CopilotSession copilotSession;
         if (typedSession.SessionId is not null)
         {
+            var resumeConfig = CopyResumeSessionConfigWithPermissionEmitter(this._sessionConfig, channel.Writer, this.Id, approvalRegistration);
+            Trace.TraceInformation("[AGUI-Permission] ResumeSessionConfig — OnPermissionRequest is {0}",
+                resumeConfig.OnPermissionRequest is not null ? "SET (wrapped)" : "NULL");
             copilotSession = await this._copilotClient.ResumeSessionAsync(
                 typedSession.SessionId,
-                this.CreateResumeConfig(),
+                resumeConfig,
                 cancellationToken).ConfigureAwait(false);
         }
         else
@@ -164,10 +199,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             typedSession.SessionId = copilotSession.SessionId;
         }
 
+        Trace.TraceInformation("[AGUI-Permission] Copilot session created: SessionId={0}", copilotSession.SessionId);
+
         try
         {
-            Channel<AgentResponseUpdate> channel = Channel.CreateUnbounded<AgentResponseUpdate>();
-
             // Subscribe to session events
             using IDisposable subscription = copilotSession.On(evt =>
             {
@@ -198,6 +233,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
                     default:
                         // Handle all other event types by storing as RawRepresentation
+                        Trace.TraceInformation("[AGUI-Permission] session.On DEFAULT branch — event type: {0}", evt.GetType().Name);
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(evt));
                         break;
                 }
@@ -274,6 +310,189 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <summary>
+    /// Copies a <see cref="SessionConfig"/> and wraps <see cref="SessionConfig.OnPermissionRequest"/>
+    /// to emit <see cref="FunctionCallContent"/> and <see cref="FunctionResultContent"/> into the AG-UI
+    /// event stream, providing tool call visibility for MCP and other permission-gated tool calls.
+    /// </summary>
+    internal static SessionConfig CopySessionConfigWithPermissionEmitter(
+        SessionConfig source,
+        ChannelWriter<AgentResponseUpdate> channelWriter,
+        string? agentId,
+        Func<string, Task<bool>>? approvalRegistration = null)
+    {
+        SessionConfig copy = CopySessionConfig(source);
+        copy.OnPermissionRequest = WrapPermissionHandler(source.OnPermissionRequest, channelWriter, agentId, approvalRegistration);
+        return copy;
+    }
+
+    /// <summary>
+    /// Copies a <see cref="SessionConfig"/> into a <see cref="ResumeSessionConfig"/> and wraps
+    /// <see cref="ResumeSessionConfig.OnPermissionRequest"/> to emit tool call events.
+    /// </summary>
+    internal static ResumeSessionConfig CopyResumeSessionConfigWithPermissionEmitter(
+        SessionConfig? source,
+        ChannelWriter<AgentResponseUpdate> channelWriter,
+        string? agentId,
+        Func<string, Task<bool>>? approvalRegistration = null)
+    {
+        ResumeSessionConfig copy = CopyResumeSessionConfig(source);
+        copy.OnPermissionRequest = WrapPermissionHandler(source?.OnPermissionRequest, channelWriter, agentId, approvalRegistration);
+        return copy;
+    }
+
+    private static PermissionRequestHandler? WrapPermissionHandler(
+        PermissionRequestHandler? originalHandler,
+        ChannelWriter<AgentResponseUpdate> channelWriter,
+        string? agentId)
+    {
+        return WrapPermissionHandler(originalHandler, channelWriter, agentId, approvalRegistration: null);
+    }
+
+    private static PermissionRequestHandler? WrapPermissionHandler(
+        PermissionRequestHandler? originalHandler,
+        ChannelWriter<AgentResponseUpdate> channelWriter,
+        string? agentId,
+        Func<string, Task<bool>>? approvalRegistration)
+    {
+        if (originalHandler is null)
+        {
+            return null;
+        }
+
+        return async (request, invocation) =>
+        {
+            string callId = Guid.NewGuid().ToString("N");
+            string toolName = BuildToolName(request);
+
+            Trace.TraceInformation("[AGUI-Permission] OnPermissionRequest fired: Kind={0}, ToolName={1}, CallId={2}", request.Kind, toolName, callId);
+
+            // Emit FunctionCallContent so the AG-UI pipeline generates TOOL_CALL_START/ARGS/END
+            bool written = channelWriter.TryWrite(BuildPermissionFunctionCallUpdate(callId, toolName, request, agentId));
+            Trace.TraceInformation("[AGUI-Permission] FunctionCallContent written to channel: CallId={0}, Success={1}", callId, written);
+
+            PermissionRequestResult result;
+
+            if (approvalRegistration is not null)
+            {
+                Trace.TraceInformation("[AGUI-Permission] HITL mode — blocking for client approval: CallId={0}", callId);
+                // HITL mode: block until the AG-UI client responds via the /approve endpoint
+                bool approved = await approvalRegistration(callId).ConfigureAwait(false);
+                Trace.TraceInformation("[AGUI-Permission] HITL approval resolved: CallId={0}, Approved={1}", callId, approved);
+                result = new PermissionRequestResult
+                {
+                    Kind = approved ? PermissionRequestResultKind.Approved : PermissionRequestResultKind.DeniedInteractivelyByUser
+                };
+            }
+            else
+            {
+                Trace.TraceInformation("[AGUI-Permission] Phase 1 mode — forwarding to original handler: CallId={0}", callId);
+                // Forward to the caller's original handler (e.g., ApproveAll or server-side logic)
+                result = await originalHandler(request, invocation).ConfigureAwait(false);
+                Trace.TraceInformation("[AGUI-Permission] Original handler returned: CallId={0}, ResultKind={1}", callId, result.Kind);
+            }
+
+            // Emit FunctionResultContent so the AG-UI pipeline generates TOOL_CALL_RESULT
+            bool resultWritten = channelWriter.TryWrite(BuildPermissionResultUpdate(callId, result, agentId));
+            Trace.TraceInformation("[AGUI-Permission] FunctionResultContent written to channel: CallId={0}, ResultKind={1}, Success={2}", callId, result.Kind, resultWritten);
+
+            return result;
+        };
+    }
+
+    private static string BuildToolName(PermissionRequest request)
+    {
+        // Use typed subclass properties when available for richer tool names
+        if (request is PermissionRequestMcp mcp && !string.IsNullOrEmpty(mcp.ToolName))
+        {
+            return !string.IsNullOrEmpty(mcp.ServerName)
+                ? $"{mcp.ServerName}/{mcp.ToolName}"
+                : mcp.ToolName;
+        }
+
+        return request.Kind ?? "unknown_tool";
+    }
+
+    private static AgentResponseUpdate BuildPermissionFunctionCallUpdate(
+        string callId,
+        string toolName,
+        PermissionRequest request,
+        string? agentId)
+    {
+        var args = new Dictionary<string, object?>
+        {
+            ["kind"] = request.Kind,
+        };
+
+        // Add typed properties from PermissionRequest subclasses
+        if (request is PermissionRequestMcp mcp)
+        {
+            args["serverName"] = mcp.ServerName;
+            args["toolName"] = mcp.ToolName;
+            args["toolTitle"] = mcp.ToolTitle;
+            args["readOnly"] = mcp.ReadOnly;
+            if (mcp.Args is not null)
+            {
+                args["args"] = mcp.Args;
+            }
+        }
+        else if (request is PermissionRequestShell shell)
+        {
+            args["fullCommandText"] = shell.FullCommandText;
+        }
+        else if (request is PermissionRequestWrite write)
+        {
+            args["fileName"] = write.FileName;
+        }
+        else if (request is PermissionRequestRead read)
+        {
+            args["path"] = read.Path;
+        }
+        else if (request is PermissionRequestUrl url)
+        {
+            args["url"] = url.Url;
+        }
+
+        FunctionCallContent callContent = new(callId, toolName, args)
+        {
+            RawRepresentation = request,
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                // Marker for the AG-UI pipeline to emit a CUSTOM tool_approval_requested event
+                [ApprovalRequestIdKey] = callId,
+            },
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [callContent])
+        {
+            AgentId = agentId,
+            MessageId = callId
+        };
+    }
+
+    private static AgentResponseUpdate BuildPermissionResultUpdate(
+        string callId,
+        PermissionRequestResult result,
+        string? agentId)
+    {
+        string resultText = result.Kind.ToString();
+        FunctionResultContent resultContent = new(callId, resultText)
+        {
+            RawRepresentation = result,
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                // Marker for the AG-UI pipeline to emit a CUSTOM tool_approval_completed event
+                [ApprovalRequestIdKey] = callId,
+            },
+        };
+
+        return new AgentResponseUpdate(ChatRole.Tool, [resultContent])
+        {
+            AgentId = agentId,
+            MessageId = callId
+        };
+    }
+
+    /// <summary>
     /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance
     /// with <see cref="SessionConfig.Streaming"/> set to <c>true</c>.
     /// </summary>
@@ -290,11 +509,13 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             Provider = source.Provider,
             OnPermissionRequest = source.OnPermissionRequest,
             OnUserInputRequest = source.OnUserInputRequest,
+            OnEvent = source.OnEvent,
             Hooks = source.Hooks,
             WorkingDirectory = source.WorkingDirectory,
             ConfigDir = source.ConfigDir,
             McpServers = source.McpServers,
             CustomAgents = source.CustomAgents,
+            Agent = source.Agent,
             SkillDirectories = source.SkillDirectories,
             DisabledSkills = source.DisabledSkills,
             InfiniteSessions = source.InfiniteSessions,
@@ -319,11 +540,13 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             Provider = source?.Provider,
             OnPermissionRequest = source?.OnPermissionRequest,
             OnUserInputRequest = source?.OnUserInputRequest,
+            OnEvent = source?.OnEvent,
             Hooks = source?.Hooks,
             WorkingDirectory = source?.WorkingDirectory,
             ConfigDir = source?.ConfigDir,
             McpServers = source?.McpServers,
             CustomAgents = source?.CustomAgents,
+            Agent = source?.Agent,
             SkillDirectories = source?.SkillDirectories,
             DisabledSkills = source?.DisabledSkills,
             InfiniteSessions = source?.InfiniteSessions,
