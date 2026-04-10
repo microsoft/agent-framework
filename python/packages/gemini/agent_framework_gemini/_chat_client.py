@@ -166,6 +166,29 @@ class GeminiSettings(TypedDict, total=False):
 
 _GEMINI_SERVICE_URL = "https://generativelanguage.googleapis.com"
 
+# Keys mapping to a different GenerateContentConfig field name
+_OPTION_TRANSLATIONS: dict[str, str] = {
+    "max_tokens": "max_output_tokens",
+    "stop": "stop_sequences",
+}
+
+# Keys handled with dedicated logic, not via the generic passthrough
+_OPTION_EXPLICIT_KEYS: frozenset[str] = frozenset({
+    "tools",
+    "tool_choice",
+    "response_format",
+    "response_schema",
+    "thinking_config",
+})
+
+# Keys consumed upstream and not forwarded to GenerateContentConfig
+_OPTION_CONSUMED_KEYS: frozenset[str] = frozenset({
+    "model",
+    "instructions",
+})
+
+_OPTION_EXCLUDE_KEYS: frozenset[str] = _OPTION_EXPLICIT_KEYS | _OPTION_CONSUMED_KEYS
+
 _FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "STOP": "stop",
     "MAX_TOKENS": "length",
@@ -585,9 +608,9 @@ class RawGeminiChatClient(
     ) -> types.GenerateContentConfig:
         """Build a ``types.GenerateContentConfig`` from the resolved chat options.
 
-        Maps both standard ``ChatOptions`` fields (temperature, top_p, tools, etc.) and
-        ``GeminiChatOptions``-specific fields (``response_schema``, ``top_k``, ``thinking_config``)
-        to their ``GenerateContentConfig`` equivalents.
+        Note: ``_OPTION_TRANSLATIONS`` keys are renamed, ``_OPTION_EXCLUDE_KEYS`` are skipped, and all
+        remaining keys are forwarded as-is, allowing new Gemini parameters to be adopted without
+        framework changes.
 
         Args:
             options: Resolved chat options mapping, typically a ``GeminiChatOptions`` dict.
@@ -598,35 +621,22 @@ class RawGeminiChatClient(
         """
         kwargs: dict[str, Any] = {}
 
-        # Base ChatOptions fields
         if system_instruction:
             kwargs["system_instruction"] = system_instruction
-        if (v := options.get("temperature")) is not None:
-            kwargs["temperature"] = v
-        if (v := options.get("top_p")) is not None:
-            kwargs["top_p"] = v
-        if (v := options.get("max_tokens")) is not None:
-            kwargs["max_output_tokens"] = v
-        if (v := options.get("stop")) is not None:
-            kwargs["stop_sequences"] = v
-        if (v := options.get("seed")) is not None:
-            kwargs["seed"] = v
-        if (v := options.get("frequency_penalty")) is not None:
-            kwargs["frequency_penalty"] = v
-        if (v := options.get("presence_penalty")) is not None:
-            kwargs["presence_penalty"] = v
-        if options.get("response_format"):
+
+        for key, value in options.items():
+            if key in _OPTION_EXCLUDE_KEYS or value is None:
+                continue
+            kwargs[_OPTION_TRANSLATIONS.get(key, key)] = value
+
+        if options.get("response_format") or options.get("response_schema"):
             kwargs["response_mime_type"] = "application/json"
+        if schema := options.get("response_schema"):
+            kwargs["response_schema"] = schema
         if tools := self._prepare_tools(options):
             kwargs["tools"] = tools
         if tool_config := self._prepare_tool_config(options.get("tool_choice")):
             kwargs["tool_config"] = tool_config
-        # Gemini-specific fields
-        if schema := options.get("response_schema"):
-            kwargs["response_mime_type"] = "application/json"
-            kwargs["response_schema"] = schema
-        if (v := options.get("top_k")) is not None:
-            kwargs["top_k"] = v
         if thinking_config := options.get("thinking_config"):
             thinking_config_kwargs = {k: v for k, v in thinking_config.items() if v is not None}
             if thinking_config_kwargs:
