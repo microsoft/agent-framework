@@ -14,7 +14,7 @@ import asyncio
 from agent_framework import Agent
 from dotenv import load_dotenv
 
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
+from agent_framework_gemini import GeminiChatClient
 
 load_dotenv()
 
@@ -23,15 +23,11 @@ async def main() -> None:
     """Run the Google Maps grounding example."""
     print("=== Google Maps grounding ===")
 
-    options: GeminiChatOptions = {
-        "google_maps_grounding": True,
-    }
-
     agent = Agent(
         client=GeminiChatClient(),
         name="MapsAgent",
         instructions="You are a helpful travel assistant. Use Google Maps to provide accurate location information.",
-        default_options=options,
+        tools=[GeminiChatClient.get_maps_grounding_tool()],
     )
 
     query = "What are some highly rated restaurants in the city center of Karlsruhe, Germany?"

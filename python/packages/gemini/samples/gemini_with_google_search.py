@@ -14,7 +14,7 @@ import asyncio
 from agent_framework import Agent
 from dotenv import load_dotenv
 
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
+from agent_framework_gemini import GeminiChatClient
 
 load_dotenv()
 
@@ -23,15 +23,11 @@ async def main() -> None:
     """Run the Google Search grounding example."""
     print("=== Google Search grounding ===")
 
-    options: GeminiChatOptions = {
-        "google_search_grounding": True,
-    }
-
     agent = Agent(
         client=GeminiChatClient(),
         name="SearchAgent",
         instructions="You are a helpful assistant. Use Google Search to provide accurate, up-to-date answers.",
-        default_options=options,
+        tools=[GeminiChatClient.get_web_search_tool()],
     )
 
     query = "What is the latest stable release of the .NET SDK?"

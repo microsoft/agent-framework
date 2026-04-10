@@ -14,7 +14,7 @@ import asyncio
 from agent_framework import Agent
 from dotenv import load_dotenv
 
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
+from agent_framework_gemini import GeminiChatClient
 
 load_dotenv()
 
@@ -23,15 +23,11 @@ async def main() -> None:
     """Run the code execution example."""
     print("=== Code execution ===")
 
-    options: GeminiChatOptions = {
-        "code_execution": True,
-    }
-
     agent = Agent(
         client=GeminiChatClient(),
         name="CodeAgent",
         instructions="You are a helpful assistant. Use code execution to compute precise answers.",
-        default_options=options,
+        tools=[GeminiChatClient.get_code_interpreter_tool()],
     )
 
     query = "What are the first 20 prime numbers? Compute them in code."

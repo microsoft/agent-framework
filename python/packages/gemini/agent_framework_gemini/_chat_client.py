@@ -250,6 +250,91 @@ class RawGeminiChatClient(
 
         super().__init__(additional_properties=additional_properties)
 
+    @staticmethod
+    def get_code_interpreter_tool(**kwargs: Any) -> types.Tool:
+        """Create a code execution tool.
+
+        Pass the returned tool to the ``tools`` list of an agent or ``ChatOptions``.
+
+        Keyword Args:
+            **kwargs: Reserved for future use; currently ignored.
+
+        Returns:
+            A ``types.Tool`` configured for sandboxed code execution.
+        """
+        return types.Tool(code_execution=types.ToolCodeExecution())
+
+    @staticmethod
+    def get_web_search_tool(**kwargs: Any) -> types.Tool:
+        """Create a Google Search grounding tool.
+
+        Pass the returned tool to the ``tools`` list of an agent or ``ChatOptions``.
+
+        Keyword Args:
+            **kwargs: Passed directly to ``types.GoogleSearch``. Supported fields include
+                ``time_range_filter``, ``search_types``, and ``exclude_domains``.
+
+        Returns:
+            A ``types.Tool`` configured for Google Search grounding.
+        """
+        return types.Tool(google_search=types.GoogleSearch(**kwargs))
+
+    @staticmethod
+    def get_mcp_tool(url: str, *, name: str | None = None, **kwargs: Any) -> types.Tool:
+        """Create an MCP (Model Context Protocol) server tool.
+
+        Pass the returned tool to the ``tools`` list of an agent or ``ChatOptions``.
+
+        Args:
+            url: The URL of the MCP server's streamable HTTP endpoint.
+            name: Optional display name for the MCP server.
+            **kwargs: Additional kwargs passed to ``StreamableHttpTransport``. Supported fields
+                include ``headers``, ``timeout``, ``sse_read_timeout``, and ``terminate_on_close``.
+
+        Returns:
+            A ``types.Tool`` configured for the given MCP server.
+        """
+        return types.Tool(
+            mcp_servers=[
+                types.McpServer(
+                    name=name,
+                    streamable_http_transport=types.StreamableHttpTransport(url=url, **kwargs),
+                )
+            ]
+        )
+
+    @staticmethod
+    def get_file_search_tool(**kwargs: Any) -> types.Tool:
+        """Create a file search tool backed by a Gemini file search store.
+
+        Pass the returned tool to the ``tools`` list of an agent or ``ChatOptions``.
+
+        Keyword Args:
+            **kwargs: Passed directly to ``types.FileSearch``. Supported fields include
+                ``file_search_store_names`` (list of store resource names to query),
+                ``top_k`` (maximum results per query), and ``metadata_filter``
+                (CEL expression to filter by metadata).
+
+        Returns:
+            A ``types.Tool`` configured for file search retrieval.
+        """
+        return types.Tool(file_search=types.FileSearch(**kwargs))
+
+    @staticmethod
+    def get_maps_grounding_tool(**kwargs: Any) -> types.Tool:
+        """Create a Google Maps grounding tool.
+
+        Pass the returned tool to the ``tools`` list of an agent or ``ChatOptions``.
+
+        Keyword Args:
+            **kwargs: Passed directly to ``types.GoogleMaps``. Supported fields include
+                ``enable_widget``.
+
+        Returns:
+            A ``types.Tool`` configured for Google Maps grounding.
+        """
+        return types.Tool(google_maps=types.GoogleMaps(**kwargs))
+
     @override
     def _inner_get_response(
         self,
@@ -523,42 +608,47 @@ class RawGeminiChatClient(
         return types.GenerateContentConfig(**kwargs)
 
     def _prepare_tools(self, options: Mapping[str, Any]) -> list[types.Tool] | None:
-        """Build the Gemini tool list from options, combining function declarations and built-in tools.
+        """Translate the framework tool list into Gemini API tool objects.
+
+        The Gemini API does not accept framework ``FunctionTool`` objects directly.
+        This method acts as the translation boundary between the two type systems.
+        It handles two kinds of entries in ``options["tools"]``:
+
+        - ``FunctionTool``: a framework abstraction for a callable with a name,
+          description, and JSON schema. Translated to ``types.FunctionDeclaration``
+          (Gemini's equivalent) and grouped into a single ``types.Tool``, which is
+          how the Gemini API expects function declarations to be passed.
+        - ``types.Tool``: already in Gemini's native format (e.g. built-in tools
+          such as search or code execution). Passed through unchanged. Use the
+          ``get_*_tool`` factory methods on this class to produce these.
 
         Args:
-            options: Resolved chat options containing ``tools``, ``google_search_grounding``
-                (``bool`` or ``types.GoogleSearch``), ``google_maps_grounding``
-                (``bool`` or ``types.GoogleMaps``), and ``code_execution`` flag.
+            options: Resolved chat options whose ``tools`` entry may contain
+                ``FunctionTool`` instances, plain callables, or ``types.Tool`` objects.
 
         Returns:
-            A list of ``types.Tool`` objects, or None if no tools are configured.
+            A non-empty list of ``types.Tool`` objects ready for the Gemini API,
+            or ``None`` if no tools are configured.
         """
-        function_tools: list[Any] = options.get("tools") or []
-        search_option = options.get("google_search_grounding", False)
-        maps_option = options.get("google_maps_grounding", False)
-        include_code_exec = options.get("code_execution", False)
+        tools_option: list[Any] = options.get("tools") or []
 
         result: list[types.Tool] = []
 
+        # Translate framework FunctionTool objects to Gemini API FunctionDeclaration objects
         declarations = [
             types.FunctionDeclaration(
                 name=tool.name,
                 description=tool.description or "",
                 parameters=tool.parameters(),  # type: ignore[arg-type]
             )
-            for tool in function_tools
+            for tool in tools_option
             if isinstance(tool, FunctionTool)
         ]
         if declarations:
             result.append(types.Tool(function_declarations=declarations))
-        if search_option:
-            google_search = search_option if isinstance(search_option, types.GoogleSearch) else types.GoogleSearch()
-            result.append(types.Tool(google_search=google_search))
-        if maps_option:
-            google_maps = maps_option if isinstance(maps_option, types.GoogleMaps) else types.GoogleMaps()
-            result.append(types.Tool(google_maps=google_maps))
-        if include_code_exec:
-            result.append(types.Tool(code_execution=types.ToolCodeExecution()))
+
+        # Objects of type types.Tool are already in Gemini's native format
+        result.extend(tool for tool in tools_option if isinstance(tool, types.Tool))
 
         return result or None
 

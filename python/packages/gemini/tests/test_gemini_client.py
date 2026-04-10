@@ -844,83 +844,101 @@ async def test_unknown_tool_choice_mode_is_ignored() -> None:
     assert not hasattr(config, "tool_config") or config.tool_config is None
 
 
-# built-in tools
+# built-in tool factories
 
 
-async def test_google_search_grounding_injects_tool() -> None:
+def test_get_web_search_tool_returns_google_search_tool() -> None:
+    """get_web_search_tool returns a types.Tool with google_search set."""
+    tool = GeminiChatClient.get_web_search_tool()
+    assert isinstance(tool, types.Tool)
+    assert tool.google_search is not None
+
+
+def test_get_web_search_tool_forwards_kwargs() -> None:
+    """Keyword arguments are passed through to types.GoogleSearch."""
+    tool = GeminiChatClient.get_web_search_tool(exclude_domains=["example.com"])
+    assert tool.google_search is not None
+    assert tool.google_search.exclude_domains == ["example.com"]
+
+
+def test_get_code_interpreter_tool_returns_code_execution_tool() -> None:
+    """get_code_interpreter_tool returns a types.Tool with code_execution set."""
+    tool = GeminiChatClient.get_code_interpreter_tool()
+    assert isinstance(tool, types.Tool)
+    assert tool.code_execution is not None
+
+
+def test_get_maps_grounding_tool_returns_google_maps_tool() -> None:
+    """get_maps_grounding_tool returns a types.Tool with google_maps set."""
+    tool = GeminiChatClient.get_maps_grounding_tool()
+    assert isinstance(tool, types.Tool)
+    assert tool.google_maps is not None
+
+
+def test_get_maps_grounding_tool_forwards_kwargs() -> None:
+    """Keyword arguments are passed through to types.GoogleMaps."""
+    tool = GeminiChatClient.get_maps_grounding_tool(enable_widget=True)
+    assert tool.google_maps is not None
+    assert tool.google_maps.enable_widget is True
+
+
+def test_get_file_search_tool_returns_file_search_tool() -> None:
+    """get_file_search_tool returns a types.Tool with file_search set."""
+    tool = GeminiChatClient.get_file_search_tool(file_search_store_names=["stores/my-store"])
+    assert isinstance(tool, types.Tool)
+    assert tool.file_search is not None
+    assert tool.file_search.file_search_store_names == ["stores/my-store"]
+
+
+def test_get_file_search_tool_forwards_kwargs() -> None:
+    """Keyword arguments are passed through to types.FileSearch."""
+    tool = GeminiChatClient.get_file_search_tool(
+        file_search_store_names=["stores/my-store"],
+        top_k=5,
+        metadata_filter="type='pdf'",
+    )
+    assert tool.file_search is not None
+    assert tool.file_search.top_k == 5
+    assert tool.file_search.metadata_filter == "type='pdf'"
+
+
+def test_get_mcp_tool_returns_mcp_server_tool() -> None:
+    """get_mcp_tool returns a types.Tool with a single McpServer entry."""
+    tool = GeminiChatClient.get_mcp_tool(name="my-mcp", url="https://mcp.example.com/sse")
+    assert isinstance(tool, types.Tool)
+    assert tool.mcp_servers is not None
+    assert len(tool.mcp_servers) == 1
+    server = tool.mcp_servers[0]
+    assert server.name == "my-mcp"
+    assert server.streamable_http_transport is not None
+    assert server.streamable_http_transport.url == "https://mcp.example.com/sse"
+
+
+def test_get_mcp_tool_forwards_transport_kwargs() -> None:
+    """Transport keyword arguments are passed through to StreamableHttpTransport."""
+    tool = GeminiChatClient.get_mcp_tool(
+        name="secure-mcp",
+        url="https://mcp.example.com/sse",
+        headers={"Authorization": "Bearer token"},
+    )
+    server = tool.mcp_servers[0]  # type: ignore[index]
+    assert server.streamable_http_transport.headers == {"Authorization": "Bearer token"}
+
+
+async def test_types_tool_passed_in_tools_list_is_forwarded() -> None:
+    """A types.Tool in the tools list is passed through directly to the Gemini config."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Result")]))
+    search_tool = GeminiChatClient.get_web_search_tool()
 
     await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("Search")])],
-        options={"google_search_grounding": True},
+        options={"tools": [search_tool]},
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.tools is not None
-    assert any(t.google_search for t in config.tools)
-
-
-async def test_google_maps_grounding_injects_tool() -> None:
-    client, mock = _make_gemini_client()
-    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Result")]))
-
-    await client.get_response(
-        messages=[Message(role="user", contents=[Content.from_text("Map")])],
-        options={"google_maps_grounding": True},
-    )
-
-    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.tools is not None
-    assert any(t.google_maps for t in config.tools)
-
-
-async def test_google_search_grounding_with_config_uses_provided_instance() -> None:
-    """Passing a types.GoogleSearch instance forwards it directly rather than constructing a default."""
-    client, mock = _make_gemini_client()
-    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Result")]))
-    search_config = types.GoogleSearch(exclude_domains=["example.com"])
-
-    await client.get_response(
-        messages=[Message(role="user", contents=[Content.from_text("Search")])],
-        options={"google_search_grounding": search_config},
-    )
-
-    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.tools is not None
-    injected = next((t.google_search for t in config.tools if t.google_search is not None), None)  # type: ignore[union-attr]
-    assert injected is search_config
-
-
-async def test_google_maps_grounding_with_config_uses_provided_instance() -> None:
-    """Passing a types.GoogleMaps instance forwards it directly rather than constructing a default."""
-    client, mock = _make_gemini_client()
-    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Result")]))
-    maps_config = types.GoogleMaps(enable_widget=True)
-
-    await client.get_response(
-        messages=[Message(role="user", contents=[Content.from_text("Map")])],
-        options={"google_maps_grounding": maps_config},
-    )
-
-    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.tools is not None
-    injected = next((t.google_maps for t in config.tools if t.google_maps is not None), None)  # type: ignore[union-attr]
-    assert injected is maps_config
-
-
-async def test_code_execution_injects_tool() -> None:
-    client, mock = _make_gemini_client()
-    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Result")]))
-
-    await client.get_response(
-        messages=[Message(role="user", contents=[Content.from_text("Run code")])],
-        options={"code_execution": True},
-    )
-
-    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.tools is not None
-    assert any(t.code_execution for t in config.tools)
+    assert any(tool.google_search for tool in config.tools)
 
 
 async def test_function_response_part_in_response_mapped_to_content() -> None:
@@ -1201,12 +1219,11 @@ async def test_integration_thinking_config() -> None:
 @skip_if_no_api_key
 async def test_integration_google_search_grounding() -> None:
     """Google Search grounding returns a non-empty response for a current-events question."""
-    options: GeminiChatOptions = {"google_search_grounding": True}
     client = GeminiChatClient(model=_TEST_MODEL)
 
     response = await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("What is the latest stable version of Python?")])],
-        options=options,
+        options={"tools": [GeminiChatClient.get_web_search_tool()]},
     )
 
     assert response.messages
@@ -1218,7 +1235,6 @@ async def test_integration_google_search_grounding() -> None:
 @skip_if_no_api_key
 async def test_integration_google_maps_grounding() -> None:
     """Google Maps grounding returns a non-empty response for a location-based question."""
-    options: GeminiChatOptions = {"google_maps_grounding": True}
     client = GeminiChatClient(model=_TEST_MODEL)
 
     response = await client.get_response(
@@ -1228,7 +1244,7 @@ async def test_integration_google_maps_grounding() -> None:
                 contents=[Content.from_text("What are some highly rated restaurants in Karlsruhe city center?")],
             )
         ],
-        options=options,
+        options={"tools": [GeminiChatClient.get_maps_grounding_tool()]},
     )
 
     assert response.messages
@@ -1240,7 +1256,6 @@ async def test_integration_google_maps_grounding() -> None:
 @skip_if_no_api_key
 async def test_integration_code_execution() -> None:
     """Code execution tool produces a non-empty response for a computation request."""
-    options: GeminiChatOptions = {"code_execution": True}
     client = GeminiChatClient(model=_TEST_MODEL)
 
     response = await client.get_response(
@@ -1250,7 +1265,7 @@ async def test_integration_code_execution() -> None:
                 contents=[Content.from_text("Compute the sum of the first 100 natural numbers using code.")],
             )
         ],
-        options=options,
+        options={"tools": [GeminiChatClient.get_code_interpreter_tool()]},
     )
 
     assert response.messages
