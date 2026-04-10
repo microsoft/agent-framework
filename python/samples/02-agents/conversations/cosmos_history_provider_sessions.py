@@ -82,9 +82,7 @@ async def main() -> None:
 
         alice_session = agent.create_session(session_id="tenant-alice-session-1")
 
-        response = await agent.run(
-            "Hi! I'm planning a trip to Italy. I love Renaissance art.", session=alice_session
-        )
+        response = await agent.run("Hi! I'm planning a trip to Italy. I love Renaissance art.", session=alice_session)
         print("Alice:     I'm planning a trip to Italy. I love Renaissance art.")
         print(f"Assistant: {response.text}\n")
 
@@ -97,9 +95,7 @@ async def main() -> None:
 
         bob_session = agent.create_session(session_id="tenant-bob-session-1")
 
-        response = await agent.run(
-            "Hey! I'm learning to cook Thai food. I just made pad thai.", session=bob_session
-        )
+        response = await agent.run("Hey! I'm learning to cook Thai food. I just made pad thai.", session=bob_session)
         print("Bob:       I'm learning to cook Thai food. I just made pad thai.")
         print(f"Assistant: {response.text}\n")
 

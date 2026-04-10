@@ -57,10 +57,7 @@ async def main() -> None:
         return
 
     if not cosmos_endpoint or not cosmos_database_name or not cosmos_container_name:
-        print(
-            "Please set AZURE_COSMOS_ENDPOINT, AZURE_COSMOS_DATABASE_NAME, "
-            "and AZURE_COSMOS_CONTAINER_NAME."
-        )
+        print("Please set AZURE_COSMOS_ENDPOINT, AZURE_COSMOS_DATABASE_NAME, and AZURE_COSMOS_CONTAINER_NAME.")
         return
 
     # Use a single AzureCliCredential for both Cosmos and Foundry,

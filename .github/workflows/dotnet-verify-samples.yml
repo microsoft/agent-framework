@@ -63,10 +63,19 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Generate filtered solution
+        shell: pwsh
+        run: |
+          ./dotnet/eng/scripts/New-FilteredSolution.ps1 `
+            -Solution dotnet/agent-framework-dotnet.slnx `
+            -TargetFramework net10.0 `
+            -Configuration Debug `
+            -OutputPath dotnet/filtered.slnx `
+            -Verbose
+
       - name: Build solution
-        working-directory: dotnet
         shell: bash
-        run: dotnet build agent-framework-dotnet.slnx -f net10.0 --warnaserror
+        run: dotnet build dotnet/filtered.slnx -f net10.0 --warnaserror
 
       - name: Run verify-samples
         id: verify

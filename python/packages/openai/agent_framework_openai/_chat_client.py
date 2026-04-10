@@ -512,6 +512,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
+            seen_reasoning_delta_item_ids: set[str] = set()
             validated_options: dict[str, Any] | None = None
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -530,6 +531,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                 chunk,
                                 options=validated_options,
                                 function_call_ids=function_call_ids,
+                                seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
                             )
                     except Exception as ex:
                         self._handle_request_error(ex)
@@ -1930,6 +1932,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         event: OpenAIResponseStreamEvent,
         options: dict[str, Any],
         function_call_ids: dict[int, tuple[str, str]],
+        seen_reasoning_delta_item_ids: set[str] | None = None,
     ) -> ChatResponseUpdate:
         """Parse an OpenAI Responses API streaming event into a ChatResponseUpdate."""
         metadata: dict[str, Any] = {}
@@ -2008,6 +2011,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 contents.append(Content.from_text(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.delta":
+                if seen_reasoning_delta_item_ids is not None:
+                    seen_reasoning_delta_item_ids.add(event.item_id)
                 contents.append(
                     Content.from_text_reasoning(
                         id=event.item_id,
@@ -2017,15 +2022,21 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.done":
-                contents.append(
-                    Content.from_text_reasoning(
-                        id=event.item_id,
-                        text=event.text,
-                        raw_representation=event,
+                # Done event carries the full accumulated text. Emit it only as a
+                # fallback when no delta was already received for this item_id, to
+                # avoid duplicating content in downstream accumulators (e.g. ag-ui).
+                if seen_reasoning_delta_item_ids is None or event.item_id not in seen_reasoning_delta_item_ids:
+                    contents.append(
+                        Content.from_text_reasoning(
+                            id=event.item_id,
+                            text=event.text,
+                            raw_representation=event,
+                        )
                     )
-                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.delta":
+                if seen_reasoning_delta_item_ids is not None:
+                    seen_reasoning_delta_item_ids.add(event.item_id)
                 contents.append(
                     Content.from_text_reasoning(
                         id=event.item_id,
@@ -2035,13 +2046,17 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.done":
-                contents.append(
-                    Content.from_text_reasoning(
-                        id=event.item_id,
-                        text=event.text,
-                        raw_representation=event,
+                # Done event carries the full accumulated text. Emit it only as a
+                # fallback when no delta was already received for this item_id, to
+                # avoid duplicating content in downstream accumulators (e.g. ag-ui).
+                if seen_reasoning_delta_item_ids is None or event.item_id not in seen_reasoning_delta_item_ids:
+                    contents.append(
+                        Content.from_text_reasoning(
+                            id=event.item_id,
+                            text=event.text,
+                            raw_representation=event,
+                        )
                     )
-                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.code_interpreter_call_code.delta":
                 call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
@@ -2065,6 +2080,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
+                # NOTE: Unlike reasoning done events, code_interpreter done events always
+                # emit content because downstream consumers do not accumulate
+                # code_interpreter deltas the same way.
             case "response.code_interpreter_call_code.done":
                 call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
                 ci_additional_properties = {

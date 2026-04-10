@@ -315,10 +315,7 @@ class CosmosCheckpointStorage:
         """
         await self._ensure_container_proxy()
 
-        query = (
-            "SELECT * FROM c WHERE c.workflow_name = @workflow_name "
-            "ORDER BY c.timestamp DESC OFFSET 0 LIMIT 1"
-        )
+        query = "SELECT * FROM c WHERE c.workflow_name = @workflow_name ORDER BY c.timestamp DESC OFFSET 0 LIMIT 1"
         parameters: list[dict[str, object]] = [
             {"name": "@workflow_name", "value": workflow_name},
         ]
@@ -351,10 +348,7 @@ class CosmosCheckpointStorage:
         """
         await self._ensure_container_proxy()
 
-        query = (
-            "SELECT c.checkpoint_id FROM c WHERE c.workflow_name = @workflow_name "
-            "ORDER BY c.timestamp ASC"
-        )
+        query = "SELECT c.checkpoint_id FROM c WHERE c.workflow_name = @workflow_name ORDER BY c.timestamp ASC"
         parameters: list[dict[str, object]] = [
             {"name": "@workflow_name", "value": workflow_name},
         ]
