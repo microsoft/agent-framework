@@ -106,8 +106,13 @@ GITHUB_READ_TOOLS = {
 # Configuration
 # =============================================================================
 
-# Path to the GitHub MCP server binary
-GITHUB_MCP_SERVER_PATH = "/home/aashish/projects/github-mcp/github-mcp-server-dev/github-mcp-server"
+# Path to the GitHub MCP server binary, configured via environment variable.
+GITHUB_MCP_SERVER_PATH = os.getenv("GITHUB_MCP_SERVER_PATH")
+if not GITHUB_MCP_SERVER_PATH:
+    raise RuntimeError(
+        "GITHUB_MCP_SERVER_PATH environment variable is not set. "
+        "Set it to the full path of the GitHub MCP server binary, e.g. in your .env file."
+    )
 
 # Token file path - will be created if it doesn't exist
 TOKEN_FILE_PATH = Path(__file__).parent / ".github_token"
@@ -267,7 +272,7 @@ async def main():
                     func.additional_properties["max_allowed_confidentiality"] = "public"
                     print(f"   - {func.name}: max_allowed_confidentiality=public")
             
-            # Create secure agent config
+            # Create secure agent config (also a context provider)
             config = SecureAgentConfig(
                 auto_hide_untrusted=True,
                 approval_on_violation=True,
@@ -275,7 +280,7 @@ async def main():
                 allow_untrusted_tools=GITHUB_READ_TOOLS,  # Read tools can run in untrusted context
             )
             
-            # Create agent with GitHub MCP tools
+            # Create agent - security tools and instructions injected via context provider
             agent = chat_client.as_agent(
                 name="github_assistant",
                 instructions="""You are a helpful GitHub assistant. You can read issues, search repositories, 
@@ -288,12 +293,12 @@ When asked to solve an issue:
 4. Post a comment on the issue with your solution
 
 Always try to be helpful and complete the task the user asks for.
-""" + config.get_instructions(),
+""",
                 tools=[
                     *github_mcp.functions,  # All GitHub MCP tools
                     post_to_slack,  # Tool with policy enforcement
-                    *config.get_tools(),
                 ],
+                context_providers=[config],  # Security tools + instructions injected automatically
                 middleware=config.get_middleware(),
             )
             
@@ -414,12 +419,12 @@ When asked to solve an issue:
 4. Post a comment on the issue with your solution
 
 Always try to be helpful and complete the task the user asks for.
-""" + config.get_instructions(),
+""",
                 tools=[
                     *github_mcp.functions,
                     post_to_slack,
-                    *config.get_tools(),
                 ],
+                context_providers=[config],
                 middleware=config.get_middleware(),
             )
             
@@ -559,12 +564,12 @@ When asked to solve an issue:
 4. Post a comment on the issue with your solution
 
 Always try to be helpful and complete the task the user asks for.
-""" + config.get_instructions(),
+""",
                 tools=[
                     *github_mcp.functions,
                     post_to_slack,
-                    *config.get_tools(),
                 ],
+                context_providers=[config],
                 middleware=config.get_middleware(),
             )
             

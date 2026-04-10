@@ -142,7 +142,7 @@ Rationale:
 
 - Fully backwards compatible - opt-in system
 - Agents without security middleware function normally
-- Unlabeled content defaults to TRUSTED (safe default)
+- Unlabeled content defaults to UNTRUSTED (safer default, matching implementation)
 - No breaking changes to existing APIs
 
 ### Testing Strategy

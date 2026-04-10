@@ -25,11 +25,13 @@ To run this example:
 import asyncio
 import os
 import sys
+import json
 from typing import Any
 
 from pydantic import Field
 
 from agent_framework import (
+    Content,
     SecureAgentConfig,
     tool,
 )
@@ -167,7 +169,7 @@ async def send_email(
 )
 async def fetch_emails(
     count: int = Field(default=5, description="Number of emails to fetch"),
-) -> list[dict[str, Any]]:
+) -> list[Content]:
     """Fetch emails from inbox (simulated).
 
     Each email has its own security label based on whether it's from a trusted
@@ -176,23 +178,25 @@ async def fetch_emails(
     """
     emails = SAMPLE_EMAILS[:count]
     
-    # Return emails with per-item security labels in additional_properties
-    # Middleware will automatically hide untrusted items
-    result = []
+    # Return emails as list[Content] with per-item security labels in additional_properties.
+    # This ensures FunctionTool.invoke() preserves per-item labels for tier-1 propagation.
+    result: list[Content] = []
     for email in emails:
-        result.append({
+        email_text = json.dumps({
             "id": email["id"],
             "from": email["from"],
             "subject": email["subject"],
-            "body": email["body"],  # Full content - middleware hides if untrusted
-            # Per-item label in additional_properties (consistent with FunctionResultContent)
-            "additional_properties": {
+            "body": email["body"],
+        })
+        result.append(Content.from_text(
+            email_text,
+            additional_properties={
                 "security_label": {
                     "integrity": "trusted" if email["trusted"] else "untrusted",
                     "confidentiality": "private",
                 }
             },
-        })
+        ))
     
     return result
 
@@ -227,7 +231,7 @@ def setup_agent():
         credential=credential
     )
 
-    # Create secure agent configuration
+    # Create secure agent configuration (also a context provider)
     # - enable policy enforcement with approval-on-violation for human-in-the-loop
     # - provide quarantine client for real LLM processing of untrusted content
     # - allow fetch_emails to work in any context (it returns data)
@@ -239,7 +243,7 @@ def setup_agent():
         quarantine_chat_client=quarantine_client,
     )
 
-    # Create the secure agent
+    # Create the secure agent - security tools and instructions injected via context provider
     agent = main_client.as_agent(
         name="email_assistant",
         instructions="""You are a helpful email assistant. You can:
@@ -258,13 +262,13 @@ When asked to summarize emails:
 2. Use quarantined_llm with the variable_ids from the email body references
 3. Present the safe summary to the user
 
-""" + config.get_instructions(),  # Add security tool instructions
+""",
         tools=[
             fetch_emails,
             send_email,
-            *config.get_tools(),  # Add quarantined_llm and inspect_variable
         ],
-        middleware=config.get_middleware(),  # Add security middleware
+        context_providers=[config],  # Security tools + instructions injected automatically
+        middleware=config.get_middleware(),
     )
 
     return agent, config

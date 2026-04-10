@@ -747,10 +747,8 @@ class AgentFrameworkExecutor:
                                         # Extract policy_violation info if present (from security middleware)
                                         policy_violation_data = content_dict.get("policy_violation")
                                         additional_props: dict[str, Any] | None = None
-                                        if policy_violation_data:
+                                        if isinstance(policy_violation_data, dict):
                                             additional_props = {"policy_violation": True, **policy_violation_data}
-                                        elif approved:
-                                            additional_props = {"policy_violation": True}
 
                                         # Reconstruct function_call from server-stored data
                                         function_call = Content.from_function_call(

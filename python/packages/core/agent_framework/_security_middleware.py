@@ -22,6 +22,7 @@ from ._security import (
     VariableReferenceContent,
     combine_labels,
 )
+from ._sessions import BaseContextProvider
 from ._types import Content
 
 if TYPE_CHECKING:
@@ -572,11 +573,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     @staticmethod
     def _is_variable_reference(item: Content) -> bool:
         """Return True if *item* is a hidden variable-reference placeholder."""
-        return (
-            isinstance(item, Content)
-            and item.type == "text"
-            and bool(item.additional_properties.get("_variable_reference"))
-        )
+        if not (isinstance(item, Content) and item.type == "text"):
+            return False
+        props = item.additional_properties or {}
+        return bool(props.get("_variable_reference"))
 
     async def process(
         self,
@@ -1175,14 +1175,14 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                     call_id = context.metadata.get("call_id", "")
                     policy_approved = context.metadata.get("policy_approval_granted", False)
                     
-                    # Check multiple sources for approval:
+                    # Check for explicit approval:
                     # 1. policy_approval_granted from metadata (set by _tools.py)
                     # 2. call_id in _approved_violations (persisted approvals)
-                    # 3. call_id in _pending_policy_approvals (we sent approval request for this call_id)
+                    # Note: _pending_policy_approvals only prevents duplicate requests,
+                    # it does NOT grant approval.
                     is_approved = (
-                        policy_approved 
-                        or call_id in self._approved_violations 
-                        or call_id in self._pending_policy_approvals
+                        policy_approved
+                        or call_id in self._approved_violations
                     )
                     
                     if is_approved:
@@ -1269,14 +1269,14 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             call_id = context.metadata.get("call_id", "")
             policy_approved = context.metadata.get("policy_approval_granted", False)
             
-            # Check multiple sources for approval:
+            # Check for explicit approval:
             # 1. policy_approval_granted from metadata (set by _tools.py)
             # 2. call_id in _approved_violations (persisted approvals)
-            # 3. call_id in _pending_policy_approvals (we sent approval request for this call_id)
+            # Note: _pending_policy_approvals only prevents duplicate requests,
+            # it does NOT grant approval.
             is_approved = (
-                policy_approved 
-                or call_id in self._approved_violations 
-                or call_id in self._pending_policy_approvals
+                policy_approved
+                or call_id in self._approved_violations
             )
             
             if is_approved:
@@ -1429,11 +1429,12 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         self.audit_log.clear()
 
 
-class SecureAgentConfig:
-    """Configuration for creating a secure agent with prompt injection defense.
+class SecureAgentConfig(BaseContextProvider):
+    """Context provider for creating a secure agent with prompt injection defense.
     
-    This class encapsulates the security middleware, tools, and instructions
-    needed to create an agent that can safely handle untrusted content.
+    This class extends BaseContextProvider to automatically inject security tools
+    and instructions into any agent via the context provider pipeline. Middleware
+    must still be passed separately to the agent constructor.
     
     Attributes:
         label_tracker: The LabelTrackingFunctionMiddleware instance.
@@ -1445,20 +1446,23 @@ class SecureAgentConfig:
         
             from agent_framework import Agent, SecureAgentConfig
             
-            # Create security configuration
-            config = SecureAgentConfig(
+            # Create security configuration (also a context provider)
+            security = SecureAgentConfig(
                 allow_untrusted_tools={"fetch_external_data"},
                 block_on_violation=True,
             )
             
-            # Create secure agent
+            # Create secure agent - tools and instructions injected automatically
             agent = Agent(
                 client=client,
-                instructions=base_instructions + config.get_instructions(),
-                tools=[my_tool, *config.get_tools()],
-                middleware=config.get_middleware(),
+                instructions=base_instructions,
+                tools=[my_tool],
+                context_providers=[security],
+                middleware=security.get_middleware(),
             )
     """
+    
+    DEFAULT_SOURCE_ID = "secure_agent"
     
     def __init__(
         self,
@@ -1471,6 +1475,7 @@ class SecureAgentConfig:
         enable_audit_log: bool = True,
         enable_policy_enforcement: bool = True,
         quarantine_chat_client: "SupportsChatGetResponse | None" = None,
+        source_id: str | None = None,
     ) -> None:
         """Initialize secure agent configuration.
         
@@ -1492,7 +1497,11 @@ class SecureAgentConfig:
                 instead of returning placeholder responses. This client should ideally be
                 a separate instance using a cheaper model (e.g., gpt-4o-mini) since it
                 processes untrusted content.
+            source_id: Optional source identifier for context provider attribution.
+                Defaults to "secure_agent".
         """
+        super().__init__(source_id or self.DEFAULT_SOURCE_ID)
+        
         self.label_tracker = LabelTrackingFunctionMiddleware(
             auto_hide_untrusted=auto_hide_untrusted,
             default_integrity=default_integrity,
@@ -1521,6 +1530,28 @@ class SecureAgentConfig:
             from ._security_tools import set_quarantine_client
             set_quarantine_client(quarantine_chat_client)
             logger.info("Quarantine chat client configured for real LLM calls")
+    
+    async def before_run(
+        self,
+        *,
+        agent: Any,
+        session: Any,
+        context: Any,
+        state: dict[str, Any],
+    ) -> None:
+        """Inject security tools and instructions before model invocation.
+        
+        This method is called automatically by the agent framework when
+        SecureAgentConfig is used as a context provider.
+        
+        Args:
+            agent: The agent running this invocation.
+            session: The current session.
+            context: The invocation context - tools and instructions are added here.
+            state: The provider-scoped mutable state dict.
+        """
+        context.extend_tools(self.source_id, self.get_tools())
+        context.extend_instructions(self.source_id, self.get_instructions())
     
     def get_tools(self) -> list:
         """Get the security tools for agent integration.
