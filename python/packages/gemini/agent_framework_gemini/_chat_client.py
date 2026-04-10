@@ -623,7 +623,7 @@ class RawGeminiChatClient(
             response_id=None,
             messages=[Message(role="assistant", contents=contents, raw_representation=candidate)],
             usage_details=self._parse_usage(response.usage_metadata),
-            model_id=response.model_version or self.model,
+            model=response.model_version or self.model,
             finish_reason=self._map_finish_reason(
                 candidate.finish_reason.name if candidate and candidate.finish_reason else None
             ),
@@ -656,7 +656,7 @@ class RawGeminiChatClient(
 
         return ChatResponseUpdate(
             contents=contents,
-            model_id=chunk.model_version,
+            model=chunk.model_version,
             finish_reason=finish_reason,
             raw_representation=chunk,
         )
