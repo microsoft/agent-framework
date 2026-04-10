@@ -481,6 +481,7 @@
     <Project Path="src/Microsoft.Agents.AI.Anthropic/Microsoft.Agents.AI.Anthropic.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI.Persistent/Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Foundry/Microsoft.Agents.AI.Foundry.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.FoundryLocal/Microsoft.Agents.AI.FoundryLocal.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CopilotStudio/Microsoft.Agents.AI.CopilotStudio.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CosmosNoSql/Microsoft.Agents.AI.CosmosNoSql.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Declarative/Microsoft.Agents.AI.Declarative.csproj" />

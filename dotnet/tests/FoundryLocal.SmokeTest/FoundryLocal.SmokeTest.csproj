@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net9.0</TargetFrameworks>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-arm64</RuntimeIdentifiers>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+    <NoWarn>$(NoWarn);OPENAI001</NoWarn>
+    <!-- Don't inherit xUnit test infrastructure -->
+    <UseMicrosoftTestingPlatformRunner>false</UseMicrosoftTestingPlatformRunner>
+    <TestingPlatformDotnetTestSupport>false</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.FoundryLocal\Microsoft.Agents.AI.FoundryLocal.csproj" />
+  </ItemGroup>
+
+  <!-- Remove test packages inherited from Directory.Build.props -->
+  <ItemGroup>
+    <PackageReference Remove="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Remove="Microsoft.NET.Test.Sdk" />
+    <PackageReference Remove="Moq" />
+    <PackageReference Remove="xRetry.v3" />
+    <PackageReference Remove="xunit.v3.mtp-v2" />
+    <PackageReference Remove="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <!-- Remove global usings inherited from Directory.Build.props -->
+  <ItemGroup>
+    <Using Remove="xRetry.v3" />
+    <Using Remove="Xunit" />
+  </ItemGroup>
+
+</Project>
