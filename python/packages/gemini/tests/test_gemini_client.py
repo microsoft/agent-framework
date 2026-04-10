@@ -144,7 +144,7 @@ async def test_get_response_returns_text() -> None:
     assert response.messages[0].text == "Hello!"
 
 
-async def test_get_response_model_id_from_response() -> None:
+async def test_get_response_model_from_response() -> None:
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([_make_part(text="Hi")], model_version="gemini-2.5-pro-002")
@@ -152,7 +152,7 @@ async def test_get_response_model_id_from_response() -> None:
 
     response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
 
-    assert response.model_id == "gemini-2.5-pro-002"
+    assert response.model == "gemini-2.5-pro-002"
 
 
 async def test_get_response_uses_model_from_options() -> None:
