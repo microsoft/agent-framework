@@ -1877,8 +1877,11 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.conversation_id = update.conversation_id
         if update.finish_reason is not None:
             response.finish_reason = update.finish_reason
-        if update.model is not None:
-            response.model = update.model
+        if update.model_id is not None:
+            response.model_id = update.model_id
+    if isinstance(response, AgentResponse) and isinstance(update, AgentResponseUpdate):
+        if update.finish_reason is not None:
+            response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
 
 
@@ -2435,6 +2438,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         response_id: str | None = None,
         agent_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: ResponseModelT | None = None,
         response_format: StructuredResponseFormat = None,
@@ -2476,6 +2480,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         self.response_id = response_id
         self.agent_id = agent_id
         self.created_at = created_at
+        self.finish_reason = finish_reason
         self.usage_details = usage_details
         self._value: ResponseModelT | None = value
         self._response_format: type[BaseModel] | Mapping[str, Any] | None = response_format
@@ -2688,6 +2693,7 @@ class AgentResponseUpdate(SerializationMixin):
         response_id: str | None = None,
         message_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2729,6 +2735,7 @@ class AgentResponseUpdate(SerializationMixin):
         self.response_id = response_id
         self.message_id = message_id
         self.created_at = created_at
+        self.finish_reason = finish_reason
         self.continuation_token = continuation_token
         self.additional_properties = _restore_compaction_annotation_in_additional_properties(
             additional_properties,
@@ -2761,6 +2768,7 @@ def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None)
         response_id=update.response_id,
         message_id=update.message_id,
         created_at=update.created_at,
+        finish_reason=update.finish_reason,
         continuation_token=update.continuation_token,
         additional_properties=update.additional_properties,
         raw_representation=update,
