@@ -24,6 +24,7 @@ Status is grouped into these buckets:
 | `agent-framework-bedrock` | `python/packages/bedrock` | `beta` |
 | `agent-framework-chatkit` | `python/packages/chatkit` | `beta` |
 | `agent-framework-claude` | `python/packages/claude` | `beta` |
+| `agent-framework-codex` | `python/packages/codex` | `alpha` |
 | `agent-framework-copilotstudio` | `python/packages/copilotstudio` | `beta` |
 | `agent-framework-core` | `python/packages/core` | `released` |
 | `agent-framework-declarative` | `python/packages/declarative` | `beta` |
