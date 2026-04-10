@@ -2454,6 +2454,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             agent_id: The identifier of the agent that produced this response. Useful in multi-agent
                 scenarios to track which agent generated the response.
             created_at: A timestamp for the chat response.
+            finish_reason: The reason the model stopped generating. Common values include
+                ``"stop"`` (natural completion), ``"length"`` (token limit), and
+                ``"tool_calls"`` (the model invoked a tool).
             usage_details: The usage details for the chat response.
             value: The structured output of the agent run response, if applicable.
             response_format: Optional response format for the agent response.
@@ -2709,6 +2712,9 @@ class AgentResponseUpdate(SerializationMixin):
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             created_at: Optional timestamp for the chat response update.
+            finish_reason: The reason the model stopped generating. Common values include
+                ``"stop"`` (natural completion), ``"length"`` (token limit), and
+                ``"tool_calls"`` (the model invoked a tool).
             continuation_token: Optional token for resuming a long-running background operation.
                 When present, indicates the operation is still in progress.
             additional_properties: Optional additional properties associated with the chat response update.
