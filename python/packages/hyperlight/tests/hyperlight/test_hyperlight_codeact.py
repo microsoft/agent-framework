@@ -9,8 +9,10 @@ import inspect
 import json
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Mapping, MutableSequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, MutableSequence
+from contextlib import contextmanager
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -191,6 +193,68 @@ class _FakeSessionContext:
         self.tools.append((source_id, tools))
 
 
+def _extract_execute_code_result(function_result: Content) -> Content:
+    assert function_result.type == "function_result"
+    assert function_result.exception is None, (
+        f"execute_code raised {function_result.exception!r} with items={function_result.items!r}"
+    )
+
+    code_result = next(
+        (item for item in function_result.items or [] if item.type == "code_interpreter_tool_result"),
+        None,
+    )
+    if code_result is not None:
+        return code_result
+
+    text_outputs = [item for item in function_result.items or [] if item.type == "text"]
+    if text_outputs:
+        return Content.from_code_interpreter_tool_result(outputs=text_outputs)
+
+    if function_result.result:
+        return Content.from_code_interpreter_tool_result(outputs=[Content.from_text(function_result.result)])
+
+    raise AssertionError(f"execute_code returned no usable outputs: {function_result.items!r}")
+
+
+def _extract_text_output(result_content: Content) -> str:
+    code_result = _extract_execute_code_result(result_content)
+    text_output = next(
+        (item for item in code_result.outputs or [] if item.type == "text" and item.text is not None), None
+    )
+    assert text_output is not None and text_output.text is not None, (
+        f"Expected text output from execute_code, got {code_result.outputs!r}"
+    )
+    return text_output.text
+
+
+@contextmanager
+def _serve_http_text_response(body: bytes) -> Iterator[tuple[str, list[str]]]:
+    requests: list[str] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            requests.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        yield f"127.0.0.1:{server.server_port}", requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 class _FakeCodeActChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
     def __init__(self) -> None:
         FunctionInvocationLayer.__init__(self)
@@ -234,13 +298,7 @@ class _FakeCodeActChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
 
             result_content = function_results[0]
             assert result_content.call_id == "execute_code_call"
-
-            code_result = next(
-                item for item in result_content.items or [] if item.type == "code_interpreter_tool_result"
-            )
-            text_output = next(item for item in code_result.outputs or [] if item.type == "text")
-            assert text_output.text == "42\n"
-            assert result_content.exception is None
+            assert _extract_text_output(result_content) == "42\n"
 
             return ChatResponse(messages=Message(role="assistant", contents=["The sandbox returned 42."]))
 
@@ -404,7 +462,7 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkey
     assert "compute" in _FakeSandbox.instances[0].registered_tools
 
 
-# @pytest.mark.integration
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> None:
     client = _FakeCodeActChatClient()
@@ -415,3 +473,54 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> N
 
     assert response.text == "The sandbox returned 42."
     assert client.call_count == 2
+
+
+@pytest.mark.integration
+@skip_if_hyperlight_integration_tests_disabled
+async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_with_real_sandbox(
+    tmp_path: Path,
+) -> None:
+    mounted_file = tmp_path / "mounted.txt"
+    mounted_file.write_text("hello from mount", encoding="utf-8")
+
+    with _serve_http_text_response(b"network ok") as (allowed_host, requests):
+        provider = HyperlightCodeActProvider(
+            filesystem_mode="read_write",
+            network_mode="allow_list",
+        )
+        provider.add_file_mounts((mounted_file, "data/input.txt"))
+        provider.add_allowed_domains(allowed_host)
+        provider.add_allowed_http_methods("GET")
+
+        context = _FakeSessionContext()
+        state: dict[str, Any] = {}
+        await provider.before_run(agent=object(), session=None, context=context, state=state)
+
+        run_tool = context.tools[0][1][0]
+        assert isinstance(run_tool, HyperlightExecuteCodeTool)
+
+        result = await run_tool.invoke(
+            arguments={
+                "code": (
+                    "from pathlib import Path\n"
+                    "from urllib.request import urlopen\n\n"
+                    'input_text = Path("/input/data/input.txt").read_text(encoding="utf-8")\n'
+                    'Path("/output/result.txt").write_text(input_text.upper(), encoding="utf-8")\n'
+                    f'with urlopen("http://{allowed_host}/allowed", timeout=10) as response:\n'
+                    '    network_text = response.read().decode("utf-8")\n'
+                    "print(input_text)\n"
+                    "print(network_text)\n"
+                )
+            }
+        )
+
+    assert result[0].type == "code_interpreter_tool_result"
+    outputs = result[0].outputs or []
+
+    text_output = next(item for item in outputs if item.type == "text" and item.text is not None)
+    assert text_output.text == "hello from mount\nnetwork ok\n"
+
+    file_output = next(item for item in outputs if item.type == "data")
+    assert file_output.data == b"HELLO FROM MOUNT"
+    assert file_output.additional_properties["path"] == "/output/result.txt"
+    assert requests == ["/allowed"]
