@@ -402,9 +402,7 @@ async def test_list_checkpoint_ids_empty_returns_empty(mock_container: MagicMock
 # --- Tests for close and context manager ---
 
 
-async def test_close_closes_owned_client(
-    monkeypatch: pytest.MonkeyPatch, mock_cosmos_client: MagicMock
-) -> None:
+async def test_close_closes_owned_client(monkeypatch: pytest.MonkeyPatch, mock_cosmos_client: MagicMock) -> None:
     mock_factory = MagicMock(return_value=mock_cosmos_client)
     monkeypatch.setattr(checkpoint_storage_module, "CosmosClient", mock_factory)
 

@@ -111,10 +111,7 @@ async def main() -> None:
     cosmos_key = os.getenv("AZURE_COSMOS_KEY")
 
     if not cosmos_endpoint or not cosmos_database_name or not cosmos_container_name:
-        print(
-            "Please set AZURE_COSMOS_ENDPOINT, AZURE_COSMOS_DATABASE_NAME, "
-            "and AZURE_COSMOS_CONTAINER_NAME."
-        )
+        print("Please set AZURE_COSMOS_ENDPOINT, AZURE_COSMOS_DATABASE_NAME, and AZURE_COSMOS_CONTAINER_NAME.")
         return
 
     # Authentication: supports both managed identity/RBAC and key-based auth.
@@ -131,12 +128,15 @@ async def main() -> None:
     else:
         from azure.identity.aio import DefaultAzureCredential
 
-        async with DefaultAzureCredential() as credential, CosmosCheckpointStorage(
-            endpoint=cosmos_endpoint,
-            credential=credential,
-            database_name=cosmos_database_name,
-            container_name=cosmos_container_name,
-        ) as checkpoint_storage:
+        async with (
+            DefaultAzureCredential() as credential,
+            CosmosCheckpointStorage(
+                endpoint=cosmos_endpoint,
+                credential=credential,
+                database_name=cosmos_database_name,
+                container_name=cosmos_container_name,
+            ) as checkpoint_storage,
+        ):
             await _run_workflow(checkpoint_storage)
 
 

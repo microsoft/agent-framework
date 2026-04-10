@@ -82,9 +82,7 @@ async def main() -> None:
     ):
         session = agent.create_session()
 
-        response1 = await agent.run(
-            "My name is Ada. I'm building a distributed database in Rust.", session=session
-        )
+        response1 = await agent.run("My name is Ada. I'm building a distributed database in Rust.", session=session)
         print("User:      My name is Ada. I'm building a distributed database in Rust.")
         print(f"Assistant: {response1.text}\n")
 
