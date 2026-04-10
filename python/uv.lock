@@ -517,7 +517,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-gemini"
-version = "1.0.0b260319"
+version = "1.0.0a260410"
 source = { editable = "packages/gemini" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },

@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Shows how to enable extended thinking with ThinkingConfig so the model can
-reason through complex problems before responding.
+"""Shows how to enable Google Maps grounding.
+
+Allows Gemini to retrieve location and mapping information before responding.
 
 Requires the following environment variables to be set:
 - GEMINI_API_KEY
@@ -12,28 +12,29 @@ Requires the following environment variables to be set:
 import asyncio
 
 from agent_framework import Agent
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, ThinkingConfig
 from dotenv import load_dotenv
+
+from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
 
 load_dotenv()
 
 
 async def main() -> None:
-    """Example of extended thinking with a Python version comparison question."""
-    print("=== Extended thinking ===")
+    """Run the Google Maps grounding example."""
+    print("=== Google Maps grounding ===")
 
     options: GeminiChatOptions = {
-        "thinking_config": ThinkingConfig(thinking_budget=2048),
+        "google_maps_grounding": True,
     }
 
     agent = Agent(
         client=GeminiChatClient(),
-        name="PythonAgent",
-        instructions="You are a helpful Python expert.",
+        name="MapsAgent",
+        instructions="You are a helpful travel assistant. Use Google Maps to provide accurate location information.",
         default_options=options,
     )
 
-    query = "What new language features were introduced in Python between 3.10 and 3.14?"
+    query = "What are some highly rated restaurants in the city center of Karlsruhe, Germany?"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
     async for chunk in agent.run(query, stream=True):

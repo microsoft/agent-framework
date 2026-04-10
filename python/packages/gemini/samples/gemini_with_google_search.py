@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Shows how to enable Google Search grounding so Gemini can retrieve up-to-date
-information from the web before responding.
+"""Shows how to enable Google Search grounding.
+
+Allows Gemini to retrieve up-to-date information from the web before responding.
 
 Requires the following environment variables to be set:
 - GEMINI_API_KEY
@@ -12,13 +12,15 @@ Requires the following environment variables to be set:
 import asyncio
 
 from agent_framework import Agent
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
 from dotenv import load_dotenv
+
+from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
 
 load_dotenv()
 
 
 async def main() -> None:
+    """Run the Google Search grounding example."""
     print("=== Google Search grounding ===")
 
     options: GeminiChatOptions = {

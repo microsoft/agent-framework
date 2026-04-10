@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Shows how to enable Gemini's built-in code execution tool so the model can write
-and run code in a sandboxed environment to answer questions.
+"""Shows how to enable extended thinking with ThinkingConfig.
+
+Allows the model to reason through complex problems before responding.
 
 Requires the following environment variables to be set:
 - GEMINI_API_KEY
@@ -12,27 +12,29 @@ Requires the following environment variables to be set:
 import asyncio
 
 from agent_framework import Agent
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
 from dotenv import load_dotenv
+
+from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, ThinkingConfig
 
 load_dotenv()
 
 
 async def main() -> None:
-    print("=== Code execution ===")
+    """Example of extended thinking with a Python version comparison question."""
+    print("=== Extended thinking ===")
 
     options: GeminiChatOptions = {
-        "code_execution": True,
+        "thinking_config": ThinkingConfig(thinking_budget=2048),
     }
 
     agent = Agent(
         client=GeminiChatClient(),
-        name="CodeAgent",
-        instructions="You are a helpful assistant. Use code execution to compute precise answers.",
+        name="PythonAgent",
+        instructions="You are a helpful Python expert.",
         default_options=options,
     )
 
-    query = "What are the first 20 prime numbers? Compute them in code."
+    query = "What new language features were introduced in Python between 3.10 and 3.14?"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
     async for chunk in agent.run(query, stream=True):

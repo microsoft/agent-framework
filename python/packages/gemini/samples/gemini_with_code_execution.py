@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Shows how to enable Google Maps grounding so Gemini can retrieve location and
-mapping information before responding.
+"""Shows how to enable Gemini's built-in code execution tool.
+
+Allows the model to write and run code in a sandboxed environment to answer questions.
 
 Requires the following environment variables to be set:
 - GEMINI_API_KEY
@@ -12,27 +12,29 @@ Requires the following environment variables to be set:
 import asyncio
 
 from agent_framework import Agent
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
 from dotenv import load_dotenv
+
+from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
 
 load_dotenv()
 
 
 async def main() -> None:
-    print("=== Google Maps grounding ===")
+    """Run the code execution example."""
+    print("=== Code execution ===")
 
     options: GeminiChatOptions = {
-        "google_maps_grounding": True,
+        "code_execution": True,
     }
 
     agent = Agent(
         client=GeminiChatClient(),
-        name="MapsAgent",
-        instructions="You are a helpful travel assistant. Use Google Maps to provide accurate location information.",
+        name="CodeAgent",
+        instructions="You are a helpful assistant. Use code execution to compute precise answers.",
         default_options=options,
     )
 
-    query = "What are some highly rated restaurants in the city center of Karlsruhe, Germany?"
+    query = "What are the first 20 prime numbers? Compute them in code."
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
     async for chunk in agent.run(query, stream=True):

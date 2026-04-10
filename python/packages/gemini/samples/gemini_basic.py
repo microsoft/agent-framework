@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Shows how to use GeminiChatClient with an agent and a custom tool, covering both
-non-streaming and streaming responses.
+"""Shows how to use GeminiChatClient with an agent and a custom tool.
+
+Covers both non-streaming and streaming responses.
 
 Requires the following environment variables to be set:
 - GEMINI_API_KEY
@@ -14,8 +14,9 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework_gemini import GeminiChatClient
 from dotenv import load_dotenv
+
+from agent_framework_gemini import GeminiChatClient
 
 load_dotenv()
 
@@ -68,6 +69,7 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
+    """Run non-streaming and streaming examples."""
     await non_streaming_example()
     await streaming_example()
 
