@@ -784,6 +784,8 @@ async def run_agent_stream(
         session = AgentSession(service_session_id=supplied_thread_id)
     else:
         session = AgentSession()
+    if flow.current_state:
+        session.state.update(flow.current_state)
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
     base_metadata: dict[str, Any] = {
