@@ -74,6 +74,7 @@ agent-framework-azurefunctions = { workspace = true }
 agent-framework-bedrock = { workspace = true }
 agent-framework-chatkit = { workspace = true }
 agent-framework-claude = { workspace = true }
+agent-framework-codex = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }

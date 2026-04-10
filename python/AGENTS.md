@@ -64,6 +64,7 @@ python/
 - [anthropic](packages/anthropic/AGENTS.md) - Anthropic Claude API
 - [bedrock](packages/bedrock/AGENTS.md) - AWS Bedrock
 - [claude](packages/claude/AGENTS.md) - Claude Agent SDK
+- [codex](packages/codex/AGENTS.md) - OpenAI Codex SDK
 - [foundry_local](packages/foundry_local/AGENTS.md) - Azure AI Foundry Local
 - [ollama](packages/ollama/AGENTS.md) - Local Ollama inference
 

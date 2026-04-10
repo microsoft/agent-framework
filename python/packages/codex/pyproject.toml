@@ -4,7 +4,7 @@ description = "OpenAI Codex SDK integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260225"
+version = "1.0.0a260410"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -12,7 +12,7 @@ urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=ta
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 4 - Beta",
+  "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -23,8 +23,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc2",
-    "codex-sdk>=0.1.0",
+    "agent-framework-core>=1.0.1,<2",
+    "codex-sdk>=0.1.0,<0.2",
 ]
 
 [tool.uv]
@@ -61,6 +61,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_codex"]
 exclude = ['tests']
 
 [tool.mypy]
@@ -85,9 +86,13 @@ exclude_dirs = ["tests"]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 
-[tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_codex"
-test = "pytest --cov=agent_framework_codex --cov-report=term-missing:skip-covered tests"
+[tool.poe.tasks.mypy]
+help = "Run MyPy for this package."
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_codex"
+
+[tool.poe.tasks.test]
+help = "Run the default unit test suite for this package."
+cmd = 'pytest -m "not integration" --cov=agent_framework_codex --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
