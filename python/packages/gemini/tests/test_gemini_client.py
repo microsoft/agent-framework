@@ -643,6 +643,36 @@ async def test_prepare_config_frequency_and_presence_penalty() -> None:
     assert config.presence_penalty == 0.2
 
 
+async def test_prepare_config_unknown_key_is_forwarded() -> None:
+    """Keys absent from _OPTION_EXCLUDE_KEYS and _OPTION_TRANSLATIONS are forwarded as-is."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
+
+    with patch("agent_framework_gemini._chat_client.types.GenerateContentConfig") as mock_config:
+        mock_config.return_value = MagicMock()
+        await client.get_response(
+            messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+            options={"some_future_param": "value"},
+        )
+        assert mock_config.call_args.kwargs.get("some_future_param") == "value"
+
+
+async def test_prepare_config_consumed_keys_are_excluded() -> None:
+    """Keys consumed upstream (model, instructions) are not forwarded to GenerateContentConfig."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
+
+    with patch("agent_framework_gemini._chat_client.types.GenerateContentConfig") as mock_config:
+        mock_config.return_value = MagicMock()
+        await client.get_response(
+            messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+            options={"model": "gemini-2.5-pro", "instructions": "Be helpful."},
+        )
+        kwargs = mock_config.call_args.kwargs
+        assert "model" not in kwargs
+        assert "instructions" not in kwargs
+
+
 # thinking config
 
 
