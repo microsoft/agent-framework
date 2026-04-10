@@ -42,7 +42,7 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
             {
                 if (this._userInputRequests.ContainsKey(userInputRequest.RequestId))
                 {
-                    throw new InvalidOperationException($"ToolApprovalRequestContent with duplicate RequestId: ${userInputRequest.RequestId}");
+                    throw new InvalidOperationException($"ToolApprovalRequestContent with duplicate RequestId: {userInputRequest.RequestId}");
                 }
 
                 // It is an error to simultaneously have multiple outstanding user input requests with the same ID.
@@ -63,7 +63,7 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
                 {
                     if (this._functionCalls.ContainsKey(functionCall.CallId))
                     {
-                        throw new InvalidOperationException($"FunctionCallContent with duplicate CallId: ${functionCall.CallId}");
+                        throw new InvalidOperationException($"FunctionCallContent with duplicate CallId: {functionCall.CallId}");
                     }
 
                     this._functionCalls.Add(functionCall.CallId, functionCall);
