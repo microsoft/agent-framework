@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
