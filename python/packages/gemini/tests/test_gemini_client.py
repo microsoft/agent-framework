@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 from typing import Any
@@ -969,11 +970,23 @@ def test_get_web_search_tool_returns_google_search_tool() -> None:
     assert tool.google_search is not None
 
 
-def test_get_web_search_tool_forwards_kwargs() -> None:
-    """Keyword arguments are passed through to types.GoogleSearch."""
-    tool = GeminiChatClient.get_web_search_tool(exclude_domains=["example.com"])
+def test_get_web_search_tool_with_params() -> None:
+    """Parameters are forwarded to types.GoogleSearch."""
+    time_range = types.Interval(
+        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.timezone.utc),
+    )
+    tool = GeminiChatClient.get_web_search_tool(
+        search_types=types.SearchTypes(web_search=types.WebSearch()),
+        blocking_confidence=types.PhishBlockThreshold.BLOCK_LOW_AND_ABOVE,
+        exclude_domains=["example.com"],
+        time_range_filter=time_range,
+    )
     assert tool.google_search is not None
+    assert tool.google_search.search_types is not None
+    assert tool.google_search.blocking_confidence == types.PhishBlockThreshold.BLOCK_LOW_AND_ABOVE
     assert tool.google_search.exclude_domains == ["example.com"]
+    assert tool.google_search.time_range_filter == time_range
 
 
 def test_get_code_interpreter_tool_returns_code_execution_tool() -> None:
@@ -990,11 +1003,13 @@ def test_get_maps_grounding_tool_returns_google_maps_tool() -> None:
     assert tool.google_maps is not None
 
 
-def test_get_maps_grounding_tool_forwards_kwargs() -> None:
-    """Keyword arguments are passed through to types.GoogleMaps."""
-    tool = GeminiChatClient.get_maps_grounding_tool(enable_widget=True)
+def test_get_maps_grounding_tool_with_params() -> None:
+    """Parameters are forwarded to types.GoogleMaps."""
+    auth = types.AuthConfig(api_key="test-key")
+    tool = GeminiChatClient.get_maps_grounding_tool(enable_widget=True, auth_config=auth)
     assert tool.google_maps is not None
     assert tool.google_maps.enable_widget is True
+    assert tool.google_maps.auth_config == auth
 
 
 def test_get_file_search_tool_returns_file_search_tool() -> None:
@@ -1005,8 +1020,8 @@ def test_get_file_search_tool_returns_file_search_tool() -> None:
     assert tool.file_search.file_search_store_names == ["stores/my-store"]
 
 
-def test_get_file_search_tool_forwards_kwargs() -> None:
-    """Keyword arguments are passed through to types.FileSearch."""
+def test_get_file_search_tool_with_params() -> None:
+    """Parameters are forwarded to types.FileSearch."""
     tool = GeminiChatClient.get_file_search_tool(
         file_search_store_names=["stores/my-store"],
         top_k=5,

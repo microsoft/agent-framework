@@ -243,13 +243,10 @@ class RawGeminiChatClient(
         super().__init__(additional_properties=additional_properties)
 
     @staticmethod
-    def get_code_interpreter_tool(**kwargs: Any) -> types.Tool:
+    def get_code_interpreter_tool() -> types.Tool:
         """Create a code execution tool.
 
         Pass the returned tool to the ``tools`` list of an agent or ``ChatOptions``.
-
-        Keyword Args:
-            **kwargs: Reserved for future use; currently ignored.
 
         Returns:
             A ``types.Tool`` configured for sandboxed code execution.
@@ -257,19 +254,35 @@ class RawGeminiChatClient(
         return types.Tool(code_execution=types.ToolCodeExecution())
 
     @staticmethod
-    def get_web_search_tool(**kwargs: Any) -> types.Tool:
+    def get_web_search_tool(
+        *,
+        search_types: types.SearchTypes | None = None,
+        blocking_confidence: types.PhishBlockThreshold | None = None,
+        exclude_domains: list[str] | None = None,
+        time_range_filter: types.Interval | None = None,
+    ) -> types.Tool:
         """Create a Google Search grounding tool.
 
         Pass the returned tool to the ``tools`` list of an agent or ``ChatOptions``.
 
-        Keyword Args:
-            **kwargs: Passed directly to ``types.GoogleSearch``. Supported fields include
-                ``time_range_filter``, ``search_types``, and ``exclude_domains``.
+        Args:
+            search_types: Controls which search types are enabled (web search, image search).
+            blocking_confidence: Block sites at or above this phishing confidence level.
+                Not supported in Gemini API.
+            exclude_domains: List of domains to exclude from search results. Not supported in Gemini API.
+            time_range_filter: Restrict results to a specific time range. Not supported in Vertex AI.
 
         Returns:
             A ``types.Tool`` configured for Google Search grounding.
         """
-        return types.Tool(google_search=types.GoogleSearch(**kwargs))
+        return types.Tool(
+            google_search=types.GoogleSearch(
+                search_types=search_types,
+                blocking_confidence=blocking_confidence,
+                exclude_domains=exclude_domains,
+                time_range_filter=time_range_filter,
+            )
+        )
 
     @staticmethod
     def get_mcp_tool(url: str, *, name: str | None = None, **kwargs: Any) -> types.Tool:
@@ -296,36 +309,54 @@ class RawGeminiChatClient(
         )
 
     @staticmethod
-    def get_file_search_tool(**kwargs: Any) -> types.Tool:
+    def get_file_search_tool(
+        *,
+        file_search_store_names: list[str] | None = None,
+        top_k: int | None = None,
+        metadata_filter: str | None = None,
+    ) -> types.Tool:
         """Create a file search tool backed by a Gemini file search store.
 
         Pass the returned tool to the ``tools`` list of an agent or ``ChatOptions``.
 
-        Keyword Args:
-            **kwargs: Passed directly to ``types.FileSearch``. Supported fields include
-                ``file_search_store_names`` (list of store resource names to query),
-                ``top_k`` (maximum results per query), and ``metadata_filter``
-                (CEL expression to filter by metadata).
+        Args:
+            file_search_store_names: Resource names of the file search stores to query.
+                Example: ``["fileSearchStores/my-file-search-store-123"]``.
+            top_k: Maximum number of retrieval chunks to return.
+            metadata_filter: CEL expression to filter retrieval results by metadata.
+                See https://google.aip.dev/160 for syntax.
 
         Returns:
             A ``types.Tool`` configured for file search retrieval.
         """
-        return types.Tool(file_search=types.FileSearch(**kwargs))
+        return types.Tool(
+            file_search=types.FileSearch(
+                file_search_store_names=file_search_store_names,
+                top_k=top_k,
+                metadata_filter=metadata_filter,
+            )
+        )
 
     @staticmethod
-    def get_maps_grounding_tool(**kwargs: Any) -> types.Tool:
+    def get_maps_grounding_tool(
+        *,
+        enable_widget: bool | None = None,
+        auth_config: types.AuthConfig | None = None,
+    ) -> types.Tool:
         """Create a Google Maps grounding tool.
 
         Pass the returned tool to the ``tools`` list of an agent or ``ChatOptions``.
 
-        Keyword Args:
-            **kwargs: Passed directly to ``types.GoogleMaps``. Supported fields include
-                ``enable_widget``.
+        Args:
+            enable_widget: Return a widget context token in ``GroundingMetadata`` so callers
+                can render a Google Maps widget with geospatial context.
+            auth_config: Authentication config to access the Maps API. Only API key is
+                supported. Not supported in Gemini API.
 
         Returns:
             A ``types.Tool`` configured for Google Maps grounding.
         """
-        return types.Tool(google_maps=types.GoogleMaps(**kwargs))
+        return types.Tool(google_maps=types.GoogleMaps(enable_widget=enable_widget, auth_config=auth_config))
 
     @override
     def _inner_get_response(
