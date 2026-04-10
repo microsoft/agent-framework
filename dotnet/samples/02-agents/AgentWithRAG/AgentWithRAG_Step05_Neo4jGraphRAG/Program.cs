@@ -8,7 +8,7 @@ using Neo4j.AgentFramework.GraphRAG;
 using Neo4j.Driver;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 var neo4jUri = Environment.GetEnvironmentVariable("NEO4J_URI") ?? throw new InvalidOperationException("NEO4J_URI is not set.");
 var neo4jUsername = Environment.GetEnvironmentVariable("NEO4J_USERNAME") ?? "neo4j";
 var neo4jPassword = Environment.GetEnvironmentVariable("NEO4J_PASSWORD") ?? throw new InvalidOperationException("NEO4J_PASSWORD is not set.");

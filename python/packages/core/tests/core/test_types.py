@@ -39,6 +39,7 @@ from agent_framework._types import (
     _get_data_bytes,
     _get_data_bytes_as_str,
     _parse_content_list,
+    _parse_structured_response_value,
     _validate_uri,
     add_usage_details,
     validate_tool_mode,
@@ -811,6 +812,32 @@ def test_chat_response_with_mapping_response_format() -> None:
     assert response.value is not None
     assert isinstance(response.value, dict)
     assert response.value["response"] == "Hello"
+
+
+def test_parse_structured_response_value_empty_text_with_pydantic_model() -> None:
+    """Empty text should return None instead of raising when response_format is a Pydantic model."""
+    result = _parse_structured_response_value("", OutputModel)
+    assert result is None
+
+
+def test_parse_structured_response_value_empty_text_with_mapping() -> None:
+    """Empty text should return None instead of raising when response_format is a mapping."""
+    result = _parse_structured_response_value("", {"type": "object"})
+    assert result is None
+
+
+def test_chat_response_value_with_empty_text_and_response_format() -> None:
+    """ChatResponse.value should return None when text is empty and response_format is set."""
+    message = Message(role="assistant", contents=[""])
+    response = ChatResponse(messages=message, response_format=OutputModel)
+    assert response.value is None
+
+
+def test_agent_response_value_with_empty_text_and_response_format() -> None:
+    """AgentResponse.value should return None when text is empty and response_format is set."""
+    message = Message(role="assistant", contents=[""])
+    response = AgentResponse(messages=message, response_format=OutputModel)
+    assert response.value is None
 
 
 def test_chat_response_value_raises_on_invalid_schema():

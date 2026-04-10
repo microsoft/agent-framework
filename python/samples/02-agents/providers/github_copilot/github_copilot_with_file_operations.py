@@ -16,7 +16,7 @@ import asyncio
 
 from agent_framework.github import GitHubCopilotAgent
 from copilot.generated.session_events import PermissionRequest
-from copilot.types import PermissionRequestResult
+from copilot.session import PermissionRequestResult
 
 
 def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:

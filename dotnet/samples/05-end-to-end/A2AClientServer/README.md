@@ -206,7 +206,7 @@ Sample output from the A2A client:
 ```
 A2AClient> dotnet run
 info: HostClientAgent[0]
-      Initializing Agent Framework agent with model: gpt-4o-mini
+      Initializing Agent Framework agent with model: gpt-5.4-mini
 
 User (:q or quit to exit): Customer is disputing transaction TICKET-XYZ987 as they claim the received fewer t-shirts than ordered.
 

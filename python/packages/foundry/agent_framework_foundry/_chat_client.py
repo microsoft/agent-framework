@@ -124,6 +124,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = False  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,
