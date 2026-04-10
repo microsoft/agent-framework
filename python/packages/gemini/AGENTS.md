@@ -10,12 +10,19 @@ Integration with Google's Gemini API via the `google-genai` SDK.
 - **`GeminiSettings`** - Settings loaded from environment variables
 - **`ThinkingConfig`** - Configuration for extended thinking
 
-## Gemini Options
+## Gemini-specific Options
 
 - **`thinking_config`** - Enable extended thinking via `ThinkingConfig`
-- **`code_execution`** - Let the model write and run code in a sandboxed environment
-- **`google_search_grounding`** - Responses with live Google Search results
-- **`google_maps_grounding`** - Responses with Google Maps data
+- **`response_schema`** - Raw JSON schema dict for structured output (alternative to `response_format`)
+- **`top_k`** - Top-K sampling parameter
+
+## Built-in Tool Factory Methods
+
+- **`get_web_search_tool()`** - Google Search grounding for up-to-date web answers
+- **`get_code_interpreter_tool()`** - Sandboxed code execution
+- **`get_maps_grounding_tool()`** - Google Maps grounding for location and mapping
+- **`get_file_search_tool()`** - Retrieval from Gemini file search stores
+- **`get_mcp_tool()`** - Model Context Protocol server integration
 
 ## Usage
 

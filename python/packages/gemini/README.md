@@ -16,14 +16,15 @@ Obtain an API key from [Google AI Studio](https://aistudio.google.com/apikey) an
 
 ```bash
 export GEMINI_API_KEY="your-api-key"
-export GEMINI_CHAT_MODEL="gemini-2.5-flash"
+export GEMINI_MODEL="gemini-2.5-flash"
 ```
 
 ## Examples
 
-See the [Google Gemini samples](../../samples/02-agents/providers/google/) for runnable end-to-end scripts covering:
+See the [Google Gemini samples](samples/) for runnable end-to-end scripts covering:
 
 - Basic agent with tool calling and streaming
 - Extended thinking with `ThinkingConfig`
 - Google Search grounding
+- Google Maps grounding
 - Built-in code execution
