@@ -36,7 +36,7 @@ public static class Program
             .AddUserSecrets(Assembly.GetExecutingAssembly())
             .Build();
         var apiKey = configRoot["A2AClient:ApiKey"] ?? throw new ArgumentException("A2AClient:ApiKey must be provided");
-        var modelId = configRoot["A2AClient:ModelId"] ?? "gpt-4.1";
+        var modelId = configRoot["A2AClient:ModelId"] ?? "gpt-5.4-mini";
         var agentUrls = configRoot["A2AClient:AgentUrls"] ?? "http://localhost:5000/;http://localhost:5001/;http://localhost:5002/";
 
         // Create the Host agent

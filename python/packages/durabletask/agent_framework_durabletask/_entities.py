@@ -23,6 +23,7 @@ from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
 from ._durable_agent_state import (
     DurableAgentState,
     DurableAgentStateEntry,
+    DurableAgentStateMessage,
     DurableAgentStateRequest,
     DurableAgentStateResponse,
 )
@@ -151,10 +152,11 @@ class AgentEntity:
 
         try:
             chat_messages: list[Message] = [
-                m.to_chat_message()
+                replayable_message
                 for entry in self.state.data.conversation_history
                 if not self._is_error_response(entry)
                 for m in entry.messages
+                if (replayable_message := self._to_replayable_message(m)) is not None
             ]
 
             run_kwargs: dict[str, Any] = {"messages": chat_messages, "options": options}
@@ -189,6 +191,21 @@ class AgentEntity:
             self.persist_state()
 
             return error_response
+
+    @staticmethod
+    def _to_replayable_message(message: DurableAgentStateMessage) -> Message | None:
+        """Convert persisted history into a message safe to replay into chat clients."""
+        chat_message = message.to_chat_message()
+        replayable_contents = [content for content in chat_message.contents if content.type != "reasoning"]
+        if not replayable_contents:
+            return None
+
+        return Message(
+            role=chat_message.role,
+            contents=replayable_contents,
+            author_name=chat_message.author_name,
+            additional_properties=chat_message.additional_properties,
+        )
 
     async def _invoke_agent(
         self,

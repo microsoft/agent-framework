@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0rc5"
+version = "1.0.1"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -12,7 +12,7 @@ urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=ta
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -23,30 +23,22 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    # utilities
     "typing-extensions>=4.15.0,<5",
     "pydantic>=2,<3",
     "python-dotenv>=1,<2",
-    # telemetry
     "opentelemetry-api>=1.39.0,<2",
-    "opentelemetry-sdk>=1.39.0,<2",
-    "opentelemetry-semantic-conventions-ai>=0.4.13,<0.4.14",
-    # connectors and functions
-    "openai>=1.99.0,<3",
-    "azure-identity>=1,<2",
-    "azure-ai-projects>=2.0.0,<3.0",
-    "mcp[ws]>=1.24.0,<2",
-    "packaging>=24.1,<25",
 ]
 
 [project.optional-dependencies]
 all = [
+    "mcp>=1.24.0,<2",
     "agent-framework-a2a",
     "agent-framework-ag-ui",
     "agent-framework-azure-ai-search",
+    "agent-framework-azure-cosmos",
     "agent-framework-anthropic",
+    "agent-framework-openai",
     "agent-framework-claude",
-    "agent-framework-azure-ai",
     "agent-framework-azurefunctions",
     "agent-framework-bedrock",
     "agent-framework-chatkit",
@@ -54,6 +46,7 @@ all = [
     "agent-framework-declarative",
     "agent-framework-devui",
     "agent-framework-durabletask",
+    "agent-framework-foundry",
     "agent-framework-foundry-local",
     "agent-framework-github-copilot; python_version >= '3.11'",
     "agent-framework-lab",

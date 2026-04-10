@@ -66,26 +66,26 @@ python/samples/
 
 ## Default provider
 
-All canonical samples (01-get-started) use **Azure OpenAI Responses** via `AzureOpenAIResponsesClient`
+All canonical samples (01-get-started) use **Azure AI Foundry project-backed chat** via `FoundryChatClient`
 with an Azure AI Foundry project endpoint:
 
 ```python
 import os
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
 credential = AzureCliCredential()
-client = AzureOpenAIResponsesClient(
-    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-    deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["FOUNDRY_MODEL"],
     credential=credential,
 )
 agent = client.as_agent(name="...", instructions="...")
 ```
 
 Environment variables:
-- `AZURE_AI_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
-- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` — Model deployment name (e.g. gpt-4o)
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_MODEL` — Model deployment name (e.g. gpt-4o)
 
 For authentication, run `az login` before running samples.
 
@@ -102,10 +102,10 @@ code here
 ## Package install
 
 ```bash
-pip install agent-framework --pre
+pip install agent-framework
 ```
 
-The `--pre` flag is needed during preview. `openai` is a core dependency.
+`agent-framework` is released, so `--pre` is not required here. `openai` is a core dependency.
 
 ## Current API notes
 

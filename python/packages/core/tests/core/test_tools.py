@@ -594,8 +594,8 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
-async def test_tool_invoke_ignores_additional_kwargs() -> None:
-    """Ensure tools drop unknown kwargs when invoked with validated arguments."""
+async def test_tool_invoke_rejects_unexpected_runtime_kwargs() -> None:
+    """Ensure invoke() requires runtime data to flow through FunctionInvocationContext."""
 
     @tool
     async def simple_tool(message: str) -> str:
@@ -604,15 +604,12 @@ async def test_tool_invoke_ignores_additional_kwargs() -> None:
 
     args = simple_tool.input_model(message="hello world")
 
-    # These kwargs simulate runtime context passed through function invocation.
-    result = await simple_tool.invoke(
-        arguments=args,
-        api_token="secret-token",
-        options={"model_id": "dummy"},
-    )
-
-    assert isinstance(result, list)
-    assert result[0].text == "HELLO WORLD"
+    with pytest.raises(TypeError, match="Unexpected keyword argument"):
+        await simple_tool.invoke(
+            arguments=args,
+            api_token="secret-token",
+            options={"model": "dummy"},
+        )
 
 
 async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
@@ -917,8 +914,8 @@ def test_parse_inputs_unsupported_type():
 # endregion
 
 
-async def test_ai_function_with_kwargs_injection():
-    """Test that ai_function correctly handles kwargs injection and hides them from schema."""
+async def test_ai_function_with_kwargs_rejects_runtime_invoke_kwargs():
+    """Test that runtime kwargs must be passed through FunctionInvocationContext."""
 
     @tool
     def tool_with_kwargs(x: int, **kwargs: Any) -> str:
@@ -937,13 +934,11 @@ async def test_ai_function_with_kwargs_injection():
     # Verify direct invocation works
     assert tool_with_kwargs(1, user_id="user1") == "x=1, user=user1"
 
-    # Verify invoke works with injected args
-    result = await tool_with_kwargs.invoke(
-        arguments=tool_with_kwargs.input_model(x=5),
-        user_id="user2",
-    )
-    assert isinstance(result, list)
-    assert result[0].text == "x=5, user=user2"
+    with pytest.raises(TypeError, match="Unexpected keyword argument"):
+        await tool_with_kwargs.invoke(
+            arguments=tool_with_kwargs.input_model(x=5),
+            user_id="user2",
+        )
 
     # Verify invoke works without injected args (uses default)
     result_default = await tool_with_kwargs.invoke(

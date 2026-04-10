@@ -4,7 +4,7 @@ This sample demonstrates how to build a hosted agent that uses local C# function
 
 Key features:
 - Defining local C# functions as agent tools using `AIFunctionFactory`
-- Using `AIProjectClient` to discover the OpenAI connection from the Azure AI Foundry project
+- Using `AIProjectClient` to discover the OpenAI connection from the Microsoft Foundry project
 - Building a `ChatClientAgent` with custom instructions and tools
 - Deploying to the Foundry Hosted Agent service
 
@@ -15,7 +15,7 @@ Key features:
 Before running this sample, ensure you have:
 
 1. .NET 10 SDK installed
-2. An Azure AI Foundry Project with a chat model deployed (e.g., gpt-4o-mini)
+2. A Microsoft Foundry Project with a chat model deployed (e.g., gpt-5.4-mini)
 3. Azure CLI installed and authenticated (`az login`)
 
 ## Environment Variables
@@ -23,11 +23,11 @@ Before running this sample, ensure you have:
 Set the following environment variables:
 
 ```powershell
-# Replace with your Azure AI Foundry project endpoint
+# Replace with your Microsoft Foundry project endpoint
 $env:AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project-name"
 
-# Optional, defaults to gpt-4o-mini
-$env:MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+# Optional, defaults to gpt-5.4-mini
+$env:MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 ## How It Works

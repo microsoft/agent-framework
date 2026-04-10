@@ -5,8 +5,8 @@ import os
 from contextlib import suppress
 from typing import Any
 
-from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext, SupportsChatGetResponse
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, AgentSession, ContextProvider, SessionContext, SupportsChatGetResponse
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -20,7 +20,7 @@ class UserInfo(BaseModel):
     age: int | None = None
 
 
-class UserInfoMemory(BaseContextProvider):
+class UserInfoMemory(ContextProvider):
     DEFAULT_SOURCE_ID = "user_info_memory"
 
     def __init__(self, source_id: str = DEFAULT_SOURCE_ID, *, client: SupportsChatGetResponse, **kwargs: Any):
@@ -50,9 +50,11 @@ class UserInfoMemory(BaseContextProvider):
                 # Use the chat client to extract structured information
                 result = await self._chat_client.get_response(
                     messages=request_messages,  # type: ignore
-                    instructions="Extract the user's name and age from the message if present. "
-                    "If not present return nulls.",
-                    options={"response_format": UserInfo},
+                    options={
+                        "instructions": "Extract the user's name and age from the message if present. "
+                        "If not present return nulls.",
+                        "response_format": UserInfo,
+                    },
                 )
 
                 # Update user info with extracted data
@@ -89,9 +91,9 @@ class UserInfoMemory(BaseContextProvider):
 
 
 async def main():
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

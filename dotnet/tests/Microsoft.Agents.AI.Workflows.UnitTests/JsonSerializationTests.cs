@@ -673,6 +673,55 @@ public class JsonSerializationTests
         ValidateCheckpoint(retrievedCheckpoint, prototype);
     }
 
+    [Fact]
+    public void Test_SessionState_JsonRoundtrip_WithPendingRequests()
+    {
+        // Arrange
+        Dictionary<string, ExternalRequest> pendingRequests = new()
+        {
+            ["call-1"] = TestExternalRequest,
+            ["call-2"] = ExternalRequest.Create(TestPort, "Request2", "OtherData"),
+        };
+
+        WorkflowSession.SessionState prototype = new(
+            sessionId: "test-session-123",
+            lastCheckpoint: TestParentCheckpointInfo,
+            pendingRequests: pendingRequests);
+
+        // Act
+        WorkflowSession.SessionState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.SessionId.Should().Be(prototype.SessionId);
+        result.LastCheckpoint.Should().Be(prototype.LastCheckpoint);
+        result.StateBag.Should().NotBeNull();
+        result.PendingRequests.Should().NotBeNull()
+            .And.HaveCount(pendingRequests.Count);
+
+        foreach (string key in pendingRequests.Keys)
+        {
+            result.PendingRequests.Should().ContainKey(key);
+            ValidateExternalRequest(result.PendingRequests![key], pendingRequests[key]);
+        }
+    }
+
+    [Fact]
+    public void Test_SessionState_JsonRoundtrip_WithoutPendingRequests()
+    {
+        // Arrange
+        WorkflowSession.SessionState prototype = new(
+            sessionId: "test-session-456",
+            lastCheckpoint: null);
+
+        // Act
+        WorkflowSession.SessionState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.SessionId.Should().Be(prototype.SessionId);
+        result.LastCheckpoint.Should().BeNull();
+        result.PendingRequests.Should().BeNull();
+    }
+
     /// <summary>
     /// Verifies that the default behavior (without AllowOutOfOrderMetadataProperties) fails
     /// when $type metadata is not the first property, demonstrating the PostgreSQL jsonb issue.

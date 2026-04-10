@@ -14,12 +14,16 @@ async def main():
     """Create an agent from a declarative yaml specification and run it."""
     # get the path
     current_path = Path(__file__).parent
-    yaml_path = current_path.parent.parent.parent.parent / "agent-samples" / "azure" / "AzureOpenAIResponses.yaml"
-
+    yaml_path = (
+        current_path.parent.parent.parent.parent
+        / "declarative-agents"
+        / "agent-samples"
+        / "azure"
+        / "AzureOpenAIResponses.yaml"
+    )
     # load the yaml from the path
     with yaml_path.open("r") as f:
         yaml_str = f.read()
-
     # create the agent from the yaml
     agent = AgentFactory(client_kwargs={"credential": AzureCliCredential()}).create_agent_from_yaml(yaml_str)
     # use the agent

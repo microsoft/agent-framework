@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0rc5"
+version = "1.0.1"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -12,7 +12,7 @@ urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=ta
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -23,32 +23,36 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.0.0rc5",
+    "agent-framework-core[all]==1.0.1",
 ]
 
 [dependency-groups]
 dev = [
-    "uv==0.10.9",
+    "uv==0.11.3",
     "flit==3.12.0",
-    "ruff==0.15.5",
+    "ruff==0.15.8",
     "pytest==9.0.2",
     "pytest-asyncio==1.3.0",
-    "pytest-cov==7.0.0",
+    "pytest-cov==7.1.0",
     "pytest-xdist[psutil]==3.8.0",
     "pytest-timeout==2.4.0",
     "pytest-retry==1.7.0",
-    "mypy==1.19.1",
+    "mypy==1.20.0",
     "pyright==1.1.408",
+    "mcp[ws]==1.27.0",
+    "opentelemetry-sdk==1.40.0",
     #tasks
     "poethepoet==0.42.1",
-    "rich==13.7.1",
-    "tomli==2.4.0",
-    "prek==0.3.4",
+    "rich>=13.7.1,<15.0.0",
+    "tomli==2.4.1",
+    "prek==0.3.8",
 ]
 
 [tool.uv]
 package = false
 prerelease = "if-necessary-or-explicit"
+# Keep transitive litellm below the compromised 1.82.7/1.82.8 releases.
+constraint-dependencies = ["litellm<1.82.7"]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
@@ -66,7 +70,6 @@ agent-framework-ag-ui = { workspace = true }
 agent-framework-azure-ai-search = { workspace = true }
 agent-framework-azure-cosmos = { workspace = true }
 agent-framework-anthropic = { workspace = true }
-agent-framework-azure-ai = { workspace = true }
 agent-framework-azurefunctions = { workspace = true }
 agent-framework-bedrock = { workspace = true }
 agent-framework-chatkit = { workspace = true }
@@ -74,15 +77,18 @@ agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
 agent-framework-durabletask = { workspace = true }
+agent-framework-foundry = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-ollama = { workspace = true }
+agent-framework-openai = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-claude = { workspace = true }
 agent-framework-orchestrations = { workspace = true }
+litellm = { url = "https://files.pythonhosted.org/packages/57/77/0c6eca2cb049793ddf8ce9cdcd5123a35666c4962514788c4fc90edf1d3b/litellm-1.82.1-py3-none-any.whl" }
 
 [tool.ruff]
 line-length = 120
@@ -180,7 +186,6 @@ executionEnvironments = [
     { root = "packages/ag-ui/tests", reportPrivateUsage = "none" },
     { root = "packages/anthropic/tests", reportPrivateUsage = "none" },
     { root = "packages/azure-ai-search/tests", reportPrivateUsage = "none" },
-    { root = "packages/azure-ai/tests", reportPrivateUsage = "none" },
     { root = "packages/azure-cosmos/tests", reportPrivateUsage = "none" },
     { root = "packages/azurefunctions/tests", reportPrivateUsage = "none" },
     { root = "packages/bedrock/tests", reportPrivateUsage = "none" },
@@ -191,6 +196,7 @@ executionEnvironments = [
     { root = "packages/declarative/tests", reportPrivateUsage = "none" },
     { root = "packages/devui/tests", reportPrivateUsage = "none" },
     { root = "packages/durabletask/tests", reportPrivateUsage = "none" },
+    { root = "packages/foundry/tests", reportPrivateUsage = "none" },
     { root = "packages/foundry_local/tests", reportPrivateUsage = "none" },
     { root = "packages/github_copilot/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/gaia/tests", reportPrivateUsage = "none" },
@@ -359,7 +365,6 @@ sequence = [
     { ref = "install" },
     { ref = "check" },
     { ref = "typing" },
-    { ref = "test" },
 ]
 
 [tool.poe.tasks.add-dependency-to-project]

@@ -67,7 +67,7 @@ internal sealed class Program
             agentDescription: "Editor agent for Marketing workflow");
     }
 
-    private static PromptAgentDefinition DefineAnalystAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineAnalystAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -79,13 +79,13 @@ internal sealed class Program
                 """,
             Tools =
             {
-                //AgentTool.CreateBingGroundingTool( // TODO: Use Bing Grounding when available
+                //ProjectsAgentTool.CreateBingGroundingTool( // TODO: Use Bing Grounding when available
                 //    new BingGroundingSearchToolParameters(
                 //        [new BingGroundingSearchConfiguration(configuration[Application.Settings.FoundryGroundingTool])]))
             }
         };
 
-    private static PromptAgentDefinition DefineWriterAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineWriterAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -96,7 +96,7 @@ internal sealed class Program
                 """
         };
 
-    private static PromptAgentDefinition DefineEditorAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineEditorAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =

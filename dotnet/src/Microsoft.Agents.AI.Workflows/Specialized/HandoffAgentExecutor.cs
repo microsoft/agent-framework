@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -14,17 +15,24 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal sealed class HandoffAgentExecutorOptions
 {
-    public HandoffAgentExecutorOptions(string? handoffInstructions, HandoffToolCallFilteringBehavior toolCallFilteringBehavior)
+    public HandoffAgentExecutorOptions(string? handoffInstructions, bool emitAgentResponseEvents, bool? emitAgentResponseUpdateEvents, HandoffToolCallFilteringBehavior toolCallFilteringBehavior)
     {
         this.HandoffInstructions = handoffInstructions;
+        this.EmitAgentResponseEvents = emitAgentResponseEvents;
+        this.EmitAgentResponseUpdateEvents = emitAgentResponseUpdateEvents;
         this.ToolCallFilteringBehavior = toolCallFilteringBehavior;
     }
 
     public string? HandoffInstructions { get; set; }
 
+    public bool EmitAgentResponseEvents { get; set; }
+
+    public bool? EmitAgentResponseUpdateEvents { get; set; }
+
     public HandoffToolCallFilteringBehavior ToolCallFilteringBehavior { get; set; } = HandoffToolCallFilteringBehavior.HandoffOnly;
 }
 
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 internal sealed class HandoffMessagesFilter
 {
     private readonly HandoffToolCallFilteringBehavior _filteringBehavior;
@@ -34,9 +42,10 @@ internal sealed class HandoffMessagesFilter
         this._filteringBehavior = filteringBehavior;
     }
 
+    [Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
     internal static bool IsHandoffFunctionName(string name)
     {
-        return name.StartsWith(HandoffsWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);
+        return name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);
     }
 
     public IEnumerable<ChatMessage> FilterMessages(List<ChatMessage> messages)
@@ -158,6 +167,7 @@ internal sealed class HandoffMessagesFilter
 }
 
 /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 internal sealed class HandoffAgentExecutor(
     AIAgent agent,
     HandoffAgentExecutorOptions options) : Executor<HandoffState, HandoffState>(agent.GetDescriptiveId(), declareCrossRunShareable: true), IResettableExecutor
@@ -167,6 +177,7 @@ internal sealed class HandoffAgentExecutor(
 
     private readonly AIAgent _agent = agent;
     private readonly HashSet<string> _handoffFunctionNames = [];
+    private readonly Dictionary<string, string> _handoffFunctionToAgentId = [];
     private ChatClientAgentRunOptions? _agentOptions;
 
     public void Initialize(
@@ -193,9 +204,10 @@ internal sealed class HandoffAgentExecutor(
                 foreach (HandoffTarget handoff in handoffs)
                 {
                     index++;
-                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandoffsWorkflowBuilder.FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
+                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandoffWorkflowBuilder.FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
 
                     this._handoffFunctionNames.Add(handoffFunc.Name);
+                    this._handoffFunctionToAgentId[handoffFunc.Name] = handoff.Target.Id;
 
                     this._agentOptions.ChatOptions.Tools.Add(handoffFunc);
 
@@ -250,16 +262,27 @@ internal sealed class HandoffAgentExecutor(
             }
         }
 
-        allMessages.AddRange(updates.ToAgentResponse().Messages);
+        AgentResponse agentResponse = updates.ToAgentResponse();
+
+        if (options.EmitAgentResponseEvents)
+        {
+            await context.YieldOutputAsync(agentResponse, cancellationToken).ConfigureAwait(false);
+        }
+
+        allMessages.AddRange(agentResponse.Messages);
 
         roleChanges.ResetUserToAssistantForChangedRoles();
 
-        return new(message.TurnToken, requestedHandoff, allMessages);
+        string currentAgentId = requestedHandoff is not null && this._handoffFunctionToAgentId.TryGetValue(requestedHandoff, out string? targetAgentId)
+            ? targetAgentId
+            : this._agent.Id;
+
+        return new(message.TurnToken, requestedHandoff, allMessages, currentAgentId);
 
         async Task AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
         {
             updates.Add(update);
-            if (message.TurnToken.EmitEvents is true)
+            if (message.TurnToken.ShouldEmitStreamingEvents(options.EmitAgentResponseUpdateEvents))
             {
                 await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
             }

@@ -55,22 +55,6 @@ az role assignment create `
 
 More information on how to configure RBAC permissions for Azure OpenAI can be found in the [Azure OpenAI documentation](https://learn.microsoft.com/azure/ai-services/openai/how-to/create-resource?pivots=cli).
 
-### Setting an API key for the Azure OpenAI service
-
-As an alternative to configuring Azure RBAC permissions, you can set an API key for the Azure OpenAI service by setting the `AZURE_OPENAI_API_KEY` environment variable.
-
-Bash (Linux/macOS/WSL):
-
-```bash
-export AZURE_OPENAI_API_KEY="your-api-key"
-```
-
-PowerShell:
-
-```powershell
-$env:AZURE_OPENAI_API_KEY="your-api-key"
-```
-
 ### Start Durable Task Scheduler
 
 Most samples use the Durable Task Scheduler (DTS) to support hosted agents and durable orchestrations. DTS also allows you to view the status of orchestrations and their inputs and outputs from a web UI.
@@ -90,15 +74,15 @@ Each sample reads configuration from environment variables. You'll need to set t
 Bash (Linux/macOS/WSL):
 
 ```bash
-export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="your-deployment-name"
+export FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
+export FOUNDRY_MODEL="your-deployment-name"
 ```
 
 PowerShell:
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-$env:AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="your-deployment-name"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
+$env:FOUNDRY_MODEL="your-deployment-name"
 ```
 
 ### Installing Dependencies

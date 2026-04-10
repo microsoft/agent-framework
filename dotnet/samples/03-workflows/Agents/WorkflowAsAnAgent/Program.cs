@@ -9,7 +9,7 @@ using Microsoft.Extensions.AI;
 namespace WorkflowAsAnAgentSample;
 
 /// <summary>
-/// This sample introduces the concepts workflows as agents, where a workflow can be
+/// This sample introduces the concept of workflows as agents, where a workflow can be
 /// treated as an <see cref="AIAgent"/>. This allows you to interact with a workflow
 /// as if it were a single agent.
 ///
@@ -18,6 +18,14 @@ namespace WorkflowAsAnAgentSample;
 ///
 /// You will interact with the workflow in an interactive loop, sending messages and receiving
 /// streaming responses from the workflow as if it were an agent who responds in both languages.
+///
+/// This sample also demonstrates <see cref="IResettableExecutor"/>, which is required
+/// for stateful executors that are shared across multiple workflow runs. Each iteration
+/// of the interactive loop triggers a new workflow run against the same workflow instance.
+/// Between runs, the framework automatically calls <see cref="IResettableExecutor.ResetAsync"/>
+/// on shared executors so that accumulated state (e.g., collected messages) is cleared
+/// before the next run begins. See <c>WorkflowFactory.ConcurrentAggregationExecutor</c>
+/// for the implementation.
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
@@ -31,7 +39,7 @@ public static class Program
     {
         // Set up the Azure OpenAI client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
         var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create the workflow and turn it into an agent
@@ -39,7 +47,10 @@ public static class Program
         var agent = workflow.AsAIAgent("workflow-agent", "Workflow Agent");
         var session = await agent.CreateSessionAsync();
 
-        // Start an interactive loop to interact with the workflow as if it were an agent
+        // Start an interactive loop to interact with the workflow as if it were an agent.
+        // Each iteration runs the workflow again on the same workflow instance. Between runs,
+        // the framework calls IResettableExecutor.ResetAsync() on shared stateful executors
+        // (like ConcurrentAggregationExecutor) to clear accumulated state from the previous run.
         while (true)
         {
             Console.WriteLine();

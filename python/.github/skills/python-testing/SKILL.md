@@ -124,7 +124,7 @@ The merge CI workflow (`python-merge-tests.yml`) splits integration tests into p
 - **Azure OpenAI integration** — runs when `packages/core/agent_framework/azure/` or core changes
 - **Misc integration** — Anthropic, Ollama, MCP tests; runs when their packages or core change
 - **Functions integration** — Azure Functions + Durable Task; runs when their packages or core change
-- **Azure AI integration** — runs when `packages/azure-ai/` or core changes
+- **Foundry integration** — runs when `packages/foundry/` or core changes
 
 Core infrastructure changes (e.g., `_agents.py`, `_types.py`) trigger all integration test jobs. Scheduled and manual runs always execute all jobs.
 

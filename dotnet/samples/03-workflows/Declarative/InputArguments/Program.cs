@@ -68,7 +68,7 @@ internal sealed class Program
             agentDescription: "Chats with the user with location awareness.");
     }
 
-    private static PromptAgentDefinition DefineLocationTriageAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineLocationTriageAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -79,7 +79,7 @@ internal sealed class Program
                 """
         };
 
-    private static PromptAgentDefinition DefineLocationCaptureAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineLocationCaptureAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -128,7 +128,7 @@ internal sealed class Program
                 }
         };
 
-    private static PromptAgentDefinition DefineLocationAwareAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineLocationAwareAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             // Parameterized instructions reference the "location" input argument.

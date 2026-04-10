@@ -36,7 +36,7 @@ IConfigurationRoot configuration = new ConfigurationBuilder()
     .Build();
 
 string? apiKey = configuration["OPENAI_API_KEY"];
-string model = configuration["OPENAI_CHAT_MODEL_NAME"] ?? "gpt-4o-mini";
+string model = configuration["OPENAI_CHAT_MODEL_NAME"] ?? "gpt-5.4-mini";
 string? endpoint = configuration["AZURE_AI_PROJECT_ENDPOINT"];
 string[] agentUrls = (app.Configuration["urls"] ?? "http://localhost:5000").Split(';');
 

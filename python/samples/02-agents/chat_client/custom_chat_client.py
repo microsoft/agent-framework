@@ -7,6 +7,7 @@ from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, ClassVar, TypeAlias, TypedDict
 
 from agent_framework import (
+    Agent,
     BaseChatClient,
     ChatMiddlewareLayer,
     ChatResponse,
@@ -97,11 +98,11 @@ class EchoingChatClient(BaseChatClient[OptionsT]):
             response_text = f"{response_text} {suffix}"
         stream_delay_seconds = float(options.get("stream_delay_seconds", 0.05))
 
-        response_message = Message(role="assistant", text=response_text)
+        response_message = Message(role="assistant", contents=[response_text])
 
         response = ChatResponse(
             messages=[response_message],
-            model_id="echo-model-v1",
+            model="echo-model-v1",
             response_id=f"echo-resp-{random.randint(1000, 9999)}",
         )
 
@@ -119,7 +120,7 @@ class EchoingChatClient(BaseChatClient[OptionsT]):
                     contents=[Content.from_text(char)],
                     role="assistant",
                     response_id=f"echo-stream-resp-{random.randint(1000, 9999)}",
-                    model_id="echo-model-v1",
+                    model="echo-model-v1",
                 )
                 await asyncio.sleep(stream_delay_seconds)
 
@@ -149,7 +150,7 @@ async def main() -> None:
     # Use the chat client directly
     print("Using chat client directly:")
     direct_response = await echo_client.get_response(
-        [Message(role="user", text="Hello, custom chat client!")],
+        [Message(role="user", contents=["Hello, custom chat client!"])],
         options={
             "uppercase": True,
             "suffix": "(CUSTOM OPTIONS)",
@@ -159,7 +160,8 @@ async def main() -> None:
     print(f"Direct response: {direct_response.messages[0].text}")
 
     # Create an agent using the custom chat client
-    echo_agent = echo_client.as_agent(
+    echo_agent = Agent(
+        client=echo_client,
         name="EchoAgent",
         instructions="You are a helpful assistant that echoes back what users say.",
     )

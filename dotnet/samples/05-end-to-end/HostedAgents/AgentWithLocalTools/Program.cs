@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Seattle Hotel Agent - A simple agent with a tool to find hotels in Seattle.
-// Uses Microsoft Agent Framework with Azure AI Foundry.
+// Uses Microsoft Agent Framework with Microsoft Foundry.
 // Ready for deployment to Foundry Hosted Agent service.
 
 using System.ClientModel.Primitives;
@@ -17,7 +17,7 @@ using Microsoft.Extensions.AI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string deploymentName = Environment.GetEnvironmentVariable("MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 Console.WriteLine($"Project Endpoint: {endpoint}");
 Console.WriteLine($"Model Deployment: {deploymentName}");
 

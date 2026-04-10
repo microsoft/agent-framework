@@ -19,7 +19,7 @@ from agent_framework import (
     chat_middleware,
     tool,
 )
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 from pydantic import Field
 
@@ -50,11 +50,10 @@ def _reset_usage_counters() -> None:
     STREAMING_CALL_COUNT = 0
 
 
-def _create_agent(
-) -> Agent:
+def _create_agent() -> Agent:
     """Create the shared agent used by both demonstrations."""
     return Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         instructions=(
             "You are a weather assistant. Always call the weather tool before answering weather questions, "
             "then summarize the tool result in one short paragraph."
