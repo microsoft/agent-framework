@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 """
-Payment Governance Middleware with agentpay-mcp
+Payment Governance Middleware
 
 Demonstrates how to add spend governance to AI agents using middleware.
 When agents make tool calls that involve payments (x402 protocol, API billing,
@@ -12,17 +12,15 @@ or any cost-incurring action), this middleware enforces:
 - Daily velocity limits
 - Category-based policies (e.g., "data" vs "compute" spending)
 
-This pattern is critical for production deployments where autonomous agents
-handle real money. AI gateways (LiteLLM, Portkey) govern inference costs —
-this middleware governs everything else the agent spends.
+This pattern is useful for production deployments where autonomous agents
+handle real money. AI gateways (LiteLLM, Portkey) govern inference costs,
+while function middleware can govern everything else the agent spends.
 
-Requirements:
-    pip install agentpay-mcp httpx
+The sample is intentionally self-contained. In larger deployments you can back
+these checks with an external payment or policy service.
 
 Reference:
-    - agentpay-mcp: https://github.com/up2itnow0822/agentpay-mcp
     - x402 protocol: https://x402.org
-    - NVIDIA NeMo integration: PR #17 (merged)
 """
 
 import asyncio
@@ -45,12 +43,15 @@ load_dotenv()
 
 
 # ---------------------------------------------------------------------------
-# Budget state — in production, back this with agentpay-mcp's MCP tools
+# Budget state — in production, back this with your own payment or policy service
 # ---------------------------------------------------------------------------
 @dataclass
 class BudgetState:
-    """Tracks spend across a session. Replace with agentpay-mcp calls for
-    production use (check_budget, approve_payment, get_spending_report)."""
+    """Tracks spend across a session.
+
+    In production, replace the in-memory checks with calls to your payment
+    policy backend or ledger service.
+    """
 
     session_cap: Decimal = Decimal("5.00")  # USD per session
     per_call_limit: Decimal = Decimal("1.00")  # USD per tool call
@@ -90,8 +91,8 @@ def run_sentiment_analysis(
     return f"Sentiment: {scores['positive']}% positive, {scores['negative']}% negative"
 
 
-# Cost metadata per tool — in production, agentpay-mcp resolves this from
-# the x402 price header on each service endpoint.
+# Cost metadata per tool — in production, this can come from service metadata,
+# pricing headers, or a policy backend.
 TOOL_COSTS: dict[str, tuple[Decimal, str]] = {
     "fetch_market_data": (Decimal("0.25"), "data"),
     "run_sentiment_analysis": (Decimal("0.10"), "compute"),
@@ -107,10 +108,8 @@ async def payment_governance_middleware(
 ) -> None:
     """Enforce budget, per-call, and category limits before every tool call.
 
-    In production, replace the in-memory checks with agentpay-mcp MCP calls:
-        - check_budget   → verify session has remaining funds
-        - approve_payment → debit the spend and get a signed x402 receipt
-        - get_spending_report → audit trail for FinOps dashboards
+    In production, replace the in-memory checks with calls to your payment
+    policy backend or budget ledger.
     """
     fn_name = context.function.name
     cost, category = TOOL_COSTS.get(fn_name, (Decimal("0"), "other"))

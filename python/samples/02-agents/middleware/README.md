@@ -18,7 +18,7 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 | [`session_behavior_middleware.py`](./session_behavior_middleware.py) | Shows how middleware interacts with session-backed runs. |
 | [`shared_state_middleware.py`](./shared_state_middleware.py) | Demonstrates sharing mutable state across middleware invocations. |
 | [`usage_tracking_middleware.py`](./usage_tracking_middleware.py) | Demonstrates one chat middleware function that tracks per-call usage in non-streaming and streaming tool-loop runs. |
-| [`payment_governance_middleware.py`](./payment_governance_middleware.py) | Demonstrates spend governance for agents making paid tool calls (x402 protocol) — per-session budgets, per-call limits, and category caps via [agentpay-mcp](https://github.com/up2itnow0822/agentpay-mcp). |
+| [`payment_governance_middleware.py`](./payment_governance_middleware.py) | Demonstrates spend governance for agents making paid tool calls (x402 protocol), including per-session budgets, per-call limits, and category caps. |
 
 ## Running the usage tracking sample
 
