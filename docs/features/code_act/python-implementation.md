@@ -13,7 +13,7 @@ Goals:
 - Developers can configure a provider-owned CodeAct tool set that is separate from the agent's direct `tools=` surface.
 - Developers can use the same `execute_code` concept for both tool-enabled CodeAct and a standard code interpreter tool implementation.
 - Developers can swap execution backends over time, starting with Hyperlight while keeping room for alternatives such as Pydantic's Monty.
-- Developers can configure execution capabilities such as file access, workspace mounts, and outbound network allow lists in a portable way.
+- Developers can configure execution capabilities such as workspace mounts and outbound network allow lists in a portable way.
 
 Success Metric:
 - Python samples exist for both a tool-enabled CodeAct mode and a standard interpreter mode.
@@ -26,7 +26,7 @@ Implementation-free outcome:
 - Today, the easiest way to prototype CodeAct is to infer or reshape the agent's direct tool surface, which is fragile and hard to reason about.
 - In Python, inferring a CodeAct tool surface from generic agent tool configuration is fragile and hard to reason about.
 - There is no first-class Python design that simultaneously covers Hyperlight-backed CodeAct now, future backend-specific providers such as Monty, and both tool-enabled and interpreter modes.
-- Sandbox capabilities such as file access and network access need a portable configuration model instead of ad hoc backend-specific wiring.
+- Sandbox capabilities such as mounted file access and outbound network access need a portable configuration model instead of ad hoc backend-specific wiring.
 - Approval behavior needs to be explicit and configurable, especially when CodeAct and direct tool calling may both be available.
 
 ## API Changes
@@ -67,13 +67,9 @@ Preferred pattern:
 - `remove_file_mount(...) -> None`
 - `clear_file_mounts() -> None`
 - `add_allowed_domains(...) -> None`
-- `get_allowed_domains() -> Sequence[str]`
+- `get_allowed_domains() -> Sequence[AllowedDomain]`
 - `remove_allowed_domain(...) -> None`
 - `clear_allowed_domains() -> None`
-- `add_allowed_http_methods(...) -> None`
-- `get_allowed_http_methods() -> Sequence[str]`
-- `remove_allowed_http_method(...) -> None`
-- `clear_allowed_http_methods() -> None`
 
 Requirements:
 - The provider-owned CodeAct tool registry is keyed by tool name.
@@ -86,16 +82,11 @@ Requirements:
 - `get_file_mounts()` returns the provider's current configured file mounts.
 - `remove_file_mount(...)` removes file mounts by mount path.
 - `clear_file_mounts()` removes all configured file mounts.
-- Allowed domains are keyed by normalized domain string.
-- `add_allowed_domains(...)` adds domains to the outbound allow list.
-- `get_allowed_domains()` returns the current outbound domain allow list.
-- `remove_allowed_domain(...)` removes domains from the outbound allow list.
-- `clear_allowed_domains()` removes all configured allowed domains.
-- Allowed HTTP methods are keyed by normalized method name.
-- `add_allowed_http_methods(...)` adds methods to the outbound method allow list.
-- `get_allowed_http_methods()` returns the current outbound method allow list.
-- `remove_allowed_http_method(...)` removes methods from the outbound method allow list.
-- `clear_allowed_http_methods()` removes all configured allowed HTTP methods.
+- Allowed domains are keyed by normalized target string.
+- `add_allowed_domains(...)` adds allow-list entries and replaces an existing entry when the same target is added again.
+- `get_allowed_domains()` returns the current outbound allow-list entries.
+- `remove_allowed_domain(...)` removes allow-list entries by target.
+- `clear_allowed_domains()` removes all configured allow-list entries.
 - Tool, file-mount, and network-allow-list mutations affect subsequent runs only; runs already in progress keep the snapshot captured at run start.
 - The provider must snapshot its effective tool registry and capability state at the start of each run so concurrent execution remains deterministic.
 
@@ -120,6 +111,8 @@ Effective `execute_code` approval is computed as follows:
 
 This is intentionally conservative and matches the shape of the current function-tool approval flow, where `FunctionTool` uses `always_require` / `never_require` and the auto-invocation loop escalates the whole batch if any called tool requires approval.
 
+If one sensitive provider-owned tool causes `execute_code` to require approval more often than desired, the mitigation is to keep that tool direct-only or expose it through a different CodeAct provider/tool surface. The initial model does not try to infer whether generated code will actually call that tool before approval.
+
 If the framework later standardizes pre-execution inspection or nested per-tool approvals, the Python provider surface can grow to expose that explicitly. The initial design does not assume that those extra modes are required.
 
 #### Shared execution flow
@@ -138,6 +131,8 @@ Caching rules:
 - Backends that support snapshots may cache a reusable clean snapshot.
 - Backends that do not support snapshots may still cache warm initialization artifacts.
 - No mutable per-run execution state may be shared across concurrent runs.
+- In-memory interpreter state does not persist across separate `execute_code` calls.
+- Configured workspace files, mounted files, and any writable artifact/output area are the supported persistence mechanism across calls when the backend exposes them.
 
 ### Python public API
 
@@ -151,6 +146,14 @@ class FileMount(NamedTuple):
 FileMountInput = str | tuple[str | Path, str] | FileMount
 
 
+class AllowedDomain(NamedTuple):
+    target: str
+    methods: tuple[str, ...] | None = None
+
+
+AllowedDomainInput = str | tuple[str, str | Sequence[str]] | AllowedDomain
+
+
 class HyperlightCodeActProvider(ContextProvider):
     def __init__(
         self,
@@ -161,12 +164,9 @@ class HyperlightCodeActProvider(ContextProvider):
         module_path: str | None = None,
         tools: ToolTypes | None = None,
         approval_mode: Literal["always_require", "never_require"] = "never_require",
-        filesystem_mode: Literal["none", "read_only", "read_write"] = "none",
         workspace_root: Path | None = None,
         file_mounts: Sequence[FileMountInput] = (),
-        network_mode: Literal["none", "allow_list"] = "none",
-        allowed_domains: Sequence[str] = (),
-        allowed_http_methods: Sequence[str] = (),
+        allowed_domains: Sequence[AllowedDomainInput] = (),
     ) -> None: ...
 
     def add_tools(self, tools: ToolTypes | Sequence[ToolTypes]) -> None: ...
@@ -177,20 +177,21 @@ class HyperlightCodeActProvider(ContextProvider):
     def get_file_mounts(self) -> Sequence[FileMount]: ...
     def remove_file_mount(self, mount_path: str) -> None: ...
     def clear_file_mounts(self) -> None: ...
-    def add_allowed_domains(self, domains: str | Sequence[str]) -> None: ...
-    def get_allowed_domains(self) -> Sequence[str]: ...
+    def add_allowed_domains(self, domains: AllowedDomainInput | Sequence[AllowedDomainInput]) -> None: ...
+    def get_allowed_domains(self) -> Sequence[AllowedDomain]: ...
     def remove_allowed_domain(self, domain: str) -> None: ...
     def clear_allowed_domains(self) -> None: ...
-    def add_allowed_http_methods(self, methods: str | Sequence[str]) -> None: ...
-    def get_allowed_http_methods(self) -> Sequence[str]: ...
-    def remove_allowed_http_method(self, method: str) -> None: ...
-    def clear_allowed_http_methods(self) -> None: ...
 ```
 
 `file_mounts` accepts three equivalent input forms:
 - `"data/report.csv"` uses the same relative path on the host and in the sandbox.
 - `("fixtures/users.json", "data/users.json")` or `(Path("fixtures/users.json"), "data/users.json")` uses distinct host and sandbox paths.
 - `FileMount(Path("fixtures/users.json"), "data/users.json")` is the named-tuple form of the explicit pair.
+
+`allowed_domains` accepts three equivalent input forms:
+- `"github.com"` allows that target with all backend-supported methods.
+- `("github.com", "GET")` or `("github.com", ["GET", "HEAD"])` uses an explicit per-target method list.
+- `AllowedDomain("github.com", ("GET", "HEAD"))` is the named-tuple form of the explicit entry.
 
 No public abstract `CodeActContextProvider` base or public `executor=` parameter is required for the initial Python API.
 
@@ -208,6 +209,13 @@ Provider modes:
 
 The concrete provider plugs into the existing Python `ContextProvider` surface from `agent_framework._sessions`.
 
+The Hyperlight package also depends on a small set of core hooks that must remain available from `agent-framework-core`:
+- `ContextProvider.before_run(...)`
+- `SessionContext.extend_instructions(...)`
+- `SessionContext.extend_tools(...)`
+- per-run runtime tool access via `SessionContext.options["tools"]`
+- the shared `ApprovalMode` vocabulary used by `FunctionTool`
+
 Required lifecycle hook:
 - `before_run(*, agent, session, context, state) -> None`
 
@@ -222,6 +230,8 @@ Optional lifecycle hook:
 - and wiring any backend-specific execution state needed for the run.
 
 If the provider stores anything in `state`, that value must stay JSON-serializable.
+
+Mutating the provider after `before_run(...)` has captured a run-scoped snapshot is allowed, but it affects subsequent runs only. Provider implementations should synchronize state capture and CRUD operations so shared provider instances remain safe across concurrent runs.
 
 `after_run(...)` is responsible for any backend-specific cleanup or post-processing that must happen after the model invocation completes.
 
@@ -244,6 +254,7 @@ If shared internal helpers are introduced later for multiple concrete providers,
 - The provider does not inspect or mutate `Agent.default_options["tools"]` or `context.options["tools"]` to determine its CodeAct tool set.
 - The provider snapshots the current CodeAct tool registry and capability state at run start, so later registry and allow-list mutations only affect future runs.
 - Interpreter versus tool-enabled behavior is derived from the concrete provider and the presence of CodeAct-managed tools, not from a separate public profile object.
+- `execute_code` should be traced like a normal tool invocation within the surrounding agent run, and provider-owned tool calls executed through `call_tool(...)` should continue to emit ordinary tool invocation telemetry.
 
 #### Backend integration
 
@@ -254,7 +265,7 @@ Backend-specific notes:
 - **Hyperlight**
   - Provider construction needs a guest artifact via `module`, which may be a packaged guest module name or a path to a compiled guest artifact.
   - File access maps naturally to Hyperlight Sandbox's read-only `/input` and writable `/output` capability model.
-  - Network access is denied by default and is enabled through allow-listed domains plus HTTP verbs.
+  - Network access is denied by default and is enabled through per-target allow-list entries.
 - **Monty**
   - A future `MontyCodeActProvider` should be a separate public type rather than a `HyperlightCodeActProvider` mode.
   - Monty does not expose built-in filesystem or network access directly inside the interpreter.
@@ -263,27 +274,23 @@ Backend-specific notes:
 
 #### Capability handling
 
-Capabilities are first-class `HyperlightCodeActProvider` init parameters and, for collection-shaped state, provider-managed CRUD surfaces:
-- `filesystem_mode`
+Capabilities are first-class `HyperlightCodeActProvider` init parameters and provider-managed CRUD surfaces:
 - `workspace_root`
 - `file_mounts`
-- `network_mode`
 - `allowed_domains`
-- `allowed_http_methods`
 
 Concrete providers should normalize these settings internally. Hyperlight can map them directly to sandbox capabilities, while Monty must enforce them through host-mediated file and network functions and may apply stricter URL-level checks than the public provider surface expresses.
 
 Expected management split:
-- scalar policy settings such as `filesystem_mode`, `workspace_root`, and `network_mode` remain direct configuration values on the provider,
+- `workspace_root` remains a direct configuration value on the provider,
 - file mounts are managed through provider CRUD methods,
-- outbound domains are managed through provider CRUD methods,
-- outbound HTTP methods are managed through provider CRUD methods.
+- outbound allow-list entries are managed through provider CRUD methods.
 
 Enabling access means:
-- `filesystem_mode="none"` disables file access from sandboxed code.
-- `filesystem_mode="read_only"` or `"read_write"` enables file access within the mounted/workspace surface exposed by the provider.
-- `network_mode="none"` disables outbound network access.
-- `network_mode="allow_list"` enables outbound access only for the configured `allowed_domains` and `allowed_http_methods`.
+- Configuring `workspace_root` or any `file_mounts` enables the sandbox filesystem surface exposed through `/input` and `/output`.
+- Leaving both `workspace_root` and `file_mounts` unset means no filesystem surface is configured.
+- Adding any `allowed_domains` entry enables outbound access only for the configured targets; leaving it empty means network access is disabled without a separate `network_mode` flag.
+- A string target allows all backend-supported methods for that target; an explicit tuple or `AllowedDomain` entry narrows the methods for that target.
 
 Backends may implement stricter semantics than these top-level settings. For example, Hyperlight naturally maps file access to `/input` and `/output`, while Monty would enforce equivalent policy through host-provided callbacks rather than direct interpreter I/O.
 
@@ -315,6 +322,8 @@ Use the existing content model from `agent_framework._types`, for example:
 
 Execution failures should surface readable error text and structured error `Content`, not a custom backend result object.
 
+Timeouts, out-of-memory conditions, backend crashes, and similar sandbox failures are all `execute_code` failures and should surface as structured error content. Partial textual or file outputs may be returned only when the backend can report them unambiguously; callers should not rely on partial-output recovery as a portable contract.
+
 ## E2E Code Samples
 
 ### Tool-enabled CodeAct mode
@@ -322,11 +331,8 @@ Execution failures should surface readable error text and structured error `Cont
 ```python
 codeact = HyperlightCodeActProvider(
     tools=[fetch_docs, query_data],
-    filesystem_mode="read_write",
     workspace_root="./workdir",
-    network_mode="allow_list",
-    allowed_domains=["api.github.com"],
-    allowed_http_methods=["GET"],
+    allowed_domains=[("api.github.com", "GET")],
 )
 codeact.add_tools([lookup_user])
 
@@ -342,9 +348,7 @@ agent = Agent(
 
 ```python
 code_interpreter = HyperlightCodeActProvider(
-    filesystem_mode="read_only",
     workspace_root="./data",
-    network_mode="none",
 )
 
 agent = Agent(

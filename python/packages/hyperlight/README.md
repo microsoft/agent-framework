@@ -15,6 +15,8 @@ create the sandbox.
 
 ## Public API
 
+- `AllowedDomain`
+- `AllowedDomainInput`
 - `HyperlightCodeActProvider`
 - `HyperlightExecuteCodeTool`
 - `FileMount`
@@ -29,3 +31,6 @@ create the sandbox.
   mount_path)` pair, or a `FileMount` named tuple. The host-side path in the
   explicit forms may be a `str` or `Path`. Use the explicit two-value form when
   the host path differs from the sandbox path.
+- `allowed_domains` accepts a single string target such as `"github.com"` to
+  allow all backend-supported methods, an explicit `(target, method_or_methods)`
+  tuple such as `("github.com", "GET")`, or an `AllowedDomain` named tuple.

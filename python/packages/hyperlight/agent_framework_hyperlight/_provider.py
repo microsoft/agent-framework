@@ -10,7 +10,7 @@ from agent_framework import AgentSession, ContextProvider, FunctionTool, Session
 from agent_framework._tools import ApprovalMode
 
 from ._execute_code_tool import HyperlightExecuteCodeTool, SandboxRuntime
-from ._types import FileMount, FileMountInput, FilesystemMode, NetworkMode
+from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountInput
 
 
 class HyperlightCodeActProvider(ContextProvider):
@@ -24,12 +24,9 @@ class HyperlightCodeActProvider(ContextProvider):
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         approval_mode: ApprovalMode | None = None,
-        filesystem_mode: FilesystemMode = "none",
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
-        network_mode: NetworkMode = "none",
-        allowed_domains: str | Sequence[str] | None = None,
-        allowed_http_methods: str | Sequence[str] | None = None,
+        allowed_domains: AllowedDomainInput | Sequence[AllowedDomainInput] | None = None,
         backend: str = "wasm",
         module: str | None = "python_guest.path",
         module_path: str | None = None,
@@ -39,12 +36,9 @@ class HyperlightCodeActProvider(ContextProvider):
         self._execute_code_tool = HyperlightExecuteCodeTool(
             tools=tools,
             approval_mode=approval_mode,
-            filesystem_mode=filesystem_mode,
             workspace_root=workspace_root,
             file_mounts=file_mounts,
-            network_mode=network_mode,
             allowed_domains=allowed_domains,
-            allowed_http_methods=allowed_http_methods,
             backend=backend,
             module=module,
             module_path=module_path,
@@ -86,37 +80,21 @@ class HyperlightCodeActProvider(ContextProvider):
         """Remove all provider-managed file mounts."""
         self._execute_code_tool.clear_file_mounts()
 
-    def add_allowed_domains(self, domains: str | Sequence[str]) -> None:
-        """Add provider-managed outbound allow-list domains."""
+    def add_allowed_domains(self, domains: AllowedDomainInput | Sequence[AllowedDomainInput]) -> None:
+        """Add provider-managed outbound allow-list entries."""
         self._execute_code_tool.add_allowed_domains(domains)
 
-    def get_allowed_domains(self) -> list[str]:
-        """Return the provider-managed outbound allow-list domains."""
+    def get_allowed_domains(self) -> list[AllowedDomain]:
+        """Return the provider-managed outbound allow-list entries."""
         return self._execute_code_tool.get_allowed_domains()
 
     def remove_allowed_domain(self, domain: str) -> None:
-        """Remove one provider-managed outbound allow-list domain."""
+        """Remove one provider-managed outbound allow-list entry."""
         self._execute_code_tool.remove_allowed_domain(domain)
 
     def clear_allowed_domains(self) -> None:
-        """Remove all provider-managed outbound allow-list domains."""
+        """Remove all provider-managed outbound allow-list entries."""
         self._execute_code_tool.clear_allowed_domains()
-
-    def add_allowed_http_methods(self, methods: str | Sequence[str]) -> None:
-        """Add provider-managed outbound HTTP methods."""
-        self._execute_code_tool.add_allowed_http_methods(methods)
-
-    def get_allowed_http_methods(self) -> list[str]:
-        """Return the provider-managed outbound HTTP methods."""
-        return self._execute_code_tool.get_allowed_http_methods()
-
-    def remove_allowed_http_method(self, method: str) -> None:
-        """Remove one provider-managed outbound HTTP method."""
-        self._execute_code_tool.remove_allowed_http_method(method)
-
-    def clear_allowed_http_methods(self) -> None:
-        """Remove all provider-managed outbound HTTP methods."""
-        self._execute_code_tool.clear_allowed_http_methods()
 
     async def before_run(
         self,

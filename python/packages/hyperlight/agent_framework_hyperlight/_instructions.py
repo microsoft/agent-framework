@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 from agent_framework import FunctionTool
 
-from ._types import FilesystemMode, NetworkMode
+from ._types import AllowedDomain
 
 
 def _format_tool_summaries(tools: Sequence[FunctionTool]) -> str:
@@ -25,19 +25,16 @@ def _format_tool_summaries(tools: Sequence[FunctionTool]) -> str:
 
 def _format_filesystem_capabilities(
     *,
-    filesystem_mode: FilesystemMode,
+    filesystem_enabled: bool,
     workspace_enabled: bool,
     mounted_paths: Sequence[str],
 ) -> str:
-    if filesystem_mode == "none":
-        return "Filesystem access is disabled."
+    if not filesystem_enabled:
+        return "Filesystem access is unavailable because no workspace root or file mounts are configured."
 
     lines = ["Filesystem access is enabled."]
     lines.append("Read files from `/input`.")
-    if filesystem_mode == "read_write":
-        lines.append("Write generated artifacts to `/output`; returned files will be attached to the tool result.")
-    else:
-        lines.append("The sandbox does not expose a writable `/output` directory in this configuration.")
+    lines.append("Write generated artifacts to `/output`; returned files will be attached to the tool result.")
 
     if workspace_enabled:
         lines.append("The configured workspace root is available under `/input/`.")
@@ -53,23 +50,17 @@ def _format_filesystem_capabilities(
 
 def _format_network_capabilities(
     *,
-    network_mode: NetworkMode,
-    allowed_domains: Sequence[str],
-    allowed_http_methods: Sequence[str],
+    allowed_domains: Sequence[AllowedDomain],
 ) -> str:
-    if network_mode == "none":
-        return "Outbound network access is disabled."
-
-    methods_text = ", ".join(allowed_http_methods) if allowed_http_methods else "all methods allowed by the backend"
     if not allowed_domains:
-        return "Outbound network access uses an allow-list, but no domains are currently configured."
+        return "Outbound network access is unavailable because no allow-listed targets are configured."
 
-    lines = [
-        "Outbound network access uses an allow-list.",
-        f"Allowed HTTP methods: {methods_text}.",
-        "Allowed domains:",
-    ]
-    lines.extend(f"- `{domain}`" for domain in allowed_domains)
+    lines = ["Outbound network access is allowed only for these configured targets:"]
+    for allowed_domain in allowed_domains:
+        methods_text = (
+            ", ".join(allowed_domain.methods) if allowed_domain.methods else "all methods allowed by the backend"
+        )
+        lines.append(f"- `{allowed_domain.target}`: {methods_text}.")
     return "\n".join(lines)
 
 
@@ -77,12 +68,6 @@ def build_codeact_instructions(
     *,
     tools: Sequence[FunctionTool],
     tools_visible_to_model: bool,
-    filesystem_mode: FilesystemMode,
-    workspace_enabled: bool,
-    mounted_paths: Sequence[str],
-    network_mode: NetworkMode,
-    allowed_domains: Sequence[str],
-    allowed_http_methods: Sequence[str],
 ) -> str:
     """Build dynamic CodeAct instructions for the effective sandbox state."""
     usage_note = (
@@ -105,23 +90,19 @@ tool registry, and capability limits.
 def build_execute_code_description(
     *,
     tools: Sequence[FunctionTool],
-    filesystem_mode: FilesystemMode,
+    filesystem_enabled: bool,
     workspace_enabled: bool,
     mounted_paths: Sequence[str],
-    network_mode: NetworkMode,
-    allowed_domains: Sequence[str],
-    allowed_http_methods: Sequence[str],
+    allowed_domains: Sequence[AllowedDomain],
 ) -> str:
     """Build the dynamic execute_code tool description for standalone usage."""
     filesystem_text = _format_filesystem_capabilities(
-        filesystem_mode=filesystem_mode,
+        filesystem_enabled=filesystem_enabled,
         workspace_enabled=workspace_enabled,
         mounted_paths=mounted_paths,
     )
     network_text = _format_network_capabilities(
-        network_mode=network_mode,
         allowed_domains=allowed_domains,
-        allowed_http_methods=allowed_http_methods,
     )
 
     return f"""Execute Python in an isolated Hyperlight sandbox.

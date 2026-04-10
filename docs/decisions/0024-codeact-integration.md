@@ -15,6 +15,8 @@ We need an architecture design that supports CodeAct in both Python and .NET. Th
 
 Throughout this ADR, **CodeAct** is the primary term. **Code mode** and **programmatic tool calling** refer to the same capability. This ADR uses **CodeAct** consistently.
 
+Model-generated code is treated as untrusted relative to the host process. This ADR assumes the selected backend provides the primary isolation boundary, while the framework is responsible for configuring approvals and capabilities, integrating telemetry, and translating outputs and failures into framework-native shapes. If a backend cannot provide isolation appropriate for its trust model, it is not a suitable CodeAct backend.
+
 The core design question is: **where should CodeAct integrate into the agent pipeline so that both SDKs can offer the same functionality without invasive changes to their core function-calling loops?**
 
 ## Decision Drivers
@@ -22,6 +24,7 @@ The core design question is: **where should CodeAct integrate into the agent pip
 - CodeAct must shape the model-facing surface before model invocation, not only after the model has already chosen tools.
 - The design should let users control which tools are available through CodeAct and which remain regular tools only.
 - The design must preserve existing session, approval, telemetry, and tool invocation behavior as much as possible.
+- The design should define the minimum cross-SDK telemetry and failure semantics for `execute_code`, so Python and .NET do not diverge on basic observability or error handling.
 - The design must fit naturally into the extension points that already exist in each SDK.
 - The design must be safe for concurrent runs and must not rely on mutating shared agent configuration during invocation.
 - The chosen structure should allow multiple backend-specific providers to fit under the same conceptual design over time, even though Hyperlight is the initial target.
@@ -145,16 +148,20 @@ We standardize the **public concept** of CodeAct across SDKs while allowing each
 - Python uses a `ContextProvider`.
 - .NET uses an `AIContextProvider`.
 - The term **CodeAct context provider** is used throughout this ADR as a design concept, not as a required public base type. Public SDK APIs should prefer concrete backend-specific types such as `HyperlightCodeActProvider` rather than a public abstract `CodeActContextProvider` or a public `CodeActExecutor` parameter.
-- CodeAct support should ship as an optional package in each SDK rather than as part of the core package, so users who do not need CodeAct do not take on its installation and dependency footprint.
+- CodeAct support should ship as an optional package in each SDK rather than as part of the core package, so users who do not need CodeAct do not take on its installation and dependency footprint. That optional package may still depend on a few small, backward-compatible hooks in the host SDK's core agent pipeline.
 - There is no separate runtime setup object in the chosen design. Concrete providers manage their provider-owned CodeAct tool registry, file mounts, and outbound network allow-list configuration directly through CRUD-style methods on the provider itself.
 - At a high level, CodeAct is exposed through backend-specific context providers that contribute an `execute_code` tool, own the CodeAct-specific tool registry, and carry backend capability configuration such as filesystem and network access.
 - The initial approval model is bundled approval for `execute_code`, using the same `approval_mode="always_require" | "never_require"` vocabulary as regular tools.
-- The CodeAct provider exposes a default `approval_mode` for `execute_code`. If the provider default is `never_require`, the effective approval for `execute_code` is derived from the provider-owned CodeAct tool registry captured for the run.
+- The CodeAct provider exposes a default `approval_mode` for `execute_code`. If the provider default is `always_require`, `execute_code` is always treated as `always_require` regardless of the provider-owned tool registry. If the provider default is `never_require`, the effective approval for `execute_code` is derived from the provider-owned CodeAct tool registry captured for the run.
 - If every provider-owned CodeAct tool in that registry has `approval_mode="never_require"`, `execute_code` is treated as `never_require`. If any provider-owned CodeAct tool in that registry has `approval_mode="always_require"`, `execute_code` is treated as `always_require`, even if the generated code may not end up calling that tool.
 - Approval is granted before `execute_code` starts, and provider-owned tool calls made from inside that execution run under the same approval.
 - Direct-only agent tools do not affect the approval of `execute_code`; only the provider-owned CodeAct tool registry participates in that calculation.
+- This approval model is intentionally conservative. If one sensitive provider-owned tool forces `execute_code` to require approval more often than desired, the mitigation is to keep that tool direct-only or split it into a different provider/tool surface rather than trying to infer per-run tool usage up front.
 - Configuring filesystem and network capability state on the provider, including adding file mounts or outbound network allow-list entries, is itself the approval for those capabilities in the initial model.
-- Each `execute_code` invocation must start from a clean execution state. Exact caching, snapshot, and environment-reuse strategies are implementation details defined in the language-specific specs.
+- Each `execute_code` invocation must start from a clean execution state; in-memory variables and other ephemeral interpreter/runtime state must not persist across separate calls. When a provider exposes a workspace, mounted files, or a writable artifact/output area, those files are the supported persistence mechanism across calls and are treated as external state rather than interpreter state.
+- Mutating the provider's tool registry or capability configuration while a run is in flight is allowed, but it only affects subsequent runs. Provider implementations must snapshot the effective state for each run and synchronize concurrent access so shared provider instances remain safe across concurrent runs.
+- The minimum cross-SDK telemetry contract is that `execute_code` is traced as a normal tool invocation nested inside the surrounding agent run, and provider-owned tool calls made from inside CodeAct continue to emit ordinary tool-invocation telemetry. Backend-specific resource metrics are optional extensions, not a required new top-level cross-SDK event model.
+- Timeout, out-of-memory, backend crash, and similar sandbox failures are all execution failures of `execute_code` and should surface as structured error results rather than backend-specific public DTOs. Partial textual or file outputs may be returned only when the backend can report them unambiguously; callers must not rely on partial-output recovery as a portable guarantee.
 - The provider-based structure preserves room for future pre-execution inspection and nested per-tool approvals if later experience shows they are needed.
 - Concrete backend-specific providers may still use small SDK-local helpers or adapters internally, but that split is an implementation detail rather than a public API requirement.
 
@@ -163,18 +170,25 @@ Detailed language-specific implementation notes are specified in:
 - [Python implementation](../features/code_act/python-implementation.md)
 - [.NET implementation](../features/code_act/dotnet-implementation.md)
 
+### Minimal core hooks required by the optional package
+
+CodeAct remains optional at the package level, but the optional package depends on a small number of hooks that must live in the host SDK because the agent pipeline owns model invocation and per-run tool resolution.
+
+- Python depends on the existing `ContextProvider` lifecycle, `SessionContext.extend_instructions(...)`, `SessionContext.extend_tools(...)`, per-run runtime tool access via `SessionContext.options["tools"]`, and the shared `ApprovalMode` vocabulary used by `FunctionTool`.
+- .NET depends on the existing `AIContextProvider` seam, agent/runtime support for applying providers before model invocation, and the existing chat-client or function-invocation seams that concrete implementations use to contribute `execute_code`.
+
+These hooks are backward-compatible because they only expose or forward per-run state that core already owns. Behavior changes only when a concrete CodeAct provider opts in and uses them.
+
 ### Concrete provider implementation contract
 
 The design does not require a public abstract `CodeActContextProvider` base class, but it does require a stable implementation contract for concrete providers.
 
 - Concrete providers should expose a standard capability surface at construction time, with SDK-appropriate naming for:
   - approval mode
-  - filesystem mode
   - workspace root
   - file mounts
-  - network mode
-  - allowed outbound domains
-  - allowed HTTP methods or an equivalent outbound policy surface
+  - allowed outbound targets plus any per-target method or policy restrictions needed by the backend
+- Separate public `filesystem_mode` / `network_mode` flags are not required by the cross-SDK contract. Filesystem access may be disabled implicitly until a workspace or file mounts are configured, and outbound network may be disabled implicitly until an allow-list or equivalent outbound policy entry is configured.
 - Concrete providers should expose direct CRUD-style methods for managing the provider-owned CodeAct tool registry, file mounts, and outbound network allow-list configuration, rather than requiring callers to construct a separate runtime setup object.
 - Concrete providers should implement their host SDK's provider lifecycle hooks to:
   - build CodeAct instructions,

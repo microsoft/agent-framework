@@ -29,7 +29,7 @@ from agent_framework import (
     tool,
 )
 
-from agent_framework_hyperlight import FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
+from agent_framework_hyperlight import AllowedDomain, FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
 from agent_framework_hyperlight import _execute_code_tool as execute_code_module
 
 
@@ -324,7 +324,7 @@ def test_execute_code_tool_replaces_tools_with_the_same_name() -> None:
     assert execute_code.approval_mode == "always_require"
 
 
-def test_execute_code_tool_accepts_string_and_tuple_file_mounts(
+def test_execute_code_tool_accepts_string_and_tuple_file_mounts_without_mode_flags(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -334,7 +334,7 @@ def test_execute_code_tool_accepts_string_and_tuple_file_mounts(
     explicit_file.write_text('{"hello": "world"}', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
-    execute_code = HyperlightExecuteCodeTool(filesystem_mode="read_only", _registry=_FakeRuntime())
+    execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
     execute_code.add_file_mounts("notes.txt")
     execute_code.add_file_mounts((explicit_file, "data/data.json"))
 
@@ -344,15 +344,19 @@ def test_execute_code_tool_accepts_string_and_tuple_file_mounts(
     ]
 
 
-def test_execute_code_tool_requires_enabled_capabilities(tmp_path: Path) -> None:
+def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by_target() -> None:
     execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
-    mount = (str(tmp_path), "data")
 
-    with pytest.raises(ValueError, match="filesystem_mode"):
-        execute_code.add_file_mounts(mount)
+    execute_code.add_allowed_domains(["https://api.example.com/v1", ("github.com", "get")])
+    execute_code.add_allowed_domains([
+        AllowedDomain("api.example.com", ("post", "get")),
+        ("github.com", ["head", "get"]),
+    ])
 
-    with pytest.raises(ValueError, match="network_mode"):
-        execute_code.add_allowed_domains("api.example.com")
+    assert execute_code.get_allowed_domains() == [
+        AllowedDomain("api.example.com", ("GET", "POST")),
+        AllowedDomain("github.com", ("GET", "HEAD")),
+    ]
 
 
 def test_execute_code_tool_description_contains_call_tool_guidance(tmp_path: Path) -> None:
@@ -364,12 +368,9 @@ def test_execute_code_tool_description_contains_call_tool_guidance(tmp_path: Pat
 
     execute_code = HyperlightExecuteCodeTool(
         tools=[compute],
-        filesystem_mode="read_write",
         workspace_root=workspace_root,
         file_mounts=[FileMount(str(mount_file), "data/data.json")],
-        network_mode="allow_list",
-        allowed_domains=["https://api.example.com/v1"],
-        allowed_http_methods=["get"],
+        allowed_domains=[AllowedDomain("https://api.example.com/v1", ("get", "post")), "github.com"],
         _registry=_FakeRuntime(),
     )
 
@@ -380,7 +381,8 @@ def test_execute_code_tool_description_contains_call_tool_guidance(tmp_path: Pat
     assert "/input/data/data.json" in description
     assert "/output" in description
     assert "api.example.com" in description
-    assert "GET" in description
+    assert "GET, POST" in description
+    assert "github.com" in description
 
 
 async def test_execute_code_tool_executes_with_structured_content(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -389,10 +391,8 @@ async def test_execute_code_tool_executes_with_structured_content(monkeypatch: p
 
     execute_code = HyperlightExecuteCodeTool(
         tools=[compute],
-        filesystem_mode="read_write",
-        network_mode="allow_list",
-        allowed_domains=["api.example.com"],
-        allowed_http_methods=["get"],
+        file_mounts=[FileMount(Path(__file__), "fixtures/source.py")],
+        allowed_domains=[("api.example.com", "get")],
     )
 
     result = await execute_code.invoke(arguments={"code": "create-output"})
@@ -462,6 +462,7 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkey
     assert "compute" in _FakeSandbox.instances[0].registered_tools
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> None:
     client = _FakeCodeActChatClient()
@@ -474,6 +475,7 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> N
     assert client.call_count == 2
 
 
+@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_with_real_sandbox(
     tmp_path: Path,
@@ -482,13 +484,9 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
     mounted_file.write_text("hello from mount", encoding="utf-8")
 
     with _serve_http_text_response(b"network ok") as (allowed_host, requests):
-        provider = HyperlightCodeActProvider(
-            filesystem_mode="read_write",
-            network_mode="allow_list",
-        )
+        provider = HyperlightCodeActProvider()
         provider.add_file_mounts((mounted_file, "data/input.txt"))
-        provider.add_allowed_domains(allowed_host)
-        provider.add_allowed_http_methods("GET")
+        provider.add_allowed_domains((allowed_host, "GET"))
 
         context = _FakeSessionContext()
         state: dict[str, Any] = {}

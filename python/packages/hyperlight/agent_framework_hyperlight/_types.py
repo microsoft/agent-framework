@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal, NamedTuple, TypeAlias
-
-FilesystemMode = Literal["none", "read_only", "read_write"]
-NetworkMode = Literal["none", "allow_list"]
+from typing import NamedTuple, TypeAlias
 
 
 class FileMount(NamedTuple):
@@ -18,3 +16,13 @@ class FileMount(NamedTuple):
 
 FileMountHostPath: TypeAlias = str | Path
 FileMountInput: TypeAlias = str | tuple[FileMountHostPath, str] | FileMount
+
+
+class AllowedDomain(NamedTuple):
+    """Allow outbound requests to one target, optionally restricted to specific HTTP methods."""
+
+    target: str
+    methods: tuple[str, ...] | None = None
+
+
+AllowedDomainInput: TypeAlias = str | tuple[str, str | Sequence[str]] | AllowedDomain

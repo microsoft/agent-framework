@@ -19,7 +19,7 @@ from agent_framework._tools import ApprovalMode, normalize_tools
 from pydantic import BaseModel, Field
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
-from ._types import FileMount, FileMountHostPath, FileMountInput, FilesystemMode, NetworkMode
+from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountHostPath, FileMountInput
 
 DEFAULT_HYPERLIGHT_BACKEND = "wasm"
 DEFAULT_HYPERLIGHT_MODULE = "python_guest.path"
@@ -50,17 +50,18 @@ class _RunConfig:
     module_path: str | None
     approval_mode: ApprovalMode
     tools: tuple[FunctionTool, ...]
-    filesystem_mode: FilesystemMode
     workspace_root: Path | None
     workspace_signature: tuple[tuple[str, int, int], ...]
     file_mounts: tuple[_NormalizedFileMount, ...]
-    network_mode: NetworkMode
-    allowed_domains: tuple[str, ...]
-    allowed_http_methods: tuple[str, ...]
+    allowed_domains: tuple[AllowedDomain, ...]
 
     @property
     def mounted_paths(self) -> tuple[str, ...]:
         return tuple(_display_mount_path(mount.mount_path) for mount in self.file_mounts)
+
+    @property
+    def filesystem_enabled(self) -> bool:
+        return self.workspace_root is not None or bool(self.file_mounts)
 
     def cache_key(self) -> tuple[Any, ...]:
         return (
@@ -69,13 +70,10 @@ class _RunConfig:
             self.module_path,
             self.approval_mode,
             tuple((tool_obj.name, id(tool_obj)) for tool_obj in self.tools),
-            self.filesystem_mode,
             str(self.workspace_root) if self.workspace_root is not None else None,
             self.workspace_signature,
             tuple((mount.mount_path, str(mount.host_path), mount.path_signature) for mount in self.file_mounts),
-            self.network_mode,
-            self.allowed_domains,
-            self.allowed_http_methods,
+            tuple((allowed_domain.target, allowed_domain.methods) for allowed_domain in self.allowed_domains),
         )
 
 
@@ -183,12 +181,12 @@ def _normalize_file_mount_input(file_mount: FileMountInput) -> _StoredFileMount:
 def _normalize_domain(target: str) -> str:
     candidate = target.strip()
     if not candidate:
-        raise ValueError("Domain entries must not be empty.")
+        raise ValueError("Allowed domain entries must not be empty.")
 
     parsed = urlparse(candidate if "://" in candidate else f"//{candidate}")
     normalized = (parsed.netloc or parsed.path).strip().rstrip("/")
     if not normalized:
-        raise ValueError(f"Could not normalize domain entry: {target!r}.")
+        raise ValueError(f"Could not normalize allowed domain entry: {target!r}.")
     return normalized.lower()
 
 
@@ -197,6 +195,53 @@ def _normalize_http_method(method: str) -> str:
     if not normalized:
         raise ValueError("HTTP method entries must not be empty.")
     return normalized
+
+
+def _normalize_http_methods(methods: str | Sequence[str] | None) -> tuple[str, ...] | None:
+    if methods is None:
+        return None
+
+    normalized_methods = (
+        {_normalize_http_method(methods)}
+        if isinstance(methods, str)
+        else {_normalize_http_method(method) for method in methods}
+    )
+    if not normalized_methods:
+        raise ValueError("Allowed domain methods must not be empty when provided.")
+    return tuple(sorted(normalized_methods))
+
+
+def _is_allowed_domain_pair(value: Any) -> TypeGuard[tuple[str, str | Sequence[str]]]:
+    if not isinstance(value, tuple) or isinstance(value, AllowedDomain):
+        return False
+
+    value_tuple = cast(tuple[object, ...], value)
+    if len(value_tuple) != 2:
+        return False
+
+    target, methods = value_tuple
+    if not isinstance(target, str):
+        return False
+    if isinstance(methods, str):
+        return True
+    return isinstance(methods, Sequence)
+
+
+def _normalize_allowed_domain_input(allowed_domain: AllowedDomainInput) -> AllowedDomain:
+    if isinstance(allowed_domain, str):
+        return AllowedDomain(target=_normalize_domain(allowed_domain), methods=None)
+
+    if isinstance(allowed_domain, AllowedDomain):
+        return AllowedDomain(
+            target=_normalize_domain(allowed_domain.target),
+            methods=_normalize_http_methods(allowed_domain.methods),
+        )
+
+    target, methods = allowed_domain
+    return AllowedDomain(
+        target=_normalize_domain(target),
+        methods=_normalize_http_methods(methods),
+    )
 
 
 def _normalize_mount_path(mount_path: str) -> str:
@@ -372,8 +417,8 @@ class _SandboxRegistry:
             return _build_execution_contents(result=result, sandbox=entry.sandbox, output_dir=entry.output_dir)
 
     def _create_entry(self, config: _RunConfig) -> _SandboxEntry:
-        input_dir_handle = TemporaryDirectory() if config.filesystem_mode != "none" else None
-        output_dir_handle = TemporaryDirectory() if config.filesystem_mode == "read_write" else None
+        input_dir_handle = TemporaryDirectory() if config.filesystem_enabled else None
+        output_dir_handle = TemporaryDirectory() if config.filesystem_enabled else None
 
         if input_dir_handle is not None:
             _populate_input_dir(config=config, input_root=Path(input_dir_handle.name))
@@ -396,10 +441,11 @@ class _SandboxRegistry:
         for tool_obj in config.tools:
             sandbox.register_tool(tool_obj.name, _make_sandbox_callback(tool_obj))
 
-        if config.network_mode == "allow_list":
-            methods = list(config.allowed_http_methods) or None
-            for domain in config.allowed_domains:
-                sandbox.allow_domain(domain, methods=methods)
+        for allowed_domain in config.allowed_domains:
+            sandbox.allow_domain(
+                allowed_domain.target,
+                methods=list(allowed_domain.methods) if allowed_domain.methods is not None else None,
+            )
 
         sandbox.run("None")
         snapshot = sandbox.snapshot()
@@ -420,12 +466,9 @@ class HyperlightExecuteCodeTool(FunctionTool):
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         approval_mode: ApprovalMode | None = None,
-        filesystem_mode: FilesystemMode = "none",
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
-        network_mode: NetworkMode = "none",
-        allowed_domains: str | Sequence[str] | None = None,
-        allowed_http_methods: str | Sequence[str] | None = None,
+        allowed_domains: AllowedDomainInput | Sequence[AllowedDomainInput] | None = None,
         backend: str = DEFAULT_HYPERLIGHT_BACKEND,
         module: str | None = DEFAULT_HYPERLIGHT_MODULE,
         module_path: str | None = None,
@@ -441,25 +484,18 @@ class HyperlightExecuteCodeTool(FunctionTool):
         self._state_lock = threading.RLock()
         self._registry = _registry or _SandboxRegistry()
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
-        self._filesystem_mode: FilesystemMode = filesystem_mode
         self._workspace_root = _resolve_workspace_root(workspace_root)
-        if self._filesystem_mode == "none" and self._workspace_root is not None:
-            raise ValueError("workspace_root requires filesystem_mode to be 'read_only' or 'read_write'.")
-        self._network_mode: NetworkMode = network_mode
         self._backend: str = backend
         self._module: str | None = module
         self._module_path: str | None = module_path
         self._managed_tools: list[FunctionTool] = []
         self._file_mounts: dict[str, _StoredFileMount] = {}
-        self._allowed_domains: set[str] = set()
-        self._allowed_http_methods: set[str] = set()
+        self._allowed_domains: dict[str, AllowedDomain] = {}
 
         if tools is not None:
             self.add_tools(tools)
         if file_mounts is not None:
             self.add_file_mounts(file_mounts)
-        if allowed_http_methods is not None:
-            self.add_allowed_http_methods(allowed_http_methods)
         if allowed_domains is not None:
             self.add_allowed_domains(allowed_domains)
 
@@ -472,14 +508,13 @@ class HyperlightExecuteCodeTool(FunctionTool):
             return str(self.__dict__.get("description", EXECUTE_CODE_INPUT_DESCRIPTION))
 
         with state_lock:
+            allowed_domains = sorted(self._allowed_domains.values(), key=lambda value: value.target)
             return build_execute_code_description(
                 tools=self._managed_tools,
-                filesystem_mode=self._filesystem_mode,
+                filesystem_enabled=self._workspace_root is not None or bool(self._file_mounts),
                 workspace_enabled=self._workspace_root is not None,
                 mounted_paths=[_display_mount_path(mount.mount_path) for mount in self._file_mounts.values()],
-                network_mode=self._network_mode,
-                allowed_domains=sorted(self._allowed_domains),
-                allowed_http_methods=sorted(self._allowed_http_methods),
+                allowed_domains=allowed_domains,
             )
 
     @description.setter
@@ -522,9 +557,6 @@ class HyperlightExecuteCodeTool(FunctionTool):
         A single string uses the same relative path on the host and in the sandbox.
         Use a two-string tuple or `FileMount` when those paths differ.
         """
-        if self._filesystem_mode == "none":
-            raise ValueError("File mounts require filesystem_mode to be 'read_only' or 'read_write'.")
-
         if isinstance(file_mounts, str) or _is_file_mount_pair(file_mounts):
             normalized_mounts = [_normalize_file_mount_input(file_mounts)]
         else:
@@ -557,67 +589,36 @@ class HyperlightExecuteCodeTool(FunctionTool):
         with self._state_lock:
             self._file_mounts.clear()
 
-    def add_allowed_domains(self, domains: str | Sequence[str]) -> None:
-        """Add one or more outbound allow-list domains."""
-        if self._network_mode == "none":
-            raise ValueError("Allowed domains require network_mode='allow_list'.")
+    def add_allowed_domains(self, domains: AllowedDomainInput | Sequence[AllowedDomainInput]) -> None:
+        """Add one or more outbound allow-list entries."""
+        if isinstance(domains, (str, AllowedDomain)) or _is_allowed_domain_pair(domains):
+            normalized_domains = [_normalize_allowed_domain_input(domains)]
+        else:
+            normalized_domains = [
+                _normalize_allowed_domain_input(domain) for domain in cast(Sequence[AllowedDomainInput], domains)
+            ]
 
-        normalized_domains = (
-            {_normalize_domain(domains)}
-            if isinstance(domains, str)
-            else {_normalize_domain(domain) for domain in domains}
-        )
         with self._state_lock:
-            self._allowed_domains.update(normalized_domains)
+            for normalized_domain in normalized_domains:
+                self._allowed_domains[normalized_domain.target] = normalized_domain
 
-    def get_allowed_domains(self) -> list[str]:
-        """Return the configured outbound allow-list domains."""
+    def get_allowed_domains(self) -> list[AllowedDomain]:
+        """Return the configured outbound allow-list entries."""
         with self._state_lock:
-            return sorted(self._allowed_domains)
+            return sorted(self._allowed_domains.values(), key=lambda value: value.target)
 
     def remove_allowed_domain(self, domain: str) -> None:
-        """Remove one outbound allow-list domain."""
+        """Remove one outbound allow-list entry."""
         normalized_domain = _normalize_domain(domain)
         with self._state_lock:
             if normalized_domain not in self._allowed_domains:
                 raise KeyError(f"No allowed domain exists for {domain!r}.")
-            self._allowed_domains.remove(normalized_domain)
+            del self._allowed_domains[normalized_domain]
 
     def clear_allowed_domains(self) -> None:
-        """Remove all outbound allow-list domains."""
+        """Remove all outbound allow-list entries."""
         with self._state_lock:
             self._allowed_domains.clear()
-
-    def add_allowed_http_methods(self, methods: str | Sequence[str]) -> None:
-        """Add one or more outbound HTTP methods for the allow-list policy."""
-        if self._network_mode == "none":
-            raise ValueError("Allowed HTTP methods require network_mode='allow_list'.")
-
-        normalized_methods = (
-            {_normalize_http_method(methods)}
-            if isinstance(methods, str)
-            else {_normalize_http_method(method) for method in methods}
-        )
-        with self._state_lock:
-            self._allowed_http_methods.update(normalized_methods)
-
-    def get_allowed_http_methods(self) -> list[str]:
-        """Return the configured outbound allow-list HTTP methods."""
-        with self._state_lock:
-            return sorted(self._allowed_http_methods)
-
-    def remove_allowed_http_method(self, method: str) -> None:
-        """Remove one outbound allow-list HTTP method."""
-        normalized_method = _normalize_http_method(method)
-        with self._state_lock:
-            if normalized_method not in self._allowed_http_methods:
-                raise KeyError(f"No allowed HTTP method exists for {method!r}.")
-            self._allowed_http_methods.remove(normalized_method)
-
-    def clear_allowed_http_methods(self) -> None:
-        """Remove all outbound allow-list HTTP methods."""
-        with self._state_lock:
-            self._allowed_http_methods.clear()
 
     def build_instructions(self, *, tools_visible_to_model: bool) -> str:
         """Build the current CodeAct instructions for this execute_code surface."""
@@ -625,29 +626,19 @@ class HyperlightExecuteCodeTool(FunctionTool):
         return build_codeact_instructions(
             tools=config.tools,
             tools_visible_to_model=tools_visible_to_model,
-            filesystem_mode=config.filesystem_mode,
-            workspace_enabled=config.workspace_root is not None,
-            mounted_paths=config.mounted_paths,
-            network_mode=config.network_mode,
-            allowed_domains=config.allowed_domains,
-            allowed_http_methods=config.allowed_http_methods,
         )
 
     def create_run_tool(self) -> HyperlightExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
         file_mounts = self.get_file_mounts()
         allowed_domains = self.get_allowed_domains()
-        allowed_http_methods = self.get_allowed_http_methods()
 
         return HyperlightExecuteCodeTool(
             tools=self.get_tools(),
             approval_mode=self._default_approval_mode,
-            filesystem_mode=self._filesystem_mode,
             workspace_root=self._workspace_root,
             file_mounts=file_mounts or None,
-            network_mode=self._network_mode,
             allowed_domains=allowed_domains or None,
-            allowed_http_methods=allowed_http_methods or None,
             backend=self._backend,
             module=self._module,
             module_path=self._module_path,
@@ -663,7 +654,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             "module_path": config.module_path,
             "approval_mode": config.approval_mode,
             "tool_names": [tool_obj.name for tool_obj in config.tools],
-            "filesystem_mode": config.filesystem_mode,
+            "filesystem_enabled": config.filesystem_enabled,
             "workspace_root": str(config.workspace_root) if config.workspace_root is not None else None,
             "file_mounts": [
                 {
@@ -672,9 +663,14 @@ class HyperlightExecuteCodeTool(FunctionTool):
                 }
                 for mount in config.file_mounts
             ],
-            "network_mode": config.network_mode,
-            "allowed_domains": list(config.allowed_domains),
-            "allowed_http_methods": list(config.allowed_http_methods),
+            "network_enabled": bool(config.allowed_domains),
+            "allowed_domains": [
+                {
+                    "target": allowed_domain.target,
+                    "methods": list(allowed_domain.methods) if allowed_domain.methods is not None else None,
+                }
+                for allowed_domain in config.allowed_domains
+            ],
         }
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
@@ -692,8 +688,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             managed_tools = tuple(self._managed_tools)
             workspace_root = self._workspace_root
             stored_mounts = tuple(self._file_mounts.values())
-            allowed_domains = tuple(sorted(self._allowed_domains))
-            allowed_http_methods = tuple(sorted(self._allowed_http_methods))
+            allowed_domains = tuple(sorted(self._allowed_domains.values(), key=lambda value: value.target))
             approval_mode = _resolve_execute_code_approval_mode(
                 base_approval_mode=self._default_approval_mode,
                 tools=managed_tools,
@@ -715,13 +710,10 @@ class HyperlightExecuteCodeTool(FunctionTool):
             module_path=self._module_path,
             approval_mode=approval_mode,
             tools=managed_tools,
-            filesystem_mode=self._filesystem_mode,
             workspace_root=workspace_root,
             workspace_signature=workspace_signature,
             file_mounts=normalized_mounts,
-            network_mode=self._network_mode,
             allowed_domains=allowed_domains,
-            allowed_http_methods=allowed_http_methods,
         )
 
     def _run_code(self, *, code: str) -> list[Content]:
