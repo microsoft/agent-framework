@@ -310,7 +310,8 @@ async def test_assistant_role_mapped_to_model() -> None:
 
 async def test_tool_messages_collapsed_into_single_user_message() -> None:
     """Consecutive tool messages must be collapsed into one role='user' message
-    with multiple functionResponse parts (parallel tool call pattern)."""
+    with multiple functionResponse parts (parallel tool call pattern).
+    """
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
 
@@ -361,7 +362,8 @@ async def test_function_result_name_resolved_from_call_history() -> None:
 
 async def test_function_result_resolved_when_call_id_was_generated() -> None:
     """When a function_call has no call_id and a fallback is generated, the subsequent
-    function_result referencing that generated ID must still resolve the function name."""
+    function_result referencing that generated ID must still resolve the function name.
+    """
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
 
@@ -632,7 +634,8 @@ async def test_response_schema_added_to_config() -> None:
 
 async def test_streaming_response_format_passed_to_build_response_stream() -> None:
     """Verifies that response_format is forwarded to _build_response_stream when streaming
-    so that structured output parsing works correctly on the final assembled response."""
+    so that structured output parsing works correctly on the final assembled response.
+    """
     from unittest.mock import patch
 
     from pydantic import BaseModel
@@ -713,7 +716,8 @@ async def test_function_tool_converted_to_function_declaration() -> None:
 
 async def test_callable_tool_resolved_via_validate_options() -> None:
     """Raw callables passed as tools must be normalized by _validate_options into FunctionTools
-    and reach the Gemini config as function declarations."""
+    and reach the Gemini config as function declarations.
+    """
 
     def get_weather(city: str) -> str:
         """Get the weather for a city."""
