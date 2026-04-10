@@ -45,7 +45,7 @@ def main():
         default_options={"store": False},
     )
 
-    server = ResponsesHostServer(agent, provider=InMemoryResponseProvider())
+    server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
     server.run()
 
 
