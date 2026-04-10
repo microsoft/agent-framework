@@ -68,10 +68,13 @@ class ThinkingConfig(TypedDict, total=False):
     """Extended thinking configuration for Gemini models.
 
     Attributes:
-        include_thoughts: Whether to include the model's reasoning thoughts in the response.
+        include_thoughts: Whether to include thought summaries in the response. Thought summaries
+            are condensed representations of the model's internal reasoning and appear as response
+            parts where ``part.thought`` is ``True``. Note: the framework currently excludes
+            thought parts from ``ChatResponse.contents`` and does not surface them as output.
         thinking_budget: Token budget for Gemini 2.5 models. Set to ``0`` to disable
             thinking or ``-1`` to enable a dynamic budget.
-        thinking_level: Thinking level for Gemini 3.x models. One of
+        thinking_level: Thinking level for Gemini 2.5 models and later. One of
             ``ThinkingLevel.THINKING_LEVEL_UNSPECIFIED`` (default), ``ThinkingLevel.MINIMAL``,
             ``ThinkingLevel.LOW``, ``ThinkingLevel.MEDIUM``, or ``ThinkingLevel.HIGH``.
     """
@@ -100,7 +103,9 @@ class GeminiChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
         seed: Fixed seed for reproducible outputs.
         frequency_penalty: Reduces repetition by penalising tokens that appear frequently.
         presence_penalty: Reduces repetition by penalising tokens that have already appeared.
-        tools: Function tools the model may call. Accepts ``FunctionTool`` instances or plain callables.
+        tools: Function tools the model may call. Accepts ``FunctionTool`` instances, plain callables,
+            or ``types.Tool`` objects returned by ``get_code_interpreter_tool``, ``get_web_search_tool``,
+            ``get_mcp_tool``, ``get_file_search_tool``, or ``get_maps_grounding_tool``.
         tool_choice: How the model picks a tool. One of ``'auto'``, ``'none'``, or ``'required'``.
         response_format: Pydantic model type for structured JSON output. The response text is
             parsed into the model and exposed via ``ChatResponse.value``.
@@ -125,19 +130,6 @@ class GeminiChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
 
     thinking_config: ThinkingConfig
     """Extended thinking configuration. See ``ThinkingConfig`` for available fields."""
-
-    # Tool options
-    code_execution: bool
-    """Allow the model to write and run code in a sandboxed environment."""
-
-    google_search_grounding: bool | types.GoogleSearch
-    """Ground responses with live Google Search results. Pass ``True`` to use default settings,
-    or a ``types.GoogleSearch`` instance for full control (e.g. ``time_range_filter``,
-    ``search_types``, ``exclude_domains``)."""
-
-    google_maps_grounding: bool | types.GoogleMaps
-    """Ground responses with Google Maps data. Pass ``True`` to use default settings,
-    or a ``types.GoogleMaps`` instance for full control (e.g. ``enable_widget``)."""
 
     # Unsupported base options. Override with None to indicate not supported
     logit_bias: None  # type: ignore[misc]
@@ -560,7 +552,11 @@ class RawGeminiChatClient(
         options: Mapping[str, Any],
         system_instruction: str | None,
     ) -> types.GenerateContentConfig:
-        """Build a ``types.GenerateContentConfig`` from ``ChatOptions``.
+        """Build a ``types.GenerateContentConfig`` from the resolved chat options.
+
+        Maps both standard ``ChatOptions`` fields (temperature, top_p, tools, etc.) and
+        ``GeminiChatOptions``-specific fields (``response_schema``, ``top_k``, ``thinking_config``)
+        to their ``GenerateContentConfig`` equivalents.
 
         Args:
             options: Resolved chat options mapping, typically a ``GeminiChatOptions`` dict.
@@ -653,14 +649,14 @@ class RawGeminiChatClient(
         return result or None
 
     def _prepare_tool_config(self, tool_choice: Any) -> types.ToolConfig | None:
-        """Build a Gemini ``ToolConfig`` from the framework tool_choice value.
+        """Build a Gemini ``ToolConfig`` from the framework ``tool_choice`` value.
 
         Args:
-            tool_choice: Raw tool_choice value from options (string, dict, or None).
+            tool_choice: Raw ``tool_choice`` value from options (string, dict, or None).
 
         Returns:
             A ``types.ToolConfig`` with the appropriate ``FunctionCallingConfig``, or None
-            if no tool_choice is set or the mode is unsupported.
+            if no ``tool_choice`` is set or the mode is unsupported.
         """
         tool_mode = validate_tool_mode(tool_choice)
         if not tool_mode:
@@ -852,7 +848,19 @@ class GeminiChatClient(
     RawGeminiChatClient[GeminiChatOptionsT],
     Generic[GeminiChatOptionsT],
 ):
-    """Gemini chat client for the Google Gemini API with function invocation, middleware and telemetry."""
+    """Gemini chat client for the Google Gemini API with function invocation, middleware, and telemetry.
+
+    This is the recommended client for most use cases. It builds on ``RawGeminiChatClient``
+    and adds:
+
+    - **Function invocation**: automatically calls ``FunctionTool`` implementations and feeds
+      results back to the model until it produces a final text response.
+    - **Middleware**: a composable chain for cross-cutting concerns (logging, retries, etc.).
+    - **Telemetry**: OpenTelemetry traces and metrics emitted for every request.
+
+    Use ``RawGeminiChatClient`` instead when you need full control over the request pipeline
+    and want to opt out of one or more of these layers.
+    """
 
     def __init__(
         self,

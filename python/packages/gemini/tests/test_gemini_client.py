@@ -122,17 +122,20 @@ def _make_gemini_client(
 
 
 def test_model_stored_on_instance() -> None:
+    """Stores the model identifier on the instance so it can be read back."""
     client, _ = _make_gemini_client(model="gemini-2.5-pro")
     assert client.model == "gemini-2.5-pro"
 
 
 def test_client_created_from_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Initialises successfully when the API key is supplied via environment variable."""
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-123")
     client = GeminiChatClient(model="gemini-2.5-flash")
     assert client.model == "gemini-2.5-flash"
 
 
 def test_missing_api_key_raises_when_no_client_injected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Raises ValueError at construction when neither an API key nor a pre-built client is available."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
 
@@ -141,6 +144,7 @@ def test_missing_api_key_raises_when_no_client_injected(monkeypatch: pytest.Monk
 
 
 async def test_missing_model_raises_on_get_response() -> None:
+    """Raises ValueError at call time when no model is set on the client or in options."""
     client, mock = _make_gemini_client(model=None)  # type: ignore[arg-type]
     mock.aio.models.generate_content = AsyncMock()
 
@@ -152,6 +156,7 @@ async def test_missing_model_raises_on_get_response() -> None:
 
 
 async def test_get_response_returns_text() -> None:
+    """Returns the model's text reply in the first message of the response."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hello!")]))
 
@@ -161,6 +166,7 @@ async def test_get_response_returns_text() -> None:
 
 
 async def test_get_response_model_from_response() -> None:
+    """Populates ChatResponse.model from the model_version field in the API response."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([_make_part(text="Hi")], model_version="gemini-2.5-pro-002")
@@ -172,6 +178,7 @@ async def test_get_response_model_from_response() -> None:
 
 
 async def test_get_response_uses_model_from_options() -> None:
+    """Uses the model specified in options, overriding the client's default."""
     client, mock = _make_gemini_client(model="gemini-2.5-flash")
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -185,6 +192,7 @@ async def test_get_response_uses_model_from_options() -> None:
 
 
 async def test_get_response_usage_details() -> None:
+    """Surfaces input, output, and total token counts from the API usage metadata."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response(
@@ -204,6 +212,7 @@ async def test_get_response_usage_details() -> None:
 
 
 async def test_get_response_no_usage_when_metadata_absent() -> None:
+    """Returns None for usage_details when the API response includes no usage metadata."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([_make_part(text="Hi")], prompt_tokens=None, output_tokens=None)
@@ -232,6 +241,7 @@ async def test_get_response_no_usage_when_metadata_absent() -> None:
     ],
 )
 async def test_finish_reason_mapping(gemini_reason: str, expected: str | None) -> None:
+    """Maps Gemini finish reason strings to the correct FinishReasonLiteral values."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([_make_part(text="Hi")], finish_reason=gemini_reason)
@@ -246,6 +256,7 @@ async def test_finish_reason_mapping(gemini_reason: str, expected: str | None) -
 
 
 async def test_system_message_extracted_to_system_instruction() -> None:
+    """Extracts a system role message from the conversation and sends it as the system instruction."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -261,6 +272,7 @@ async def test_system_message_extracted_to_system_instruction() -> None:
 
 
 async def test_multiple_system_messages_concatenated() -> None:
+    """Joins multiple system messages into a single system instruction string."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -278,6 +290,7 @@ async def test_multiple_system_messages_concatenated() -> None:
 
 
 async def test_instructions_option_merged_with_system_instruction() -> None:
+    """Prepends the instructions option to the system message when both are present."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -295,6 +308,7 @@ async def test_instructions_option_merged_with_system_instruction() -> None:
 
 
 async def test_instructions_option_without_system_message() -> None:
+    """Uses the instructions option as the sole system instruction when no system message is present."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -308,6 +322,7 @@ async def test_instructions_option_without_system_message() -> None:
 
 
 async def test_assistant_role_mapped_to_model() -> None:
+    """Maps the framework 'assistant' role to the 'model' role expected by the Gemini API."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Sure")]))
 
@@ -462,6 +477,7 @@ async def test_non_function_result_content_in_tool_message_is_skipped() -> None:
 
 
 async def test_thinking_parts_are_silently_skipped() -> None:
+    """Excludes thought-summary parts from ChatResponse.contents, returning only the final answer."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([
@@ -541,6 +557,7 @@ async def test_empty_executable_code_part_is_skipped() -> None:
 
 
 async def test_prepare_config_temperature() -> None:
+    """Forwards the temperature option to GenerateContentConfig.temperature."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -554,6 +571,7 @@ async def test_prepare_config_temperature() -> None:
 
 
 async def test_prepare_config_max_tokens() -> None:
+    """Forwards max_tokens to GenerateContentConfig.max_output_tokens."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -567,6 +585,7 @@ async def test_prepare_config_max_tokens() -> None:
 
 
 async def test_prepare_config_top_p_and_top_k() -> None:
+    """Forwards top_p and top_k to their respective GenerateContentConfig fields."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -581,6 +600,7 @@ async def test_prepare_config_top_p_and_top_k() -> None:
 
 
 async def test_prepare_config_stop_sequences() -> None:
+    """Forwards the stop option to GenerateContentConfig.stop_sequences."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -594,6 +614,7 @@ async def test_prepare_config_stop_sequences() -> None:
 
 
 async def test_prepare_config_seed() -> None:
+    """Forwards the seed option to GenerateContentConfig.seed for reproducible outputs."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -607,6 +628,7 @@ async def test_prepare_config_seed() -> None:
 
 
 async def test_prepare_config_frequency_and_presence_penalty() -> None:
+    """Forwards frequency_penalty and presence_penalty to their GenerateContentConfig equivalents."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -624,6 +646,7 @@ async def test_prepare_config_frequency_and_presence_penalty() -> None:
 
 
 async def test_thinking_config_budget() -> None:
+    """Passes thinking_budget through to GenerateContentConfig.thinking_config."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
     tc: ThinkingConfig = {"thinking_budget": 1024}
@@ -639,6 +662,7 @@ async def test_thinking_config_budget() -> None:
 
 
 async def test_thinking_config_level() -> None:
+    """Passes thinking_level through to GenerateContentConfig.thinking_config."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
     tc: ThinkingConfig = {"thinking_level": types.ThinkingLevel.HIGH}
@@ -657,6 +681,7 @@ async def test_thinking_config_level() -> None:
 
 
 async def test_response_format_sets_json_mime_type() -> None:
+    """Sets response_mime_type to application/json when response_format is given."""
     from pydantic import BaseModel
 
     class Reply(BaseModel):
@@ -693,6 +718,7 @@ async def test_response_format_populates_value_on_chat_response() -> None:
 
 
 async def test_response_schema_added_to_config() -> None:
+    """Sets both response_mime_type and the raw schema on the config when response_schema is given."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
     schema = {"type": "object", "properties": {"name": {"type": "string"}}}
@@ -739,6 +765,7 @@ async def test_streaming_response_format_passed_to_build_response_stream() -> No
 
 
 async def test_function_call_in_response_mapped_to_content() -> None:
+    """Maps a function_call part in the response to a function_call Content with the correct name and call ID."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([_make_part(function_call=("call-1", "get_weather", {"city": "Berlin"}))])
@@ -769,6 +796,8 @@ async def test_function_call_missing_id_gets_fallback() -> None:
 
 
 async def test_function_tool_converted_to_function_declaration() -> None:
+    """Translates a FunctionTool in the tools list into a FunctionDeclaration in the generation config."""
+
     def get_weather(city: str) -> str:
         """Get the weather for a city."""
         return "sunny"
@@ -816,30 +845,37 @@ async def test_callable_tool_resolved_via_validate_options() -> None:
 
 
 def test_coerce_to_dict_with_dict_input() -> None:
+    """Returns a dict value unchanged."""
     assert GeminiChatClient._coerce_to_dict({"key": "value"}) == {"key": "value"}
 
 
 def test_coerce_to_dict_with_json_string() -> None:
+    """Parses a JSON object string into a dict."""
     assert GeminiChatClient._coerce_to_dict('{"key": "value"}') == {"key": "value"}
 
 
 def test_coerce_to_dict_with_plain_string() -> None:
+    """Wraps a plain non-JSON string as {'result': value}."""
     assert GeminiChatClient._coerce_to_dict("some text") == {"result": "some text"}
 
 
 def test_coerce_to_dict_with_none() -> None:
+    """Coerces None to {'result': ''}."""
     assert GeminiChatClient._coerce_to_dict(None) == {"result": ""}
 
 
 def test_coerce_to_dict_with_numeric_value() -> None:
+    """Wraps a numeric value as {'result': str(value)}."""
     assert GeminiChatClient._coerce_to_dict(42) == {"result": "42"}
 
 
 def test_coerce_to_dict_with_json_array_string() -> None:
+    """Wraps a JSON array string as {'result': value} because it is not a dict."""
     assert GeminiChatClient._coerce_to_dict("[1, 2, 3]") == {"result": "[1, 2, 3]"}
 
 
 def test_coerce_to_dict_with_json_string_literal() -> None:
+    """Wraps a JSON string literal as {'result': value} because it is not a dict."""
     assert GeminiChatClient._coerce_to_dict('"hello"') == {"result": '"hello"'}
 
 
@@ -872,16 +908,19 @@ async def _get_config_for_tool_choice(tool_choice: str) -> types.GenerateContent
 
 
 async def test_tool_choice_auto_maps_to_AUTO() -> None:
+    """Maps 'auto' tool_choice to FunctionCallingConfigMode.AUTO."""
     config = await _get_config_for_tool_choice("auto")
     assert _get_function_calling_mode(config) == "AUTO"
 
 
 async def test_tool_choice_none_maps_to_NONE() -> None:
+    """Maps 'none' tool_choice to FunctionCallingConfigMode.NONE."""
     config = await _get_config_for_tool_choice("none")
     assert _get_function_calling_mode(config) == "NONE"
 
 
 async def test_tool_choice_required_maps_to_ANY() -> None:
+    """Maps 'required' tool_choice to FunctionCallingConfigMode.ANY."""
     config = await _get_config_for_tool_choice("required")
     assert _get_function_calling_mode(config) == "ANY"
 
@@ -906,6 +945,7 @@ async def test_tool_choice_required_with_name_sets_allowed_function_names() -> N
 
 
 async def test_unknown_tool_choice_mode_is_ignored() -> None:
+    """Produces no tool_config in the generation config when the tool_choice mode is unrecognised."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
@@ -1037,6 +1077,7 @@ async def test_function_response_part_in_response_mapped_to_content() -> None:
 
 
 async def test_streaming_yields_text_chunks() -> None:
+    """Yields incremental text updates that together form the complete response."""
     client, mock = _make_gemini_client()
     chunks = [
         _make_response([_make_part(text="Hello ")], finish_reason=None, prompt_tokens=None, output_tokens=None),
@@ -1084,6 +1125,7 @@ async def test_streaming_function_call_emitted_immediately() -> None:
 
 
 async def test_streaming_finish_reason_only_on_last_chunk() -> None:
+    """Sets finish_reason only on the final chunk; intermediate chunks have it as None."""
     client, mock = _make_gemini_client()
     chunks = [
         _make_response([_make_part(text="Hello ")], finish_reason=None, prompt_tokens=None, output_tokens=None),
@@ -1102,6 +1144,7 @@ async def test_streaming_finish_reason_only_on_last_chunk() -> None:
 
 
 async def test_streaming_usage_only_on_final_chunk() -> None:
+    """Attaches usage content only to the final chunk, not to intermediate ones."""
     client, mock = _make_gemini_client()
     chunks = [
         _make_response([_make_part(text="Hello ")], finish_reason=None, prompt_tokens=None, output_tokens=None),
@@ -1190,6 +1233,7 @@ async def test_empty_candidates_in_stream_does_not_raise(candidates: list | None
 
 
 def test_service_url() -> None:
+    """Returns the Gemini API base URL."""
     client, _ = _make_gemini_client()
     assert client.service_url() == "https://generativelanguage.googleapis.com"
 
