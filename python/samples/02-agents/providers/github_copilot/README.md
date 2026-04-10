@@ -30,7 +30,7 @@ The following environment variables can be configured:
 
 ```python
 from agent_framework.observability import configure_otel_providers
-from agent_framework_github_copilot import GitHubCopilotAgent
+from agent_framework.github import GitHubCopilotAgent
 
 configure_otel_providers(enable_console_exporters=True)
 

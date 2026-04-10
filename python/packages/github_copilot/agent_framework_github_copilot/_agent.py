@@ -322,6 +322,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
@@ -333,6 +334,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
@@ -343,6 +345,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,  # type: ignore[override]
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
@@ -358,6 +361,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
+            middleware: Not used by this agent directly. Accepted for interface
+                compatibility; pass middleware via :class:`GitHubCopilotAgent` which
+                forwards it through :class:`AgentTelemetryLayer`.
             options: Runtime options (model, timeout, etc.).
             kwargs: Additional keyword arguments for compatibility with the shared agent
                 interface (e.g. compaction_strategy, tokenizer). Not used by this agent.
@@ -369,6 +375,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Raises:
             AgentException: If the request fails.
         """
+        del middleware  # not used; accepted for interface compatibility with AgentTelemetryLayer
         if stream:
             ctx_holder: dict[str, Any] = {}
 
