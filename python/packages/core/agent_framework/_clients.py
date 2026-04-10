@@ -31,7 +31,9 @@ from ._docstrings import apply_layered_docstring
 from ._serialization import SerializationMixin
 from ._tools import (
     FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
     ToolTypes,
+    normalize_function_invocation_configuration,
 )
 from ._types import (
     ChatResponse,
@@ -647,7 +649,15 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             "additional_properties": dict(additional_properties) if additional_properties is not None else None,
         }
         if function_invocation_configuration is not None:
-            agent_kwargs["function_invocation_configuration"] = function_invocation_configuration
+            if isinstance(self, FunctionInvocationLayer):
+                self.function_invocation_configuration = normalize_function_invocation_configuration(
+                    function_invocation_configuration
+                )
+            else:
+                logger.warning(
+                    "function_invocation_configuration was provided, but the chat client does not support "
+                    "function invoking."
+                )
 
         return Agent(**agent_kwargs)
 
