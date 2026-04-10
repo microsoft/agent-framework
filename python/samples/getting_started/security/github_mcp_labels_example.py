@@ -52,7 +52,7 @@ from agent_framework import (
     TextContent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from agent_framework.devui import serve
 
@@ -255,9 +255,9 @@ async def main():
             print(f"\n✅ Using Azure OpenAI endpoint: {endpoint}")
             
             credential = AzureCliCredential()
-            chat_client = AzureOpenAIChatClient(
-                endpoint=endpoint,
-                deployment_name="o4-mini",
+            chat_client = OpenAIChatClient(
+                model="o4-mini",
+                azure_endpoint=endpoint,
                 credential=credential,
                 api_version="2024-12-01-preview",
             )
@@ -393,10 +393,10 @@ def run_demo():
                     print(f"   - {func.name}: max_allowed_confidentiality=public")
             
             credential = AzureCliCredential()
-            chat_client = AzureOpenAIChatClient(
-                endpoint=endpoint,
-                deployment_name="gpt-4o-mini",
-                credential=credential
+            chat_client = OpenAIChatClient(
+                model="gpt-4o-mini",
+                azure_endpoint=endpoint,
+                credential=credential,
             )
             
             config = SecureAgentConfig(
@@ -537,10 +537,10 @@ def run_devui():
                     print(f"   - {func.name}: max_allowed_confidentiality=public")
             
             credential = AzureCliCredential()
-            chat_client = AzureOpenAIChatClient(
-                endpoint=endpoint,
-                deployment_name="gpt-4o-mini",
-                credential=credential
+            chat_client = OpenAIChatClient(
+                model="gpt-4o-mini",
+                azure_endpoint=endpoint,
+                credential=credential,
             )
             
             config = SecureAgentConfig(

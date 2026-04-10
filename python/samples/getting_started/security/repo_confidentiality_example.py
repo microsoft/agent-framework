@@ -52,7 +52,7 @@ from agent_framework import (
     SecureAgentConfig,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from agent_framework.devui import serve
 
@@ -199,9 +199,9 @@ def setup_agent(*, approval_on_violation: bool = False):
     credential = AzureCliCredential()
 
     # Main client - using gpt-4o-mini which may be more compliant with requests
-    main_client = AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name="gpt-4o-mini",
+    main_client = OpenAIChatClient(
+        model="gpt-4o-mini",
+        azure_endpoint=endpoint,
         credential=credential,
         function_invocation_configuration={
             "max_iterations": 5,
@@ -209,10 +209,10 @@ def setup_agent(*, approval_on_violation: bool = False):
     )
 
     # Quarantine client for processing untrusted content safely
-    quarantine_client = AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name="gpt-4o-mini",
-        credential=credential
+    quarantine_client = OpenAIChatClient(
+        model="gpt-4o-mini",
+        azure_endpoint=endpoint,
+        credential=credential,
     )
 
     # SecureAgentConfig: Enables automatic security policy enforcement (also a context provider)

@@ -35,7 +35,7 @@ from agent_framework import (
     SecureAgentConfig,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 from agent_framework.devui import serve
 
@@ -217,18 +217,18 @@ def setup_agent():
     credential = AzureCliCredential()
 
     # Create the main agent's chat client (uses gpt-4o for main reasoning)
-    main_client = AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name="gpt-4o",
-        credential=credential
+    main_client = OpenAIChatClient(
+        model="gpt-4o",
+        azure_endpoint=endpoint,
+        credential=credential,
     )
 
     # Create a SEPARATE client for quarantine operations
     # Uses gpt-4o-mini (cheaper model) since it processes untrusted content
-    quarantine_client = AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name="gpt-4o-mini",  # Use cheaper model for quarantine
-        credential=credential
+    quarantine_client = OpenAIChatClient(
+        model="gpt-4o-mini",  # Use cheaper model for quarantine
+        azure_endpoint=endpoint,
+        credential=credential,
     )
 
     # Create secure agent configuration (also a context provider)
