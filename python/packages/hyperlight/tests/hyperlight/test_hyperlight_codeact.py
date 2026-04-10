@@ -404,8 +404,7 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkey
     assert "compute" in _FakeSandbox.instances[0].registered_tools
 
 
-@pytest.mark.flaky
-@pytest.mark.integration
+# @pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> None:
     client = _FakeCodeActChatClient()
