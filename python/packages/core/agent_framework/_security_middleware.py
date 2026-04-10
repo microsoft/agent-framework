@@ -22,7 +22,7 @@ from ._security import (
     VariableReferenceContent,
     combine_labels,
 )
-from ._sessions import BaseContextProvider
+from ._sessions import ContextProvider
 from ._types import Content
 
 if TYPE_CHECKING:
@@ -1429,7 +1429,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         self.audit_log.clear()
 
 
-class SecureAgentConfig(BaseContextProvider):
+class SecureAgentConfig(ContextProvider):
     """Context provider for creating a secure agent with prompt injection defense.
     
     This class extends BaseContextProvider to automatically inject security tools
@@ -1539,19 +1539,21 @@ class SecureAgentConfig(BaseContextProvider):
         context: Any,
         state: dict[str, Any],
     ) -> None:
-        """Inject security tools and instructions before model invocation.
+        """Inject security tools, instructions, and middleware before model invocation.
         
         This method is called automatically by the agent framework when
-        SecureAgentConfig is used as a context provider.
+        SecureAgentConfig is used as a context provider. It injects all
+        security components into the invocation context.
         
         Args:
             agent: The agent running this invocation.
             session: The current session.
-            context: The invocation context - tools and instructions are added here.
+            context: The invocation context - tools, instructions, and middleware are added here.
             state: The provider-scoped mutable state dict.
         """
         context.extend_tools(self.source_id, self.get_tools())
         context.extend_instructions(self.source_id, self.get_instructions())
+        context.extend_middleware(self.source_id, self.get_middleware())
     
     def get_tools(self) -> list:
         """Get the security tools for agent integration.

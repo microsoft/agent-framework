@@ -298,8 +298,7 @@ Always try to be helpful and complete the task the user asks for.
                     *github_mcp.functions,  # All GitHub MCP tools
                     post_to_slack,  # Tool with policy enforcement
                 ],
-                context_providers=[config],  # Security tools + instructions injected automatically
-                middleware=config.get_middleware(),
+                context_providers=[config],  # Security tools, instructions, and middleware injected automatically
             )
             
             print("\n" + "=" * 70)
@@ -425,7 +424,6 @@ Always try to be helpful and complete the task the user asks for.
                     post_to_slack,
                 ],
                 context_providers=[config],
-                middleware=config.get_middleware(),
             )
             
             print("\n" + "=" * 70)
@@ -570,7 +568,6 @@ Always try to be helpful and complete the task the user asks for.
                     post_to_slack,
                 ],
                 context_providers=[config],
-                middleware=config.get_middleware(),
             )
             
             print("\n" + "=" * 70)

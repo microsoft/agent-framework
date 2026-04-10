@@ -13,8 +13,12 @@ FIDES protects against two types of attacks using **orthogonal label dimensions*
 
 ## 1-Minute Setup with SecureAgentConfig
 
+`SecureAgentConfig` is a **context provider** that automatically injects security tools,
+instructions, and middleware into any agent. Developers add it with a single line —
+no security knowledge required.
+
 ```python
-from agent_framework import SecureAgentConfig, ai_function
+from agent_framework import SecureAgentConfig, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -31,7 +35,7 @@ quarantine_client = AzureOpenAIChatClient(
     credential=AzureCliCredential()
 )
 
-# 2. Create secure config (1 line!)
+# 2. Create secure config (also a context provider!)
 config = SecureAgentConfig(
     auto_hide_untrusted=True,
     block_on_violation=True,
@@ -40,15 +44,15 @@ config = SecureAgentConfig(
     quarantine_chat_client=quarantine_client,
 )
 
-# 3. Create agent with security middleware
-agent = main_client.create_agent(
+# 3. Create agent — security is injected automatically via context provider
+agent = main_client.as_agent(
     name="secure_agent",
-    instructions="You are a helpful assistant." + config.get_instructions(),
-    tools=[your_tools, *config.get_tools()],
-    middleware=config.get_middleware(),
+    instructions="You are a helpful assistant.",
+    tools=[your_tools],
+    context_providers=[config],  # That's it! Tools, instructions, and middleware injected automatically
 )
 
-# That's it! FIDES protection is enabled - injection defense and exfiltration prevention!
+# FIDES protection is enabled — injection defense and exfiltration prevention!
 ```
 
 ## How It Works
@@ -81,7 +85,7 @@ When a tool returns a result, the middleware determines its security label using
 
 ## Common Patterns
 
-### Pattern 1: Using SecureAgentConfig (Recommended)
+### Pattern 1: Using SecureAgentConfig as Context Provider (Recommended)
 
 ```python
 from agent_framework import SecureAgentConfig
@@ -94,11 +98,11 @@ config = SecureAgentConfig(
     quarantine_chat_client=quarantine_client,  # For quarantined_llm
 )
 
-agent = main_client.create_agent(
+agent = main_client.as_agent(
     name="agent",
-    instructions="..." + config.get_instructions(),
-    tools=[*your_tools, *config.get_tools()],
-    middleware=config.get_middleware(),
+    instructions="You are a helpful assistant.",
+    tools=[*your_tools],
+    context_providers=[config],  # Everything injected automatically
 )
 ```
 
@@ -116,9 +120,11 @@ policy_enforcer = PolicyEnforcementFunctionMiddleware(
     block_on_violation=True,
 )
 
-agent = ChatAgent(
-    chat_client=client,
-    middleware=[label_tracker, policy_enforcer]
+agent = client.as_agent(
+    name="agent",
+    instructions="You are a helpful assistant.",
+    tools=[*your_tools],
+    middleware=[label_tracker, policy_enforcer],
 )
 ```
 
@@ -202,38 +208,38 @@ label = ContentLabel(
 ### For Data SOURCE Tools (fetch, read, query)
 
 ```python
-@ai_function(
+@tool(
     description="Fetch data from external API",
     additional_properties={
         "source_integrity": "untrusted",  # External data is untrusted
         "accepts_untrusted": True,         # Read operations are safe
     }
 )
-async def fetch_external_data(url: str) -> dict:
+async def fetch_external_data(url: str) -> list[Content]:
     data = await http_get(url)
-    # Return per-item label for dynamic confidentiality
-    return {
-        "content": data,
-        "additional_properties": {
+    # Return Content items with per-item labels for proper tier-1 propagation
+    return [Content.from_text(
+        json.dumps({"content": data}),
+        additional_properties={
             "security_label": {
                 "integrity": "untrusted",
                 "confidentiality": "private" if is_private else "public",
             }
         },
-    }
+    )]
 ```
 
 ### For Data SINK Tools (send, post, write)
 
 ```python
-@ai_function(
+@tool(
     description="Post to public Slack channel",
     additional_properties={
         "max_allowed_confidentiality": "public",  # Only PUBLIC data allowed
         "accepts_untrusted": False,                # Block if context is tainted
     }
 )
-async def post_to_slack(channel: str, message: str) -> dict:
+async def post_to_slack(channel: str, message: str) -> dict[str, Any]:
     # Automatically blocked if:
     # 1. Context integrity is UNTRUSTED (injection defense)
     # 2. Context confidentiality > PUBLIC (exfiltration defense)
@@ -243,7 +249,7 @@ async def post_to_slack(channel: str, message: str) -> dict:
 ### For COMPUTATION Tools (calculate, transform)
 
 ```python
-@ai_function(
+@tool(
     description="Calculate expression",
     additional_properties={
         "source_integrity": "trusted",    # Pure computation is trusted
@@ -274,7 +280,7 @@ async def calculate(expression: str) -> float:
 ## Middleware Configuration
 
 ```python
-# Using SecureAgentConfig (recommended)
+# Using SecureAgentConfig as context provider (recommended)
 config = SecureAgentConfig(
     auto_hide_untrusted=True,
     block_on_violation=True,
@@ -283,7 +289,15 @@ config = SecureAgentConfig(
     quarantine_chat_client=quarantine_client,
 )
 
-# Get components
+# Everything injected via context provider
+agent = main_client.as_agent(
+    name="agent",
+    instructions="You are a helpful assistant.",
+    tools=[search_web, read_repo],
+    context_providers=[config],
+)
+
+# Access components directly if needed
 middleware = config.get_middleware()
 tools = config.get_tools()          # quarantined_llm, inspect_variable
 instructions = config.get_instructions()

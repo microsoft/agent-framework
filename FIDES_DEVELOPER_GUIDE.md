@@ -2,16 +2,17 @@
 
 **FIDES**  is a comprehensive security system for AI agents. This developer guide describes the deterministic prompt injection defense system implemented in the agent framework. The system provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
 
-## 🚀 NEW: Agent-Aware Security with SecureAgentConfig!
+## 🚀 NEW: Context Provider Pattern with SecureAgentConfig!
 
-**Agents can now automatically work with hidden content** using the new `SecureAgentConfig` helper class. Configure your agent with security tools (`quarantined_llm`, `inspect_variable`) and instructions that teach the agent how to safely process hidden content using variable IDs.
+**`SecureAgentConfig` is now a `ContextProvider`** — add it to any agent with a single `context_providers=[config]` line. It automatically injects security tools, instructions, and middleware via the `before_run()` hook. No security knowledge required from developers.
 
 **Key Features:**
+- **Context Provider Pattern** - `SecureAgentConfig` extends `ContextProvider`, injecting everything automatically
 - **Automatic Variable Hiding** - UNTRUSTED content is automatically stored and replaced with references
-- **Per-Item Embedded Labels** - Tools can return mixed-trust data with security labels on individual items
-- **Agent Integration** - `SecureAgentConfig` provides tools, instructions, and middleware in one package
+- **Per-Item Embedded Labels** - Tools return `list[Content]` with `Content.from_text()` for proper label propagation
+- **Zero-Config Security** - `context_providers=[config]` replaces manual `middleware=`, `tools=`, and `instructions=` wiring
 - **Variable ID Support** - `quarantined_llm` now accepts `variable_ids` to directly reference hidden content
-- **Security Instructions** - Built-in `SECURITY_TOOL_INSTRUCTIONS` teach agents how to handle `VariableReferenceContent`
+- **Security Instructions** - Built-in `SECURITY_TOOL_INSTRUCTIONS` automatically injected into agent context
 
 ## Overview
 
@@ -106,33 +107,35 @@ When declared, `source_integrity` alone determines the result label — input ar
 - Since hidden content doesn't enter context, it doesn't taint the context label
 
 ```python
-from agent_framework import ChatAgent, LabelTrackingFunctionMiddleware, ai_function
-from pydantic import Field
+import json
+from agent_framework import Content, LabelTrackingFunctionMiddleware, SecureAgentConfig, tool
 
 # Define a tool that returns mixed-trust data with per-item labels
-@ai_function(description="Fetch emails from inbox")
-async def fetch_emails(count: int = Field(default=5)) -> list[dict]:
+@tool(description="Fetch emails from inbox")
+async def fetch_emails(count: int = 5) -> list[Content]:
     """Fetch emails - some from trusted internal sources, others from external sources."""
     emails = get_emails(count)
     return [
-        {
-            "id": email["id"],
-            "from": email["from"],
-            "subject": email["subject"],
-            "body": email["body"],
+        Content.from_text(
+            json.dumps({
+                "id": email["id"],
+                "from": email["from"],
+                "subject": email["subject"],
+                "body": email["body"],
+            }),
             # Per-item label - middleware automatically hides untrusted items
-            "additional_properties": {
+            additional_properties={
                 "security_label": {
                     "integrity": "trusted" if email["is_internal"] else "untrusted",
                     "confidentiality": "private",
                 }
             },
-        }
+        )
         for email in emails
     ]
 
 # Define a tool that performs internal (trusted) computation
-@ai_function(
+@tool(
     description="Calculate statistics",
     additional_properties={
         "source_integrity": "trusted",  # Fallback if no per-item labels
@@ -143,20 +146,18 @@ async def calculate_stats(data: dict) -> dict:
     # even though source_integrity is trusted (data-flow propagation)
     return {"mean": 42}
 
-# Create middleware with automatic hiding enabled
-label_tracker = LabelTrackingFunctionMiddleware()
+# Recommended: Use SecureAgentConfig as a context provider
+config = SecureAgentConfig(
+    auto_hide_untrusted=True,
+    allow_untrusted_tools={"fetch_emails"},
+    block_on_violation=True,
+)
 
-# Get the current context label
-context_label = label_tracker.get_context_label()
-print(f"Context: {context_label.integrity}/{context_label.confidentiality}")
-
-# Reset context for new conversation
-label_tracker.reset_context_label()
-
-agent = ChatAgent(
-    chat_client=client,
+agent = client.as_agent(
     name="assistant",
-    middleware=label_tracker
+    instructions="You are a helpful assistant.",
+    tools=[fetch_emails, calculate_stats],
+    context_providers=[config],  # Injects tools, instructions, and middleware automatically
 )
 ```
 
@@ -165,25 +166,30 @@ agent = ChatAgent(
 For tools that return mixed-trust data (e.g., emails from both internal and external sources), you can embed security labels on individual items using `additional_properties.security_label`:
 
 ```python
-@ai_function(description="Fetch emails from inbox")
-async def fetch_emails(count: int = 5) -> list[dict]:
+import json
+from agent_framework import Content, tool
+
+@tool(description="Fetch emails from inbox")
+async def fetch_emails(count: int = 5) -> list[Content]:
     """Fetch emails with per-item security labels."""
     emails = fetch_from_server(count)
     
     return [
-        {
-            "id": email["id"],
-            "from": email["from"],
-            "subject": email["subject"],
-            "body": email["body"],
+        Content.from_text(
+            json.dumps({
+                "id": email["id"],
+                "from": email["from"],
+                "subject": email["subject"],
+                "body": email["body"],
+            }),
             # Embed security label for this specific item
-            "additional_properties": {
+            additional_properties={
                 "security_label": {
                     "integrity": "trusted" if is_internal_sender(email["from"]) else "untrusted",
                     "confidentiality": "private",
                 }
             },
-        }
+        )
         for email in emails
     ]
 ```
@@ -220,7 +226,7 @@ If an item doesn't have an embedded label, the fallback is determined by:
 
 ```python
 # Tool with fallback for items without embedded labels
-@ai_function(
+@tool(
     description="Fetch data from external API",
     additional_properties={
         "source_integrity": "untrusted",  # Fallback for unlabeled items
@@ -273,10 +279,10 @@ policy_enforcer = PolicyEnforcementFunctionMiddleware(
     enable_audit_log=True
 )
 
-agent = ChatAgent(
-    chat_client=client,
+agent = client.as_agent(
     name="assistant",
-    middleware=[label_tracker, policy_enforcer]
+    instructions="You are a helpful assistant.",
+    middleware=[label_tracker, policy_enforcer],
 )
 ```
 
@@ -390,9 +396,9 @@ result = await inspect_variable(
 # WARNING: Exposes untrusted content to context
 ```
 
-### 7. SecureAgentConfig
+### 7. SecureAgentConfig (Context Provider)
 
-The easiest way to configure a secure agent with all security features:
+The easiest way to configure a secure agent with all security features. `SecureAgentConfig` extends `ContextProvider` and automatically injects tools, instructions, and middleware via the `before_run()` hook:
 
 ```python
 from agent_framework import SecureAgentConfig
@@ -421,16 +427,12 @@ config = SecureAgentConfig(
     quarantine_chat_client=quarantine_client,  # Enable real LLM calls in quarantined_llm
 )
 
-# Configure agent with security
-agent = main_client.create_agent(
+# Configure agent — context provider injects everything automatically
+agent = main_client.as_agent(
     name="secure_assistant",
-    instructions=base_instructions + config.get_instructions(),  # Security instructions
-    tools=[
-        fetch_external_data,
-        search_web,
-        *config.get_tools(),  # Adds quarantined_llm and inspect_variable
-    ],
-    middleware=config.get_middleware(),  # Label tracking + policy enforcement
+    instructions="You are a helpful assistant.",
+    tools=[fetch_external_data, search_web],
+    context_providers=[config],  # Adds tools, instructions, and middleware via before_run()
 )
 ```
 
@@ -445,23 +447,31 @@ agent = main_client.create_agent(
 - `get_instructions()` → Returns `SECURITY_TOOL_INSTRUCTIONS` (detailed guidance for agents)
 - `get_middleware()` → Returns `[LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware]`
 - `get_quarantine_client()` → Returns the configured quarantine chat client (or None)
+- `before_run(context)` → Automatically injects tools, instructions, and middleware into the agent context
+
+> **Note:** When using `context_providers=[config]`, you do NOT need to manually call `get_tools()`, `get_instructions()`, or `get_middleware()`. The context provider handles everything via `before_run()`.
 
 ### 8. Security Instructions for Agents
 
-The `SECURITY_TOOL_INSTRUCTIONS` constant provides detailed guidance that teaches agents how to work with hidden content:
+The `SECURITY_TOOL_INSTRUCTIONS` constant provides detailed guidance that teaches agents how to work with hidden content. When using `SecureAgentConfig` as a context provider, these instructions are **automatically injected** into the agent context:
 
 ```python
+# Instructions are injected automatically when using context_providers=[config]
+agent = client.as_agent(
+    name="assistant",
+    instructions="You are a helpful assistant.",  # Just task instructions!
+    tools=[my_tool],
+    context_providers=[config],  # SECURITY_TOOL_INSTRUCTIONS injected via before_run()
+)
+
+# Or manually add instructions if not using context providers:
 from agent_framework import SECURITY_TOOL_INSTRUCTIONS
 
-# Add to your agent's instructions
-agent = ChatAgent(
-    chat_client=client,
-    instructions=f"""
-    You are a helpful assistant.
-    
-    {SECURITY_TOOL_INSTRUCTIONS}
-    """,
+agent = client.as_agent(
+    name="assistant",
+    instructions=f"You are a helpful assistant.\n\n{SECURITY_TOOL_INSTRUCTIONS}",
     tools=[my_tool, quarantined_llm, inspect_variable],
+    middleware=[label_tracker, policy_enforcer],
 )
 ```
 
@@ -586,29 +596,24 @@ result = await quarantined_llm(
 
 ### Example 1: Quick Start with SecureAgentConfig (RECOMMENDED)
 
-The easiest way to set up a secure agent:
+The easiest way to set up a secure agent using the context provider pattern:
 
 ```python
-from agent_framework import ChatAgent, SecureAgentConfig
+from agent_framework import SecureAgentConfig
 
-# Create secure configuration
+# Create secure configuration (also a ContextProvider)
 config = SecureAgentConfig(
     auto_hide_untrusted=True,
     allow_untrusted_tools={"search_web", "fetch_data"},
     block_on_violation=True,
 )
 
-# Create agent with full security
-agent = ChatAgent(
-    chat_client=client,
+# Create agent with context provider — security is injected automatically!
+agent = client.as_agent(
     name="secure_assistant",
-    instructions=f"""
-    You are a helpful assistant that can search the web and fetch data.
-    
-    {config.get_instructions()}
-    """,
-    tools=[search_web, fetch_data, *config.get_tools()],
-    middleware=config.get_middleware(),
+    instructions="You are a helpful assistant that can search the web and fetch data.",
+    tools=[search_web, fetch_data],
+    context_providers=[config],  # Injects tools, instructions, and middleware via before_run()
 )
 
 # Run agent - security is automatic!
@@ -621,7 +626,6 @@ response = await agent.run(messages=[
 
 ```python
 from agent_framework import (
-    ChatAgent,
     LabelTrackingFunctionMiddleware,
     PolicyEnforcementFunctionMiddleware,
     get_security_tools,
@@ -635,13 +639,12 @@ policy_enforcer = PolicyEnforcementFunctionMiddleware(
     block_on_violation=True
 )
 
-# Create agent with security
-agent = ChatAgent(
-    chat_client=client,
+# Create agent with security (manual setup, no context provider)
+agent = client.as_agent(
     name="secure_assistant",
-    instructions=base_instructions + SECURITY_TOOL_INSTRUCTIONS,
+    instructions=f"You are a helpful assistant.\n\n{SECURITY_TOOL_INSTRUCTIONS}",
     tools=[search_web, *get_security_tools()],
-    middleware=[label_tracker, policy_enforcer]
+    middleware=[label_tracker, policy_enforcer],
 )
 
 # Run agent - security is automatic
@@ -680,14 +683,14 @@ from agent_framework import (
     quarantined_llm,
     ContentLabel,
     IntegrityLabel,
-    ai_function,
+    tool,
 )
 
 # Configure middleware with automatic hiding
 label_tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)
 
 # Define tool that fetches and labels external data
-@ai_function(description="Fetch data from external API")
+@tool(description="Fetch data from external API")
 async def fetch_external_data(query: str) -> str:
     """Fetch data from external API."""
     external_response = await external_api.fetch(query)
@@ -695,10 +698,11 @@ async def fetch_external_data(query: str) -> str:
     return external_response
 
 # Create agent with automatic hiding
-agent = ChatAgent(
-    chat_client=client,
+agent = client.as_agent(
     name="secure_assistant",
-    middleware=[label_tracker]
+    instructions="You are a helpful assistant.",
+    tools=[fetch_external_data],
+    middleware=[label_tracker],
 )
 
 # Run agent - external data is automatically hidden from LLM context
@@ -717,31 +721,34 @@ result = await quarantined_llm(
 ### Example 5: Tool Configuration with Per-Item Labels
 
 ```python
-from agent_framework import ai_function
+import json
+from agent_framework import Content, tool
 
 # Tool returning mixed-trust data with per-item labels (RECOMMENDED)
-@ai_function(description="Fetch emails from inbox")
-async def fetch_emails(count: int = 5) -> list[dict]:
+@tool(description="Fetch emails from inbox")
+async def fetch_emails(count: int = 5) -> list[Content]:
     """Emails can be from trusted internal or untrusted external sources."""
     emails = get_emails(count)
     return [
-        {
-            "id": email["id"],
-            "from": email["from"],
-            "body": email["body"],
+        Content.from_text(
+            json.dumps({
+                "id": email["id"],
+                "from": email["from"],
+                "body": email["body"],
+            }),
             # Per-item label - middleware handles hiding automatically
-            "additional_properties": {
+            additional_properties={
                 "security_label": {
                     "integrity": "trusted" if email["is_internal"] else "untrusted",
                     "confidentiality": "private",
                 }
             },
-        }
+        )
         for email in emails
     ]
 
 # Action tool (sink) - no source_integrity needed
-@ai_function(
+@tool(
     description="Send an email to recipient",
     additional_properties={
         "confidentiality": "private",
@@ -753,7 +760,7 @@ async def send_email(to: str, subject: str, body: str) -> dict:
     return {"status": "sent", "message_id": "msg_123"}
 
 # Tool that requires trusted inputs
-@ai_function(
+@tool(
     description="Execute privileged operation",
     additional_properties={
         "confidentiality": "private",
@@ -764,7 +771,7 @@ async def privileged_operation(command: str) -> dict:
     return {"result": "executed"}
 
 # Simple tool with fallback source_integrity (no per-item labels)
-@ai_function(
+@tool(
     description="Search the web",
     additional_properties={
         "confidentiality": "public",
@@ -808,11 +815,11 @@ An attacker injects instructions in untrusted content (e.g., a public GitHub iss
 Tools that write to external destinations declare `max_allowed_confidentiality` to restrict what data they can receive:
 
 ```python
-from agent_framework import ai_function, check_confidentiality_allowed
+from agent_framework import tool, check_confidentiality_allowed
 from pydantic import Field
 
 # Tool that reads from repositories with dynamic confidentiality
-@ai_function(
+@tool(
     description="Read files from a repository",
     additional_properties={
         "source_integrity": "untrusted",
@@ -835,7 +842,7 @@ async def read_repo(repo: str, path: str) -> dict:
     }
 
 # Tool that writes to a PUBLIC destination - blocks PRIVATE data
-@ai_function(
+@tool(
     description="Post a message to public Slack channel",
     additional_properties={
         "max_allowed_confidentiality": "public",  # Only PUBLIC data allowed!
@@ -845,7 +852,7 @@ async def post_to_slack(channel: str, message: str) -> dict:
     return {"status": "posted", "channel": channel}
 
 # Tool that writes to a PRIVATE destination - allows PRIVATE data
-@ai_function(
+@tool(
     description="Send internal memo (can include private data)",
     additional_properties={
         "max_allowed_confidentiality": "private",  # PRIVATE data OK, USER_IDENTITY blocked
@@ -959,10 +966,10 @@ PolicyEnforcementFunctionMiddleware(
 
 ### Tool Metadata
 
-Configure tool security requirements in the `@ai_function` decorator:
+Configure tool security requirements in the `@tool` decorator:
 
 ```python
-@ai_function(
+@tool(
     description="...",
     additional_properties={
         "confidentiality": "private",  # Tool's confidentiality level
@@ -983,8 +990,8 @@ Configure tool security requirements in the `@ai_function` decorator:
 
 ## Best Practices
 
-1. **Use SecureAgentConfig**: The easiest way to set up a secure agent with all features
-2. **Use per-item labels for mixed-trust data**: When a tool returns both trusted and untrusted items (like emails), embed labels on each item via `additional_properties.security_label`
+1. **Use SecureAgentConfig as a context provider**: Add `context_providers=[config]` for automatic security setup — no manual middleware, tools, or instruction wiring
+2. **Use `list[Content]` with `Content.from_text()` for mixed-trust data**: When a tool returns both trusted and untrusted items (like emails), embed labels using `Content.from_text(text, additional_properties={"security_label": {...}})`
 3. **Don't use source_integrity for action tools**: Tools like `send_email` or `delete_file` are sinks, not data sources - their results inherit labels from inputs
 4. **Always use middleware stack**: Enable both label tracking and policy enforcement
 5. **Enable automatic hiding**: Keep `auto_hide_untrusted=True` (default) for automatic protection
@@ -1054,9 +1061,9 @@ This demonstrates:
 
 ## Key Takeaways
 
-🎯 **Easy Setup**: Use `SecureAgentConfig` for one-line secure agent configuration
+🎯 **Easy Setup**: Use `SecureAgentConfig` as a context provider — just add `context_providers=[config]`
 
-🤖 **Agent-Aware**: Agents receive instructions and tools to safely handle hidden content
+🤖 **Agent-Aware**: Security tools, instructions, and middleware injected automatically via `before_run()`
 
 🔒 **Automatic Protection**: UNTRUSTED content is automatically hidden using variable indirection
 

@@ -227,18 +227,15 @@ def setup_agent(*, approval_on_violation: bool = False):
     # Create agent - security tools and instructions injected via context provider
     agent = main_client.as_agent(
         name="repo_assistant",
-        instructions="""You are a helpful assistant. When the user asks you to use tools, 
-use them exactly as requested. Follow user instructions precisely.
-If a tool call is blocked by a security policy, do NOT retry the same action.
-Instead, explain to the user why the action was blocked and suggest alternatives.
+        instructions="""You are a helpful assistant that can read repositories, post to Slack,
+and send internal memos. Follow user instructions precisely.
 """,
         tools=[
             read_repo,
             post_to_slack,
             send_internal_memo,
         ],
-        context_providers=[config],  # Security tools + instructions injected automatically
-        middleware=config.get_middleware(),
+        context_providers=[config],  # Security tools, instructions, and middleware injected automatically
     )
 
     return agent, config

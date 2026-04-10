@@ -5,9 +5,10 @@
 **FIDES**  is a comprehensive deterministic prompt injection defense system for the agent framework. The implementation provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
 
 **🚀 Key Features:**
+- **Context Provider Pattern** - `SecureAgentConfig` extends `ContextProvider`, injecting tools, instructions, and middleware automatically
 - **Automatic Variable Hiding** - UNTRUSTED content is automatically hidden without requiring manual intervention
-- **Per-Item Embedded Labels** - Tools can return mixed-trust data with security labels on individual items
-- **SecureAgentConfig** - One-line secure agent configuration with tools, instructions, and middleware
+- **Per-Item Embedded Labels** - Tools return `list[Content]` with `Content.from_text()` for proper label propagation
+- **SecureAgentConfig** - One-line secure agent configuration via `context_providers=[config]`
 - **Data Exfiltration Prevention** - `max_allowed_confidentiality` prevents sensitive data leakage
 - **Message-Level Label Tracking** (Phase 1) - Track labels on every message in the conversation
 - **Content Lineage Tracking** (Phase 2) - Track how content is derived and transformed
@@ -21,7 +22,7 @@ The FIDES defense system consists of eight main components:
 3. **Per-Item Embedded Labels** - Tools can return mixed-trust data with per-item security labels
 4. **Policy Enforcement Middleware** - Blocks tool calls that violate security policies
 5. **Security Tools** - Specialized tools for safe handling of untrusted content (`quarantined_llm`, `inspect_variable`)
-6. **SecureAgentConfig** - Helper class for easy secure agent configuration
+6. **SecureAgentConfig** - Context provider for easy secure agent configuration
 7. **Message-Level Label Tracking** - Track labels on every message in the conversation (Phase 1)
 8. **Content Lineage Tracking** - Track how content is derived and transformed (Phase 2)
 
@@ -68,8 +69,9 @@ The FIDES defense system consists of eight main components:
    - `get_security_tools()` - Returns list of security tools
    - Helper functions for variable store management
 
-4. **`_security_config.py`** (~200+ lines)
-   - `SecureAgentConfig` - Helper class for easy secure agent configuration
+4. **`_security_middleware.py`** (also contains `SecureAgentConfig`)
+   - `SecureAgentConfig` extends `ContextProvider` - automatic secure agent configuration
+     - `before_run(context)` - Injects tools, instructions, and middleware via `context.extend_tools()`, `context.extend_instructions()`, `context.extend_middleware()`
      - `get_tools()` - Returns `[quarantined_llm, inspect_variable]`
      - `get_instructions()` - Returns `SECURITY_TOOL_INSTRUCTIONS`
      - `get_middleware()` - Returns configured middleware stack
@@ -121,22 +123,27 @@ The FIDES defense system consists of eight main components:
 
 ### 2. Per-Item Embedded Labels
 
-Tools returning mixed-trust data can embed labels on individual items:
+Tools returning mixed-trust data embed labels on individual items using `Content.from_text()`:
 
 ```python
-@ai_function(description="Fetch emails from inbox")
-async def fetch_emails(count: int = 5) -> list[dict]:
+import json
+from agent_framework import Content, tool
+
+@tool(description="Fetch emails from inbox")
+async def fetch_emails(count: int = 5) -> list[Content]:
     return [
-        {
-            "id": email["id"],
-            "body": email["body"],
-            "additional_properties": {
+        Content.from_text(
+            json.dumps({
+                "id": email["id"],
+                "body": email["body"],
+            }),
+            additional_properties={
                 "security_label": {
                     "integrity": "trusted" if email["is_internal"] else "untrusted",
                     "confidentiality": "private",
                 }
             },
-        }
+        )
         for email in emails
     ]
 ```
@@ -160,7 +167,7 @@ async def fetch_emails(count: int = 5) -> list[dict]:
 Tools declare `max_allowed_confidentiality` to prevent sensitive data leakage:
 
 ```python
-@ai_function(
+@tool(
     description="Post to public Slack channel",
     additional_properties={
         "max_allowed_confidentiality": "public",  # Blocks PRIVATE data
@@ -170,9 +177,9 @@ async def post_to_slack(channel: str, message: str) -> dict:
     return {"status": "posted"}
 ```
 
-### 6. SecureAgentConfig
+### 6. SecureAgentConfig (Context Provider)
 
-One-line secure agent configuration:
+SecureAgentConfig extends `ContextProvider` for automatic secure agent configuration:
 
 ```python
 config = SecureAgentConfig(
@@ -182,12 +189,12 @@ config = SecureAgentConfig(
     quarantine_chat_client=quarantine_client,  # Optional: real LLM for quarantine
 )
 
-agent = ChatAgent(
-    chat_client=client,
+# Context provider injects tools, instructions, and middleware automatically
+agent = client.as_agent(
     name="secure_assistant",
-    instructions=base_instructions + config.get_instructions(),
-    tools=[my_tool, *config.get_tools()],
-    middleware=config.get_middleware(),
+    instructions="You are a helpful assistant.",
+    tools=[my_tool],
+    context_providers=[config],  # That's it!
 )
 ```
 
@@ -257,7 +264,7 @@ lineage = middleware.track_lineage(
 
 ## Usage Pattern
 
-### Recommended: SecureAgentConfig
+### Recommended: SecureAgentConfig as Context Provider
 
 ```python
 from agent_framework import SecureAgentConfig
@@ -268,12 +275,12 @@ config = SecureAgentConfig(
     block_on_violation=True,
 )
 
-agent = ChatAgent(
-    chat_client=client,
+# Context provider injects everything automatically
+agent = client.as_agent(
     name="secure_assistant",
-    instructions=f"You are helpful.\n\n{config.get_instructions()}",
-    tools=[search_web, *config.get_tools()],
-    middleware=config.get_middleware(),
+    instructions="You are a helpful assistant.",
+    tools=[search_web],
+    context_providers=[config],  # Tools, instructions, and middleware injected via before_run()
 )
 ```
 
@@ -290,7 +297,7 @@ result = await quarantined_llm(
 ## Testing
 
 Comprehensive test suite with:
-- 40+ unit tests covering all components
+- 115+ unit tests covering all components
 - Label creation, serialization, combination
 - Variable store operations
 - Middleware behavior (tracking and enforcement)
@@ -310,8 +317,8 @@ pytest tests/test_security.py -v
 ## Code Statistics
 
 - **Total lines**: ~4,000+ lines
-- **New modules**: 4+ (`_security.py`, `_security_middleware.py`, `_security_tools.py`, `_security_config.py`)
-- **Total tests**: 40+ unit tests
+- **New modules**: 3 (`_security.py`, `_security_middleware.py`, `_security_tools.py`)
+- **Total tests**: 115+ unit tests
 - **Documentation**: 1,250+ lines in developer guide
 - **Examples**: 6+ comprehensive scenarios
 
@@ -350,8 +357,10 @@ pytest tests/test_security.py -v
 ✅ Policy enforcement validates confidentiality flow
 
 ### SecureAgentConfig
-✅ One-line secure agent configuration
-✅ `get_tools()`, `get_instructions()`, `get_middleware()` methods
+✅ Context provider pattern with `ContextProvider` base class
+✅ `before_run()` hook for automatic injection of tools, instructions, and middleware
+✅ One-line secure agent configuration via `context_providers=[config]`
+✅ `get_tools()`, `get_instructions()`, `get_middleware()` methods (for manual use)
 ✅ `quarantine_chat_client` support for real LLM calls
 ✅ `SECURITY_TOOL_INSTRUCTIONS` constant
 
@@ -369,15 +378,17 @@ pytest tests/test_security.py -v
 ✅ Complete FIDES Developer Guide (~1250 lines)
 ✅ Architecture Decision Record (ADR)
 ✅ Quick Start Guide
-✅ Comprehensive test suite (40+ tests)
+✅ Comprehensive test suite (115+ tests)
 ✅ Example code with 6+ scenarios
+✅ 3 complete security examples (email, repo confidentiality, GitHub MCP labels)
 
 ## Summary
 
 **FIDES** provides a comprehensive, deterministic defense against prompt injection attacks with:
 
 - **Zero-effort protection**: Automatic variable hiding for developers
-- **Granular control**: Per-item embedded labels for mixed-trust data
+- **Context provider pattern**: `SecureAgentConfig` extends `ContextProvider` for automatic setup
+- **Granular control**: Per-item embedded labels via `Content.from_text()` for mixed-trust data
 - **Easy configuration**: `SecureAgentConfig` for one-line setup
 - **Data safety**: Exfiltration prevention via confidentiality gates
 - **Full traceability**: Message-level and content lineage tracking
