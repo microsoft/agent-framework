@@ -1284,13 +1284,11 @@ async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_
         final=True,
     )
 
-    mock_a2a_client.responses.extend(
-        [
-            (working_task, first_chunk),
-            (working_task, second_chunk),
-            (terminal_task, terminal_event),
-        ]
-    )
+    mock_a2a_client.responses.extend([
+        (working_task, first_chunk),
+        (working_task, second_chunk),
+        (terminal_task, terminal_event),
+    ])
 
     stream = a2a_agent.run("Hello", stream=True)
     updates: list[AgentResponseUpdate] = []
@@ -1371,12 +1369,10 @@ async def test_streaming_terminal_task_only_emits_unstreamed_artifacts(
         final=True,
     )
 
-    mock_a2a_client.responses.extend(
-        [
-            (working_task, streamed_chunk),
-            (terminal_task, terminal_event),
-        ]
-    )
+    mock_a2a_client.responses.extend([
+        (working_task, streamed_chunk),
+        (terminal_task, terminal_event),
+    ])
 
     stream = a2a_agent.run("Hello", stream=True)
     updates: list[AgentResponseUpdate] = []

@@ -7,7 +7,7 @@ import contextlib
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
+from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -29,20 +29,11 @@ from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
 
 try:
-    from copilot import CopilotClient, CopilotSession
+    from copilot import CopilotClient, CopilotSession, SubprocessConfig
     from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
-    from copilot.types import (
-        CopilotClientOptions,
-        MCPServerConfig,
-        MessageOptions,
-        PermissionRequestResult,
-        ResumeSessionConfig,
-        SessionConfig,
-        SystemMessageConfig,
-        ToolInvocation,
-        ToolResult,
-    )
-    from copilot.types import Tool as CopilotTool
+    from copilot.session import MCPServerConfig, PermissionRequestResult, SystemMessageConfig
+    from copilot.tools import Tool as CopilotTool
+    from copilot.tools import ToolInvocation, ToolResult
 except ImportError as _copilot_import_error:
     raise ImportError(
         "GitHubCopilotAgent requires the 'github-copilot-sdk' package, which is only available on Python 3.11+. "
@@ -62,6 +53,14 @@ PermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], Permission
 """Type for permission request handlers."""
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+
+def _deny_all_permissions(
+    _request: PermissionRequest,
+    _invocation: dict[str, str],
+) -> PermissionRequestResult:
+    """Default permission handler that denies all requests."""
+    return PermissionRequestResult()
 
 
 class GitHubCopilotSettings(TypedDict, total=False):
@@ -274,16 +273,13 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             return
 
         if self._client is None:
-            client_options: CopilotClientOptions = {}
-            cli_path = self._settings.get("cli_path")
-            if cli_path:
-                client_options["cli_path"] = cli_path
+            cli_path = self._settings.get("cli_path") or None
+            log_level = self._settings.get("log_level") or None
 
-            log_level = self._settings.get("log_level")
+            subprocess_kwargs: dict[str, Any] = {"cli_path": cli_path}
             if log_level:
-                client_options["log_level"] = log_level  # type: ignore[typeddict-item]
-
-            self._client = CopilotClient(client_options if client_options else None)
+                subprocess_kwargs["log_level"] = log_level
+            self._client = CopilotClient(SubprocessConfig(**subprocess_kwargs))
 
         try:
             await self._client.start()
@@ -407,10 +403,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         prompt = "\n".join([message.text for message in context_messages])
         if session_context.instructions:
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
-        message_options = cast(MessageOptions, {"prompt": prompt})
 
         try:
-            response_event = await copilot_session.send_and_wait(message_options, timeout=timeout)
+            response_event = await copilot_session.send_and_wait(prompt, timeout=timeout)
         except Exception as ex:
             raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
 
@@ -489,7 +484,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         prompt = "\n".join([message.text for message in context_messages])
         if session_context.instructions:
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
-        message_options = cast(MessageOptions, {"prompt": prompt})
 
         queue: asyncio.Queue[AgentResponseUpdate | Exception | None] = asyncio.Queue()
 
@@ -550,7 +544,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         unsubscribe = copilot_session.on(event_handler)
 
         try:
-            await copilot_session.send(message_options)
+            await copilot_session.send(prompt)
 
             while (item := await queue.get()) is not None:
                 if isinstance(item, Exception):
@@ -730,43 +724,35 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
         opts = runtime_options or {}
-        config: SessionConfig = {"streaming": streaming}
+        model = opts.get("model") or self._settings.get("model") or None
+        system_message = opts.get("system_message") or self._default_options.get("system_message") or None
+        permission_handler: PermissionHandlerType = (
+            opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
+        )
+        mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
+        tools = self._prepare_tools(self._tools) if self._tools else None
 
-        model = opts.get("model") or self._settings.get("model")
-        if model:
-            config["model"] = model  # type: ignore[typeddict-item]
-
-        system_message = opts.get("system_message") or self._default_options.get("system_message")
-        if system_message:
-            config["system_message"] = system_message
-
-        if self._tools:
-            config["tools"] = self._prepare_tools(self._tools)
-
-        permission_handler = opts.get("on_permission_request") or self._permission_handler
-        if permission_handler:
-            config["on_permission_request"] = permission_handler
-
-        mcp_servers = opts.get("mcp_servers") or self._mcp_servers
-        if mcp_servers:
-            config["mcp_servers"] = mcp_servers
-
-        return await self._client.create_session(config)
+        return await self._client.create_session(
+            on_permission_request=permission_handler,
+            streaming=streaming,
+            model=model or None,
+            system_message=system_message or None,
+            tools=tools or None,
+            mcp_servers=mcp_servers or None,
+        )
 
     async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:
         """Resume an existing Copilot session by ID."""
         if not self._client:
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
-        config: ResumeSessionConfig = {"streaming": streaming}
+        permission_handler: PermissionHandlerType = self._permission_handler or _deny_all_permissions
+        tools = self._prepare_tools(self._tools) if self._tools else None
 
-        if self._tools:
-            config["tools"] = self._prepare_tools(self._tools)
-
-        if self._permission_handler:
-            config["on_permission_request"] = self._permission_handler
-
-        if self._mcp_servers:
-            config["mcp_servers"] = self._mcp_servers
-
-        return await self._client.resume_session(session_id, config)
+        return await self._client.resume_session(
+            session_id,
+            on_permission_request=permission_handler,
+            streaming=streaming,
+            tools=tools or None,
+            mcp_servers=self._mcp_servers or None,
+        )

@@ -40,7 +40,7 @@ jobs:
           UV_CACHE_DIR: /tmp/.uv-cache
       # Unit tests
       - name: Run all tests
-        run: uv run poe test -A
+        run: uv run poe test -A --junitxml=pytest.xml
         working-directory: ./python
 
       # Surface failing tests
@@ -48,7 +48,7 @@ jobs:
         if: always()
         uses: pmeier/pytest-results-action@v0.7.2
         with:
-          path: ./python/**.xml
+          path: ./python/pytest.xml
           summary: true
           display-options: fEX
           fail-on-empty: false

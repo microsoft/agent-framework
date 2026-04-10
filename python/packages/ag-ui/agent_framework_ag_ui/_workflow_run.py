@@ -29,6 +29,7 @@ from ._message_adapters import normalize_agui_input_messages
 from ._run_common import (
     FlowState,
     _build_run_finished_event,
+    _close_reasoning_block,
     _emit_content,
     _extract_resume_payload,
     _normalize_resume_interrupts,
@@ -728,6 +729,9 @@ async def run_workflow_stream(
             yield RunErrorEvent(message=str(exc), code=type(exc).__name__)
             run_error_emitted = True
         terminal_emitted = True
+
+    for reasoning_evt in _close_reasoning_block(flow):
+        yield reasoning_evt
 
     for end_event in _drain_open_message():
         yield end_event
