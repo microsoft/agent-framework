@@ -1,8 +1,10 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using DotNetEnv;
-using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Foundry;
 using Microsoft.Agents.AI.Foundry.Hosting;
 
 // Load .env file if present (for local development)
@@ -19,7 +21,7 @@ var aiProjectClient = new AIProjectClient(projectEndpoint, new DefaultAzureCrede
 ProjectsAgentRecord agentRecord = await aiProjectClient
     .AgentAdministrationClient.GetAgentAsync(agentName);
 
-AIAgent agent = aiProjectClient.AsAIAgent(agentRecord);
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentRecord);
 
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);

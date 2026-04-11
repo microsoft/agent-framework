@@ -274,14 +274,14 @@
     <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV1/FoundrySingleAgent/FoundrySingleAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/" />
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Client-Agent/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/consumption/SimpleAgent.csproj" />
-  </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-ChatClientAgent/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/instance-hosting/HostedChatClientAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-FoundryAgent/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/foundry-hosting/simple-agent-foundry.csproj" />
+    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/foundry-hosting/HostedFoundryAgent.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/UsingHostedAgent/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/consumption/SimpleAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryResponsesHosting/">
     <Project Path="samples/04-hosting/FoundryResponsesHosting/FoundryResponsesHosting.csproj" />
