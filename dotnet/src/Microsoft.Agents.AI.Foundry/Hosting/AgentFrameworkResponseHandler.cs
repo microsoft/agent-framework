@@ -47,8 +47,20 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     {
         // 1. Resolve agent
         var agent = this.ResolveAgent(request);
+        var sessionStore = this.ResolveSessionStore(request);
 
-        // 2. Create the SDK event stream builder
+        // 2. Load or create a new session from the interaction
+        var sessionConversationId = request.GetConversationId() ?? Guid.NewGuid().ToString();
+
+        var chatClientAgent = agent.GetService<ChatClientAgent>();
+
+        AgentSession? session = !string.IsNullOrEmpty(sessionConversationId)
+            ? await sessionStore.GetSessionAsync(agent, sessionConversationId, cancellationToken).ConfigureAwait(false)
+                : chatClientAgent is not null
+                ? await chatClientAgent.CreateSessionAsync(sessionConversationId, cancellationToken).ConfigureAwait(false)
+                : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        // 3. Create the SDK event stream builder
         var stream = new ResponseEventStream(context, request);
 
         // 3. Emit lifecycle events
@@ -87,7 +99,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // and inside catch blocks. We use a flag to defer the yield to outside the try/catch.
         bool emittedTerminal = false;
         var enumerator = OutputConverter.ConvertUpdatesToEventsAsync(
-            agent.RunStreamingAsync(messages, options: options, cancellationToken: cancellationToken),
+            agent.RunStreamingAsync(messages, session, options: options, cancellationToken: cancellationToken),
             stream,
             cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
@@ -151,6 +163,12 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         finally
         {
             await enumerator.DisposeAsync().ConfigureAwait(false);
+
+            // Persist session after streaming completes (successful or not)
+            if (session is not null && !string.IsNullOrEmpty(sessionConversationId))
+            {
+                await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, CancellationToken.None).ConfigureAwait(false);
+            }
         }
     }
 
@@ -187,6 +205,43 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AIAgent is registered."
             : $"Agent '{agentName}' not found. Ensure it is registered via AddAIAgent(\"{agentName}\", ...) or as a default AIAgent.";
+
+        throw new InvalidOperationException(errorMessage);
+    }
+
+    /// <summary>
+    /// Resolves an <see cref="AIAgent"/> from the request.
+    /// Tries <c>agent.name</c> first, then falls back to <c>metadata["entity_id"]</c>.
+    /// If neither is present, attempts to resolve a default (non-keyed) <see cref="AIAgent"/>.
+    /// </summary>
+    private AgentSessionStore ResolveSessionStore(CreateResponse request)
+    {
+        var agentName = GetAgentName(request);
+
+        if (!string.IsNullOrEmpty(agentName))
+        {
+            var sessionStore = this._serviceProvider.GetKeyedService<AgentSessionStore>(agentName);
+            if (sessionStore is not null)
+            {
+                return sessionStore;
+            }
+
+            if (this._logger.IsEnabled(LogLevel.Warning))
+            {
+                this._logger.LogWarning("SessionStore for agent '{AgentName}' not found in keyed services. Attempting default resolution.", agentName);
+            }
+        }
+
+        // Try non-keyed default
+        var defaultSessionStore = this._serviceProvider.GetService<AgentSessionStore>();
+        if (defaultSessionStore is not null)
+        {
+            return defaultSessionStore;
+        }
+
+        var errorMessage = string.IsNullOrEmpty(agentName)
+            ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AgentSessionStore is registered."
+            : $"Agent '{agentName}' not found. Ensure it is registered via AddAIAgent(\"{agentName}\", ...) or as a default AgentSessionStore.";
 
         throw new InvalidOperationException(errorMessage);
     }

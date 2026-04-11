@@ -11,6 +11,10 @@ Env.TraversePath().Load();
 
 var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set."));
+
+var agentName = Environment.GetEnvironmentVariable("AGENT_NAME")
+    ?? throw new InvalidOperationException("AGENT_NAME is not set.");
+
 var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 // Create the agent via the AI project client using the Responses API.
@@ -23,7 +27,7 @@ AIAgent agent = new AIProjectClient(projectEndpoint, new DefaultAzureCredential(
             providing explanations, brainstorming ideas, and offering guidance.
             Be concise, clear, and helpful in your responses.
             """,
-        name: "simple-agent",
+        name: agentName,
         description: "A simple general-purpose AI assistant");
 
 // Host the agent as a Foundry Hosted Agent using the Responses API.

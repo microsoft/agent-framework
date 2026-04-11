@@ -229,7 +229,8 @@ public static partial class AzureAIProjectChatClientExtensions
     {
         Throw.IfNull(aiProjectClient);
         Throw.IfNull(agentOptions);
-        agentOptions.ChatOptions ??= new();
+        Throw.IfNull(agentOptions.ChatOptions);
+        Throw.IfNullOrWhitespace(agentOptions.ChatOptions.ModelId);
 
         IChatClient chatClient = aiProjectClient
             .GetProjectOpenAIClient()

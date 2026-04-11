@@ -45,6 +45,7 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddResponsesServer();
+        services.TryAddSingleton<AgentSessionStore, InMemoryAgentSessionStore>();
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
     }
@@ -71,14 +72,27 @@ public static class FoundryHostingExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
+    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, an in-memory session store will be used.</param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, AIAgent agent)
+    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(agent);
 
         services.AddResponsesServer();
-        services.TryAddSingleton(agent);
+        agentSessionStore ??= new InMemoryAgentSessionStore();
+
+        if (!string.IsNullOrWhiteSpace(agent.Name))
+        {
+            services.TryAddKeyedSingleton(agent.Name, agent);
+            services.TryAddKeyedSingleton(agent.Name, agentSessionStore);
+        }
+        else
+        {
+            services.TryAddSingleton(agent);
+            services.TryAddSingleton(agentSessionStore);
+        }
+
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
     }

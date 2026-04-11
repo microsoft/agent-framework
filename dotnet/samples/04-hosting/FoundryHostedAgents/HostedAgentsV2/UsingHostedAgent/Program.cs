@@ -1,33 +1,38 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel.Primitives;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using DotNetEnv;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Foundry;
 
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string agentEndpoint = Environment.GetEnvironmentVariable("AGENT_ENDPOINT") ?? "http://localhost:8088";
+Uri agentEndpoint = new(Environment.GetEnvironmentVariable("AGENT_ENDPOINT")
+    ?? "http://localhost:8088");
+
+var agentName = Environment.GetEnvironmentVariable("AGENT_NAME")
+    ?? throw new InvalidOperationException("AGENT_NAME is not set.");
 
 // ── Create an agent-framework agent backed by the remote agent endpoint ──────
 
-var endpointUri = new Uri(agentEndpoint);
 var options = new AIProjectClientOptions();
 
-// For local HTTP dev: tell AIProjectClient the endpoint is HTTPS (to satisfy
-// BearerTokenPolicy's TLS check), then swap the scheme back to HTTP right
-// before the request hits the wire.
-Uri clientEndpoint = endpointUri;
-if (endpointUri.Scheme == "http")
+if (agentEndpoint.Scheme == "http")
 {
-    clientEndpoint = new UriBuilder(endpointUri) { Scheme = "https" }.Uri;
+    // For local HTTP dev: tell AIProjectClient the endpoint is HTTPS (to satisfy
+    // BearerTokenPolicy's TLS check), then swap the scheme back to HTTP right
+    // before the request hits the wire.
+
+    agentEndpoint = new UriBuilder(agentEndpoint) { Scheme = "https" }.Uri;
     options.AddPolicy(new HttpSchemeRewritePolicy(), PipelinePosition.BeforeTransport);
 }
 
-var aiProjectClient = new AIProjectClient(clientEndpoint, new AzureCliCredential(), options);
-var agent = aiProjectClient.AsAIAgent();
+var aiProjectClient = new AIProjectClient(agentEndpoint, new AzureCliCredential(), options);
+FoundryAgent agent = aiProjectClient.AsAIAgent(new AgentReference(agentName));
 
 AgentSession session = await agent.CreateSessionAsync();
 
