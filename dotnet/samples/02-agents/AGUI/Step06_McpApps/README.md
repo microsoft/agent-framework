@@ -88,7 +88,7 @@ The server starts at `http://localhost:5253`. It connects to the McpServer, wrap
 
 ```bash
 cd Step06_McpApps/Client
-dotnet run
+AGUI_SERVER_URL=http://localhost:5253 dotnet run 
 ```
 
 The client connects to `http://localhost:5253` by default. Type messages and press Enter. Type `:q` or `quit` to exit. Try asking: *"What time is it?"*
