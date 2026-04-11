@@ -1,0 +1,20 @@
+name: simple-agent
+description: >
+  A simple general-purpose AI assistant hosted as a Foundry Hosted Agent,
+  backed by a Foundry-managed agent definition.
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Simple Agent
+    - Foundry Agent
+template:
+  name: simple-agent
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: v1
+  environment_variables:
+    - name: AZURE_AI_PROJECT_ENDPOINT
+      value: ${AZURE_AI_PROJECT_ENDPOINT}
+    - name: AGENT_NAME
+      value: ${AGENT_NAME}

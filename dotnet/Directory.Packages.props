@@ -27,6 +27,7 @@
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
     <PackageVersion Include="Azure.Core" Version="1.52.0" />
     <PackageVersion Include="Azure.Identity" Version="1.20.0" />
+    <PackageVersion Include="DotNetEnv" Version="3.1.1" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.5.0" />
     <!-- Google Gemini  -->
     <PackageVersion Include="Google.GenAI" Version="1.6.0" />
