@@ -8,7 +8,7 @@ using Microsoft.Agents.AI;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string agentEndpoint = Environment.GetEnvironmentVariable("AGENT_ENDPOINT") ?? "http://localhost:8088";
+string agentEndpoint = Environment.GetEnvironmentVariable("AGENT_ENDPOINT") ?? "http://localhost:59055";
 
 // ── Create an agent-framework agent backed by the remote agent endpoint ──────
 // The Foundry Agent SDK's AIProjectClient can target any OpenAI-compatible endpoint.
@@ -21,11 +21,13 @@ AgentSession session = await agent.CreateSessionAsync();
 // ── REPL ──────────────────────────────────────────────────────────────────────
 
 Console.ForegroundColor = ConsoleColor.Cyan;
-Console.WriteLine("╔══════════════════════════════════════════════════════════╗");
-Console.WriteLine("║  Simple Agent Client                                     ║");
-Console.WriteLine($"║  Connected to: {agentEndpoint,-41}║");
-Console.WriteLine("║  Type a message or 'quit' to exit                        ║");
-Console.WriteLine("╚══════════════════════════════════════════════════════════╝");
+Console.WriteLine($"""
+    ══════════════════════════════════════════════════════════
+    Simple Agent Sample                                     
+    Connected to: {agentEndpoint}
+    Type a message or 'quit' to exit                        
+    ══════════════════════════════════════════════════════════
+    """);
 Console.ResetColor();
 Console.WriteLine();
 
@@ -38,9 +40,7 @@ while (true)
     string? input = Console.ReadLine();
 
     if (string.IsNullOrWhiteSpace(input)) { continue; }
-    if (input.Equals("quit", StringComparison.OrdinalIgnoreCase) ||
-        input.Equals("exit", StringComparison.OrdinalIgnoreCase))
-    { break; }
+    if (input.Equals("quit", StringComparison.OrdinalIgnoreCase)) { break; }
 
     try
     {
