@@ -15,7 +15,7 @@ from agent_framework import (
 )
 from agent_framework.github import GitHubCopilotAgent
 from copilot.generated.session_events import PermissionRequest
-from copilot.types import PermissionRequestResult
+from copilot.session import PermissionRequestResult
 from pydantic import BaseModel
 from typing_extensions import Never
 
@@ -134,7 +134,7 @@ class CustomAgentExecutor(Executor):
                     [
                         Message(
                             role="user",
-                            text=f"Validate the following sample:\n\n{sample.relative_path}",
+                            contents=[f"Validate the following sample:\n\n{sample.relative_path}"],
                         )
                     ],
                     session=self._session,

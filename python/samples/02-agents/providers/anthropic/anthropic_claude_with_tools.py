@@ -13,11 +13,18 @@ Available built-in tools:
 - "Edit": Edit existing files
 - "Glob": Search for files by pattern
 - "Grep": Search file contents
+
+Environment variables:
+- ANTHROPIC_API_KEY: Your Anthropic API key
 """
 
 import asyncio
 
 from agent_framework.anthropic import ClaudeAgent
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

@@ -42,9 +42,9 @@ which provisions a REST API endpoint compatible with the OpenAI Responses protoc
 
 Before running this sample, ensure you have:
 
-1. **Azure AI Foundry Project**
+1. **Microsoft Foundry Project**
    - Project created.
-   - Chat model deployed (e.g., `gpt-4o` or `gpt-4.1`)
+   - Chat model deployed (e.g., `gpt-5.4-mini`)
    - Note your project endpoint URL and model deployment name
      > **Note**: You can right-click the project in the Microsoft Foundry VS Code extension and select `Copy Project Endpoint URL` to get the endpoint.
 
@@ -66,14 +66,14 @@ Set the following environment variables:
 ```powershell
 # Replace with your actual values
 $env:AZURE_AI_PROJECT_ENDPOINT="https://<your-resource>.services.ai.azure.com/api/projects/<your-project>"
-$env:MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 **Bash:**
 
 ```bash
 export AZURE_AI_PROJECT_ENDPOINT="https://<your-resource>.services.ai.azure.com/api/projects/<your-project>"
-export MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+export MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 ### Running the Sample

@@ -585,7 +585,7 @@ async def _collect_agent_responses_setup(participant: SupportsAgentRun) -> list[
             captured.append(
                 Message(
                     role=ev.data.role or "assistant",
-                    text=ev.data.text or "",
+                    contents=[ev.data.text or ""],
                     author_name=ev.data.author_name,
                 )
             )

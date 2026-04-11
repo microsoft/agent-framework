@@ -1,7 +1,8 @@
 fail_fast: true
 exclude: ^scripts/
 repos:
-  - repo: builtin
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
     hooks:
       - id: check-toml
         name: Check TOML files
@@ -34,9 +35,6 @@ repos:
       - id: no-commit-to-branch
         name: Protect main branch
         args: [--branch, main]
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
       - id: check-ast
         name: Check Valid Python Samples
         types: ["python"]

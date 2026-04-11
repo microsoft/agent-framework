@@ -1,11 +1,17 @@
 # Azure Cosmos DB Package Samples
 
-This folder contains samples for `agent-framework-azure-cosmos`.
+This package keeps a local sample for the Cosmos context provider.
+
+## Package-local sample
 
 | File | Description |
 | --- | --- |
-| [`cosmos_history_provider.py`](cosmos_history_provider.py) | Demonstrates an Agent using `CosmosHistoryProvider` with `AzureOpenAIResponsesClient` (project endpoint), provider-configured container name, and `session_id` partitioning. |
-| [`cosmos_context_provider.py`](cosmos_context_provider.py) | Demonstrates an Agent using `AzureCosmosContextProvider` for context injection from an existing Cosmos knowledge container, using `default_search_mode=CosmosContextSearchMode.FULL_TEXT` for the normal agent flow and always writing request/response messages back into that same container. |
+| [`cosmos_context_provider.py`](cosmos_context_provider.py) | Demonstrates an Agent using `AzureCosmosContextProvider` for context injection from an existing Cosmos knowledge container, using `default_search_mode=CosmosContextSearchMode.FULL_TEXT` for the normal agent flow and writing request/response messages back into that same container. |
+
+## Other Azure Cosmos samples
+
+- History provider samples live under `python/samples/02-agents/conversations/`
+- Workflow checkpoint storage samples live under `python/samples/03-workflows/checkpoint/`
 
 ## Prerequisites
 
@@ -19,6 +25,5 @@ For `cosmos_context_provider.py`, the Cosmos account, database, and container mu
 ## Run
 
 ```bash
-uv run --directory packages/azure-cosmos python samples/cosmos_history_provider.py
 uv run --directory packages/azure-cosmos python samples/cosmos_context_provider.py
 ```

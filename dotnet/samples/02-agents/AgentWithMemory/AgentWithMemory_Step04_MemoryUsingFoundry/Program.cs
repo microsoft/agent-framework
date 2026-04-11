@@ -1,22 +1,21 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use the FoundryMemoryProvider to persist and recall memories for an agent.
-// The sample stores conversation messages in an Azure AI Foundry memory store and retrieves relevant
+// The sample stores conversation messages in a Microsoft Foundry memory store and retrieves relevant
 // memories for subsequent invocations, even across new sessions.
 //
-// Note: Memory extraction in Azure AI Foundry is asynchronous and takes time. This sample demonstrates
+// Note: Memory extraction in Microsoft Foundry is asynchronous and takes time. This sample demonstrates
 // a simple polling approach to wait for memory updates to complete before querying.
 
 using System.Text.Json;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAI;
-using Microsoft.Agents.AI.FoundryMemory;
+using Microsoft.Agents.AI.Foundry;
 
 string foundryEndpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? "memory-store-sample";
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 string embeddingModelName = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
 
 // Create an AIProjectClient for Foundry with Azure Identity authentication.
@@ -37,7 +36,7 @@ FoundryMemoryProvider memoryProvider = new(
     memoryStoreName,
     stateInitializer: _ => new(new FoundryMemoryProviderScope("sample-user-123")));
 
-FoundryAgent agent = projectClient.AsAIAgent(
+ChatClientAgent agent = projectClient.AsAIAgent(
     new ChatClientAgentOptions()
     {
         Name = "TravelAssistantWithFoundryMemory",
@@ -62,7 +61,7 @@ await memoryProvider.EnsureStoredMemoriesDeletedAsync(session);
 Console.WriteLine(await agent.RunAsync("Hi there! My name is Taylor and I'm planning a hiking trip to Patagonia in November.", session));
 Console.WriteLine(await agent.RunAsync("I'm travelling with my sister and we love finding scenic viewpoints.", session));
 
-// Memory extraction in Azure AI Foundry is asynchronous and takes time to process.
+// Memory extraction in Microsoft Foundry is asynchronous and takes time to process.
 // WhenUpdatesCompletedAsync polls all pending updates and waits for them to complete.
 Console.WriteLine("\nWaiting for Foundry Memory to process updates...");
 await memoryProvider.WhenUpdatesCompletedAsync();

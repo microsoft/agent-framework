@@ -16,6 +16,10 @@ It includes:
 
 The backend uses Azure OpenAI responses and supports intent-driven, non-linear handoff routing.
 
+This demo keeps workflow state per `thread_id`. When the assistant ends a case with `Case complete.`, the UI blocks
+later top-level input on that same thread and asks the user to start a new case explicitly instead of resuming a
+terminated workflow.
+
 ## Folder Layout
 
 - `backend/server.py` - FastAPI + AG-UI endpoint + Handoff workflow
@@ -27,8 +31,8 @@ The backend uses Azure OpenAI responses and supports intent-driven, non-linear h
 - Node.js 18+
 - npm 9+
 - Azure AI project + model deployment configured in environment variables:
-  - `AZURE_AI_PROJECT_ENDPOINT`
-  - `AZURE_AI_MODEL_DEPLOYMENT_NAME`
+  - `FOUNDRY_PROJECT_ENDPOINT`
+  - `FOUNDRY_MODEL`
 
 ## 1) Run Backend
 
@@ -81,6 +85,28 @@ VITE_BACKEND_URL=http://127.0.0.1:8891 npm run dev
 7. When replacement is requested, wait for the `submit_replacement` reviewer interrupt and approve/reject it.
 8. If you asked for refund-only, the flow should close without replacement/shipping prompts.
 9. Confirm the case snapshot updates and workflow completion.
+10. After the case closes, another top-level message on the same thread is rejected with a notice.
+11. Click **Start New Case** to begin a fresh thread.
+
+## Important: `require_per_service_call_history_persistence`
+
+All agents participating in a handoff workflow **must** be constructed with
+`require_per_service_call_history_persistence=True`. The `HandoffBuilder` will
+raise a `ValueError` at build time if any participant is missing this flag.
+
+**Why this is required:** Handoff workflows use middleware that short-circuits
+tool calls via `MiddlewareTermination` when a handoff tool is invoked. Without
+per-service-call history persistence, local history providers would persist tool
+results that the service never received, causing call/result mismatches on
+subsequent turns.
+
+```python
+agent = Agent(
+    client=client,
+    name="my_agent",
+    require_per_service_call_history_persistence=True,  # Required for handoff
+)
+```
 
 ## What This Validates
 

@@ -22,7 +22,6 @@ from agent_framework import (
     evaluator,
 )
 
-
 # -- Custom evaluators that inspect multimodal content --
 
 

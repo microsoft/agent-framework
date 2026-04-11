@@ -19,7 +19,7 @@ Configure the required Azure OpenAI environment variables:
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="<<your-model-endpoint>>"
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4.1-mini"
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 > **Note:** This sample uses `DefaultAzureCredential` for authentication. Make sure you're authenticated with Azure (e.g., via `az login`, Visual Studio, or environment variables).

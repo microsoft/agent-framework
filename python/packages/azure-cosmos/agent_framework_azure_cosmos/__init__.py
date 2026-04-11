@@ -4,12 +4,14 @@
 
 Supported classes:
     - ``AzureCosmosContextProvider``
+    - ``CosmosCheckpointStorage``
     - ``CosmosContextSearchMode``
     - ``CosmosHistoryProvider``
 """
 
 import importlib.metadata
 
+from ._checkpoint_storage import CosmosCheckpointStorage
 from ._context_provider import AzureCosmosContextProvider, CosmosContextSearchMode
 from ._history_provider import CosmosHistoryProvider
 
@@ -20,6 +22,7 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "AzureCosmosContextProvider",
+    "CosmosCheckpointStorage",
     "CosmosContextSearchMode",
     "CosmosHistoryProvider",
     "__version__",

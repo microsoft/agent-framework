@@ -7,7 +7,7 @@ import re
 import httpx
 from a2a.client import A2ACardResolver
 from agent_framework.a2a import A2AAgent
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -29,8 +29,8 @@ Key concepts demonstrated:
 
 Prerequisites:
 - Set A2A_AGENT_HOST to the URL of a running A2A server
-- Set AZURE_AI_PROJECT_ENDPOINT to your Azure AI Foundry project endpoint
-- Set AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME to the model deployment name (e.g. gpt-4o)
+- Set FOUNDRY_PROJECT_ENDPOINT to your Azure AI Foundry project endpoint
+- Set FOUNDRY_MODEL to the model deployment name (e.g. gpt-4o)
 
 To run this sample:
     cd python/samples/04-hosting/a2a
@@ -45,12 +45,10 @@ async def main() -> None:
     if not a2a_agent_host:
         raise ValueError("A2A_AGENT_HOST environment variable is not set")
 
-    project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-    deployment_name = os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
-    if not project_endpoint or not deployment_name:
-        raise ValueError(
-            "AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME must be set"
-        )
+    project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
+    model = os.getenv("FOUNDRY_MODEL")
+    if not project_endpoint or not model:
+        raise ValueError("FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL must be set")
 
     print(f"Connecting to A2A agent at: {a2a_agent_host}")
 
@@ -83,9 +81,9 @@ async def main() -> None:
 
         # 5. Create the host agent with the skill tools.
         credential = AzureCliCredential()
-        client = AzureOpenAIResponsesClient(
+        client = FoundryChatClient(
             project_endpoint=project_endpoint,
-            deployment_name=deployment_name,
+            model=model,
             credential=credential,
         )
         host_agent = client.as_agent(
