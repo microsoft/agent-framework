@@ -30,10 +30,7 @@ from pydantic import BaseModel
 from ._docstrings import apply_layered_docstring
 from ._serialization import SerializationMixin
 from ._tools import (
-    FunctionInvocationConfiguration,
-    FunctionInvocationLayer,
     ToolTypes,
-    normalize_function_invocation_configuration,
 )
 from ._types import (
     ChatResponse,
@@ -575,7 +572,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         context_providers: Sequence[Any] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: Mapping[str, Any] | None = None,
@@ -603,7 +599,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 chat history persistence. When enabled, history providers are invoked around
                 each model call instead of once per ``run()`` when the service is not already
                 storing history.
-            function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level compaction override. When omitted,
                 client-level compaction defaults remain in effect for each call.
             tokenizer: Optional agent-level tokenizer override. When omitted,
@@ -648,16 +643,6 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             "tokenizer": tokenizer,
             "additional_properties": dict(additional_properties) if additional_properties is not None else None,
         }
-        if function_invocation_configuration is not None:
-            if isinstance(self, FunctionInvocationLayer):
-                self.function_invocation_configuration = normalize_function_invocation_configuration(
-                    function_invocation_configuration
-                )
-            else:
-                logger.warning(
-                    "function_invocation_configuration was provided, but the chat client does not support "
-                    "function invoking."
-                )
 
         return Agent(**agent_kwargs)
 

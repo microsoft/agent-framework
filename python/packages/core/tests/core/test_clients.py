@@ -15,7 +15,6 @@ from agent_framework import (
     SlidingWindowStrategy,
     SupportsChatGetResponse,
     TruncationStrategy,
-    normalize_function_invocation_configuration,
 )
 
 
@@ -59,16 +58,15 @@ def test_base_client_as_agent_uses_explicit_additional_properties(chat_client_ba
     assert agent.additional_properties == {"team": "core"}
 
 
-def test_base_client_as_agent_applies_function_invocation_configuration_to_client(
+def test_base_client_as_agent_rejects_function_invocation_configuration(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    config = normalize_function_invocation_configuration({"max_iterations": 1, "include_detailed_errors": True})
+    bad_kwargs: dict[str, Any] = {
+        "function_invocation_configuration": {"max_iterations": 1, "include_detailed_errors": True}
+    }
 
-    agent = chat_client_base.as_agent(function_invocation_configuration=config)
-
-    assert agent.client is chat_client_base
-    assert chat_client_base.function_invocation_configuration["max_iterations"] == 1  # type: ignore[attr-defined]
-    assert chat_client_base.function_invocation_configuration["include_detailed_errors"] is True  # type: ignore[attr-defined]
+    with pytest.raises(TypeError, match="function_invocation_configuration"):
+        chat_client_base.as_agent(**bad_kwargs)
 
 
 async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_base: SupportsChatGetResponse) -> None:
