@@ -13,7 +13,6 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
@@ -230,8 +229,7 @@ public static partial class AzureAIProjectChatClientExtensions
     {
         Throw.IfNull(aiProjectClient);
         Throw.IfNull(agentOptions);
-        Throw.IfNull(agentOptions.ChatOptions);
-        Throw.IfNullOrWhitespace(agentOptions.ChatOptions.ModelId);
+        agentOptions.ChatOptions ??= new();
 
         IChatClient chatClient = aiProjectClient
             .GetProjectOpenAIClient()
