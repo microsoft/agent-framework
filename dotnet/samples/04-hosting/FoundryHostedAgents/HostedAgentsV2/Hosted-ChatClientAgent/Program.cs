@@ -32,4 +32,11 @@ builder.Services.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();
+
+// In Development, also map the OpenAI-compatible route that AIProjectClient uses.
+if (app.Environment.IsDevelopment())
+{
+    app.MapFoundryResponses("openai/v1");
+}
+
 app.Run();
