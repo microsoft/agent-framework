@@ -5,16 +5,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
-    <RootNamespace>SimpleAgent</RootNamespace>
-    <AssemblyName>simple-agent</AssemblyName>
-    <NoWarn>$(NoWarn);NU1903;NU1605</NoWarn>
+    <RootNamespace>HostedFoundryAgent</RootNamespace>
+    <AssemblyName>HostedFoundryAgent</AssemblyName>
+    <NoWarn>$(NoWarn);</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.Projects" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
-    <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="Azure.Core" />
     <PackageReference Include="DotNetEnv" />
   </ItemGroup>
 

@@ -8,7 +8,7 @@ using Microsoft.Agents.AI;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string agentEndpoint = Environment.GetEnvironmentVariable("AGENT_ENDPOINT") ?? "http://localhost:59055";
+string agentEndpoint = Environment.GetEnvironmentVariable("AGENT_ENDPOINT") ?? "http://localhost:8088";
 
 // ── Create an agent-framework agent backed by the remote agent endpoint ──────
 // The Foundry Agent SDK's AIProjectClient can target any OpenAI-compatible endpoint.
