@@ -1,3 +1,5 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
 using Azure.AI.Projects;
 using Azure.Identity;
 using DotNetEnv;
