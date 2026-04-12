@@ -330,8 +330,12 @@ class TestBeforeRunTimeout:
         assert "continuation_token" in token_info
         assert "analyzer_id" in token_info
 
-        # Instructions should mention analyzing
-        assert any("being analyzed" in instr for instr in context.instructions)
+        # Context messages should mention analyzing
+        assert any(
+            "being analyzed" in m.text
+            for msgs in context.context_messages.values()
+            for m in msgs
+        )
 
 
 class TestBeforeRunPendingResolution:
@@ -659,8 +663,12 @@ class TestDuplicateDocumentKey:
 
         # Should still have only one document, not re-analyzed
         assert mock_cu_client.begin_analyze_binary.call_count == 1
-        # Instructions should mention duplicate
-        assert any("already uploaded" in instr for instr in context2.instructions)
+        # Context messages should mention duplicate
+        assert any(
+            "already uploaded" in m.text
+            for msgs in context2.context_messages.values()
+            for m in msgs
+        )
 
     async def test_duplicate_in_same_turn_rejected(
         self,
@@ -688,7 +696,11 @@ class TestDuplicateDocumentKey:
         # Only analyzed once (first one wins)
         assert mock_cu_client.begin_analyze_binary.call_count == 1
         assert "report.pdf" in state["documents"]
-        assert any("already uploaded" in instr for instr in context.instructions)
+        assert any(
+            "already uploaded" in m.text
+            for msgs in context.context_messages.values()
+            for m in msgs
+        )
 
 
 class TestBinaryStripping:
@@ -1610,9 +1622,12 @@ class TestFileSearchIntegration:
         # Should be uploaded to vector store via backend
         mock_backend.upload_file.assert_called_once()
 
-        # Instructions should mention file_search, not "provided above"
-        assert any("file_search" in instr for instr in context.instructions)
-        assert not any("provided above" in instr for instr in context.instructions)
+        # Context messages should mention file_search, not "provided above"
+        all_msg_text = " ".join(
+            m.text for msgs in context.context_messages.values() for m in msgs
+        )
+        assert "file_search" in all_msg_text or any("file_search" in instr for instr in context.instructions)
+        assert "provided above" not in all_msg_text
 
 
 class TestCloseCancel:
@@ -1706,8 +1721,12 @@ class TestSessionIsolation:
         context_b = _make_context([Message(role="user", contents=[Content.from_text("Hello")])])
         await provider.before_run(agent=_make_mock_agent(), session=AgentSession(), context=context_b, state=state_b)
         assert "report.pdf" not in state_b.get("documents", {})
-        # Session B context should have no document-related instructions
-        assert not any("report.pdf" in instr for instr in context_b.instructions)
+        # Session B context should have no document-related messages
+        assert not any(
+            "report.pdf" in m.text
+            for msgs in context_b.context_messages.values()
+            for m in msgs
+        )
 
 
 class TestAnalyzerAutoDetectionE2E:
