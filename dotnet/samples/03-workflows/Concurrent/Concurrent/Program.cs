@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.OpenAI;
+using System.Text;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -31,22 +32,26 @@ public static class Program
 {
     private static async Task Main()
     {
-        // Set up the Azure OpenAI client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        // Set up the Azure AI Project client
+        var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
+            ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+        var chatClient = new AIProjectClient(new Uri(endpoint), new AzureCliCredential())
+                            .ProjectOpenAIClient.GetChatClient(deploymentName).AsIChatClient();
 
         // Create the executors
-        ChatClientAgent physicist = new(
+        var physicist = new ChatClientAgent(
             chatClient,
             name: "Physicist",
             instructions: "You are an expert in physics. You answer questions from a physics perspective."
-        );
-        ChatClientAgent chemist = new(
+        ).BindAsExecutor(new AIAgentHostOptions { ForwardIncomingMessages = false });
+
+        var chemist = new ChatClientAgent(
             chatClient,
             name: "Chemist",
             instructions: "You are an expert in chemistry. You answer questions from a chemistry perspective."
-        );
+        ).BindAsExecutor(new AIAgentHostOptions { ForwardIncomingMessages = false });
+
         var startExecutor = new ConcurrentStartExecutor();
         var aggregationExecutor = new ConcurrentAggregationExecutor();
 
@@ -61,10 +66,29 @@ public static class Program
         await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input: "What is temperature?");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
-            if (evt is WorkflowOutputEvent output)
+            switch (evt)
             {
-                Console.WriteLine($"Workflow completed with results:\n{output.Data}");
+                case WorkflowOutputEvent workflowOutput:
+                    Console.WriteLine($"Workflow completed with results:\n{workflowOutput.Data}");
+                    break;
+
+                case WorkflowErrorEvent workflowError:
+                    WriteError(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred");
+                    break;
+
+                case ExecutorFailedEvent executorFailed:
+                    WriteError($"Executor '{executorFailed.ExecutorId}' failed with {(
+                        executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}"
+                        )}.");
+                    break;
             }
+        }
+
+        void WriteError(string error)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.Write(error);
+            Console.ResetColor();
         }
     }
 }
@@ -92,7 +116,7 @@ internal sealed partial class ConcurrentStartExecutor() :
         // the message but will not start processing until they receive a turn token.
         await context.SendMessageAsync(new ChatMessage(ChatRole.User, message), cancellationToken: cancellationToken);
         // Broadcast the turn token to kick off the agents.
-        await context.SendMessageAsync(new TurnToken(emitEvents: true), cancellationToken: cancellationToken);
+        await context.SendMessageAsync(new TurnToken(emitEvents: false), cancellationToken: cancellationToken);
     }
 }
 
@@ -116,11 +140,19 @@ internal sealed partial class ConcurrentAggregationExecutor() :
     public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._messages.AddRange(message);
+    }
 
-        if (this._messages.Count == 2)
+    protected override ValueTask OnMessageDeliveryFinishedAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        StringBuilder resultBuilder = new();
+        foreach (ChatMessage m in this._messages)
         {
-            var formattedMessages = string.Join(Environment.NewLine, this._messages.Select(m => $"{m.AuthorName}: {m.Text}"));
-            await context.YieldOutputAsync(formattedMessages, cancellationToken);
+            resultBuilder.AppendLine($"{m.AuthorName}: {m.Text}");
+            resultBuilder.AppendLine();
         }
+
+        this._messages.Clear();
+
+        return context.YieldOutputAsync(resultBuilder.ToString(), cancellationToken);
     }
 }

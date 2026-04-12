@@ -128,6 +128,7 @@ class FlowState:
     interrupts: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     reasoning_messages: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     accumulated_reasoning: dict[str, str] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    reasoning_message_id: str | None = None
 
     def get_tool_name(self, call_id: str | None) -> str | None:
         """Get tool name by call ID."""
@@ -462,11 +463,38 @@ def _emit_mcp_tool_result(
     return _emit_tool_result_common(content.call_id, raw_output, flow, predictive_handler)
 
 
+def _close_reasoning_block(flow: FlowState) -> list[BaseEvent]:
+    """Close an open reasoning block, emitting end events.
+
+    Should be called when the reasoning block is complete -- e.g. when
+    non-reasoning content arrives or at end of a run.
+    """
+    if not flow.reasoning_message_id:
+        return []
+    message_id = flow.reasoning_message_id
+    flow.reasoning_message_id = None
+    return [
+        ReasoningMessageEndEvent(message_id=message_id),
+        ReasoningEndEvent(message_id=message_id),
+    ]
+
+
 def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> list[BaseEvent]:
     """Emit AG-UI reasoning events for text_reasoning content.
 
     Uses the protocol-defined reasoning event types so that AG-UI consumers
     such as CopilotKit can render reasoning natively.
+
+    When *flow* is provided the function follows the streaming pattern: it
+    emits ``ReasoningStartEvent`` / ``ReasoningMessageStartEvent`` only on
+    the first delta for a given ``message_id`` and just
+    ``ReasoningMessageContentEvent`` for subsequent deltas.  The matching
+    ``ReasoningMessageEndEvent`` / ``ReasoningEndEvent`` are deferred until
+    ``_close_reasoning_block`` is called (e.g. when non-reasoning content
+    arrives or at end-of-run).
+
+    Without *flow* (backward-compat) the full Start→Content→End sequence is
+    emitted for every call.
 
     Only ``content.text`` is used for the visible reasoning message. If
     ``content.protected_data`` is present it is emitted as a
@@ -483,26 +511,49 @@ def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> lis
 
     message_id = content.id or generate_event_id()
 
-    events: list[BaseEvent] = [
-        ReasoningStartEvent(message_id=message_id),
-        ReasoningMessageStartEvent(message_id=message_id, role="assistant"),
-    ]
+    events: list[BaseEvent] = []
 
-    if text:
-        events.append(ReasoningMessageContentEvent(message_id=message_id, delta=text))
+    if flow is not None:
+        # Streaming mode: track open reasoning block in flow state.
+        if flow.reasoning_message_id != message_id:
+            # Close any previously open reasoning block (different message_id).
+            events.extend(_close_reasoning_block(flow))
+            # Open new reasoning block.
+            events.append(ReasoningStartEvent(message_id=message_id))
+            events.append(ReasoningMessageStartEvent(message_id=message_id, role="assistant"))
+            flow.reasoning_message_id = message_id
 
-    events.append(ReasoningMessageEndEvent(message_id=message_id))
+        if text:
+            events.append(ReasoningMessageContentEvent(message_id=message_id, delta=text))
 
-    if content.protected_data is not None:
-        events.append(
-            ReasoningEncryptedValueEvent(
-                subtype="message",
-                entity_id=message_id,
-                encrypted_value=content.protected_data,
+        if content.protected_data is not None:
+            events.append(
+                ReasoningEncryptedValueEvent(
+                    subtype="message",
+                    entity_id=message_id,
+                    encrypted_value=content.protected_data,
+                )
             )
-        )
+    else:
+        # No flow -- backward-compatible full sequence per call.
+        events.append(ReasoningStartEvent(message_id=message_id))
+        events.append(ReasoningMessageStartEvent(message_id=message_id, role="assistant"))
 
-    events.append(ReasoningEndEvent(message_id=message_id))
+        if text:
+            events.append(ReasoningMessageContentEvent(message_id=message_id, delta=text))
+
+        events.append(ReasoningMessageEndEvent(message_id=message_id))
+
+        if content.protected_data is not None:
+            events.append(
+                ReasoningEncryptedValueEvent(
+                    subtype="message",
+                    entity_id=message_id,
+                    encrypted_value=content.protected_data,
+                )
+            )
+
+        events.append(ReasoningEndEvent(message_id=message_id))
 
     # Persist reasoning into flow state for MESSAGES_SNAPSHOT.
     # Accumulate reasoning text per message_id, similar to flow.accumulated_text,
@@ -546,23 +597,30 @@ def _emit_content(
 ) -> list[BaseEvent]:
     """Emit appropriate events for any content type."""
     content_type = getattr(content, "type", None)
+
+    # Close open reasoning block when switching to non-reasoning content.
+    if content_type != "text_reasoning":
+        events = _close_reasoning_block(flow)
+    else:
+        events = []
+
     if content_type == "text":
-        return _emit_text(content, flow, skip_text)
+        return events + _emit_text(content, flow, skip_text)
     if content_type == "function_call":
-        return _emit_tool_call(content, flow, predictive_handler)
+        return events + _emit_tool_call(content, flow, predictive_handler)
     if content_type == "function_result":
-        return _emit_tool_result(content, flow, predictive_handler)
+        return events + _emit_tool_result(content, flow, predictive_handler)
     if content_type == "function_approval_request":
-        return _emit_approval_request(content, flow, predictive_handler, require_confirmation)
+        return events + _emit_approval_request(content, flow, predictive_handler, require_confirmation)
     if content_type == "usage":
-        return _emit_usage(content)
+        return events + _emit_usage(content)
     if content_type == "oauth_consent_request":
-        return _emit_oauth_consent(content)
+        return events + _emit_oauth_consent(content)
     if content_type == "mcp_server_tool_call":
-        return _emit_mcp_tool_call(content, flow)
+        return events + _emit_mcp_tool_call(content, flow)
     if content_type == "mcp_server_tool_result":
-        return _emit_mcp_tool_result(content, flow, predictive_handler)
+        return events + _emit_mcp_tool_result(content, flow, predictive_handler)
     if content_type == "text_reasoning":
         return _emit_text_reasoning(content, flow)
     logger.debug("Skipping unsupported content type in AG-UI emitter: %s", content_type)
-    return []
+    return events

@@ -20,7 +20,7 @@ This sample demonstrates how to use image multi-modality with an AI agent. It sh
 Before running this sample, ensure you have:
 
 1. An Azure OpenAI project set up
-2. A compatible model deployment (e.g., gpt-4o)
+2. A compatible model deployment (e.g., gpt-5.4-mini)
 3. Azure CLI installed and authenticated
 
 ## Environment Variables
@@ -29,7 +29,7 @@ Set the following environment variables:
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure OpenAI endpoint
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o" # Replace with your model deployment name (optional, defaults to gpt-4o)
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini" # Replace with your model deployment name (optional, defaults to gpt-5.4-mini)
 ```
 
 ## Run the sample

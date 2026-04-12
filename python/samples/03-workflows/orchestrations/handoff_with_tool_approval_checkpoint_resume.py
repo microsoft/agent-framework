@@ -71,6 +71,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent]:
             "if they need refund help or order tracking. Use handoff_to_refund_agent or "
             "handoff_to_order_agent to transfer them."
         ),
+        require_per_service_call_history_persistence=True,
     )
 
     refund = Agent(
@@ -83,6 +84,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent]:
             "to record the request before continuing."
         ),
         tools=[submit_refund],
+        require_per_service_call_history_persistence=True,
     )
 
     order = Agent(
@@ -92,6 +94,7 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent]:
             "You are an order tracking specialist. Help customers track their orders. "
             "Ask for order numbers and provide shipping updates."
         ),
+        require_per_service_call_history_persistence=True,
     )
 
     return triage, refund, order
