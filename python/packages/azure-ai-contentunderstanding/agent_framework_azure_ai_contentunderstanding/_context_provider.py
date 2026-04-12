@@ -292,12 +292,17 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     )
                     context.extend_messages(
                         self.source_id,
-                        [Message(role="user", contents=[
-                            (
-                                f"Document '{upload_key}' was analyzed but failed to upload "
-                                "to the vector store. The document content is not available for search."
+                        [
+                            Message(
+                                role="user",
+                                contents=[
+                                    (
+                                        f"Document '{upload_key}' was analyzed but failed to upload "
+                                        "to the vector store. The document content is not available for search."
+                                    )
+                                ],
                             )
-                        ])],
+                        ],
                     )
             state["_pending_uploads"] = remaining_uploads
             pending_uploads = remaining_uploads
@@ -314,14 +319,19 @@ class ContentUnderstandingContextProvider(ContextProvider):
                 logger.warning("Duplicate document key '%s' — skipping (already exists in session).", doc_key)
                 context.extend_messages(
                     self.source_id,
-                    [Message(role="user", contents=[
-                        (
-                            f"The user tried to upload '{doc_key}', but a file with that name "
-                            "was already uploaded earlier in this session. The new upload was rejected "
-                            "and was not analyzed. Tell the user that a file with the same name "
-                            "already exists and they need to rename the file before uploading again."
+                    [
+                        Message(
+                            role="user",
+                            contents=[
+                                (
+                                    f"The user tried to upload '{doc_key}', but a file with that name "
+                                    "was already uploaded earlier in this session. The new upload was rejected "
+                                    "and was not analyzed. Tell the user that a file with the same name "
+                                    "already exists and they need to rename the file before uploading again."
+                                )
+                            ],
                         )
-                    ])],
+                    ],
                 )
                 continue
             file_start_times[doc_key] = time.monotonic()
@@ -349,36 +359,51 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     if uploaded:
                         context.extend_messages(
                             self.source_id,
-                            [Message(role="user", contents=[
-                                (
-                                    f"The user just uploaded '{entry['filename']}'. It has been analyzed "
-                                    "using Azure Content Understanding and indexed in a vector store. "
-                                    f"When using file_search, include '{entry['filename']}' in your query "
-                                    "to retrieve content from this specific document."
+                            [
+                                Message(
+                                    role="user",
+                                    contents=[
+                                        (
+                                            f"The user just uploaded '{entry['filename']}'. It has been analyzed "
+                                            "using Azure Content Understanding and indexed in a vector store. "
+                                            f"When using file_search, include '{entry['filename']}' in your query "
+                                            "to retrieve content from this specific document."
+                                        )
+                                    ],
                                 )
-                            ])],
+                            ],
                         )
                     elif entry.get("error"):
                         # Upload failed (not timeout — actual error)
                         context.extend_messages(
                             self.source_id,
-                            [Message(role="user", contents=[
-                                (
-                                    f"Document '{entry['filename']}' was analyzed but failed to upload "
-                                    "to the vector store. The document content is not available for search."
+                            [
+                                Message(
+                                    role="user",
+                                    contents=[
+                                        (
+                                            f"Document '{entry['filename']}' was analyzed but failed to upload "
+                                            "to the vector store. The document content is not available for search."
+                                        )
+                                    ],
                                 )
-                            ])],
+                            ],
                         )
                     else:
                         # Upload deferred to background (timeout)
                         context.extend_messages(
                             self.source_id,
-                            [Message(role="user", contents=[
-                                (
-                                    f"Document '{entry['filename']}' has been analyzed and is being indexed. "
-                                    "Ask about it again in a moment."
+                            [
+                                Message(
+                                    role="user",
+                                    contents=[
+                                        (
+                                            f"Document '{entry['filename']}' has been analyzed and is being indexed. "
+                                            "Ask about it again in a moment."
+                                        )
+                                    ],
                                 )
-                            ])],
+                            ],
                         )
                 else:
                     # Without file_search, inject full content into context
@@ -390,15 +415,23 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     )
                     context.extend_messages(
                         self.source_id,
-                        [Message(role="user", contents=[
-                            (
-                                f"The user just uploaded '{entry['filename']}'. It has been analyzed "
-                                "using Azure Content Understanding. "
-                                "The document content (markdown) and extracted fields (JSON) are provided above. "
-                                "If the user's question is ambiguous, prioritize this most recently uploaded document. "
-                                "Use specific field values and cite page numbers when answering."
+                        [
+                            Message(
+                                role="user",
+                                contents=[
+                                    (
+                                        f"The user just uploaded '{entry['filename']}'."
+                                        " It has been analyzed using Azure Content Understanding."
+                                        " The document content (markdown) and extracted fields"
+                                        " (JSON) are provided above."
+                                        " If the user's question is ambiguous,"
+                                        " prioritize this most recently uploaded document."
+                                        " Use specific field values and cite page numbers"
+                                        " when answering."
+                                    )
+                                ],
                             )
-                        ])],
+                        ],
                     )
 
         # 6. Register file_search tool (for LLM clients that support it)
@@ -530,9 +563,12 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     }
                 context.extend_messages(
                     self.source_id,
-                    [Message(role="user", contents=[
-                        f"Document '{filename}' is being analyzed. Ask about it again in a moment."
-                    ])],
+                    [
+                        Message(
+                            role="user",
+                            contents=[f"Document '{filename}' is being analyzed. Ask about it again in a moment."],
+                        )
+                    ],
                 )
                 return DocumentEntry(
                     status=DocumentStatus.ANALYZING,
@@ -664,15 +700,20 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     )
                 context.extend_messages(
                     self.source_id,
-                    [Message(role="user", contents=[
-                        f"Document '{entry['filename']}' analysis is now complete."
-                        + (
-                            " The document is being indexed in the vector store and will become"
-                            " searchable via file_search shortly."
-                            if self.file_search
-                            else " The content is provided above."
+                    [
+                        Message(
+                            role="user",
+                            contents=[
+                                f"Document '{entry['filename']}' analysis is now complete."
+                                + (
+                                    " The document is being indexed in the vector store and will become"
+                                    " searchable via file_search shortly."
+                                    if self.file_search
+                                    else " The content is provided above."
+                                )
+                            ],
                         )
-                    ])],
+                    ],
                 )
 
             except Exception as e:

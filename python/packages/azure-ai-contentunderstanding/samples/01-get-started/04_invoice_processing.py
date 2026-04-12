@@ -130,8 +130,7 @@ async def main() -> None:
                 role="user",
                 contents=[
                     Content.from_text(
-                        "Process this invoice. Extract the vendor name, total amount, "
-                        "due date, and all line items."
+                        "Process this invoice. Extract the vendor name, total amount, due date, and all line items."
                     ),
                     Content.from_data(
                         pdf_bytes,
