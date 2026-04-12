@@ -18,6 +18,7 @@ Status is grouped into these buckets:
 | `agent-framework-a2a` | `python/packages/a2a` | `beta` |
 | `agent-framework-ag-ui` | `python/packages/ag-ui` | `beta` |
 | `agent-framework-anthropic` | `python/packages/anthropic` | `beta` |
+| `agent-framework-azure-ai-contentunderstanding` | `python/packages/azure-ai-contentunderstanding` | `alpha` |
 | `agent-framework-azure-ai-search` | `python/packages/azure-ai-search` | `beta` |
 | `agent-framework-azure-cosmos` | `python/packages/azure-cosmos` | `beta` |
 | `agent-framework-azurefunctions` | `python/packages/azurefunctions` | `beta` |
