@@ -16,7 +16,7 @@ from agent_framework_azure_ai_contentunderstanding import (
     ContentUnderstandingContextProvider,
     DocumentStatus,
 )
-from agent_framework_azure_ai_contentunderstanding._constants import SUPPORTED_MEDIA_TYPES
+from agent_framework_azure_ai_contentunderstanding._detection import SUPPORTED_MEDIA_TYPES
 
 # ---------------------------------------------------------------------------
 # Helpers

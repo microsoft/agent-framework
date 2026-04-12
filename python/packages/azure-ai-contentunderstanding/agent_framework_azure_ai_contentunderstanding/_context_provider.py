@@ -41,7 +41,6 @@ else:
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
-from ._constants import DEFAULT_ANALYZER, MEDIA_TYPE_ANALYZER_MAP
 from ._detection import (
     derive_doc_key,
     detect_and_strip_files,
@@ -50,6 +49,14 @@ from ._detection import (
     sanitize_doc_key,
     sniff_media_type,
 )
+
+# Mapping from media type prefix to the appropriate prebuilt CU analyzer.
+# Used when analyzer_id is None (auto-detect mode).
+MEDIA_TYPE_ANALYZER_MAP: dict[str, str] = {
+    "audio/": "prebuilt-audioSearch",
+    "video/": "prebuilt-videoSearch",
+}
+DEFAULT_ANALYZER: str = "prebuilt-documentSearch"
 from ._extraction import extract_field_value, extract_sections, flatten_field, format_result
 from ._models import AnalysisSection, DocumentEntry, DocumentStatus, FileSearchConfig
 
