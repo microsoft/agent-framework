@@ -151,8 +151,6 @@ async def main() -> None:
         )
 
         # Parse the structured output from JSON text
-        import json
-
         try:
             invoice = InvoiceResult.model_validate_json(response.text)
             print(f"Vendor: {invoice.vendor_name}")
