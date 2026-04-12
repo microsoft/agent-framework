@@ -429,6 +429,57 @@ async def test_cmc_with_dict_tool_passthrough(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_fails_when_allow_multiple_tool_calls_leaks(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    """Test that passing allow_multiple_tool_calls to Ollama raises an error.
+
+    This reproduces the bug where HandoffBuilder sets allow_multiple_tool_calls=False,
+    and the option leaks through to AsyncClient.chat() as an unexpected keyword argument.
+    """
+    mock_chat.side_effect = TypeError("AsyncClient.chat() got an unexpected keyword argument 'allow_multiple_tool_calls'")
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+
+    with pytest.raises(ChatClientException, match="allow_multiple_tool_calls"):
+        await ollama_client.get_response(
+            messages=chat_history,
+            options={
+                "allow_multiple_tool_calls": False,
+                "tools": [hello_world],
+            },
+        )
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_excludes_allow_multiple_tool_calls(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    """Test that allow_multiple_tool_calls is excluded from the Ollama API call."""
+    mock_chat.return_value = mock_chat_completion_response
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    await ollama_client.get_response(
+        messages=chat_history,
+        options={
+            "allow_multiple_tool_calls": False,
+            "tools": [hello_world],
+        },
+    )
+
+    mock_chat.assert_called_once()
+    call_kwargs = mock_chat.call_args.kwargs
+    assert "allow_multiple_tool_calls" not in call_kwargs
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_with_data_content_type(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
