@@ -49,6 +49,12 @@ from ._detection import (
     sanitize_doc_key,
     sniff_media_type,
 )
+from ._extraction import extract_field_value, extract_sections, flatten_field, format_result
+from ._models import AnalysisSection, DocumentEntry, DocumentStatus, FileSearchConfig
+
+logger = logging.getLogger("agent_framework.azure_ai_contentunderstanding")
+
+AzureCredentialTypes = AzureKeyCredential | AsyncTokenCredential
 
 # Mapping from media type prefix to the appropriate prebuilt CU analyzer.
 # Used when analyzer_id is None (auto-detect mode).
@@ -57,12 +63,6 @@ MEDIA_TYPE_ANALYZER_MAP: dict[str, str] = {
     "video/": "prebuilt-videoSearch",
 }
 DEFAULT_ANALYZER: str = "prebuilt-documentSearch"
-from ._extraction import extract_field_value, extract_sections, flatten_field, format_result
-from ._models import AnalysisSection, DocumentEntry, DocumentStatus, FileSearchConfig
-
-logger = logging.getLogger("agent_framework.azure_ai_contentunderstanding")
-
-AzureCredentialTypes = AzureKeyCredential | AsyncTokenCredential
 
 
 class ContentUnderstandingSettings(TypedDict, total=False):
@@ -293,8 +293,10 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     context.extend_messages(
                         self.source_id,
                         [Message(role="user", contents=[
-                            f"Document '{upload_key}' was analyzed but failed to upload "
-                            "to the vector store. The document content is not available for search."
+                            (
+                                f"Document '{upload_key}' was analyzed but failed to upload "
+                                "to the vector store. The document content is not available for search."
+                            )
                         ])],
                     )
             state["_pending_uploads"] = remaining_uploads
@@ -313,10 +315,12 @@ class ContentUnderstandingContextProvider(ContextProvider):
                 context.extend_messages(
                     self.source_id,
                     [Message(role="user", contents=[
-                        f"The user tried to upload '{doc_key}', but a file with that name "
-                        "was already uploaded earlier in this session. The new upload was rejected "
-                        "and was not analyzed. Tell the user that a file with the same name "
-                        "already exists and they need to rename the file before uploading again."
+                        (
+                            f"The user tried to upload '{doc_key}', but a file with that name "
+                            "was already uploaded earlier in this session. The new upload was rejected "
+                            "and was not analyzed. Tell the user that a file with the same name "
+                            "already exists and they need to rename the file before uploading again."
+                        )
                     ])],
                 )
                 continue
@@ -346,10 +350,12 @@ class ContentUnderstandingContextProvider(ContextProvider):
                         context.extend_messages(
                             self.source_id,
                             [Message(role="user", contents=[
-                                f"The user just uploaded '{entry['filename']}'. It has been analyzed "
-                                "using Azure Content Understanding and indexed in a vector store. "
-                                f"When using file_search, include '{entry['filename']}' in your query "
-                                "to retrieve content from this specific document."
+                                (
+                                    f"The user just uploaded '{entry['filename']}'. It has been analyzed "
+                                    "using Azure Content Understanding and indexed in a vector store. "
+                                    f"When using file_search, include '{entry['filename']}' in your query "
+                                    "to retrieve content from this specific document."
+                                )
                             ])],
                         )
                     elif entry.get("error"):
@@ -357,8 +363,10 @@ class ContentUnderstandingContextProvider(ContextProvider):
                         context.extend_messages(
                             self.source_id,
                             [Message(role="user", contents=[
-                                f"Document '{entry['filename']}' was analyzed but failed to upload "
-                                "to the vector store. The document content is not available for search."
+                                (
+                                    f"Document '{entry['filename']}' was analyzed but failed to upload "
+                                    "to the vector store. The document content is not available for search."
+                                )
                             ])],
                         )
                     else:
@@ -366,8 +374,10 @@ class ContentUnderstandingContextProvider(ContextProvider):
                         context.extend_messages(
                             self.source_id,
                             [Message(role="user", contents=[
-                                f"Document '{entry['filename']}' has been analyzed and is being indexed. "
-                                "Ask about it again in a moment."
+                                (
+                                    f"Document '{entry['filename']}' has been analyzed and is being indexed. "
+                                    "Ask about it again in a moment."
+                                )
                             ])],
                         )
                 else:
@@ -381,11 +391,13 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     context.extend_messages(
                         self.source_id,
                         [Message(role="user", contents=[
-                            f"The user just uploaded '{entry['filename']}'. It has been analyzed "
-                            "using Azure Content Understanding. "
-                            "The document content (markdown) and extracted fields (JSON) are provided above. "
-                            "If the user's question is ambiguous, prioritize this most recently uploaded document. "
-                            "Use specific field values and cite page numbers when answering."
+                            (
+                                f"The user just uploaded '{entry['filename']}'. It has been analyzed "
+                                "using Azure Content Understanding. "
+                                "The document content (markdown) and extracted fields (JSON) are provided above. "
+                                "If the user's question is ambiguous, prioritize this most recently uploaded document. "
+                                "Use specific field values and cite page numbers when answering."
+                            )
                         ])],
                     )
 
