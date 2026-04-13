@@ -27,7 +27,7 @@ public sealed class A2AAgent : AIAgent
 {
     private static readonly AIAgentMetadata s_agentMetadata = new("a2a");
 
-    private readonly A2AClient _a2aClient;
+    private readonly IA2AClient _a2aClient;
     private readonly string? _id;
     private readonly string? _name;
     private readonly string? _description;
@@ -41,7 +41,7 @@ public sealed class A2AAgent : AIAgent
     /// <param name="name">The the name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public A2AAgent(A2AClient a2aClient, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
+    public A2AAgent(IA2AClient a2aClient, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(a2aClient);
 
@@ -224,7 +224,7 @@ public sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
         => base.GetService(serviceType, serviceKey)
-           ?? (serviceType == typeof(A2AClient) ? this._a2aClient
+           ?? (serviceType == typeof(IA2AClient) ? this._a2aClient
             : serviceType == typeof(AIAgentMetadata) ? s_agentMetadata
             : null);
 
