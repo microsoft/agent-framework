@@ -14,8 +14,17 @@
     <PackageReference Include="DotNetEnv" />
   </ItemGroup>
 
+  <!-- For contributors: uses ProjectReference to build against local source -->
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
   </ItemGroup>
+
+  <!-- For end-users: uncomment the PackageReference below and remove the ProjectReference above
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.0.0" />
+    <PackageReference Include="Azure.AI.Projects" />
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+  -->
 
 </Project>

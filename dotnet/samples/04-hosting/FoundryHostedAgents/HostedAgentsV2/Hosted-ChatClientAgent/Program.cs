@@ -19,7 +19,7 @@ var agentName = Environment.GetEnvironmentVariable("AGENT_NAME")
 var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
-// then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
+// then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity running in foundry).
 TokenCredential credential = new ChainedTokenCredential(
     new DevTemporaryTokenCredential(),
     new DefaultAzureCredential());
