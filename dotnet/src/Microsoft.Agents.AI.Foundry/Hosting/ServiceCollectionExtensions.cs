@@ -87,11 +87,11 @@ public static class FoundryHostingExtensions
             services.TryAddKeyedSingleton(agent.Name, agent);
             services.TryAddKeyedSingleton(agent.Name, agentSessionStore);
         }
-        else
-        {
-            services.TryAddSingleton(agent);
-            services.TryAddSingleton(agentSessionStore);
-        }
+
+        // Also register as the default (non-keyed) agent so requests
+        // without an agent name can resolve it (e.g., local dev tooling).
+        services.TryAddSingleton(agent);
+        services.TryAddSingleton(agentSessionStore);
 
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
