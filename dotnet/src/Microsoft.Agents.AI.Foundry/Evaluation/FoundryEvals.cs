@@ -135,15 +135,15 @@ public sealed class FoundryEvals : IAgentEvaluator
         string evalName = "Agent Framework Eval",
         CancellationToken cancellationToken = default)
     {
-        // 1. Convert EvalItems to JSONL dicts
-        var dicts = new List<Dictionary<string, object>>(items.Count);
+        // 1. Convert EvalItems to typed payloads
+        var payloads = new List<WireEvalItemPayload>(items.Count);
         foreach (var item in items)
         {
-            dicts.Add(FoundryEvalConverter.ConvertEvalItem(item, this._splitter));
+            payloads.Add(FoundryEvalConverter.ConvertEvalItem(item, this._splitter));
         }
 
-        bool hasContext = dicts.Any(d => d.ContainsKey("context"));
-        bool hasTools = dicts.Any(d => d.ContainsKey("tool_definitions"));
+        bool hasContext = payloads.Any(p => p.Context is not null);
+        bool hasTools = payloads.Any(p => p.ToolDefinitions is { Count: > 0 });
 
         // Filter out tool evaluators if no items have tools; auto-add ToolCallAccuracy if tools present
         var evaluators = FilterToolEvaluators(this._evaluatorNames, hasTools);
@@ -153,16 +153,14 @@ public sealed class FoundryEvals : IAgentEvaluator
         }
 
         // 2. Create the evaluation definition
-        var createEvalPayload = new Dictionary<string, object>
+        var createEvalPayload = new WireCreateEvalRequest
         {
-            ["name"] = evalName,
-            ["data_source_config"] = new Dictionary<string, object>
+            Name = evalName,
+            DataSourceConfig = new WireCustomDataSourceConfig
             {
-                ["type"] = "custom",
-                ["item_schema"] = FoundryEvalConverter.BuildItemSchema(hasContext, hasTools),
-                ["include_sample_schema"] = true,
+                ItemSchema = FoundryEvalConverter.BuildItemSchema(hasContext, hasTools),
             },
-            ["testing_criteria"] = FoundryEvalConverter.BuildTestingCriteria(
+            TestingCriteria = FoundryEvalConverter.BuildTestingCriteria(
                 evaluators, this._model, includeDataMapping: true),
         };
 
@@ -179,20 +177,16 @@ public sealed class FoundryEvals : IAgentEvaluator
         }
 
         // 3. Create the evaluation run with inline JSONL data
-        var dataSource = new Dictionary<string, object>
+        var createRunPayload = new WireCreateRunRequest
         {
-            ["type"] = "jsonl",
-            ["source"] = new Dictionary<string, object>
+            Name = $"{evalName} Run",
+            DataSource = new WireJsonlDataSource
             {
-                ["type"] = "file_content",
-                ["content"] = dicts.ConvertAll(d => (object)new Dictionary<string, object> { ["item"] = d }),
+                Source = new WireFileContentSource
+                {
+                    Content = payloads.ConvertAll(p => new WireItemWrapper { Item = p }),
+                },
             },
-        };
-
-        var createRunPayload = new Dictionary<string, object>
-        {
-            ["name"] = $"{evalName} Run",
-            ["data_source"] = dataSource,
         };
 
         var createRunJson = JsonSerializer.Serialize(createRunPayload, s_jsonOptions);
@@ -304,31 +298,24 @@ public sealed class FoundryEvals : IAgentEvaluator
             : [Relevance, Coherence, TaskAdherence];
 
         // Create the evaluation definition with the appropriate data source scenario
-        Dictionary<string, object> dataSourceConfig;
-        Dictionary<string, object> runDataSource;
+        object dataSourceConfig;
+        object runDataSource;
 
         if (responseIdList is { Count: > 0 })
         {
             // Responses API path
-            dataSourceConfig = new Dictionary<string, object>
-            {
-                ["type"] = "azure_ai_source",
-                ["scenario"] = "responses",
-            };
+            dataSourceConfig = new WireAzureAiDataSourceConfig { Scenario = "responses" };
 
-            runDataSource = new Dictionary<string, object>
+            runDataSource = new WireResponsesDataSource
             {
-                ["type"] = "azure_ai_responses",
-                ["item_generation_params"] = new Dictionary<string, object>
+                ItemGenerationParams = new WireResponseRetrievalParams
                 {
-                    ["type"] = "response_retrieval",
-                    ["data_mapping"] = new Dictionary<string, object> { ["response_id"] = "{{item.resp_id}}" },
-                    ["source"] = new Dictionary<string, object>
+                    DataMapping = new Dictionary<string, string> { ["response_id"] = "{{item.resp_id}}" },
+                    Source = new WireFileContentSource
                     {
-                        ["type"] = "file_content",
-                        ["content"] = responseIdList.ConvertAll(id => (object)new Dictionary<string, object>
+                        Content = responseIdList.ConvertAll(id => new WireItemWrapper
                         {
-                            ["item"] = new Dictionary<string, object> { ["resp_id"] = id },
+                            Item = new WireResponseIdItem { RespId = id },
                         }),
                     },
                 },
@@ -337,36 +324,21 @@ public sealed class FoundryEvals : IAgentEvaluator
         else
         {
             // Traces path
-            dataSourceConfig = new Dictionary<string, object>
+            dataSourceConfig = new WireAzureAiDataSourceConfig { Scenario = "traces" };
+
+            runDataSource = new WireTracesDataSource
             {
-                ["type"] = "azure_ai_source",
-                ["scenario"] = "traces",
+                LookbackHours = lookbackHours,
+                TraceIds = traceIdList is { Count: > 0 } ? traceIdList : null,
+                AgentId = !string.IsNullOrEmpty(agentId) ? agentId : null,
             };
-
-            var traceSource = new Dictionary<string, object>
-            {
-                ["type"] = "azure_ai_traces",
-                ["lookback_hours"] = lookbackHours,
-            };
-
-            if (traceIdList is { Count: > 0 })
-            {
-                traceSource["trace_ids"] = traceIdList;
-            }
-
-            if (!string.IsNullOrEmpty(agentId))
-            {
-                traceSource["agent_id"] = agentId;
-            }
-
-            runDataSource = traceSource;
         }
 
-        var createEvalPayload = new Dictionary<string, object>
+        var createEvalPayload = new WireCreateEvalRequest
         {
-            ["name"] = evalName,
-            ["data_source_config"] = dataSourceConfig,
-            ["testing_criteria"] = FoundryEvalConverter.BuildTestingCriteria(resolvedEvaluators, model),
+            Name = evalName,
+            DataSourceConfig = dataSourceConfig,
+            TestingCriteria = FoundryEvalConverter.BuildTestingCriteria(resolvedEvaluators, model),
         };
 
         var createEvalJson = JsonSerializer.Serialize(createEvalPayload, s_jsonOptions);
@@ -381,10 +353,10 @@ public sealed class FoundryEvals : IAgentEvaluator
                 ?? throw new InvalidOperationException("Foundry eval creation returned a null ID.");
         }
 
-        var createRunPayload = new Dictionary<string, object>
+        var createRunPayload = new WireCreateRunRequest
         {
-            ["name"] = $"{evalName} Run",
-            ["data_source"] = runDataSource,
+            Name = $"{evalName} Run",
+            DataSource = runDataSource,
         };
 
         var createRunJson = JsonSerializer.Serialize(createRunPayload, s_jsonOptions);
@@ -478,15 +450,11 @@ public sealed class FoundryEvals : IAgentEvaluator
             ? evaluators
             : [Relevance, Coherence, TaskAdherence];
 
-        var createEvalPayload = new Dictionary<string, object>
+        var createEvalPayload = new WireCreateEvalRequest
         {
-            ["name"] = evalName,
-            ["data_source_config"] = new Dictionary<string, object>
-            {
-                ["type"] = "azure_ai_source",
-                ["scenario"] = "target_completions",
-            },
-            ["testing_criteria"] = FoundryEvalConverter.BuildTestingCriteria(resolvedEvaluators, model),
+            Name = evalName,
+            DataSourceConfig = new WireAzureAiDataSourceConfig { Scenario = "target_completions" },
+            TestingCriteria = FoundryEvalConverter.BuildTestingCriteria(resolvedEvaluators, model),
         };
 
         var createEvalJson = JsonSerializer.Serialize(createEvalPayload, s_jsonOptions);
@@ -501,24 +469,20 @@ public sealed class FoundryEvals : IAgentEvaluator
                 ?? throw new InvalidOperationException("Foundry eval creation returned a null ID.");
         }
 
-        var dataSource = new Dictionary<string, object>
+        var createRunPayload = new WireCreateRunRequest
         {
-            ["type"] = "azure_ai_target_completions",
-            ["target"] = target,
-            ["source"] = new Dictionary<string, object>
+            Name = $"{evalName} Run",
+            DataSource = new WireTargetCompletionsDataSource
             {
-                ["type"] = "file_content",
-                ["content"] = queryList.ConvertAll(q => (object)new Dictionary<string, object>
+                Target = target,
+                Source = new WireFileContentSource
                 {
-                    ["item"] = new Dictionary<string, object> { ["query"] = q },
-                }),
+                    Content = queryList.ConvertAll(q => new WireItemWrapper
+                    {
+                        Item = new WireQueryItem { Query = q },
+                    }),
+                },
             },
-        };
-
-        var createRunPayload = new Dictionary<string, object>
-        {
-            ["name"] = $"{evalName} Run",
-            ["data_source"] = dataSource,
         };
 
         var createRunJson = JsonSerializer.Serialize(createRunPayload, s_jsonOptions);

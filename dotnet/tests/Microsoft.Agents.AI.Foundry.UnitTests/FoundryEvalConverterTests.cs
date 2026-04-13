@@ -53,11 +53,9 @@ public sealed class FoundryEvalConverterTests
         var output = FoundryEvalConverter.ConvertMessage(msg);
 
         Assert.Single(output);
-        Assert.Equal("user", output[0]["role"]);
-        var content = (List<Dictionary<string, object>>)output[0]["content"];
-        Assert.Single(content);
-        Assert.Equal("text", content[0]["type"]);
-        Assert.Equal("Hello world", content[0]["text"]);
+        Assert.Equal("user", output[0].Role);
+        var text = Assert.IsType<WireTextContent>(Assert.Single(output[0].Content));
+        Assert.Equal("Hello world", text.Text);
     }
 
     [Fact]
@@ -70,9 +68,7 @@ public sealed class FoundryEvalConverterTests
         var output = FoundryEvalConverter.ConvertMessage(msg);
 
         Assert.Single(output);
-        var content = (List<Dictionary<string, object>>)output[0]["content"];
-        Assert.Single(content);
-        Assert.Equal("input_image", content[0]["type"]);
+        Assert.IsType<WireImageContent>(Assert.Single(output[0].Content));
     }
 
     [Fact]
@@ -85,11 +81,9 @@ public sealed class FoundryEvalConverterTests
         var output = FoundryEvalConverter.ConvertMessage(msg);
 
         Assert.Single(output);
-        var content = (List<Dictionary<string, object>>)output[0]["content"];
-        Assert.Single(content);
-        Assert.Equal("tool_call", content[0]["type"]);
-        Assert.Equal("c1", content[0]["tool_call_id"]);
-        Assert.Equal("get_weather", content[0]["name"]);
+        var toolCall = Assert.IsType<WireToolCallContent>(Assert.Single(output[0].Content));
+        Assert.Equal("c1", toolCall.ToolCallId);
+        Assert.Equal("get_weather", toolCall.Name);
     }
 
     [Fact]
@@ -101,8 +95,8 @@ public sealed class FoundryEvalConverterTests
         ]);
         var output = FoundryEvalConverter.ConvertMessage(msg);
 
-        var content = (List<Dictionary<string, object>>)output[0]["content"];
-        Assert.DoesNotContain("arguments", content[0].Keys);
+        var toolCall = Assert.IsType<WireToolCallContent>(Assert.Single(output[0].Content));
+        Assert.Null(toolCall.Arguments);
     }
 
     [Fact]
@@ -116,9 +110,9 @@ public sealed class FoundryEvalConverterTests
         var output = FoundryEvalConverter.ConvertMessage(msg);
 
         Assert.Equal(2, output.Count);
-        Assert.All(output, m => Assert.Equal("tool", m["role"]));
-        Assert.Equal("c1", output[0]["tool_call_id"]);
-        Assert.Equal("c2", output[1]["tool_call_id"]);
+        Assert.All(output, m => Assert.Equal("tool", m.Role));
+        Assert.Equal("c1", output[0].ToolCallId);
+        Assert.Equal("c2", output[1].ToolCallId);
     }
 
     [Fact]
@@ -128,10 +122,8 @@ public sealed class FoundryEvalConverterTests
         var output = FoundryEvalConverter.ConvertMessage(msg);
 
         Assert.Single(output);
-        var content = (List<Dictionary<string, object>>)output[0]["content"];
-        Assert.Single(content);
-        Assert.Equal("text", content[0]["type"]);
-        Assert.Equal(string.Empty, content[0]["text"]);
+        var text = Assert.IsType<WireTextContent>(Assert.Single(output[0].Content));
+        Assert.Equal(string.Empty, text.Text);
     }
 
     [Fact]
@@ -145,10 +137,9 @@ public sealed class FoundryEvalConverterTests
         var output = FoundryEvalConverter.ConvertMessage(msg);
 
         Assert.Single(output);
-        var content = (List<Dictionary<string, object>>)output[0]["content"];
-        Assert.Equal(2, content.Count);
-        Assert.Equal("text", content[0]["type"]);
-        Assert.Equal("input_image", content[1]["type"]);
+        Assert.Equal(2, output[0].Content.Count);
+        Assert.IsType<WireTextContent>(output[0].Content[0]);
+        Assert.IsType<WireImageContent>(output[0].Content[1]);
     }
 
     // ---------------------------------------------------------------
@@ -159,12 +150,12 @@ public sealed class FoundryEvalConverterTests
     public void ConvertEvalItem_BasicItem_HasQueryAndResponse()
     {
         var item = new EvalItem(query: "What is AI?", response: "Artificial Intelligence.");
-        var dict = FoundryEvalConverter.ConvertEvalItem(item);
+        var payload = FoundryEvalConverter.ConvertEvalItem(item);
 
-        Assert.Equal("What is AI?", dict["query"]);
-        Assert.Equal("Artificial Intelligence.", dict["response"]);
-        Assert.True(dict.ContainsKey("query_messages"));
-        Assert.True(dict.ContainsKey("response_messages"));
+        Assert.Equal("What is AI?", payload.Query);
+        Assert.Equal("Artificial Intelligence.", payload.Response);
+        Assert.NotNull(payload.QueryMessages);
+        Assert.NotNull(payload.ResponseMessages);
     }
 
     [Fact]
@@ -174,18 +165,18 @@ public sealed class FoundryEvalConverterTests
         {
             Context = "Some grounding context",
         };
-        var dict = FoundryEvalConverter.ConvertEvalItem(item);
+        var payload = FoundryEvalConverter.ConvertEvalItem(item);
 
-        Assert.Equal("Some grounding context", dict["context"]);
+        Assert.Equal("Some grounding context", payload.Context);
     }
 
     [Fact]
     public void ConvertEvalItem_WithoutContext_OmitsContextField()
     {
         var item = new EvalItem(query: "q", response: "r");
-        var dict = FoundryEvalConverter.ConvertEvalItem(item);
+        var payload = FoundryEvalConverter.ConvertEvalItem(item);
 
-        Assert.False(dict.ContainsKey("context"));
+        Assert.Null(payload.Context);
     }
 
     // ---------------------------------------------------------------
@@ -200,10 +191,11 @@ public sealed class FoundryEvalConverterTests
 
         Assert.Single(criteria);
         var entry = criteria[0];
-        Assert.Equal("azure_ai_evaluator", entry["type"]);
-        Assert.Equal("builtin.relevance", entry["evaluator_name"]);
+        Assert.Equal("azure_ai_evaluator", entry.Type);
+        Assert.Equal("builtin.relevance", entry.EvaluatorName);
 
-        var mapping = (Dictionary<string, string>)entry["data_mapping"];
+        Assert.NotNull(entry.DataMapping);
+        var mapping = entry.DataMapping;
         Assert.Equal("{{item.query}}", mapping["query"]);
         Assert.Equal("{{item.response}}", mapping["response"]);
     }
@@ -215,7 +207,8 @@ public sealed class FoundryEvalConverterTests
             ["intent_resolution"], "gpt-4o-mini", includeDataMapping: true);
 
         Assert.Single(criteria);
-        var mapping = (Dictionary<string, string>)criteria[0]["data_mapping"];
+        var mapping = criteria[0].DataMapping;
+        Assert.NotNull(mapping);
         Assert.Equal("{{item.query_messages}}", mapping["query"]);
         Assert.Equal("{{item.response_messages}}", mapping["response"]);
     }
@@ -227,7 +220,8 @@ public sealed class FoundryEvalConverterTests
             ["tool_call_accuracy"], "gpt-4o-mini", includeDataMapping: true);
 
         Assert.Single(criteria);
-        var mapping = (Dictionary<string, string>)criteria[0]["data_mapping"];
+        var mapping = criteria[0].DataMapping;
+        Assert.NotNull(mapping);
         Assert.True(mapping.ContainsKey("tool_definitions"));
         Assert.Equal("{{item.tool_definitions}}", mapping["tool_definitions"]);
     }
@@ -239,7 +233,8 @@ public sealed class FoundryEvalConverterTests
             ["groundedness"], "gpt-4o-mini", includeDataMapping: true);
 
         Assert.Single(criteria);
-        var mapping = (Dictionary<string, string>)criteria[0]["data_mapping"];
+        var mapping = criteria[0].DataMapping;
+        Assert.NotNull(mapping);
         Assert.True(mapping.ContainsKey("context"));
         Assert.Equal("{{item.context}}", mapping["context"]);
     }
@@ -251,7 +246,7 @@ public sealed class FoundryEvalConverterTests
             ["relevance"], "gpt-4o-mini", includeDataMapping: false);
 
         Assert.Single(criteria);
-        Assert.False(criteria[0].ContainsKey("data_mapping"));
+        Assert.Null(criteria[0].DataMapping);
     }
 
     // ---------------------------------------------------------------
@@ -262,32 +257,29 @@ public sealed class FoundryEvalConverterTests
     public void BuildItemSchema_Default_HasQueryResponseAndConversationFields()
     {
         var schema = FoundryEvalConverter.BuildItemSchema();
-        var properties = (Dictionary<string, object>)schema["properties"];
 
-        Assert.True(properties.ContainsKey("query"));
-        Assert.True(properties.ContainsKey("response"));
-        Assert.True(properties.ContainsKey("query_messages"));
-        Assert.True(properties.ContainsKey("response_messages"));
-        Assert.False(properties.ContainsKey("context"));
-        Assert.False(properties.ContainsKey("tool_definitions"));
+        Assert.True(schema.Properties.ContainsKey("query"));
+        Assert.True(schema.Properties.ContainsKey("response"));
+        Assert.True(schema.Properties.ContainsKey("query_messages"));
+        Assert.True(schema.Properties.ContainsKey("response_messages"));
+        Assert.False(schema.Properties.ContainsKey("context"));
+        Assert.False(schema.Properties.ContainsKey("tool_definitions"));
     }
 
     [Fact]
     public void BuildItemSchema_WithContext_IncludesContextProperty()
     {
         var schema = FoundryEvalConverter.BuildItemSchema(hasContext: true);
-        var properties = (Dictionary<string, object>)schema["properties"];
 
-        Assert.True(properties.ContainsKey("context"));
+        Assert.True(schema.Properties.ContainsKey("context"));
     }
 
     [Fact]
     public void BuildItemSchema_WithTools_IncludesToolDefinitionsProperty()
     {
         var schema = FoundryEvalConverter.BuildItemSchema(hasTools: true);
-        var properties = (Dictionary<string, object>)schema["properties"];
 
-        Assert.True(properties.ContainsKey("tool_definitions"));
+        Assert.True(schema.Properties.ContainsKey("tool_definitions"));
     }
 
     // ---------------------------------------------------------------
@@ -307,11 +299,10 @@ public sealed class FoundryEvalConverterTests
         var output = FoundryEvalConverter.ConvertMessage(msg);
 
         Assert.Single(output);
-        var content = (List<Dictionary<string, object>>)output[0]["content"];
-        Assert.Equal(2, content.Count);
-        Assert.Equal("text", content[0]["type"]);
-        Assert.Equal("Describe this image", content[0]["text"]);
-        Assert.Equal("input_image", content[1]["type"]);
-        Assert.Contains("data:image/png;base64,", (string)content[1]["image_url"]);
+        Assert.Equal(2, output[0].Content.Count);
+        var text = Assert.IsType<WireTextContent>(output[0].Content[0]);
+        Assert.Equal("Describe this image", text.Text);
+        var image = Assert.IsType<WireImageContent>(output[0].Content[1]);
+        Assert.Contains("data:image/png;base64,", image.ImageUrl);
     }
 }
