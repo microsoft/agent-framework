@@ -767,13 +767,18 @@ public sealed class FoundryEvals : IAgentEvaluator
                         Interpretation = interpretation,
                     };
                 }
-                else
+                else if (passed.HasValue)
                 {
-                    evalResult.Metrics[metricName] = new BooleanMetric(metricName, passed ?? false)
+                    evalResult.Metrics[metricName] = new BooleanMetric(metricName, passed.Value)
                     {
                         Interpretation = interpretation,
                     };
                 }
+
+                // When neither score nor passed is present, the evaluator returned no
+                // actionable data (e.g. an error or informational entry). Skip the metric
+                // so it doesn't falsely influence ItemPassed. The raw data is still
+                // available in DetailedItems for diagnostics.
             }
         }
 
