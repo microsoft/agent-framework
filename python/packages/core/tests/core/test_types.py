@@ -194,6 +194,8 @@ def test_data_content_detect_image_format_from_base64():
     # Test error handling
     with pytest.raises(ValueError, match="Invalid base64 data provided."):
         detect_media_type_from_base64(data_str="invalid_base64!")
+    with pytest.raises(ValueError, match="Invalid base64 data provided."):
+        detect_media_type_from_base64(data_str="")
 
     with pytest.raises(ValueError, match="Provide exactly one of data_bytes, data_str, or data_uri."):
         detect_media_type_from_base64()

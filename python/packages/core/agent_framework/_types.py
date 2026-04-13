@@ -125,6 +125,8 @@ def detect_media_type_from_base64(
     if data_str is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
+        if not data_str:
+            raise ValueError("Invalid base64 data provided.")
         try:
             data = base64.b64decode(data_str)
         except Exception as exc:
