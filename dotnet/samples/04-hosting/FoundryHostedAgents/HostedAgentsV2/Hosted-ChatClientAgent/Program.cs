@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.Projects;
+using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
 using Microsoft.Agents.AI;
@@ -17,8 +18,14 @@ var agentName = Environment.GetEnvironmentVariable("AGENT_NAME")
 
 var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
 
+// Use a chained credential: try a temporary dev token first (for local Docker debugging),
+// then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
+TokenCredential credential = new ChainedTokenCredential(
+    new DevTemporaryTokenCredential(),
+    new DefaultAzureCredential());
+
 // Create the agent via the AI project client using the Responses API.
-AIAgent agent = new AIProjectClient(projectEndpoint, new DefaultAzureCredential())
+AIAgent agent = new AIProjectClient(projectEndpoint, credential)
     .AsAIAgent(
         model: deployment,
         instructions: """
@@ -44,3 +51,43 @@ if (app.Environment.IsDevelopment())
 }
 
 app.Run();
+
+/// <summary>
+/// A <see cref="TokenCredential"/> for local Docker debugging only.
+///
+/// When debugging and testing a hosted agent in a local Docker container, Azure CLI
+/// and other interactive credentials are not available. This credential reads a
+/// pre-fetched bearer token from the <c>AZURE_BEARER_TOKEN</c> environment variable.
+///
+/// This should NOT be used in production — tokens expire (~1 hour) and cannot be refreshed.
+/// In production, the Foundry platform injects a managed identity automatically.
+///
+/// Generate a token on your host and pass it to the container:
+///   export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
+///   docker run -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN ...
+/// </summary>
+internal sealed class DevTemporaryTokenCredential : TokenCredential
+{
+    private const string EnvironmentVariable = "AZURE_BEARER_TOKEN";
+
+    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
+    {
+        return GetAccessToken();
+    }
+
+    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
+    {
+        return new ValueTask<AccessToken>(GetAccessToken());
+    }
+
+    private static AccessToken GetAccessToken()
+    {
+        var token = Environment.GetEnvironmentVariable(EnvironmentVariable);
+        if (string.IsNullOrEmpty(token))
+        {
+            throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
+        }
+
+        return new AccessToken(token, DateTimeOffset.UtcNow.AddHours(1));
+    }
+}

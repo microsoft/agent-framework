@@ -1,20 +1,9 @@
-name: simple-agent
-description: >
-  A simple general-purpose AI assistant hosted as a Foundry Hosted Agent.
-metadata:
-  tags:
-    - AI Agent Hosting
-    - Simple Agent
-template:
-  name: simple-agent
-  kind: hosted
-  protocols:
-    - protocol: responses
-      version: v1
-  environment_variables:
-    - name: AZURE_AI_PROJECT_ENDPOINT
-      value: ${AZURE_AI_PROJECT_ENDPOINT}
-    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
-      value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
-    - name: AGENT_NAME
-      value: ${AGENT_NAME}
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
+kind: hosted
+name: hosted-chat-client-agent
+protocols:
+  - protocol: responses
+    version: 1.0.0
+resources:
+  cpu: "0.25"
+  memory: 0.5Gi
