@@ -2951,7 +2951,10 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             raise
         except Exception as exc:
             self._stream_error = exc
-            await self._run_cleanup_hooks()
+            try:
+                await self._run_cleanup_hooks()
+            finally:
+                self._stream_error = None
             raise
         if self._map_update is not None:
             update = self._map_update(update)  # type: ignore[assignment]

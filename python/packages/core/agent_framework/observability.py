@@ -1323,13 +1323,11 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 from ._types import ChatResponse
 
                 try:
-                    if not result_stream.consumed:
-                        # Stream did not complete normally (e.g., it errored). Skip
-                        # get_final_response() to avoid firing result hooks such as
-                        # after_run context providers on error paths. Capture the
-                        # stream error on the span so it is not silently swallowed.
-                        if result_stream.stream_error is not None:
-                            capture_exception(span=span, exception=result_stream.stream_error, timestamp=time_ns())
+                    if result_stream.stream_error is not None:
+                        # Stream errored; skip get_final_response() to avoid firing
+                        # result hooks such as after_run context providers on error
+                        # paths. Capture the error on the span before returning.
+                        capture_exception(span=span, exception=result_stream.stream_error, timestamp=time_ns())
                         return
                     response: ChatResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
@@ -1587,13 +1585,11 @@ class AgentTelemetryLayer:
                 from ._types import AgentResponse
 
                 try:
-                    if not result_stream.consumed:
-                        # Stream did not complete normally (e.g., it errored). Skip
-                        # get_final_response() to avoid firing result hooks such as
-                        # after_run context providers on error paths. Capture the
-                        # stream error on the span so it is not silently swallowed.
-                        if result_stream.stream_error is not None:
-                            capture_exception(span=span, exception=result_stream.stream_error, timestamp=time_ns())
+                    if result_stream.stream_error is not None:
+                        # Stream errored; skip get_final_response() to avoid firing
+                        # result hooks such as after_run context providers on error
+                        # paths. Capture the error on the span before returning.
+                        capture_exception(span=span, exception=result_stream.stream_error, timestamp=time_ns())
                         return
                     response: AgentResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
