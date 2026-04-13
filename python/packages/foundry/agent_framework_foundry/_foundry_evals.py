@@ -692,7 +692,7 @@ class FoundryEvals:
                 ]
             if item.context:
                 d["context"] = item.context
-            if item.expected_output:
+            if item.expected_output is not None:
                 d["ground_truth"] = item.expected_output
             dicts.append(d)
 

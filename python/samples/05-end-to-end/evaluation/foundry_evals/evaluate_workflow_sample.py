@@ -5,7 +5,7 @@
 This sample demonstrates three patterns:
 1. Post-hoc: Run the workflow, then evaluate the result you already have.
 2. Run + evaluate: Pass queries and let evaluate_workflow() run the workflow for you.
-3. Similarity: Evaluate an agent's output against ground-truth reference answers.
+3. Similarity: Evaluate the workflow's final output against ground-truth reference answers.
 
 Patterns 1 & 2 return a list of results (one per provider), each with a per-agent
 breakdown in sub_results so you can identify which agent is underperforming.

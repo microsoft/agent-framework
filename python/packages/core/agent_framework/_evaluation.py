@@ -1732,6 +1732,8 @@ async def evaluate_workflow(
     if workflow_result is None and queries is None:
         raise ValueError("Provide either 'workflow_result' or 'queries'.")
 
+    if expected_output is not None and queries is None:
+        raise ValueError("Provide 'queries' when using 'expected_output'; 'expected_output' is not supported with 'workflow_result' only.")
     if expected_output is not None and queries is not None and len(expected_output) != len(queries):
         raise ValueError(f"Got {len(queries)} queries but {len(expected_output)} expected_output values.")
 
