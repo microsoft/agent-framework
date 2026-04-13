@@ -48,7 +48,8 @@ jobs:
             .
             .github
             dotnet
-            workflow-samples
+            python
+            declarative-agents
 
       - name: Setup dotnet
         uses: actions/setup-dotnet@v5.2.0
