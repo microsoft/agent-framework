@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from asyncio import CancelledError
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -8,12 +9,12 @@ from a2a.server.tasks import TaskUpdater
 from a2a.types import FilePart, FileWithBytes, FileWithUri, Part, TaskState, TextPart
 from a2a.utils import new_task
 from agent_framework import (
-    Agent,
-    Content,
     Message,
-    WorkflowAgent,
+    SupportsAgentRun,
 )
 from typing_extensions import override
+
+logger = logging.getLogger("agent_framework.a2a")
 
 
 class A2AExecutor(AgentExecutor):
@@ -70,7 +71,7 @@ class A2AExecutor(AgentExecutor):
         agent: The AI agent to execute.
     """
 
-    def __init__(self, agent: Agent | WorkflowAgent):
+    def __init__(self, agent: SupportsAgentRun):
         """Initialize the A2AExecutor with the specified agent.
 
         Example:
@@ -86,7 +87,7 @@ class A2AExecutor(AgentExecutor):
             agent: The AI agent or workflow to execute.
         """
         super().__init__()
-        self._agent: Agent | WorkflowAgent = agent
+        self._agent: SupportsAgentRun = agent
 
     @override
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -123,11 +124,8 @@ class A2AExecutor(AgentExecutor):
 
             session = self._agent.create_session(session_id=task.context_id)
 
-            # Create a Message from the user query
-            user_message = Message(role="user", contents=[Content.from_text(text=query)])
-
             # Run the agent with the message list
-            response = await self._agent.run(user_message, session=session)
+            response = await self._agent.run(query, session=session)
 
             response_messages = response.messages
             if not isinstance(response_messages, list):
@@ -186,7 +184,9 @@ class A2AExecutor(AgentExecutor):
                 parts.append(Part(root=FilePart(file=FileWithBytes(bytes=base64_str, mime_type=content.media_type))))
             elif content.type == "uri" and content.uri:
                 parts.append(Part(root=FilePart(file=FileWithUri(uri=content.uri, mime_type=content.media_type))))
-            # Silently skip unsupported content types
+            else:
+                # Silently skip unsupported content types
+                logger.warning("A2AExecutor does not yet support content type: %s. Omitted.", content.type)
 
         if parts:
             await updater.update_status(
