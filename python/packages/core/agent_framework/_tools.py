@@ -1842,6 +1842,9 @@ def _replace_approval_contents_with_results(
                     # Put back the function call content only if it doesn't exist
                     msg.contents[content_idx] = content.function_call
             elif content.type == "function_approval_response":
+                # Skip hosted tool approvals — they must pass through to the API unchanged
+                if _is_hosted_tool_approval(content):
+                    continue
                 call_id = content.function_call.call_id
                 if content.approved and content.id in fcc_todo:
                     # Check if we already replaced a placeholder for this call_id

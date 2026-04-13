@@ -1013,13 +1013,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                     elif isinstance(label_data, dict):
                         try:
                             labels.append(ContentLabel.from_dict(label_data))
-                        except Exception:
+                        except Exception:  # nosec B110 - best-effort label extraction
                             pass
                 # Fall back to "label" for backward compatibility
                 elif "label" in value and isinstance(value.get("label"), dict):
                     try:
                         labels.append(ContentLabel.from_dict(value["label"]))
-                    except Exception:
+                    except Exception:  # nosec B110 - best-effort label extraction
                         pass
                 # Recurse into dict values
                 for v in value.values():

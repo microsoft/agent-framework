@@ -1198,6 +1198,6 @@ Potential improvements:
 
 ## References
 
-- [ADR-0007: Agent Filtering Middleware](../../../docs/decisions/0007-agent-filtering-middleware.md)
-- [Security Module](_security.py) — All security primitives, middleware, tools, and configuration
+- [ADR-0007: Agent Filtering Middleware](../../../../docs/decisions/0007-agent-filtering-middleware.md)
+- [Security Module](../../../packages/core/agent_framework/_security.py) — All security primitives, middleware, tools, and configuration
 
