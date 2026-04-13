@@ -1,7 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
-from collections.abc import AsyncIterable
+import json
+import logging
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
 
 from agent_framework import ChatOptions, Content, HistoryProvider, Message, RawAgent, SupportsAgentRun
 from agent_framework._telemetry import append_to_user_agent
@@ -35,7 +39,17 @@ from azure.ai.agentserver.responses.models import (
     SummaryTextContent,
     TextContent,
 )
+from azure.ai.agentserver.responses.streaming._builders import (
+    OutputItemFunctionCallBuilder,
+    OutputItemMcpCallBuilder,
+    OutputItemMessageBuilder,
+    OutputItemReasoningItemBuilder,
+    ReasoningSummaryPartBuilder,
+    TextContentBuilder,
+)
 from typing_extensions import Any, Sequence, cast
+
+logger = logging.getLogger(__name__)
 
 
 class ResponsesHostServer(ResponsesAgentServerHost):
@@ -67,13 +81,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         """
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
-        self._agent = agent
-        for provider in getattr(self._agent, "context_providers", []):
+        for provider in getattr(agent, "context_providers", []):
             if isinstance(provider, HistoryProvider) and provider.load_messages:
                 raise RuntimeError(
                     "There shouldn't be a history provider with `load_messages=True` already present. "
                     "History is managed by the hosting infrastructure."
                 )
+        self._agent = agent
+
+        self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
+
+        # Append the user agent prefix for telemetry purposes
+        append_to_user_agent(self.USER_AGENT_PREFIX)
 
         self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
 
@@ -98,8 +117,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         yield stream.emit_created()
         yield stream.emit_in_progress()
 
-        # Add reasoning
-
         if request.stream is None or request.stream is False:
             # Run the agent in non-streaming mode
             if isinstance(self._agent, RawAgent):
@@ -107,33 +124,188 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 response = await raw_agent.run(messages, stream=False, options=chat_options)
             else:
                 response = await self._agent.run(messages, stream=False)
-            for item in stream.output_item_message(response.text):
-                yield item
+
+            for message in response.messages:
+                for content in message.contents:
+                    async for item in _to_outputs(stream, content):
+                        yield item
+
             yield stream.emit_completed()
             return
 
         # Start the streaming response
-        message_item = stream.add_output_item_message()
-        yield message_item.emit_added()
-        text_content = message_item.add_text_content()
-        yield text_content.emit_added()
-
-        # Invoke the MAF agent
         if isinstance(self._agent, RawAgent):
             raw_agent = cast("RawAgent[Any]", self._agent)  # pyright: ignore[reportUnknownMemberType]
             response_stream = raw_agent.run(messages, stream=True, options=chat_options)
         else:
             response_stream = self._agent.run(messages, stream=True)
-        async for update in response_stream:
-            if update.text:
-                yield text_content.emit_delta(update.text)
 
-        # Complete the message
-        yield text_content.emit_text_done()
-        yield text_content.emit_done()
-        yield message_item.emit_done()
+        # Track the current active output item builder for streaming;
+        # lazily created on matching content, closed when a different type arrives.
+        tracker = _OutputItemTracker(stream)
+
+        async for update in response_stream:
+            for content in update.contents:
+                for event in tracker.handle(content):
+                    yield event
+                if tracker.needs_async:
+                    async for item in _to_outputs(stream, content):
+                        yield item
+                    tracker.needs_async = False
+
+        # Close any remaining active builder
+        for event in tracker.close():
+            yield event
 
         yield stream.emit_completed()
+
+
+# region Active Builder State
+
+
+class _OutputItemTracker:
+    """Tracks the current active output item builder during streaming.
+
+    Handles lazy creation, delta emission, and closing of streaming builders
+    for text messages, reasoning, function calls, and MCP calls.
+    """
+
+    _DELTA_TYPES = frozenset({"text", "text_reasoning", "function_call", "mcp_server_tool_call"})
+
+    def __init__(self, stream: ResponseEventStream) -> None:
+        self._stream = stream
+        self._active_type: str | None = None
+        self._active_id: str | None = None
+        # Accumulated delta text for the current active builder
+        self._accumulated: list[str] = []
+        # Builder state — only one is active at a time
+        self._message_item: OutputItemMessageBuilder | None = None
+        self._text_content: TextContentBuilder | None = None
+        self._reasoning_item: OutputItemReasoningItemBuilder | None = None
+        self._summary_part: ReasoningSummaryPartBuilder | None = None
+        self._fc_builder: OutputItemFunctionCallBuilder | None = None
+        self._mcp_builder: OutputItemMcpCallBuilder | None = None
+        self.needs_async = False
+
+    def handle(self, content: Content) -> Generator[ResponseStreamEvent, None, None]:
+        """Process a content item, yielding sync events.
+
+        Sets ``needs_async = True`` if the caller must also drain an
+        async ``_to_outputs`` call for this content.
+        """
+        if content.type == "text" and content.text is not None:
+            if self._active_type != "text":
+                yield from self._close()
+                yield from self._open_message()
+            assert self._text_content is not None  # noqa: S101
+            self._accumulated.append(content.text)
+            yield self._text_content.emit_delta(content.text)
+
+        elif content.type == "text_reasoning" and content.text is not None:
+            if self._active_type != "text_reasoning":
+                yield from self._close()
+                yield from self._open_reasoning()
+            assert self._summary_part is not None  # noqa: S101
+            self._accumulated.append(content.text)
+            yield self._summary_part.emit_text_delta(content.text)
+
+        elif content.type == "function_call" and content.call_id is not None:
+            if self._active_type != "function_call" or self._active_id != content.call_id:
+                yield from self._close()
+                yield from self._open_function_call(content)
+            assert self._fc_builder is not None  # noqa: S101
+            args_str = _arguments_to_str(content.arguments)
+            self._accumulated.append(args_str)
+            yield self._fc_builder.emit_arguments_delta(args_str)
+
+        elif content.type == "mcp_server_tool_call" and content.tool_name:
+            key = f"{content.server_name or 'default'}::{content.tool_name}"
+            if self._active_type != "mcp_server_tool_call" or self._active_id != key:
+                yield from self._close()
+                yield from self._open_mcp_call(content)
+            assert self._mcp_builder is not None  # noqa: S101
+            args_str = _arguments_to_str(content.arguments)
+            self._accumulated.append(args_str)
+            yield self._mcp_builder.emit_arguments_delta(args_str)
+
+        else:
+            yield from self._close()
+            self.needs_async = True
+
+    def close(self) -> Generator[ResponseStreamEvent, None, None]:
+        """Close any remaining active builder."""
+        yield from self._close()
+
+    # -- Private open/close helpers --
+
+    def _open_message(self) -> Generator[ResponseStreamEvent, None, None]:
+        self._message_item = self._stream.add_output_item_message()
+        self._text_content = self._message_item.add_text_content()
+        self._active_type = "text"
+        self._active_id = None
+        yield self._message_item.emit_added()
+        yield self._text_content.emit_added()
+
+    def _open_reasoning(self) -> Generator[ResponseStreamEvent, None, None]:
+        self._reasoning_item = self._stream.add_output_item_reasoning_item()
+        self._summary_part = self._reasoning_item.add_summary_part()
+        self._active_type = "text_reasoning"
+        self._active_id = None
+        yield self._reasoning_item.emit_added()
+        yield self._summary_part.emit_added()
+
+    def _open_function_call(self, content: Content) -> Generator[ResponseStreamEvent, None, None]:
+        self._fc_builder = self._stream.add_output_item_function_call(
+            name=content.name or "",
+            call_id=content.call_id or "",
+        )
+        self._active_type = "function_call"
+        self._active_id = content.call_id
+        yield self._fc_builder.emit_added()
+
+    def _open_mcp_call(self, content: Content) -> Generator[ResponseStreamEvent, None, None]:
+        self._mcp_builder = self._stream.add_output_item_mcp_call(
+            server_label=content.server_name or "default",
+            name=content.tool_name or "",
+        )
+        self._active_type = "mcp_server_tool_call"
+        self._active_id = f"{content.server_name or 'default'}::{content.tool_name}"
+        yield self._mcp_builder.emit_added()
+
+    def _close(self) -> Generator[ResponseStreamEvent, None, None]:
+        accumulated = "".join(self._accumulated)
+
+        if self._active_type == "text" and self._text_content and self._message_item:
+            yield self._text_content.emit_text_done(accumulated)
+            yield self._text_content.emit_done()
+            yield self._message_item.emit_done()
+            self._text_content = None
+            self._message_item = None
+
+        elif self._active_type == "text_reasoning" and self._summary_part and self._reasoning_item:
+            yield self._summary_part.emit_text_done(accumulated)
+            yield self._summary_part.emit_done()
+            yield self._reasoning_item.emit_done()
+            self._summary_part = None
+            self._reasoning_item = None
+
+        elif self._active_type == "function_call" and self._fc_builder:
+            yield self._fc_builder.emit_arguments_done(accumulated)
+            yield self._fc_builder.emit_done()
+            self._fc_builder = None
+
+        elif self._active_type == "mcp_server_tool_call" and self._mcp_builder:
+            yield self._mcp_builder.emit_arguments_done(accumulated)
+            yield self._mcp_builder.emit_completed()
+            yield self._mcp_builder.emit_done()
+            self._mcp_builder = None
+
+        self._active_type = None
+        self._active_id = None
+        self._accumulated.clear()
+
+
+# endregion
 
 
 # region Option Conversion
@@ -165,7 +337,7 @@ def _to_chat_options(request: CreateResponse) -> ChatOptions:
 # endregion
 
 
-# region Message Conversion
+# region Input Message Conversion
 
 
 def _to_messages(history: Sequence[OutputItem]) -> list[Message]:
@@ -300,6 +472,113 @@ def _convert_message_content(content: MessageContent) -> Content:
         return Content.from_uri(screenshot.image_url)
 
     raise ValueError(f"Unsupported MessageContent type: {content.type}")
+
+
+# endregion
+
+# region Output Item Conversion
+
+
+def _arguments_to_str(arguments: str | Mapping[str, Any] | None) -> str:
+    """Convert arguments to a JSON string.
+
+    Args:
+        arguments: The arguments to convert, can be a string, mapping, or None.
+
+    Returns:
+        The arguments as a JSON string.
+    """
+    if arguments is None:
+        return ""
+    if isinstance(arguments, str):
+        return arguments
+    return json.dumps(arguments)
+
+
+async def _to_outputs(stream: ResponseEventStream, content: Content) -> AsyncIterator[ResponseStreamEvent]:
+    """Converts a Content object to an async sequence of ResponseStreamEvent objects.
+
+    Args:
+        stream: The ResponseEventStream to use for building events.
+        content: The Content to convert.
+
+    Yields:
+        ResponseStreamEvent: The converted event objects.
+
+    Raises:
+        ValueError: If the Content type is not supported.
+    """
+    if content.type == "text" and content.text is not None:
+        async for event in stream.aoutput_item_message(content.text):
+            yield event
+    elif content.type == "text_reasoning" and content.text is not None:
+        async for event in stream.aoutput_item_reasoning_item(content.text):
+            yield event
+    elif content.type == "function_call":
+        async for event in stream.aoutput_item_function_call(
+            content.name,  # type: ignore[arg-type]
+            content.call_id,  # type: ignore[arg-type]
+            _arguments_to_str(content.arguments),
+        ):
+            yield event
+    elif content.type == "function_result":
+        async for event in stream.aoutput_item_function_call_output(
+            content.call_id,  # type: ignore[arg-type]
+            str(content.result or ""),
+        ):
+            yield event
+    elif content.type == "image_generation_tool_result" and content.outputs is not None:
+        async for event in stream.aoutput_item_image_gen_call(str(content.outputs)):
+            yield event
+    elif content.type == "mcp_server_tool_call":
+        mcp_call = stream.add_output_item_mcp_call(
+            server_label=content.server_name or "default",
+            name=content.tool_name or "",
+        )
+        yield mcp_call.emit_added()
+        async for event in mcp_call.aarguments(_arguments_to_str(content.arguments)):
+            yield event
+        yield mcp_call.emit_completed()
+        yield mcp_call.emit_done()
+    elif content.type == "mcp_server_tool_result":
+        output = (
+            content.output
+            if isinstance(content.output, str)
+            else str(content.output)
+            if content.output is not None
+            else ""
+        )
+        async for event in stream.aoutput_item_custom_tool_call_output(content.call_id or "", output):
+            yield event
+    elif content.type == "shell_tool_call":
+        action: dict[str, Any] = {"type": "exec", "command": content.commands or []}
+        async for event in stream.aoutput_item_function_shell_call(
+            content.call_id or "",
+            action,
+            {},
+            status=content.status or "completed",
+        ):
+            yield event
+    elif content.type == "shell_tool_result":
+        output_items: list[dict[str, Any]] = []
+        if content.outputs:
+            for out in content.outputs:
+                output_items.append({
+                    "type": "shell_output",
+                    "stdout": getattr(out, "stdout", "") or "",
+                    "stderr": getattr(out, "stderr", "") or "",
+                    "exit_code": getattr(out, "exit_code", None),
+                })
+        async for event in stream.aoutput_item_function_shell_call_output(
+            content.call_id or "",
+            output_items,
+            status=content.status or "completed",
+            max_output_length=content.max_output_length,
+        ):
+            yield event
+    else:
+        # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
+        logger.warning(f"Content type '{content.type}' is not supported yet.")
 
 
 # endregion
