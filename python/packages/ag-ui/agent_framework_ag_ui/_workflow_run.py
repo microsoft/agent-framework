@@ -29,6 +29,7 @@ from ._message_adapters import normalize_agui_input_messages
 from ._run_common import (
     FlowState,
     _build_run_finished_event,
+    _close_reasoning_block,
     _emit_content,
     _extract_resume_payload,
     _normalize_resume_interrupts,
@@ -124,14 +125,28 @@ def _request_payload_from_request_event(request_event: Any) -> dict[str, Any] | 
 
 
 def _extract_responses_from_messages(messages: list[Message]) -> dict[str, Any]:
-    """Extract request-info responses from incoming tool/function-result messages."""
+    """Extract request-info responses from incoming messages.
+
+    Handles both ``function_result`` content (keyed by ``call_id``) and
+    ``function_approval_response`` content (keyed by ``id``), so that
+    approval decisions sent via messages are forwarded into the workflow
+    responses map.
+    """
     responses: dict[str, Any] = {}
     for message in messages:
         for content in message.contents:
-            if content.type != "function_result" or not content.call_id:
-                continue
-            value = _coerce_json_value(content.result)
-            responses[str(content.call_id)] = value
+            if content.type == "function_result" and content.call_id:
+                value = _coerce_json_value(content.result)
+                responses[str(content.call_id)] = value
+            elif content.type == "function_approval_response" and getattr(content, "id", None):
+                approval_value: dict[str, Any] = {
+                    "approved": getattr(content, "approved", False),
+                    "id": str(content.id),  # type: ignore[union-attr]
+                }
+                func_call = getattr(content, "function_call", None)
+                if func_call is not None:
+                    approval_value["function_call"] = make_json_safe(func_call.to_dict())
+                responses[str(content.id)] = approval_value  # type: ignore[union-attr]
     return responses
 
 
@@ -714,6 +729,9 @@ async def run_workflow_stream(
             yield RunErrorEvent(message=str(exc), code=type(exc).__name__)
             run_error_emitted = True
         terminal_emitted = True
+
+    for reasoning_evt in _close_reasoning_block(flow):
+        yield reasoning_evt
 
     for end_event in _drain_open_message():
         yield end_event

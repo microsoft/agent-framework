@@ -39,7 +39,7 @@ public static class Program
     {
         // Set up the Azure OpenAI client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
         var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create agents
@@ -310,6 +310,7 @@ internal sealed class EmailAssistantExecutor : Executor<AnalysisResult, EmailRes
 /// <summary>
 /// Executor that sends emails.
 /// </summary>
+[YieldsOutput(typeof(string))]
 internal sealed class SendEmailExecutor() : Executor<EmailResponse>("SendEmailExecutor")
 {
     /// <summary>
@@ -322,6 +323,7 @@ internal sealed class SendEmailExecutor() : Executor<EmailResponse>("SendEmailEx
 /// <summary>
 /// Executor that handles spam messages.
 /// </summary>
+[YieldsOutput(typeof(string))]
 internal sealed class HandleSpamExecutor() : Executor<AnalysisResult>("HandleSpamExecutor")
 {
     /// <summary>
@@ -343,6 +345,7 @@ internal sealed class HandleSpamExecutor() : Executor<AnalysisResult>("HandleSpa
 /// <summary>
 /// Executor that handles uncertain messages.
 /// </summary>
+[YieldsOutput(typeof(string))]
 internal sealed class HandleUncertainExecutor() : Executor<AnalysisResult>("HandleUncertainExecutor")
 {
     /// <summary>

@@ -4,28 +4,14 @@
 
 using System.ClientModel;
 using Microsoft.Agents.AI;
-using OpenAI;
-using OpenAI.Chat;
+using OpenAI.Responses;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-4o-mini";
+var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-5.4-mini";
 
-AIAgent agent = new OpenAIClient(apiKey)
-    .GetChatClient(model)
-    .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+AIAgent agent =
+    new ResponsesClient(new ApiKeyCredential(apiKey))
+    .AsAIAgent(model: model, instructions: "You are good at telling jokes.", name: "Joker");
 
-UserChatMessage chatMessage = new("Tell me a joke about a pirate.");
-
-// Invoke the agent and output the text result.
-ChatCompletion chatCompletion = await agent.RunAsync([chatMessage]);
-Console.WriteLine(chatCompletion.Content.Last().Text);
-
-// Invoke the agent with streaming support.
-AsyncCollectionResult<StreamingChatCompletionUpdate> completionUpdates = agent.RunStreamingAsync([chatMessage]);
-await foreach (StreamingChatCompletionUpdate completionUpdate in completionUpdates)
-{
-    if (completionUpdate.ContentUpdate.Count > 0)
-    {
-        Console.WriteLine(completionUpdate.ContentUpdate[0].Text);
-    }
-}
+// Once you have the agent, you can invoke it like any other AIAgent.
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));

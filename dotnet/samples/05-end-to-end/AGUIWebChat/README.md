@@ -15,7 +15,7 @@ The server requires Azure OpenAI credentials. Set the following environment vari
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"  # e.g., "gpt-4o"
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"  # e.g., "gpt-5.4-mini"
 ```
 
 The server uses `DefaultAzureCredential` for authentication. Ensure you are logged in using one of the following methods:
@@ -74,7 +74,7 @@ AzureOpenAIClient azureOpenAIClient = new AzureOpenAIClient(
 ChatClient chatClient = azureOpenAIClient.GetChatClient(deploymentName);
 
 // Create AI agent
-ChatClientAgent agent = chatClient.AsIChatClient().AsAIAgent(
+ChatClientAgent agent = chatClient.AsAIAgent(
     name: "ChatAssistant",
     instructions: "You are a helpful assistant.");
 
@@ -162,7 +162,7 @@ dotnet run
 Edit the instructions in `Server/Program.cs`:
 
 ```csharp
-ChatClientAgent agent = chatClient.AsIChatClient().AsAIAgent(
+ChatClientAgent agent = chatClient.AsAIAgent(
     name: "ChatAssistant",
     instructions: "You are a helpful coding assistant specializing in C# and .NET.");
 ```

@@ -126,6 +126,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Single(result.Messages);
         Assert.Equal(ChatRole.Assistant, result.Messages[0].Role);
         Assert.Equal("Hello! How can I help you today?", result.Messages[0].Text);
+        Assert.Equal(ChatFinishReason.Stop, result.FinishReason);
     }
 
     [Fact]
@@ -249,8 +250,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("stream-1", updates[0].MessageId);
         Assert.Equal(this._agent.Id, updates[0].AgentId);
         Assert.Equal("stream-1", updates[0].ResponseId);
-
-        Assert.NotNull(updates[0].RawRepresentation);
+        Assert.Equal(ChatFinishReason.Stop, updates[0].FinishReason);
         Assert.IsType<AgentMessage>(updates[0].RawRepresentation);
         Assert.Equal("stream-1", ((AgentMessage)updates[0].RawRepresentation!).MessageId);
     }
@@ -501,8 +501,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.NotNull(result);
         Assert.Equal(this._agent.Id, result.AgentId);
         Assert.Equal("task-789", result.ResponseId);
-
-        Assert.NotNull(result.RawRepresentation);
+        Assert.Null(result.FinishReason);
         Assert.IsType<AgentTask>(result.RawRepresentation);
         Assert.Equal("task-789", ((AgentTask)result.RawRepresentation).Id);
 
@@ -551,6 +550,15 @@ public sealed class A2AAgentTests : IDisposable
         else
         {
             Assert.Null(result.ContinuationToken);
+        }
+
+        if (taskState is TaskState.Completed)
+        {
+            Assert.Equal(ChatFinishReason.Stop, result.FinishReason);
+        }
+        else
+        {
+            Assert.Null(result.FinishReason);
         }
     }
 
@@ -661,6 +669,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(MessageId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
         Assert.Equal(MessageText, update0.Text);
+        Assert.Equal(ChatFinishReason.Stop, update0.FinishReason);
         Assert.IsType<AgentMessage>(update0.RawRepresentation);
         Assert.Equal(MessageId, ((AgentMessage)update0.RawRepresentation!).MessageId);
     }
@@ -702,6 +711,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(ChatRole.Assistant, update0.Role);
         Assert.Equal(TaskId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.Null(update0.FinishReason);
         Assert.IsType<AgentTask>(update0.RawRepresentation);
         Assert.Equal(TaskId, ((AgentTask)update0.RawRepresentation!).Id);
 
@@ -741,6 +751,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(ChatRole.Assistant, update0.Role);
         Assert.Equal(TaskId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.Null(update0.FinishReason);
         Assert.IsType<TaskStatusUpdateEvent>(update0.RawRepresentation);
 
         // Assert - session should be updated with context and task IDs
@@ -784,6 +795,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(ChatRole.Assistant, update0.Role);
         Assert.Equal(TaskId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.Null(update0.FinishReason);
         Assert.IsType<TaskArtifactUpdateEvent>(update0.RawRepresentation);
 
         // Assert - artifact content should be in the update

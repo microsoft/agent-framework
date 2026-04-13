@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from agent_framework import Agent, ChatResponse, Content, Message, agent_middleware
-from agent_framework._middleware import AgentContext
+from agent_framework._middleware import AgentContext, FunctionInvocationContext
 
 from .conftest import MockChatClient
 
@@ -14,19 +14,33 @@ from .conftest import MockChatClient
 class TestAsToolKwargsPropagation:
     """Test cases for kwargs propagation through as_tool() delegation."""
 
+    @staticmethod
+    def _build_context(
+        tool: Any,
+        *,
+        task: str,
+        runtime_kwargs: dict[str, Any] | None = None,
+    ) -> FunctionInvocationContext:
+        return FunctionInvocationContext(
+            function=tool,
+            arguments={"task": task},
+            kwargs=runtime_kwargs,
+        )
+
     async def test_as_tool_forwards_runtime_kwargs(self, client: MockChatClient) -> None:
-        """Test that runtime kwargs are forwarded through as_tool() to sub-agent."""
+        """Test that runtime kwargs are forwarded through as_tool() to sub-agent tools."""
         captured_kwargs: dict[str, Any] = {}
+        captured_function_invocation_kwargs: dict[str, Any] = {}
 
         @agent_middleware
         async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-            # Capture kwargs passed to the sub-agent
             captured_kwargs.update(context.kwargs)
+            captured_function_invocation_kwargs.update(context.function_invocation_kwargs)
             await call_next()
 
         # Setup mock response
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="Response from sub-agent")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from sub-agent"])]),
         ]
 
         # Create sub-agent with middleware
@@ -39,34 +53,36 @@ class TestAsToolKwargsPropagation:
         # Create tool from sub-agent
         tool = sub_agent.as_tool(name="delegate", arg_name="task")
 
-        # Directly invoke the tool with kwargs (simulating what happens during agent execution)
+        # Directly invoke the tool with explicit runtime context (simulating agent execution).
         _ = await tool.invoke(
-            arguments=tool.input_model(task="Test delegation"),
-            api_token="secret-xyz-123",
-            user_id="user-456",
-            session_id="session-789",
+            context=self._build_context(
+                tool,
+                task="Test delegation",
+                runtime_kwargs={
+                    "api_token": "secret-xyz-123",
+                    "user_id": "user-456",
+                    "session_id": "session-789",
+                },
+            ),
         )
 
-        # Verify kwargs were forwarded to sub-agent
-        assert "api_token" in captured_kwargs, f"Expected 'api_token' in {captured_kwargs}"
-        assert captured_kwargs["api_token"] == "secret-xyz-123"
-        assert "user_id" in captured_kwargs
-        assert captured_kwargs["user_id"] == "user-456"
-        assert "session_id" in captured_kwargs
-        assert captured_kwargs["session_id"] == "session-789"
+        assert captured_kwargs == {}
+        assert captured_function_invocation_kwargs["api_token"] == "secret-xyz-123"
+        assert captured_function_invocation_kwargs["user_id"] == "user-456"
+        assert captured_function_invocation_kwargs["session_id"] == "session-789"
 
-    async def test_as_tool_excludes_arg_name_from_forwarded_kwargs(self, client: MockChatClient) -> None:
-        """Test that the arg_name parameter is not forwarded as a kwarg."""
-        captured_kwargs: dict[str, Any] = {}
+    async def test_as_tool_forwards_context_kwargs_verbatim(self, client: MockChatClient) -> None:
+        """Test that runtime kwargs are forwarded exactly from FunctionInvocationContext.kwargs."""
+        captured_function_invocation_kwargs: dict[str, Any] = {}
 
         @agent_middleware
         async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-            captured_kwargs.update(context.kwargs)
+            captured_function_invocation_kwargs.update(context.function_invocation_kwargs)
             await call_next()
 
         # Setup mock response
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="Response from sub-agent")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from sub-agent"])]),
         ]
 
         sub_agent = Agent(
@@ -79,25 +95,26 @@ class TestAsToolKwargsPropagation:
 
         # Invoke tool with both the arg_name field and additional kwargs
         await tool.invoke(
-            arguments=tool.input_model(custom_task="Test task"),
-            api_token="token-123",
-            custom_task="should_be_excluded",  # This should be filtered out
+            context=FunctionInvocationContext(
+                function=tool,
+                arguments={"custom_task": "Test task"},
+                kwargs={
+                    "api_token": "token-123",
+                    "custom_task": "should_be_excluded",
+                },
+            )
         )
 
-        # The arg_name ("custom_task") should NOT be in the forwarded kwargs
-        assert "custom_task" not in captured_kwargs
-        # But other kwargs should be present
-        assert "api_token" in captured_kwargs
-        assert captured_kwargs["api_token"] == "token-123"
+        assert captured_function_invocation_kwargs["custom_task"] == "should_be_excluded"
+        assert captured_function_invocation_kwargs["api_token"] == "token-123"
 
     async def test_as_tool_nested_delegation_propagates_kwargs(self, client: MockChatClient) -> None:
-        """Test that kwargs propagate through multiple levels of delegation (A → B → C)."""
-        captured_kwargs_list: list[dict[str, Any]] = []
+        """Test that runtime kwargs propagate through multiple levels of delegation (A -> B -> C)."""
+        captured_function_invocation_kwargs_list: list[dict[str, Any]] = []
 
         @agent_middleware
         async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-            # Capture kwargs at each level
-            captured_kwargs_list.append(dict(context.kwargs))
+            captured_function_invocation_kwargs_list.append(dict(context.function_invocation_kwargs))
             await call_next()
 
         # Setup mock responses to trigger nested tool invocation: B calls tool C, then completes.
@@ -116,8 +133,8 @@ class TestAsToolKwargsPropagation:
                     )
                 ]
             ),
-            ChatResponse(messages=[Message(role="assistant", text="Response from agent_c")]),
-            ChatResponse(messages=[Message(role="assistant", text="Response from agent_b")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from agent_c"])]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from agent_b"])]),
         ]
 
         # Create agent C (bottom level)
@@ -140,24 +157,29 @@ class TestAsToolKwargsPropagation:
 
         # Invoke tool B with kwargs - should propagate to both B and C
         await tool_b.invoke(
-            arguments=tool_b.input_model(task="Test cascade"),
-            trace_id="trace-abc-123",
-            tenant_id="tenant-xyz",
-            options={"additional_function_arguments": {"trace_id": "trace-abc-123", "tenant_id": "tenant-xyz"}},
+            context=self._build_context(
+                tool_b,
+                task="Test cascade",
+                runtime_kwargs={
+                    "trace_id": "trace-abc-123",
+                    "tenant_id": "tenant-xyz",
+                },
+            ),
         )
 
-        # Verify kwargs were forwarded to the first agent invocation.
-        assert len(captured_kwargs_list) >= 1
-        assert captured_kwargs_list[0].get("trace_id") == "trace-abc-123"
-        assert captured_kwargs_list[0].get("tenant_id") == "tenant-xyz"
+        assert len(captured_function_invocation_kwargs_list) >= 1
+        assert captured_function_invocation_kwargs_list[0].get("trace_id") == "trace-abc-123"
+        assert captured_function_invocation_kwargs_list[0].get("tenant_id") == "tenant-xyz"
 
     async def test_as_tool_streaming_mode_forwards_kwargs(self, client: MockChatClient) -> None:
-        """Test that kwargs are forwarded in streaming mode."""
+        """Test that runtime kwargs are forwarded in streaming mode."""
         captured_kwargs: dict[str, Any] = {}
+        captured_function_invocation_kwargs: dict[str, Any] = {}
 
         @agent_middleware
         async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             captured_kwargs.update(context.kwargs)
+            captured_function_invocation_kwargs.update(context.function_invocation_kwargs)
             await call_next()
 
         # Setup mock streaming responses
@@ -182,20 +204,22 @@ class TestAsToolKwargsPropagation:
 
         # Invoke tool with kwargs while streaming callback is active
         await tool.invoke(
-            arguments=tool.input_model(task="Test streaming"),
-            api_key="streaming-key-999",
+            context=self._build_context(
+                tool,
+                task="Test streaming",
+                runtime_kwargs={"api_key": "streaming-key-999"},
+            ),
         )
 
-        # Verify kwargs were forwarded even in streaming mode
-        assert "api_key" in captured_kwargs
-        assert captured_kwargs["api_key"] == "streaming-key-999"
+        assert captured_kwargs == {}
+        assert captured_function_invocation_kwargs["api_key"] == "streaming-key-999"
         assert len(captured_updates) == 1
 
     async def test_as_tool_empty_kwargs_still_works(self, client: MockChatClient) -> None:
         """Test that as_tool works correctly when no extra kwargs are provided."""
         # Setup mock response
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="Response from agent")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from agent"])]),
         ]
 
         sub_agent = Agent(
@@ -206,23 +230,25 @@ class TestAsToolKwargsPropagation:
         tool = sub_agent.as_tool()
 
         # Invoke without any extra kwargs - should work without errors
-        result = await tool.invoke(arguments=tool.input_model(task="Simple task"))
+        result = await tool.invoke(arguments={"task": "Simple task"})
 
         # Verify tool executed successfully
         assert result is not None
 
     async def test_as_tool_kwargs_with_chat_options(self, client: MockChatClient) -> None:
-        """Test that kwargs including chat_options are properly forwarded."""
+        """Test that runtime kwargs are forwarded only via function_invocation_kwargs."""
         captured_kwargs: dict[str, Any] = {}
+        captured_function_invocation_kwargs: dict[str, Any] = {}
 
         @agent_middleware
         async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             captured_kwargs.update(context.kwargs)
+            captured_function_invocation_kwargs.update(context.function_invocation_kwargs)
             await call_next()
 
         # Setup mock response
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="Response with options")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response with options"])]),
         ]
 
         sub_agent = Agent(
@@ -235,24 +261,26 @@ class TestAsToolKwargsPropagation:
 
         # Invoke with various kwargs
         await tool.invoke(
-            arguments=tool.input_model(task="Test with options"),
-            temperature=0.8,
-            max_tokens=500,
-            custom_param="custom_value",
+            context=self._build_context(
+                tool,
+                task="Test with options",
+                runtime_kwargs={
+                    "temperature": 0.8,
+                    "max_tokens": 500,
+                    "custom_param": "custom_value",
+                },
+            ),
         )
 
-        # Verify all kwargs were forwarded
-        assert "temperature" in captured_kwargs
-        assert captured_kwargs["temperature"] == 0.8
-        assert "max_tokens" in captured_kwargs
-        assert captured_kwargs["max_tokens"] == 500
-        assert "custom_param" in captured_kwargs
-        assert captured_kwargs["custom_param"] == "custom_value"
+        assert captured_kwargs == {}
+        assert captured_function_invocation_kwargs["temperature"] == 0.8
+        assert captured_function_invocation_kwargs["max_tokens"] == 500
+        assert captured_function_invocation_kwargs["custom_param"] == "custom_value"
 
     async def test_as_tool_kwargs_isolated_per_invocation(self, client: MockChatClient) -> None:
-        """Test that kwargs are isolated per invocation and don't leak between calls."""
-        first_call_kwargs: dict[str, Any] = {}
-        second_call_kwargs: dict[str, Any] = {}
+        """Test that runtime kwargs are isolated per invocation and don't leak between calls."""
+        first_call_function_invocation_kwargs: dict[str, Any] = {}
+        second_call_function_invocation_kwargs: dict[str, Any] = {}
         call_count = 0
 
         @agent_middleware
@@ -260,15 +288,15 @@ class TestAsToolKwargsPropagation:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                first_call_kwargs.update(context.kwargs)
+                first_call_function_invocation_kwargs.update(context.function_invocation_kwargs)
             elif call_count == 2:
-                second_call_kwargs.update(context.kwargs)
+                second_call_function_invocation_kwargs.update(context.function_invocation_kwargs)
             await call_next()
 
         # Setup mock responses for both calls
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="First response")]),
-            ChatResponse(messages=[Message(role="assistant", text="Second response")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["First response"])]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Second response"])]),
         ]
 
         sub_agent = Agent(
@@ -281,38 +309,40 @@ class TestAsToolKwargsPropagation:
 
         # First call with specific kwargs
         await tool.invoke(
-            arguments=tool.input_model(task="First task"),
-            session_id="session-1",
-            api_token="token-1",
+            context=self._build_context(
+                tool,
+                task="First task",
+                runtime_kwargs={"session_id": "session-1", "api_token": "token-1"},
+            ),
         )
 
         # Second call with different kwargs
         await tool.invoke(
-            arguments=tool.input_model(task="Second task"),
-            session_id="session-2",
-            api_token="token-2",
+            context=self._build_context(
+                tool,
+                task="Second task",
+                runtime_kwargs={"session_id": "session-2", "api_token": "token-2"},
+            ),
         )
 
-        # Verify first call had its own kwargs
-        assert first_call_kwargs.get("session_id") == "session-1"
-        assert first_call_kwargs.get("api_token") == "token-1"
+        assert first_call_function_invocation_kwargs.get("session_id") == "session-1"
+        assert first_call_function_invocation_kwargs.get("api_token") == "token-1"
 
-        # Verify second call had its own kwargs (not leaked from first)
-        assert second_call_kwargs.get("session_id") == "session-2"
-        assert second_call_kwargs.get("api_token") == "token-2"
+        assert second_call_function_invocation_kwargs.get("session_id") == "session-2"
+        assert second_call_function_invocation_kwargs.get("api_token") == "token-2"
 
-    async def test_as_tool_excludes_conversation_id_from_forwarded_kwargs(self, client: MockChatClient) -> None:
-        """Test that conversation_id is not forwarded to sub-agent."""
-        captured_kwargs: dict[str, Any] = {}
+    async def test_as_tool_forwards_conversation_id_from_context_kwargs(self, client: MockChatClient) -> None:
+        """Test that conversation_id is forwarded when explicitly present in runtime context kwargs."""
+        captured_function_invocation_kwargs: dict[str, Any] = {}
 
         @agent_middleware
         async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-            captured_kwargs.update(context.kwargs)
+            captured_function_invocation_kwargs.update(context.function_invocation_kwargs)
             await call_next()
 
         # Setup mock response
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="Response from sub-agent")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from sub-agent"])]),
         ]
 
         sub_agent = Agent(
@@ -325,17 +355,17 @@ class TestAsToolKwargsPropagation:
 
         # Invoke tool with conversation_id in kwargs (simulating parent's conversation state)
         await tool.invoke(
-            arguments=tool.input_model(task="Test delegation"),
-            conversation_id="conv-parent-456",
-            api_token="secret-xyz-123",
-            user_id="user-456",
+            context=self._build_context(
+                tool,
+                task="Test delegation",
+                runtime_kwargs={
+                    "conversation_id": "conv-parent-456",
+                    "api_token": "secret-xyz-123",
+                    "user_id": "user-456",
+                },
+            ),
         )
 
-        # Verify conversation_id was NOT forwarded to sub-agent
-        assert "conversation_id" not in captured_kwargs, (
-            f"conversation_id should not be forwarded, but got: {captured_kwargs}"
-        )
-
-        # Verify other kwargs were still forwarded
-        assert captured_kwargs.get("api_token") == "secret-xyz-123"
-        assert captured_kwargs.get("user_id") == "user-456"
+        assert captured_function_invocation_kwargs.get("conversation_id") == "conv-parent-456"
+        assert captured_function_invocation_kwargs.get("api_token") == "secret-xyz-123"
+        assert captured_function_invocation_kwargs.get("user_id") == "user-456"

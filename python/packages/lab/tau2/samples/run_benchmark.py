@@ -96,14 +96,14 @@ async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: st
     assistant_chat_client = OpenAIChatClient(
         base_url=openai_base_url,
         api_key=openai_api_key,
-        model_id=assistant_model,
+        model=assistant_model,
     )
 
     # User simulator: simulates realistic customer behavior and requests
     user_simulator_chat_client = OpenAIChatClient(
         base_url=openai_base_url,
         api_key=openai_api_key,
-        model_id=user_model,
+        model=user_model,
     )
 
     # STEP 4: Filter task set for debug mode
@@ -133,8 +133,8 @@ async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: st
                 # Initialize result structure for this task
                 result: dict[str, Any] = {
                     "config": {
-                        "assistant": assistant_chat_client.model_id,
-                        "user": user_simulator_chat_client.model_id,
+                        "assistant": assistant_chat_client.model,
+                        "user": user_simulator_chat_client.model,
                     },
                     "task": task,
                 }
@@ -183,8 +183,8 @@ async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: st
             # Initialize result structure for this task
             result: dict[str, Any] = {
                 "config": {
-                    "assistant": assistant_chat_client.model_id,
-                    "user": user_simulator_chat_client.model_id,
+                    "assistant": assistant_chat_client.model,
+                    "user": user_simulator_chat_client.model,
                 },
                 "task": task,
             }

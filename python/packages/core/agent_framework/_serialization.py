@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -39,7 +40,7 @@ class SerializationProtocol(Protocol):
 
 
             # Message implements SerializationProtocol via SerializationMixin
-            user_msg = Message(role="user", text="What's the weather like today?")
+            user_msg = Message(role="user", contents=["What's the weather like today?"])
 
             # Serialize to dictionary - automatic type identification and nested serialization
             msg_dict = user_msg.to_dict()
@@ -263,6 +264,25 @@ class SerializationMixin:
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
     INJECTABLE: ClassVar[set[str]] = set()
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> SerializationMixin:
+        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+
+        Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
+        (e.g., proto/gRPC responses) that are not safe to deep-copy.  They are
+        kept as shallow references in the copy; all other attributes are
+        deep-copied normally.
+        """
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k in cls._SHALLOW_COPY_FIELDS:
+                object.__setattr__(result, k, v)
+            else:
+                object.__setattr__(result, k, copy.deepcopy(v, memo))
+        return result
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.
@@ -405,13 +425,13 @@ class SerializationMixin:
                 from openai import AsyncOpenAI
 
 
-                # OpenAI chat client requires an AsyncOpenAI client instance
-                # The client is marked as INJECTABLE = {"client"} in OpenAIBase
+                # OpenAI chat client requires an AsyncOpenAI client instance.
+                # The client dependency is excluded from serialization.
 
                 # Serialized data contains only the model configuration
                 client_data = {
                     "type": "open_ai_chat_client",
-                    "model_id": "gpt-4o-mini",
+                    "model": "gpt-4o-mini",
                     # client is excluded from serialization
                 }
 

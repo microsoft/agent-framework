@@ -177,10 +177,10 @@ class TestBuildAgentExecutorResponse:
         # Create a previous response with conversation history
         previous = AgentExecutorResponse(
             executor_id="prev",
-            agent_response=AgentResponse(messages=[Message(role="assistant", text="Previous")]),
+            agent_response=AgentResponse(messages=[Message(role="assistant", contents=["Previous"])]),
             full_conversation=[
-                Message(role="user", text="First"),
-                Message(role="assistant", text="Previous"),
+                Message(role="user", contents=["First"]),
+                Message(role="assistant", contents=["Previous"]),
             ],
         )
 
@@ -211,7 +211,8 @@ class TestExtractMessageContent:
         """Test extracting from AgentExecutorResponse with text."""
         response = AgentExecutorResponse(
             executor_id="exec",
-            agent_response=AgentResponse(messages=[Message(role="assistant", text="Response text")]),
+            agent_response=AgentResponse(messages=[Message(role="assistant", contents=["Response text"])]),
+            full_conversation=[Message(role="assistant", contents=["Response text"])],
         )
 
         result = _extract_message_content(response)
@@ -224,10 +225,14 @@ class TestExtractMessageContent:
             executor_id="exec",
             agent_response=AgentResponse(
                 messages=[
-                    Message(role="user", text="First"),
-                    Message(role="assistant", text="Last message"),
+                    Message(role="user", contents=["First"]),
+                    Message(role="assistant", contents=["Last message"]),
                 ]
             ),
+            full_conversation=[
+                Message(role="user", contents=["First"]),
+                Message(role="assistant", contents=["Last message"]),
+            ],
         )
 
         result = _extract_message_content(response)
@@ -239,8 +244,8 @@ class TestExtractMessageContent:
         """Test extracting from AgentExecutorRequest."""
         request = AgentExecutorRequest(
             messages=[
-                Message(role="user", text="First"),
-                Message(role="user", text="Last request"),
+                Message(role="user", contents=["First"]),
+                Message(role="user", contents=["Last request"]),
             ]
         )
 

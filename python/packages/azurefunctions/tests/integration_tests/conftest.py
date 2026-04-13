@@ -111,13 +111,17 @@ def _should_skip_azure_functions_integration_tests() -> tuple[bool, str]:
             f"Durable Task Scheduler emulator not running on port {_DTS_EMULATOR_PORT}. Start with: docker run -d -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:latest",  # noqa: E501
         )
 
-    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
-    if not endpoint or endpoint == "https://your-resource.openai.azure.com/":
-        return True, "No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests."
-
-    deployment_name = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "").strip()
-    if not deployment_name or deployment_name == "your-deployment-name":
-        return True, "No real AZURE_OPENAI_CHAT_DEPLOYMENT_NAME provided; skipping integration tests."
+    has_foundry_config = bool(os.getenv("FOUNDRY_PROJECT_ENDPOINT", "").strip()) and bool(
+        os.getenv("FOUNDRY_MODEL", "").strip()
+    )
+    has_azure_openai_config = bool(os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()) and bool(
+        os.getenv("AZURE_OPENAI_MODEL", "").strip()
+    )
+    if not has_foundry_config and not has_azure_openai_config:
+        return (
+            True,
+            "No real FOUNDRY_* or AZURE_OPENAI_* configuration provided; skipping integration tests.",
+        )
 
     return False, "Integration tests enabled."
 
@@ -322,22 +326,22 @@ def _is_port_in_use(port: int, host: str = _DEFAULT_HOST) -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
-def _load_and_validate_env() -> None:
+def _load_and_validate_env(sample_path: Path) -> None:
     """Load .env file from current directory if it exists, then validate required environment variables.
 
     Raises pytest.fail if required environment variables are missing.
     """
     _load_env_file_if_present()
-
     # Required environment variables for Azure Functions samples
-    # These match the variables defined in .env.example
     required_env_vars = [
-        "AZURE_OPENAI_ENDPOINT",
-        "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME",
         "AzureWebJobsStorage",
         "DURABLE_TASK_SCHEDULER_CONNECTION_STRING",
         "FUNCTIONS_WORKER_RUNTIME",
     ]
+    if sample_path.name == "11_workflow_parallel":
+        required_env_vars.extend(["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_MODEL"])
+    else:
+        required_env_vars.extend(["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"])
 
     # Check if required env vars are set
     missing_vars = [var for var in required_env_vars if not os.environ.get(var)]
@@ -526,7 +530,7 @@ def function_app_for_test(request: pytest.FixtureRequest) -> Iterator[dict[str, 
     assert sample_path is not None, "Sample path must be resolved before starting the function app"
 
     # Load .env file if it exists and validate required env vars
-    _load_and_validate_env()
+    _load_and_validate_env(sample_path)
 
     max_attempts = 3
     last_error: Exception | None = None

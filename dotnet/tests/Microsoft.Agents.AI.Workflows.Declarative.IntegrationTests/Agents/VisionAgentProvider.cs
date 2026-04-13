@@ -3,7 +3,7 @@
 using System;
 using System.Collections.Generic;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
 using Shared.IntegrationTests;
@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 
 internal sealed class VisionAgentProvider(IConfiguration configuration) : AgentProvider(configuration)
 {
-    protected override async IAsyncEnumerable<AgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
+    protected override async IAsyncEnumerable<ProjectsAgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
     {
         AIProjectClient aiProjectClient = new(foundryEndpoint, TestAzureCliCredentials.CreateAzureCliCredential());
 
@@ -23,7 +23,7 @@ internal sealed class VisionAgentProvider(IConfiguration configuration) : AgentP
                 agentDescription: "Use computer vision to describe an image or document.");
     }
 
-    private PromptAgentDefinition DefineVisionAgent() =>
+    private DeclarativeAgentDefinition DefineVisionAgent() =>
         new(this.GetSetting(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions =

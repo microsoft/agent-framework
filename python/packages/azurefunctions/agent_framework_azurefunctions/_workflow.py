@@ -50,7 +50,7 @@ from azure.durable_functions import DurableOrchestrationContext
 
 from ._context import CapturingRunnerContext
 from ._orchestration import AzureFunctionsAgentExecutor
-from ._serialization import deserialize_value, reconstruct_to_type, resolve_type, serialize_value
+from ._serialization import deserialize_value, reconstruct_to_type, resolve_type, serialize_value, strip_pickle_markers
 
 logger = logging.getLogger(__name__)
 
@@ -240,11 +240,11 @@ def build_agent_executor_response(
     Returns:
         AgentExecutorResponse with reconstructed conversation
     """
-    final_text = response_text
+    final_text: str = response_text or ""
     if structured_response:
         final_text = json.dumps(structured_response)
 
-    assistant_message = Message(role="assistant", text=final_text)
+    assistant_message = Message(role="assistant", contents=[final_text])
 
     agent_response = AgentResponse(
         messages=[assistant_message],
@@ -255,7 +255,7 @@ def build_agent_executor_response(
     if isinstance(previous_message, AgentExecutorResponse) and previous_message.full_conversation:
         full_conversation.extend(previous_message.full_conversation)
     elif isinstance(previous_message, str):
-        full_conversation.append(Message(role="user", text=previous_message))
+        full_conversation.append(Message(role="user", contents=[previous_message]))
 
     full_conversation.append(assistant_message)
 
@@ -964,12 +964,19 @@ def _deserialize_hitl_response(response_data: Any, response_type_str: str | None
     if response_data is None:
         return None
 
+    # Sanitize untrusted external input before deserialization.
+    # HITL response data originates from an HTTP POST and must not contain
+    # pickle/type markers that would reach pickle.loads().
+    response_data = strip_pickle_markers(response_data)
+    if response_data is None:
+        return None
+
     # If already a primitive, return as-is
     if not isinstance(response_data, dict):
         logger.debug("Response data is not a dict, returning as-is: %s", type(response_data).__name__)
         return response_data
 
-    # Try to deserialize using the type hint
+    # Try to reconstruct using the type hint (Pydantic / dataclass)
     if response_type_str:
         response_type = resolve_type(response_type_str)
         if response_type:
@@ -979,6 +986,8 @@ def _deserialize_hitl_response(response_data: Any, response_type_str: str | None
             return result
         logger.warning("Could not resolve response type: %s", response_type_str)
 
-    # Fall back to generic deserialization
-    logger.debug("Falling back to generic deserialization")
-    return deserialize_value(response_data)
+    # No type hint available - return the sanitized dict as-is.
+    # We intentionally do NOT call deserialize_value() here because HITL
+    # response data is untrusted and must never flow into pickle.loads().
+    logger.debug("No type hint; returning sanitized data as-is")
+    return response_data  # type: ignore[reportUnknownVariableType]

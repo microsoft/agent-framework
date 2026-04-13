@@ -13,9 +13,9 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-// Get Azure AI Foundry configuration from environment variables
+// Get Microsoft Foundry configuration from environment variables
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
+var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Get a client to create/retrieve server side agents with
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
@@ -189,9 +189,9 @@ async Task<AgentResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, Agent
         // Regex patterns for PII detection (simplified for demonstration)
         Regex[] piiPatterns =
         [
-            new(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled), // Phone number (e.g., 123-456-7890)
-            new(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled), // Email address
-            new(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled) // Full name (e.g., John Doe)
+            MyRegex(), // Phone number (e.g., 123-456-7890)
+            EmailRegex(), // Email address
+            FullNameRegex() // Full name (e.g., John Doe)
         ];
 
         foreach (var pattern in piiPatterns)
@@ -246,7 +246,7 @@ async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMes
     AgentResponse response = await innerAgent.RunAsync(messages, session, options, cancellationToken);
 
     // For simplicity, we are assuming here that only function approvals are pending.
-    List<FunctionApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
+    List<ToolApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
 
     while (approvalRequests.Count > 0)
     {
@@ -255,13 +255,13 @@ async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMes
         response.Messages = approvalRequests
             .ConvertAll(functionApprovalRequest =>
             {
-                Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
+                Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {((FunctionCallContent)functionApprovalRequest.ToolCall).Name}");
                 return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
             });
 
         response = await innerAgent.RunAsync(response.Messages, session, options, cancellationToken);
 
-        approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
+        approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
     }
 
     return response;
@@ -308,4 +308,16 @@ internal sealed class DateTimeContextProvider : MessageAIContextProvider
                 new ChatMessage(ChatRole.User, $"For reference, the current date and time is: {DateTimeOffset.Now}")
             ]);
     }
+}
+
+internal partial class Program
+{
+    [GeneratedRegex(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled)]
+    private static partial Regex MyRegex();
+
+    [GeneratedRegex(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled)]
+    private static partial Regex EmailRegex();
+
+    [GeneratedRegex(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled)]
+    private static partial Regex FullNameRegex();
 }

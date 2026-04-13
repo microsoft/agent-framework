@@ -5,8 +5,9 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import configure_otel_providers, get_tracer
-from agent_framework.openai import OpenAIChatClient
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
@@ -18,6 +19,12 @@ load_dotenv()
 """
 This sample shows how you can observe an agent in Agent Framework by using the
 same observability setup function.
+
+Pre-requisites:
+- A Foundry project
+- An observability backend to receive traces and metrics (for example, a local or remote
+  OpenTelemetry Collector, another OTLP-compatible backend, or console exporters enabled
+  via environment variables).
 """
 
 
@@ -47,7 +54,7 @@ async def main():
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
         agent = Agent(
-            client=OpenAIChatClient(),
+            client=FoundryChatClient(credential=AzureCliCredential()),
             tools=get_weather,
             name="WeatherAgent",
             instructions="You are a weather assistant.",

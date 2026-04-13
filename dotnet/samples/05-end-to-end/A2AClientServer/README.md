@@ -51,7 +51,7 @@ dotnet run --urls "http://localhost:5002;https://localhost:5012" --agentType "lo
 
 ### Configuring for use with Azure AI Agents
 
-You must create the agents in an Azure AI Foundry project and then provide the project endpoint and agents ids. The instructions for each agent are as follows:
+You must create the agents in a Microsoft Foundry project and then provide the project endpoint and agent IDs. The instructions for each agent are as follows:
 
 - Invoice Agent
     ```
@@ -90,15 +90,15 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://ai-foundry-your-project.services.ai.azur
 Use the following commands to run each A2A server
 
 ```bash
-dotnet run --urls "http://localhost:5000;https://localhost:5010" --agentId "<Invoice Agent Id>" --agentType "invoice" --no-build
+dotnet run --urls "http://localhost:5000;https://localhost:5010" --agentName "<Invoice Agent Name>" --agentType "invoice" --no-build
 ```
 
 ```bash
-dotnet run --urls "http://localhost:5001;https://localhost:5011" --agentId "<Policy Agent Id>" --agentType "policy" --no-build
+dotnet run --urls "http://localhost:5001;https://localhost:5011" --agentName "<Policy Agent Name>" --agentType "policy" --no-build
 ```
 
 ```bash
-dotnet run --urls "http://localhost:5002;https://localhost:5012" --agentId "<Logistics Agent Id>" --agentType "logistics" --no-build
+dotnet run --urls "http://localhost:5002;https://localhost:5012" --agentName "<Logistics Agent Name>" --agentType "logistics" --no-build
 ```
 
 ### Testing the Agents using the Rest Client
@@ -206,7 +206,7 @@ Sample output from the A2A client:
 ```
 A2AClient> dotnet run
 info: HostClientAgent[0]
-      Initializing Agent Framework agent with model: gpt-4o-mini
+      Initializing Agent Framework agent with model: gpt-5.4-mini
 
 User (:q or quit to exit): Customer is disputing transaction TICKET-XYZ987 as they claim the received fewer t-shirts than ordered.
 

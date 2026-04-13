@@ -188,7 +188,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Usage:
             workflow.run("Write a blog post about AI agents")
         """
-        await self._handle_messages([Message(role="user", text=task)], ctx)
+        await self._handle_messages([Message(role="user", contents=[task])], ctx)
 
     @handler
     async def handle_message(
@@ -205,7 +205,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             ctx: Workflow context
 
         Usage:
-            workflow.run(Message(role="user", text="Write a blog post about AI agents"))
+            workflow.run(Message(role="user", contents=["Write a blog post about AI agents"]))
         """
         await self._handle_messages([task], ctx)
 
@@ -224,8 +224,8 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             ctx: Workflow context
         Usage:
             workflow.run([
-                Message(role="user", text="Write a blog post about AI agents"),
-                Message(role="user", text="Make it engaging and informative.")
+                Message(role="user", contents=["Write a blog post about AI agents"]),
+                Message(role="user", contents=["Make it engaging and informative."])
             ])
         """
         if not task:
@@ -377,7 +377,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Returns:
             Message with completion content
         """
-        return Message(role="assistant", text=message, author_name=self._name)
+        return Message(role="assistant", contents=[message], author_name=self._name)
 
     # Participant routing (shared across all patterns)
 
@@ -441,7 +441,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             # AgentExecutors receive simple message list
             messages: list[Message] = []
             if additional_instruction:
-                messages.append(Message(role="user", text=additional_instruction))
+                messages.append(Message(role="user", contents=[additional_instruction]))
             request = AgentExecutorRequest(messages=messages, should_respond=True)
             await ctx.send_message(request, target_id=target)
             await ctx.add_event(

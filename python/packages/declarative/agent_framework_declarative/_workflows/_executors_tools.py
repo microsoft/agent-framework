@@ -15,11 +15,10 @@ import json
 import logging
 import uuid
 from abc import abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import Any, cast
-from collections.abc import Callable
 
 from agent_framework import (
     Content,
@@ -589,7 +588,9 @@ class BaseToolExecutor(DeclarativeActionExecutor):
                 messages=[
                     Message(
                         role="assistant",
-                        text=f"Function '{function_name}' was rejected: {response.reason or 'No reason provided'}",
+                        contents=[
+                            f"Function '{function_name}' was rejected: {response.reason or 'No reason provided'}"
+                        ],
                     )
                 ],
             )

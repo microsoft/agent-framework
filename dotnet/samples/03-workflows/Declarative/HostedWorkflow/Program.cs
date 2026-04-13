@@ -3,10 +3,12 @@
 // Uncomment this to enable JSON checkpointing to the local file system.
 //#define CHECKPOINT_JSON
 
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
@@ -44,11 +46,11 @@ internal sealed class Program
         await CreateAgentsAsync(aiProjectClient, configuration);
 
         // Ensure workflow agent exists in Foundry.
-        AgentVersion agentVersion = await CreateWorkflowAsync(aiProjectClient, configuration);
+        ProjectsAgentVersion agentVersion = await CreateWorkflowAsync(aiProjectClient, configuration);
 
         string workflowInput = GetWorkflowInput(args);
 
-        AIAgent agent = aiProjectClient.AsAIAgent(agentVersion);
+        FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
         AgentSession session = await agent.CreateSessionAsync();
 
@@ -84,7 +86,7 @@ internal sealed class Program
         }
     }
 
-    private static async Task<AgentVersion> CreateWorkflowAsync(AIProjectClient agentClient, IConfiguration configuration)
+    private static async Task<ProjectsAgentVersion> CreateWorkflowAsync(AIProjectClient agentClient, IConfiguration configuration)
     {
         string workflowYaml = File.ReadAllText("MathChat.yaml");
 
@@ -112,7 +114,7 @@ internal sealed class Program
             agentDescription: "Teacher agent for MathChat workflow");
     }
 
-    private static PromptAgentDefinition DefineStudentAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineStudentAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
@@ -125,7 +127,7 @@ internal sealed class Program
                 """
         };
 
-    private static PromptAgentDefinition DefineTeacherAgent(IConfiguration configuration) =>
+    private static DeclarativeAgentDefinition DefineTeacherAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =

@@ -42,7 +42,7 @@ public static class Program
 
         // Set up the Azure OpenAI client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
         var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create executors for text processing
@@ -205,6 +205,8 @@ internal sealed class TextInverterExecutor(string id) : Executor<string, string>
 /// 1. Sending ChatMessage(s)
 /// 2. Sending a TurnToken to trigger processing
 /// </summary>
+[SendsMessage(typeof(ChatMessage))]
+[SendsMessage(typeof(TurnToken))]
 internal sealed class StringToChatMessageExecutor(string id) : Executor<string>(id)
 {
     public override async ValueTask HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
@@ -234,6 +236,8 @@ internal sealed class StringToChatMessageExecutor(string id) : Executor<string>(
 /// The AIAgentHostExecutor sends response.Messages which has runtime type List&lt;ChatMessage&gt;.
 /// The message router uses exact type matching via message.GetType().
 /// </remarks>
+[SendsMessage(typeof(ChatMessage))]
+[SendsMessage(typeof(TurnToken))]
 internal sealed class JailbreakSyncExecutor() : Executor<List<ChatMessage>>("JailbreakSync")
 {
     public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)

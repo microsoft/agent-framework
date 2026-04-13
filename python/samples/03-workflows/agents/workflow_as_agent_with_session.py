@@ -3,8 +3,8 @@
 import asyncio
 import os
 
-from agent_framework import AgentSession, InMemoryHistoryProvider
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, AgentSession, InMemoryHistoryProvider
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -24,7 +24,7 @@ It also demonstrates how to enable checkpointing for workflow execution state
 persistence, allowing workflows to be paused and resumed.
 
 Key concepts:
-- Workflows can be wrapped as agents using workflow.as_agent()
+- Workflows can be wrapped as agents using Agent(client=workflow,)
 - AgentSession preserves conversation history
 - Each call to agent.run() includes session history + new message
 - Participants in the workflow see the full conversation context
@@ -37,20 +37,21 @@ Use cases:
 - Long-running workflows that need pause/resume capability
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured for AzureOpenAIResponsesClient
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 
 async def main() -> None:
     # Create a chat client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    assistant = client.as_agent(
+    assistant = Agent(
+        client=client,
         name="assistant",
         instructions=(
             "You are a helpful assistant. Answer questions based on the conversation "
@@ -58,7 +59,8 @@ async def main() -> None:
         ),
     )
 
-    summarizer = client.as_agent(
+    summarizer = Agent(
+        client=client,
         name="summarizer",
         instructions=(
             "You are a summarizer. After the assistant responds, provide a brief "
@@ -70,7 +72,7 @@ async def main() -> None:
     workflow = SequentialBuilder(participants=[assistant, summarizer]).build()
 
     # Wrap the workflow as an agent
-    agent = workflow.as_agent(name="ConversationalWorkflowAgent")
+    agent = workflow.as_agent()
 
     # Create a session to maintain history
     session = agent.create_session()
@@ -129,19 +131,20 @@ async def demonstrate_session_serialization() -> None:
     This shows how conversation history can be persisted and restored,
     enabling long-running conversational workflows.
     """
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    memory_assistant = client.as_agent(
+    memory_assistant = Agent(
+        client=client,
         name="memory_assistant",
         instructions="You are a helpful assistant with good memory. Remember details from our conversation.",
     )
 
     workflow = SequentialBuilder(participants=[memory_assistant]).build()
-    agent = workflow.as_agent(name="MemoryWorkflowAgent")
+    agent = workflow.as_agent()
 
     # Create initial session and have a conversation
     session = agent.create_session()

@@ -4,6 +4,9 @@
 // In this case the OpenAI responses service will invoke any MCP tools as required. MCP tools are not invoked by the Agent Framework.
 // The sample demonstrates how to use MCP tools with auto approval by setting ApprovalMode to NeverRequire.
 
+#pragma warning disable MEAI001 // HostedMcpServerTool, HostedMcpServerToolApprovalMode are experimental
+#pragma warning disable OPENAI001 // GetResponsesClient is experimental
+
 using Azure.AI.AgentServer.AgentFramework.Extensions;
 using Azure.AI.OpenAI;
 using Azure.Identity;
@@ -12,7 +15,7 @@ using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Create an MCP tool that can be called without approval.
 AITool mcpTool = new HostedMcpServerTool(serverName: "microsoft_learn", serverAddress: "https://learn.microsoft.com/api/mcp")

@@ -6,6 +6,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentContext,
     AgentMiddleware,
     AgentResponse,
@@ -13,7 +14,7 @@ from agent_framework import (
     MiddlewareTermination,
     tool,
 )
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -70,10 +71,12 @@ class PreTerminationMiddleware(AgentMiddleware):
                         messages=[
                             Message(
                                 role="assistant",
-                                text=(
-                                    f"Sorry, I cannot process requests containing '{blocked_word}'. "
-                                    "Please rephrase your question."
-                                ),
+                                contents=[
+                                    (
+                                        f"Sorry, I cannot process requests containing '{blocked_word}'. "
+                                        "Please rephrase your question."
+                                    )
+                                ],
                             )
                         ]
                     )
@@ -118,7 +121,8 @@ async def pre_termination_middleware() -> None:
     print("\n--- Example 1: Pre-termination MiddlewareTypes ---")
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
@@ -145,7 +149,8 @@ async def post_termination_middleware() -> None:
     print("\n--- Example 2: Post-termination MiddlewareTypes ---")
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,

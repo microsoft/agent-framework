@@ -101,7 +101,7 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
 
     Keys:
         # Inherited from ChatOptions (mapped to Bedrock):
-        model_id: The Bedrock model identifier,
+        model: The Bedrock model identifier,
             translates to ``modelId`` in Bedrock API.
         temperature: Sampling temperature,
             translates to ``inferenceConfig.temperature``.
@@ -175,7 +175,7 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
 
 
 BEDROCK_OPTION_TRANSLATIONS: dict[str, str] = {
-    "model_id": "modelId",
+    "model": "modelId",
     "max_tokens": "maxTokens",
     "top_p": "topP",
     "stop": "stopSequences",
@@ -209,15 +209,15 @@ class BedrockSettings(TypedDict, total=False):
     """Bedrock configuration settings pulled from environment variables or .env files."""
 
     region: str | None
-    chat_model_id: str | None
+    chat_model: str | None
     access_key: SecretString | None
     secret_key: SecretString | None
     session_token: SecretString | None
 
 
 class BedrockChatClient(
-    ChatMiddlewareLayer[BedrockChatOptionsT],
     FunctionInvocationLayer[BedrockChatOptionsT],
+    ChatMiddlewareLayer[BedrockChatOptionsT],
     ChatTelemetryLayer[BedrockChatOptionsT],
     BaseChatClient[BedrockChatOptionsT],
     Generic[BedrockChatOptionsT],
@@ -230,33 +230,33 @@ class BedrockChatClient(
         self,
         *,
         region: str | None = None,
-        model_id: str | None = None,
+        model: str | None = None,
         access_key: str | None = None,
         secret_key: str | None = None,
         session_token: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Create a Bedrock chat client and load AWS credentials.
 
         Args:
             region: Region to send Bedrock requests to; falls back to BEDROCK_REGION.
-            model_id: Default model identifier; falls back to BEDROCK_CHAT_MODEL_ID.
+            model: Default model identifier; falls back to BEDROCK_CHAT_MODEL.
             access_key: Optional AWS access key for manual credential injection.
             secret_key: Optional AWS secret key paired with ``access_key``.
             session_token: Optional AWS session token for temporary credentials.
             client: Preconfigured Bedrock runtime client; when omitted a boto3 session is created.
             boto3_session: Custom boto3 session used to build the runtime client if provided.
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middlewares to include.
             function_invocation_configuration: Optional function invocation configuration
             env_file_path: Optional .env file path used by ``BedrockSettings`` to load defaults.
             env_file_encoding: Encoding for the optional .env file.
-            kwargs: Additional arguments forwarded to ``BaseChatClient``.
 
         Examples:
             .. code-block:: python
@@ -264,7 +264,7 @@ class BedrockChatClient(
                 from agent_framework.amazon import BedrockChatClient
 
                 # Basic usage with default credentials
-                client = BedrockChatClient(model_id="<model name>")
+                client = BedrockChatClient(model="<model name>")
 
                 # Using custom ChatOptions with type safety:
                 from typing import TypedDict
@@ -275,14 +275,14 @@ class BedrockChatClient(
                     my_custom_option: str
 
 
-                client = BedrockChatClient[MyOptions](model_id="<model name>")
+                client = BedrockChatClient[MyOptions](model="<model name>")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         settings = load_settings(
             BedrockSettings,
             env_prefix="BEDROCK_",
             region=region,
-            chat_model_id=model_id,
+            chat_model=model,
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
@@ -290,7 +290,7 @@ class BedrockChatClient(
             env_file_encoding=env_file_encoding,
         )
         region = settings.get("region") or DEFAULT_REGION
-        chat_model_id = settings.get("chat_model_id")
+        chat_model = settings.get("chat_model")
 
         if client:
             self._bedrock_client = client
@@ -303,11 +303,11 @@ class BedrockChatClient(
             )
 
         super().__init__(
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
-        self.model_id = chat_model_id
+        self.model = chat_model
         self.region = region
 
     @staticmethod
@@ -355,7 +355,7 @@ class BedrockChatClient(
                 yield ChatResponseUpdate(
                     response_id=parsed_response.response_id,
                     contents=contents,
-                    model_id=parsed_response.model_id,
+                    model=parsed_response.model,
                     finish_reason=finish_reason,
                     raw_representation=parsed_response.raw_representation,
                 )
@@ -375,10 +375,10 @@ class BedrockChatClient(
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
-        model_id = options.get("model_id") or self.model_id
-        if not model_id:
+        model = options.get("model") or self.model
+        if not model:
             raise ValueError(
-                "Bedrock model_id is required. Set via chat options or BEDROCK_CHAT_MODEL_ID environment variable."
+                "Bedrock model is required. Set via chat options or BEDROCK_CHAT_MODEL environment variable."
             )
 
         system_prompts, conversation = self._prepare_bedrock_messages(messages)
@@ -389,7 +389,7 @@ class BedrockChatClient(
             system_prompts = [{"text": instructions}, *system_prompts]
 
         run_options: dict[str, Any] = {
-            "modelId": model_id,
+            "modelId": model,
             "messages": conversation,
             "inferenceConfig": {"maxTokens": options.get("max_tokens", DEFAULT_MAX_TOKENS)},
         }
@@ -405,11 +405,16 @@ class BedrockChatClient(
 
         tool_config = self._prepare_tools(options.get("tools"))
         if tool_mode := validate_tool_mode(options.get("tool_choice")):
-            tool_config = tool_config or {}
             match tool_mode.get("mode"):
-                case "auto" | "none":
-                    tool_config["toolChoice"] = {tool_mode.get("mode"): {}}
+                case "none":
+                    # Bedrock doesn't support toolChoice "none".
+                    # Omit toolConfig entirely so the model won't attempt tool calls.
+                    tool_config = None
+                case "auto":
+                    tool_config = tool_config or {}
+                    tool_config["toolChoice"] = {"auto": {}}
                 case "required":
+                    tool_config = tool_config or {}
                     if required_name := tool_mode.get("required_function_name"):
                         tool_config["toolChoice"] = {"tool": {"name": required_name}}
                     else:
@@ -518,10 +523,22 @@ class BedrockChatClient(
                     }
                 }
             case "function_result":
+                if content.items:
+                    text_parts = [item.text or "" for item in content.items if item.type == "text"]
+                    rich_items = [item for item in content.items if item.type in ("data", "uri")]
+                    if rich_items:
+                        logger.warning(
+                            "Bedrock does not support rich content (images, audio) in tool results. "
+                            "Rich content items will be omitted."
+                        )
+                    tool_result_text = "\n".join(text_parts) if text_parts else ""
+                    tool_result_blocks = self._convert_tool_result_to_blocks(tool_result_text)
+                else:
+                    tool_result_blocks = self._convert_tool_result_to_blocks(content.result)
                 tool_result_block = {
                     "toolResult": {
                         "toolUseId": content.call_id,
-                        "content": self._convert_tool_result_to_blocks(content.result),
+                        "content": tool_result_blocks,
                         "status": "error" if content.exception else "success",
                     }
                 }
@@ -542,7 +559,12 @@ class BedrockChatClient(
         return None
 
     def _convert_tool_result_to_blocks(self, result: Any) -> list[dict[str, Any]]:
-        prepared_result = result if isinstance(result, str) else FunctionTool.parse_result(result)
+        if isinstance(result, str):
+            prepared_result = result
+        else:
+            parsed = FunctionTool.parse_result(result)
+            text_parts = [c.text or "" for c in parsed if c.type == "text"]
+            prepared_result = "\n".join(text_parts) if text_parts else str(result)
         try:
             parsed_result: object = json.loads(prepared_result)
         except json.JSONDecodeError:
@@ -611,12 +633,12 @@ class BedrockChatClient(
         usage_details = self._parse_usage(usage_source)
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")
-        model_id = response.get("modelId") or output.get("modelId") or self.model_id
+        model = response.get("modelId") or output.get("modelId") or self.model
         return ChatResponse(
             response_id=response_id,
             messages=[chat_message],
             usage_details=usage_details,
-            model_id=model_id,
+            model=model,
             finish_reason=finish_reason,
             raw_representation=response,
         )

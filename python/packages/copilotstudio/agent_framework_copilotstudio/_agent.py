@@ -11,8 +11,8 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
-    BaseContextProvider,
     Content,
+    ContextProvider,
     Message,
     ResponseStream,
     normalize_messages,
@@ -60,7 +60,7 @@ class CopilotStudioAgent(BaseAgent):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: list[AgentMiddlewareTypes] | None = None,
         environment_id: str | None = None,
         agent_identifier: str | None = None,
@@ -196,7 +196,6 @@ class CopilotStudioAgent(BaseAgent):
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
     @overload
@@ -206,7 +205,6 @@ class CopilotStudioAgent(BaseAgent):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
@@ -215,7 +213,6 @@ class CopilotStudioAgent(BaseAgent):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
@@ -229,22 +226,20 @@ class CopilotStudioAgent(BaseAgent):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
-            kwargs: Additional keyword arguments.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
         if stream:
-            return self._run_stream_impl(messages=messages, session=session, **kwargs)
-        return self._run_impl(messages=messages, session=session, **kwargs)
+            return self._run_stream_impl(messages=messages, session=session)
+        return self._run_impl(messages=messages, session=session)
 
     async def _run_impl(
         self,
         messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
-        **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming implementation of run."""
         if not session:
@@ -269,7 +264,6 @@ class CopilotStudioAgent(BaseAgent):
         messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Streaming implementation of run."""
 

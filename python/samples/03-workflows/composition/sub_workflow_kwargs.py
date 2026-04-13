@@ -6,11 +6,12 @@ import os
 from typing import Annotated, Any
 
 from agent_framework import (
+    Agent,
     Message,
     WorkflowExecutor,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -32,8 +33,8 @@ Key Concepts:
 - Useful for passing authentication tokens, configuration, or request context
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 
@@ -81,14 +82,15 @@ async def main() -> None:
     print("=" * 70)
 
     # Create chat client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
     # Create an agent with tools that use kwargs
-    inner_agent = client.as_agent(
+    inner_agent = Agent(
+        client=client,
         name="data_agent",
         instructions=(
             "You are a data access agent. Use the available tools to help users. "

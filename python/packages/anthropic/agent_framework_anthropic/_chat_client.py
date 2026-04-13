@@ -31,7 +31,7 @@ from agent_framework._settings import SecretString, load_settings
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
-from anthropic import AsyncAnthropic
+from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
 from anthropic.types.beta import (
     BetaContentBlock,
     BetaMessage,
@@ -68,6 +68,7 @@ else:
 __all__ = [
     "AnthropicChatOptions",
     "AnthropicClient",
+    "RawAnthropicClient",
     "ThinkingConfig",
 ]
 
@@ -78,6 +79,7 @@ BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08
 STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
+AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
 
 
 # region Anthropic Chat Options TypedDict
@@ -112,8 +114,6 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         a default of 1024 will be used.
 
     Keys:
-        model_id: The model to use for the request,
-            translates to ``model`` in Anthropic API.
         temperature: Sampling temperature between 0 and 1.
         top_p: Nucleus sampling parameter.
         max_tokens: Maximum number of tokens to generate (REQUIRED).
@@ -168,10 +168,22 @@ AnthropicOptionsT = TypeVar(
 
 # Translation between framework options keys and Anthropic Messages API
 OPTION_TRANSLATIONS: dict[str, str] = {
-    "model_id": "model",
     "stop": "stop_sequences",
     "instructions": "system",
 }
+
+
+def _apply_option_translations(options: dict[str, Any]) -> None:
+    """Translate framework option keys to Anthropic request keys in-place.
+
+    When both the old and new key are present, the new key wins and the old key
+    is discarded to preserve explicit overrides.
+    """
+    for old_key, new_key in OPTION_TRANSLATIONS.items():
+        if old_key not in options or old_key == new_key:
+            continue
+        old_value = options.pop(old_key)
+        options.setdefault(new_key, old_value)
 
 
 # region Role and Finish Reason Maps
@@ -203,21 +215,31 @@ class AnthropicSettings(TypedDict, total=False):
 
     Keys:
         api_key: The Anthropic API key.
-        chat_model_id: The Anthropic chat model ID.
+        chat_model: The Anthropic chat model.
     """
 
     api_key: SecretString | None
-    chat_model_id: str | None
+    chat_model: str | None
 
 
-class AnthropicClient(
-    ChatMiddlewareLayer[AnthropicOptionsT],
-    FunctionInvocationLayer[AnthropicOptionsT],
-    ChatTelemetryLayer[AnthropicOptionsT],
+class RawAnthropicClient(
     BaseChatClient[AnthropicOptionsT],
     Generic[AnthropicOptionsT],
 ):
-    """Anthropic Chat client with middleware, telemetry, and function invocation support."""
+    """Raw Anthropic chat client without middleware, telemetry, or function invocation support.
+
+    Warning:
+        **This class should not normally be used directly.** It does not include middleware,
+        telemetry, or function invocation support that you most likely need. If you do use it,
+        you should consider which additional layers to apply. There is a defined ordering that
+        you should follow:
+
+        1. **FunctionInvocationLayer** - Owns the tool/function calling loop and routes function middleware
+        2. **ChatMiddlewareLayer** - Applies chat middleware per model call and stays outside telemetry
+        3. **ChatTelemetryLayer** - Must stay inside chat middleware for correct per-call telemetry
+
+        Use ``AnthropicClient`` instead for a fully-featured client with all layers applied.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -225,49 +247,45 @@ class AnthropicClient(
         self,
         *,
         api_key: str | None = None,
-        model_id: str | None = None,
-        anthropic_client: AsyncAnthropic | None = None,
+        model: str | None = None,
+        anthropic_client: AnthropicAsyncClient | None = None,
         additional_beta_flags: list[str] | None = None,
-        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
-        """Initialize an Anthropic Agent client.
+        """Initialize a raw Anthropic client.
 
         Keyword Args:
             api_key: The Anthropic API key to use for authentication.
-            model_id: The ID of the model to use.
+            model: The model to use.
             anthropic_client: An existing Anthropic client to use. If not provided, one will be created.
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
                 Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
-            middleware: Optional middleware to apply to the client.
-            function_invocation_configuration: Optional function invocation configuration override.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            kwargs: Additional keyword arguments passed to the parent class.
 
         Examples:
             .. code-block:: python
 
-                from agent_framework.anthropic import AnthropicClient
+                from agent_framework.anthropic import RawAnthropicClient
                 from azure.identity.aio import DefaultAzureCredential
 
                 # Using environment variables
                 # Set ANTHROPIC_API_KEY=your_anthropic_api_key
-                # ANTHROPIC_CHAT_MODEL_ID=claude-sonnet-4-5-20250929
+                # ANTHROPIC_CHAT_MODEL=claude-sonnet-4-5-20250929
 
                 # Or passing parameters directly
-                client = AnthropicClient(
-                    model_id="claude-sonnet-4-5-20250929",
+                client = RawAnthropicClient(
+                    model="claude-sonnet-4-5-20250929",
                     api_key="your_anthropic_api_key",
                 )
 
                 # Or loading from a .env file
-                client = AnthropicClient(env_file_path="path/to/.env")
+                client = RawAnthropicClient(env_file_path="path/to/.env")
 
                 # Or passing in an existing client
                 from anthropic import AsyncAnthropic
@@ -275,8 +293,8 @@ class AnthropicClient(
                 anthropic_client = AsyncAnthropic(
                     api_key="your_anthropic_api_key", base_url="https://custom-anthropic-endpoint.com"
                 )
-                client = AnthropicClient(
-                    model_id="claude-sonnet-4-5-20250929",
+                client = RawAnthropicClient(
+                    model="claude-sonnet-4-5-20250929",
                     anthropic_client=anthropic_client,
                 )
 
@@ -289,7 +307,7 @@ class AnthropicClient(
                     my_custom_option: str
 
 
-                client: AnthropicClient[MyOptions] = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
+                client: RawAnthropicClient[MyOptions] = RawAnthropicClient(model="claude-sonnet-4-5-20250929")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         """
@@ -297,13 +315,13 @@ class AnthropicClient(
             AnthropicSettings,
             env_prefix="ANTHROPIC_",
             api_key=api_key,
-            chat_model_id=model_id,
+            chat_model=model,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
 
         api_key_secret = anthropic_settings.get("api_key")
-        model_id_setting = anthropic_settings.get("chat_model_id")
+        model_setting = anthropic_settings.get("chat_model")
 
         if anthropic_client is None:
             if api_key_secret is None:
@@ -319,15 +337,13 @@ class AnthropicClient(
 
         # Initialize parent
         super().__init__(
-            middleware=middleware,
-            function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
+            additional_properties=additional_properties,
         )
 
         # Initialize instance variables
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
-        self.model_id = model_id_setting
+        self.model = model_setting
         # streaming requires tracking the last function call ID, name, and content type
         self._last_call_id_name: tuple[str, str] | None = None
         self._last_call_content_type: str | None = None
@@ -508,7 +524,7 @@ class AnthropicClient(
         if stream:
             # Streaming mode
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
+                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):  # type: ignore[misc]
                     parsed_chunk = self._process_stream_event(chunk)
                     if parsed_chunk:
                         yield parsed_chunk
@@ -517,7 +533,7 @@ class AnthropicClient(
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
-            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)  # type: ignore[misc]
             return self._process_message(message, options)
 
         return _get_response()
@@ -556,16 +572,22 @@ class AnthropicClient(
         # Stream mode is controlled explicitly at call sites.
         run_options.pop("stream", None)
 
-        # Translation between options keys and Anthropic Messages API
-        for old_key, new_key in OPTION_TRANSLATIONS.items():
-            if old_key in run_options and old_key != new_key:
-                run_options[new_key] = run_options.pop(old_key)
+        _apply_option_translations(run_options)
 
-        # model id
+        # Filter out framework kwargs that should not be passed to the Anthropic API.
+        # This includes underscore-prefixed internal objects (like _function_middleware_pipeline)
+        # and framework kwargs like 'thread' and 'middleware'.
+        filtered_kwargs = {
+            k: v for k, v in kwargs.items() if not k.startswith("_") and k not in {"thread", "middleware"}
+        }
+        _apply_option_translations(filtered_kwargs)
+        run_options.update(filtered_kwargs)
+
+        # model
         if not run_options.get("model"):
-            if not self.model_id:
-                raise ValueError("model_id must be a non-empty string")
-            run_options["model"] = self.model_id
+            if not self.model:
+                raise ValueError("model must be a non-empty string")
+            run_options["model"] = self.model
 
         # max_tokens - Anthropic requires this, default if not provided
         if not run_options.get("max_tokens"):
@@ -602,13 +624,6 @@ class AnthropicClient(
             # Add the structured outputs beta flag
             run_options["betas"].add(STRUCTURED_OUTPUTS_BETA_FLAG)
 
-        # Filter out framework kwargs that should not be passed to the Anthropic API.
-        # This includes underscore-prefixed internal objects (like _function_middleware_pipeline)
-        # and framework kwargs like 'thread' and 'middleware'.
-        filtered_kwargs = {
-            k: v for k, v in kwargs.items() if not k.startswith("_") and k not in {"thread", "middleware"}
-        }
-        run_options.update(filtered_kwargs)
         return run_options
 
     def _prepare_betas(self, options: Mapping[str, Any]) -> set[str]:
@@ -716,12 +731,46 @@ class AnthropicClient(
                         "input": content.parse_arguments(),
                     })
                 case "function_result":
-                    a_content.append({
-                        "type": "tool_result",
-                        "tool_use_id": content.call_id,
-                        "content": content.result if content.result is not None else "",
-                        "is_error": content.exception is not None,
-                    })
+                    if content.items:
+                        tool_content: list[dict[str, Any]] = []
+                        for item in content.items:
+                            if item.type == "text":
+                                tool_content.append({"type": "text", "text": item.text or ""})
+                            elif item.type == "data" and item.has_top_level_media_type("image"):
+                                tool_content.append({
+                                    "type": "image",
+                                    "source": {
+                                        "data": _get_data_bytes_as_str(item),  # type: ignore[attr-defined]
+                                        "media_type": item.media_type,
+                                        "type": "base64",
+                                    },
+                                })
+                            elif item.type == "uri" and item.has_top_level_media_type("image"):
+                                tool_content.append({
+                                    "type": "image",
+                                    "source": {"type": "url", "url": item.uri},
+                                })
+                            else:
+                                logger.debug(
+                                    "Ignoring unsupported rich content media type in tool result: %s",
+                                    item.media_type,
+                                )
+                        tool_result_content = (
+                            tool_content if tool_content else (content.result if content.result is not None else "")
+                        )
+                        a_content.append({
+                            "type": "tool_result",
+                            "tool_use_id": content.call_id,
+                            "content": tool_result_content,
+                            "is_error": content.exception is not None,
+                        })
+                    else:
+                        a_content.append({
+                            "type": "tool_result",
+                            "tool_use_id": content.call_id,
+                            "content": content.result if content.result is not None else "",
+                            "is_error": content.exception is not None,
+                        })
                 case "mcp_server_tool_call":
                     mcp_call: dict[str, Any] = {
                         "type": "mcp_tool_use",
@@ -879,7 +928,7 @@ class AnthropicClient(
                 )
             ],
             usage_details=self._parse_usage_from_anthropic(message.usage),
-            model_id=message.model,
+            model=message.model,
             finish_reason=FINISH_REASON_MAP.get(message.stop_reason) if message.stop_reason else None,
             response_format=options.get("response_format"),
             raw_representation=message,
@@ -907,7 +956,7 @@ class AnthropicClient(
                         *self._parse_contents_from_anthropic(event.message.content),
                         *usage_details,
                     ],
-                    model_id=event.message.model,
+                    model=event.message.model,
                     finish_reason=FINISH_REASON_MAP.get(event.message.stop_reason)
                     if event.message.stop_reason
                     else None,
@@ -1232,8 +1281,8 @@ class AnthropicClient(
                         )
                     )
                 case "input_json_delta":
-                    # Skip argument deltas for MCP tools — execution is handled server-side.
-                    if self._last_call_content_type == "mcp_tool_use":
+                    # Skip argument deltas for MCP and server tools — execution is handled server-side.
+                    if self._last_call_content_type in ("mcp_tool_use", "server_tool_use"):
                         pass
                     else:
                         call_id = self._last_call_id_name[0] if self._last_call_id_name else ""
@@ -1342,3 +1391,95 @@ class AnthropicClient(
             The service URL for the chat client, or None if not set.
         """
         return str(self.anthropic_client.base_url)
+
+
+class AnthropicClient(
+    FunctionInvocationLayer[AnthropicOptionsT],
+    ChatMiddlewareLayer[AnthropicOptionsT],
+    ChatTelemetryLayer[AnthropicOptionsT],
+    RawAnthropicClient[AnthropicOptionsT],
+    Generic[AnthropicOptionsT],
+):
+    """Anthropic chat client with middleware, telemetry, and function invocation support."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        anthropic_client: AnthropicAsyncClient | None = None,
+        additional_beta_flags: list[str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Anthropic client.
+
+        Keyword Args:
+            api_key: The Anthropic API key to use for authentication.
+            model: The model to use.
+            anthropic_client: An existing Anthropic client to use. If not provided, one will be created.
+                This can be used to further configure the client before passing it in.
+                For instance if you need to set a different base_url for testing or private deployments.
+            additional_beta_flags: Additional beta flags to enable on the client.
+                Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+            additional_properties: Additional properties stored on the client instance.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.anthropic import AnthropicClient
+
+                # Using environment variables
+                # Set ANTHROPIC_API_KEY=your_anthropic_api_key
+                # ANTHROPIC_CHAT_MODEL=claude-sonnet-4-5-20250929
+
+                # Or passing parameters directly
+                client = AnthropicClient(
+                    model="claude-sonnet-4-5-20250929",
+                    api_key="your_anthropic_api_key",
+                )
+
+                # Or loading from a .env file
+                client = AnthropicClient(env_file_path="path/to/.env")
+
+                # Or passing in an existing client
+                from anthropic import AsyncAnthropic
+
+                anthropic_client = AsyncAnthropic(
+                    api_key="your_anthropic_api_key", base_url="https://custom-anthropic-endpoint.com"
+                )
+                client = AnthropicClient(
+                    model="claude-sonnet-4-5-20250929",
+                    anthropic_client=anthropic_client,
+                )
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.anthropic import AnthropicChatOptions
+
+
+                class MyOptions(AnthropicChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AnthropicClient[MyOptions] = AnthropicClient(model="claude-sonnet-4-5-20250929")
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
+        """
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            anthropic_client=anthropic_client,
+            additional_beta_flags=additional_beta_flags,
+            additional_properties=additional_properties,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )

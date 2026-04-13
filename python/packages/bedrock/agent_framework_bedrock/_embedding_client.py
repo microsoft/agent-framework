@@ -39,7 +39,7 @@ class BedrockEmbeddingSettings(TypedDict, total=False):
     """Bedrock embedding settings."""
 
     region: str | None
-    embedding_model_id: str | None
+    embedding_model: str | None
     access_key: SecretString | None
     secret_key: SecretString | None
     session_token: SecretString | None
@@ -56,7 +56,7 @@ class BedrockEmbeddingOptions(EmbeddingGenerationOptions, total=False):
             from agent_framework_bedrock import BedrockEmbeddingOptions
 
             options: BedrockEmbeddingOptions = {
-                "model_id": "amazon.titan-embed-text-v2:0",
+                "model": "amazon.titan-embed-text-v2:0",
                 "dimensions": 1024,
                 "normalize": True,
             }
@@ -80,8 +80,8 @@ class RawBedrockEmbeddingClient(
     """Raw Bedrock embedding client without telemetry.
 
     Keyword Args:
-        model_id: The Bedrock embedding model ID (e.g. "amazon.titan-embed-text-v2:0").
-            Can also be set via environment variable BEDROCK_EMBEDDING_MODEL_ID.
+        model: The Bedrock embedding model ID (e.g. "amazon.titan-embed-text-v2:0").
+            Can also be set via environment variable BEDROCK_EMBEDDING_MODEL.
         region: AWS region. Will try to load from BEDROCK_REGION env var,
             if not set, the regular Boto3 configuration/loading applies
             (which may include other env vars, config files, or instance metadata).
@@ -98,23 +98,23 @@ class RawBedrockEmbeddingClient(
         self,
         *,
         region: str | None = None,
-        model_id: str | None = None,
+        model: str | None = None,
         access_key: str | None = None,
         secret_key: str | None = None,
         session_token: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a raw Bedrock embedding client."""
         settings = load_settings(
             BedrockEmbeddingSettings,
             env_prefix="BEDROCK_",
-            required_fields=["embedding_model_id"],
+            required_fields=["embedding_model"],
             region=region,
-            embedding_model_id=model_id,
+            embedding_model=model,
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
@@ -143,9 +143,9 @@ class RawBedrockEmbeddingClient(
                 config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
             )
 
-        self.model_id: str = settings["embedding_model_id"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+        self.model: str = settings["embedding_model"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
         self.region = resolved_region
-        super().__init__(**kwargs)
+        super().__init__(additional_properties=additional_properties)
 
     def service_url(self) -> str:
         """Get the URL of the service."""
@@ -170,15 +170,15 @@ class RawBedrockEmbeddingClient(
             Generated embeddings with usage metadata.
 
         Raises:
-            ValueError: If model_id is not provided or values is empty.
+            ValueError: If model is not provided or values is empty.
         """
         if not values:
             return GeneratedEmbeddings([], options=options)
 
         opts: dict[str, Any] = dict(options) if options else {}
-        model = opts.get("model_id") or self.model_id
+        model = opts.get("model") or self.model
         if not model:
-            raise ValueError("model_id is required")
+            raise ValueError("model is required")
 
         embedding_results = await asyncio.gather(
             *(self._generate_embedding_for_text(opts, model, text) for text in values)
@@ -218,7 +218,7 @@ class RawBedrockEmbeddingClient(
         embedding = Embedding(
             vector=response_body["embedding"],
             dimensions=len(response_body["embedding"]),
-            model_id=model,
+            model=model,
         )
         input_tokens = int(response_body.get("inputTextTokenCount", 0))
         return embedding, input_tokens
@@ -234,8 +234,8 @@ class BedrockEmbeddingClient(
     Uses the Amazon Titan Embeddings model via Bedrock's invoke_model API.
 
     Keyword Args:
-        model_id: The Bedrock embedding model ID (e.g. "amazon.titan-embed-text-v2:0").
-            Can also be set via environment variable BEDROCK_EMBEDDING_MODEL_ID.
+        model: The Bedrock embedding model ID (e.g. "amazon.titan-embed-text-v2:0").
+            Can also be set via environment variable BEDROCK_EMBEDDING_MODEL.
         region: AWS region. Defaults to "us-east-1".
             Can also be set via environment variable BEDROCK_REGION.
         access_key: AWS access key for manual credential injection.
@@ -253,7 +253,7 @@ class BedrockEmbeddingClient(
 
             # Using default AWS credentials
             client = BedrockEmbeddingClient(
-                model_id="amazon.titan-embed-text-v2:0",
+                model="amazon.titan-embed-text-v2:0",
             )
 
             # Generate embeddings
@@ -267,28 +267,28 @@ class BedrockEmbeddingClient(
         self,
         *,
         region: str | None = None,
-        model_id: str | None = None,
+        model: str | None = None,
         access_key: str | None = None,
         secret_key: str | None = None,
         session_token: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
         otel_provider_name: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a Bedrock embedding client."""
         super().__init__(
             region=region,
-            model_id=model_id,
+            model=model,
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
             client=client,
             boto3_session=boto3_session,
+            additional_properties=additional_properties,
             otel_provider_name=otel_provider_name,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
-            **kwargs,
         )

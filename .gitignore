@@ -47,6 +47,8 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+pytest.xml
+python-coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
@@ -205,6 +207,9 @@ WARP.md
 **/memory-bank/
 **/projectBrief.md
 **/tmpclaude*
+# Dependency-bound validation reports
+python/scripts/dependency-*-results.json
+python/scripts/dependencies/dependency-*-results.json
 
 # Azurite storage emulator files
 */__azurite_db_blob__.json*
@@ -227,3 +232,6 @@ local.settings.json
 # Database files
 *.db
 python/dotnet-ref
+
+# Generated filtered solution files (created by eng/scripts/New-FilteredSolution.ps1)
+dotnet/filtered-*.slnx

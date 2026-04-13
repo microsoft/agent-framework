@@ -1,16 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
-from agent_framework import Message
-from agent_framework._sessions import (
+import pytest
+
+from agent_framework import (
+    AgentContext,
     AgentSession,
-    BaseContextProvider,
-    BaseHistoryProvider,
+    ChatContext,
+    ContextProvider,
+    HistoryProvider,
     InMemoryHistoryProvider,
+    Message,
     SessionContext,
+    agent_middleware,
+    chat_middleware,
 )
+from agent_framework._sessions import LOCAL_HISTORY_CONVERSATION_ID, is_local_history_conversation_id
+from agent_framework.exceptions import MiddlewareException
 
 # ---------------------------------------------------------------------------
 # SessionContext tests
@@ -102,6 +110,50 @@ class TestSessionContext:
         ctx.extend_instructions("sys", ["Be helpful", "Be concise"])
         assert ctx.instructions == ["Be helpful", "Be concise"]
 
+    def test_extend_middleware_creates_key_and_appends(self) -> None:
+        ctx = SessionContext(input_messages=[])
+
+        @chat_middleware
+        async def first_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @chat_middleware
+        async def second_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        ctx.extend_middleware("rag", first_middleware)
+        ctx.extend_middleware("rag", [second_middleware])
+
+        assert ctx.middleware["rag"] == [first_middleware, second_middleware]
+        assert ctx.get_middleware() == [first_middleware, second_middleware]
+
+    def test_extend_middleware_preserves_source_order(self) -> None:
+        ctx = SessionContext(input_messages=[])
+
+        @chat_middleware
+        async def first_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @chat_middleware
+        async def second_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        ctx.extend_middleware("a", first_middleware)
+        ctx.extend_middleware("b", second_middleware)
+
+        assert list(ctx.middleware.keys()) == ["a", "b"]
+        assert ctx.get_middleware() == [first_middleware, second_middleware]
+
+    def test_extend_middleware_rejects_agent_middleware(self) -> None:
+        ctx = SessionContext(input_messages=[])
+
+        @agent_middleware
+        async def provider_agent_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        with pytest.raises(MiddlewareException, match="Context providers may only add chat or function middleware"):
+            ctx.extend_middleware("rag", provider_agent_middleware)
+
     def test_get_messages_all(self) -> None:
         ctx = SessionContext(input_messages=[])
         ctx.extend_messages("a", [Message(role="user", contents=["a"])])
@@ -154,37 +206,41 @@ class TestSessionContext:
         ctx._response = resp
         assert ctx.response is resp
 
+    def test_local_history_conversation_id_sentinel(self) -> None:
+        assert is_local_history_conversation_id(LOCAL_HISTORY_CONVERSATION_ID) is True
+        assert is_local_history_conversation_id("some_other_id") is False
+
 
 # ---------------------------------------------------------------------------
-# BaseContextProvider tests
+# ContextProvider tests
 # ---------------------------------------------------------------------------
 
 
-class TestContextProviderBase:
+class TestContextProvider:
     def test_source_id_required(self) -> None:
-        provider = BaseContextProvider(source_id="test")
+        provider = ContextProvider(source_id="test")
         assert provider.source_id == "test"
 
     async def test_before_run_is_noop(self) -> None:
-        provider = BaseContextProvider(source_id="test")
+        provider = ContextProvider(source_id="test")
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
         # Should not raise
         await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
 
     async def test_after_run_is_noop(self) -> None:
-        provider = BaseContextProvider(source_id="test")
+        provider = ContextProvider(source_id="test")
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
         await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
-# BaseHistoryProvider tests
+# HistoryProvider tests
 # ---------------------------------------------------------------------------
 
 
-class ConcreteHistoryProvider(BaseHistoryProvider):
+class ConcreteHistoryProvider(HistoryProvider):
     """Concrete test implementation."""
 
     def __init__(self, source_id: str, stored_messages: list[Message] | None = None, **kwargs) -> None:
@@ -192,10 +248,10 @@ class ConcreteHistoryProvider(BaseHistoryProvider):
         self.stored: list[Message] = []
         self._stored_messages = stored_messages or []
 
-    async def get_messages(self, session_id: str | None, **kwargs) -> list[Message]:
+    async def get_messages(self, session_id: str | None, *, state=None, **kwargs) -> list[Message]:
         return list(self._stored_messages)
 
-    async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs) -> None:
+    async def save_messages(self, session_id: str | None, messages: Sequence[Message], *, state=None, **kwargs) -> None:
         self.stored.extend(messages)
 
 

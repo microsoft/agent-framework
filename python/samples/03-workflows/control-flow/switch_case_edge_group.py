@@ -18,7 +18,7 @@ from agent_framework import (  # Core chat primitives used to form LLM requests
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to turn a function into a workflow executor
 )
-from agent_framework.azure import AzureOpenAIResponsesClient  # Thin client for Azure OpenAI chat models
+from agent_framework.foundry import FoundryChatClient  # Thin client for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from dotenv import load_dotenv
 from pydantic import BaseModel  # Structured outputs with validation
@@ -43,10 +43,10 @@ on that type.
 - Use ctx.yield_output() to provide workflow results - the workflow completes when idle with no pending work.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Familiarity with WorkflowBuilder, executors, edges, and events.
 - Understanding of switch-case edge groups and how Case and Default are evaluated in order.
-- Working Azure OpenAI configuration for AzureOpenAIResponsesClient, with Azure CLI login and required environment variables.
+- Working Azure OpenAI configuration for FoundryChatClient, with Azure CLI login and required environment variables.
 - Access to workflow/resources/ambiguous_email.txt, or accept the inline fallback string.
 """
 
@@ -104,7 +104,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
 
     # Kick off the detector by forwarding the email as a user message to the spam_detection_agent.
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message("user", text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", contents=[new_email.email_content])], should_respond=True)
     )
 
 
@@ -125,7 +125,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content from workflow state using the id carried in DetectionResult.
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message("user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", contents=[email.email_content])], should_respond=True)
     )
 
 
@@ -159,11 +159,12 @@ async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Neve
 
 def create_spam_detection_agent() -> Agent:
     """Create and return the spam detection agent."""
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Be less confident in your assessments. "
@@ -177,11 +178,12 @@ def create_spam_detection_agent() -> Agent:
 
 def create_email_assistant_agent() -> Agent:
     """Create and return the email assistant agent."""
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
         name="email_assistant_agent",
         default_options={"response_format": EmailResponse},

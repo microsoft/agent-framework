@@ -4,6 +4,13 @@
 
 from unittest.mock import patch
 
+import pytest
+
+try:
+    from litellm import completion as _litellm_completion  # noqa: F401
+except Exception:
+    pytest.skip("LiteLLM import surface required by tau2 is unavailable.", allow_module_level=True)
+
 from agent_framework import InMemoryHistoryProvider
 from agent_framework._types import Content, Message
 from agent_framework_lab_tau2._sliding_window import SlidingWindowHistoryProvider

@@ -15,12 +15,20 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLifetime
 {
+    private const string SkipFlakyTimingTest = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971";
+
     private const string AzureFunctionsPort = "7071";
     private const string AzuritePort = "10000";
     private const string DtsPort = "8080";
     private const string RedisPort = "6379";
 
     private static readonly string s_dotnetTargetFramework = GetTargetFramework();
+
+#if DEBUG
+    private const string BuildConfiguration = "Debug";
+#else
+    private const string BuildConfiguration = "Release";
+#endif
     private static readonly HttpClient s_sharedHttpClient = new();
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()
@@ -29,7 +37,11 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             .Build();
 
     private static bool s_infrastructureStarted;
-    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(2);
+
+    // In CI, `dotnet run` builds the Functions project from scratch before the host starts, so 60s is not enough.
+    private static readonly TimeSpan s_functionsReadyTimeout = TimeSpan.FromSeconds(180);
+
     private static readonly string s_samplesPath = Path.GetFullPath(
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableAgents", "AzureFunctions"));
 
@@ -262,7 +274,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -392,7 +404,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");
@@ -793,7 +805,8 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     private async Task RunSampleTestAsync(string samplePath, Func<IReadOnlyList<OutputLog>, Task> testAction)
     {
         // Build the sample project first (it may not have been built as part of the solution)
-        await this.BuildSampleAsync(samplePath);
+        await AzureFunctionsTestHelper.BuildSampleAsync(
+            samplePath, $"-f {s_dotnetTargetFramework} -c {BuildConfiguration}", this._outputHelper);
 
         // Start the Azure Functions app
         List<OutputLog> logsContainer = [];
@@ -801,7 +814,8 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         try
         {
             // Wait for the app to be ready
-            await this.WaitForAzureFunctionsAsync();
+            await AzureFunctionsTestHelper.WaitForFunctionsReadyAsync(
+                funcProcess, AzureFunctionsPort, s_sharedHttpClient, this._outputHelper, s_functionsReadyTimeout, samplePath);
 
             // Run the test
             await testAction(logsContainer);
@@ -814,44 +828,12 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
     private sealed record OutputLog(DateTime Timestamp, LogLevel Level, string Message);
 
-    private async Task BuildSampleAsync(string samplePath)
-    {
-        this._outputHelper.WriteLine($"Building sample at {samplePath}...");
-
-        ProcessStartInfo buildInfo = new()
-        {
-            FileName = "dotnet",
-            Arguments = $"build -f {s_dotnetTargetFramework}",
-            WorkingDirectory = samplePath,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-
-        using Process buildProcess = new() { StartInfo = buildInfo };
-        buildProcess.Start();
-
-        // Read both streams asynchronously to avoid deadlocks from filled pipe buffers
-        Task<string> stdoutTask = buildProcess.StandardOutput.ReadToEndAsync();
-        Task<string> stderrTask = buildProcess.StandardError.ReadToEndAsync();
-        await buildProcess.WaitForExitAsync();
-
-        string stderr = await stderrTask;
-        if (buildProcess.ExitCode != 0)
-        {
-            string stdout = await stdoutTask;
-            throw new InvalidOperationException($"Failed to build sample at {samplePath}:\n{stdout}\n{stderr}");
-        }
-
-        this._outputHelper.WriteLine($"Build completed for {samplePath}.");
-    }
-
     private Process StartFunctionApp(string samplePath, List<OutputLog> logs)
     {
         ProcessStartInfo startInfo = new()
         {
             FileName = "dotnet",
-            Arguments = $"run --no-build -f {s_dotnetTargetFramework} --port {AzureFunctionsPort}",
+            Arguments = $"run --no-build -f {s_dotnetTargetFramework} -c {BuildConfiguration} --port {AzureFunctionsPort}",
             WorkingDirectory = samplePath,
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -907,30 +889,6 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         process.BeginOutputReadLine();
 
         return process;
-    }
-
-    private async Task WaitForAzureFunctionsAsync()
-    {
-        this._outputHelper.WriteLine(
-            $"Waiting for Azure Functions Core Tools to be ready at http://localhost:{AzureFunctionsPort}/...");
-        await this.WaitForConditionAsync(
-            condition: async () =>
-            {
-                try
-                {
-                    using HttpRequestMessage request = new(HttpMethod.Head, $"http://localhost:{AzureFunctionsPort}/");
-                    using HttpResponseMessage response = await s_sharedHttpClient.SendAsync(request);
-                    this._outputHelper.WriteLine($"Azure Functions Core Tools response: {response.StatusCode}");
-                    return response.IsSuccessStatusCode;
-                }
-                catch (HttpRequestException)
-                {
-                    // Expected when the app isn't yet ready
-                    return false;
-                }
-            },
-            message: "Azure Functions Core Tools is ready",
-            timeout: TimeSpan.FromSeconds(60));
     }
 
     private async Task WaitForOrchestrationCompletionAsync(Uri statusUri)

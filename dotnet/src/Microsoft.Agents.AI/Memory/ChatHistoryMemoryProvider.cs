@@ -7,12 +7,14 @@ using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Compliance.Redaction;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.VectorData;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
+#pragma warning disable IDE0001 // Simplify Names - Microsoft.Extensions.Logging.LogLevel.Trace doesn't get found in net472 when removing the namespace.
 /// <summary>
 /// A context provider that stores all chat history in a vector store and is able to
 /// retrieve related chat history later to augment the current conversation.
@@ -33,8 +35,25 @@ namespace Microsoft.Agents.AI;
 /// exposes a function tool that the model can invoke to retrieve relevant memories on demand instead of
 /// injecting them automatically on each invocation.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong>
+/// <list type="bullet">
+/// <item><description><strong>Indirect prompt injection:</strong> Messages retrieved from the vector store via semantic search
+/// are injected into the LLM context. If the vector store is compromised, adversarial content could influence LLM behavior.
+/// The data returned from the store is accepted as-is without validation or sanitization.</description></item>
+/// <item><description><strong>PII and sensitive data:</strong> Conversation messages (including user inputs and LLM responses)
+/// are stored as vectors in the underlying store. These messages may contain PII or sensitive information. Ensure the vector
+/// store is configured with appropriate access controls and encryption at rest.</description></item>
+/// <item><description><strong>On-demand search tool:</strong> When using <see cref="ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling"/>,
+/// the AI model controls when and what to search for. The search query is AI-generated and should be treated as untrusted input
+/// by the vector store implementation.</description></item>
+/// <item><description><strong>Trace logging:</strong> When <see cref="Microsoft.Extensions.Logging.LogLevel.Trace"/> is enabled,
+/// full search queries and results may be logged. This data may contain PII.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
 public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDisposable
+#pragma warning restore IDE0001 // Simplify Names
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
     private const int DefaultMaxResults = 3;
@@ -62,7 +81,7 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
     private readonly VectorStoreCollection<object, Dictionary<string, object?>> _collection;
     private readonly int _maxResults;
     private readonly string _contextPrompt;
-    private readonly bool _enableSensitiveTelemetryData;
+    private readonly Redactor _redactor;
     private readonly ChatHistoryMemoryProviderOptions.SearchBehavior _searchTime;
     private readonly string _toolName;
     private readonly string _toolDescription;
@@ -100,7 +119,7 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
         options ??= new ChatHistoryMemoryProviderOptions();
         this._maxResults = options.MaxResults.HasValue ? Throw.IfLessThanOrEqual(options.MaxResults.Value, 0) : DefaultMaxResults;
         this._contextPrompt = options.ContextPrompt ?? DefaultContextPrompt;
-        this._enableSensitiveTelemetryData = options.EnableSensitiveTelemetryData;
+        this._redactor = options.EnableSensitiveTelemetryData ? NullRedactor.Instance : (options.Redactor ?? new ReplacingRedactor("<redacted>"));
         this._searchTime = options.SearchTime;
         this._logger = loggerFactory?.CreateLogger<ChatHistoryMemoryProvider>();
         this._toolName = options.FunctionToolName ?? DefaultFunctionToolName;
@@ -467,7 +486,7 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
         GC.SuppressFinalize(this);
     }
 
-    private string? SanitizeLogData(string? data) => this._enableSensitiveTelemetryData ? data : "<redacted>";
+    private string SanitizeLogData(string? data) => this._redactor.Redact(data);
 
     /// <summary>
     /// Rebinds a filter expression's body to use the specified shared parameter,
