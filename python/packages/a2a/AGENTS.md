@@ -5,7 +5,7 @@ Agent-to-Agent (A2A) protocol support for inter-agent communication.
 ## Main Classes
 
 - **`A2AAgent`** - Client to connect to remote A2A-compliant agents.
-- **`A2AExecutor`** - Bridge to expose local agents via the A2A protocol.
+- **`A2AExecutor`** - Bridge to expose Agent Framework agents via the A2A protocol.
 
 ## Usage
 
