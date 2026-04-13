@@ -271,7 +271,7 @@ def _get_json_response(*, host: str, port: int, path: str) -> dict[str, Any]:
     raise RuntimeError(f"Expected JSON object from {path}, got: {type(data).__name__}")
 
 
-def _get_devtools_websocket_url(port: int) -> str:
+async def _get_devtools_websocket_url(port: int) -> str:
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
         with contextlib.suppress(Exception):
@@ -279,7 +279,7 @@ def _get_devtools_websocket_url(port: int) -> str:
             websocket_url = version_data.get("webSocketDebuggerUrl")
             if isinstance(websocket_url, str) and websocket_url:
                 return websocket_url
-        time.sleep(0.1)
+        await asyncio.sleep(0.1)
 
     raise RuntimeError(f"Timed out waiting for DevTools on port {port}")
 
@@ -655,7 +655,7 @@ async def test_devui_streaming_renderer_memory_is_bounded(
         )
 
         try:
-            websocket_url = _get_devtools_websocket_url(debug_port)
+            websocket_url = await _get_devtools_websocket_url(debug_port)
 
             async with websocket_connect(websocket_url, max_size=None) as websocket:
                 client = _CDPClient(websocket)
