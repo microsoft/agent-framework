@@ -576,17 +576,6 @@ async def _to_outputs(stream: ResponseEventStream, content: Content) -> AsyncIte
             max_output_length=content.max_output_length,
         ):
             yield event
-    elif content.type == "function_approval_request" and content.function_call is not None:
-        fc = content.function_call
-        async for event in stream.aoutput_item_mcp_approval_request(
-            content.server_name or "default",
-            fc.name or "",
-            _arguments_to_str(fc.arguments),
-        ):
-            yield event
-    elif content.type == "function_approval_response" and content.id is not None and content.approved is not None:
-        async for event in stream.aoutput_item_mcp_approval_response(content.id, content.approved):
-            yield event
     else:
         # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
         logger.warning(f"Content type '{content.type}' is not supported yet.")
