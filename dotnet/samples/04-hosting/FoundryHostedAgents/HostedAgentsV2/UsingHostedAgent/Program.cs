@@ -86,6 +86,7 @@ while (true)
 Console.WriteLine("Goodbye!");
 
 /// <summary>
+/// For Local Development Only
 /// Rewrites HTTPS URIs to HTTP right before transport, allowing AIProjectClient
 /// to target a local HTTP dev server while satisfying BearerTokenPolicy's TLS check.
 /// </summary>
