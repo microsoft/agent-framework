@@ -46,6 +46,7 @@ from ._orchestration._tooling import collect_server_tools, merge_tools, register
 from ._run_common import (
     FlowState,
     _build_run_finished_event,  # type: ignore
+    _close_reasoning_block,  # type: ignore
     _emit_content,  # type: ignore
     _extract_resume_payload,  # type: ignore
     _has_only_tool_calls,  # type: ignore
@@ -1057,6 +1058,10 @@ async def run_agent_stream(
                                 },
                             }
                         )
+
+    # Close any open reasoning block
+    for event in _close_reasoning_block(flow):
+        yield event
 
     # Close any open message
     if flow.message_id:
