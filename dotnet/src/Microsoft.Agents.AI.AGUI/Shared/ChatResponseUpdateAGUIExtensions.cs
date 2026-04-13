@@ -7,6 +7,7 @@ using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -88,6 +89,11 @@ internal static class ChatResponseUpdateAGUIExtensions
                         yield return CreateStateDeltaUpdate(stateDelta, conversationId, responseId, jsonSerializerOptions);
                     }
                     break;
+
+                // Activity snapshot events (e.g. MCP App tool results)
+                case ActivitySnapshotEvent activitySnapshot when activitySnapshot.Content.HasValue:
+                    yield return CreateActivitySnapshotUpdate(activitySnapshot, conversationId, responseId, jsonSerializerOptions);
+                    break;
             }
         }
     }
@@ -136,6 +142,30 @@ internal static class ChatResponseUpdateAGUIExtensions
             AdditionalProperties = new AdditionalPropertiesDictionary
             {
                 ["is_state_delta"] = true
+            }
+        };
+    }
+
+    private static ChatResponseUpdate CreateActivitySnapshotUpdate(
+        ActivitySnapshotEvent activitySnapshot,
+        string? conversationId,
+        string? responseId,
+        JsonSerializerOptions jsonSerializerOptions)
+    {
+        byte[] jsonBytes = JsonSerializer.SerializeToUtf8Bytes(
+            activitySnapshot.Content!.Value,
+            jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)));
+        DataContent dataContent = new(jsonBytes, "application/json");
+
+        return new ChatResponseUpdate(ChatRole.Assistant, [dataContent])
+        {
+            ConversationId = conversationId,
+            ResponseId = responseId,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["is_activity_snapshot"] = true,
+                ["activity_type"] = activitySnapshot.ActivityType
             }
         };
     }
@@ -342,6 +372,7 @@ internal static class ChatResponseUpdateAGUIExtensions
 
         string? currentMessageId = null;
         string? streamingMessageId = null;
+        var toolArgsByCallId = new Dictionary<string, string>(StringComparer.Ordinal);
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             // Generate a fallback MessageId when the provider doesn't supply one.
@@ -400,12 +431,15 @@ internal static class ChatResponseUpdateAGUIExtensions
                             ParentMessageId = chatResponse.MessageId
                         };
 
+                        var argsJson = JsonSerializer.Serialize(
+                            functionCallContent.Arguments,
+                            jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
+                        toolArgsByCallId[functionCallContent.CallId] = argsJson;
+
                         yield return new ToolCallArgsEvent
                         {
                             ToolCallId = functionCallContent.CallId,
-                            Delta = JsonSerializer.Serialize(
-                                functionCallContent.Arguments,
-                                jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)))
+                            Delta = argsJson
                         };
 
                         yield return new ToolCallEndEvent
@@ -415,13 +449,23 @@ internal static class ChatResponseUpdateAGUIExtensions
                     }
                     else if (content is FunctionResultContent functionResultContent)
                     {
+                        var resultContent = SerializeResultContent(functionResultContent, jsonSerializerOptions) ?? "";
+
                         yield return new ToolCallResultEvent
                         {
                             MessageId = chatResponse.MessageId,
                             ToolCallId = functionResultContent.CallId,
-                            Content = SerializeResultContent(functionResultContent, jsonSerializerOptions) ?? "",
+                            Content = resultContent,
                             Role = AGUIRoles.Tool
                         };
+
+                        if (functionResultContent.Result is AIContent aic && GetToolMetadata(aic) is JsonObject toolMetadata)
+                        {
+                            toolArgsByCallId.TryGetValue(functionResultContent.CallId, out var toolInputJson);
+                            toolArgsByCallId.Remove(functionResultContent.CallId);
+                            var resourceUri = toolMetadata["ui"]?["resourceUri"]?.ToString() ?? string.Empty;
+                            yield return BuildActivitySnapshot(chatResponse.MessageId, resourceUri, resultContent, toolInputJson ?? "{}", jsonSerializerOptions);
+                        }
                     }
                     else if (content is DataContent dataContent)
                     {
@@ -498,8 +542,142 @@ internal static class ChatResponseUpdateAGUIExtensions
         {
             null => null,
             string str => str,
+            TextContent textContent => JsonSerializer.Serialize(textContent.Text ?? string.Empty, options.GetTypeInfo(typeof(string))),
             JsonElement jsonElement => jsonElement.GetRawText(),
             _ => JsonSerializer.Serialize(functionResultContent.Result, options.GetTypeInfo(functionResultContent.Result.GetType())),
         };
+    }
+
+    private static JsonObject? GetToolMetadata(AIContent content)
+    {
+        return content.AdditionalProperties?["ToolMetadata"] as JsonObject;
+    }
+
+    /// <summary>
+    /// Builds an <see cref="ActivitySnapshotEvent"/> for an MCP App tool result.
+    /// The <c>content.result</c> is normalized to a <c>{"content":[...]}</c> structure so that
+    /// clients always receive a consistent MCP CallToolResult shape.
+    /// </summary>
+    private static ActivitySnapshotEvent BuildActivitySnapshot(
+        string? messageId,
+        string resourceUri,
+        string resultContent,
+        string toolInputJson,
+        JsonSerializerOptions options)
+    {
+        // Normalize the tool result into {"content":[...]} form.
+        string normalizedResult = NormalizeToCallToolResult(resultContent, options);
+
+        // Inline-build the content JSON to avoid allocating intermediate objects.
+        string encodedResourceUri = JsonSerializer.Serialize(resourceUri, options.GetTypeInfo(typeof(string)));
+        string contentJson =
+            $"{{\"resourceUri\":{encodedResourceUri}," +
+            $"\"result\":{normalizedResult}," +
+            $"\"toolInput\":{toolInputJson}}}";
+
+        var contentElement = (JsonElement?)JsonSerializer.Deserialize(
+            contentJson,
+            options.GetTypeInfo(typeof(JsonElement)));
+
+        return new ActivitySnapshotEvent
+        {
+            MessageId = messageId,
+            ActivityType = "mcp-apps",
+            Replace = true,
+            Content = contentElement
+        };
+    }
+
+    /// <summary>
+    /// Ensures the raw tool result string has the shape <c>{"content":[{"type":"text","text":"..."}]}</c>
+    /// expected by clients.  Handles the case where the MCP SDK strips the "type" discriminator when
+    /// converting <c>TextContentBlock</c> into <c>Microsoft.Extensions.AI.TextContent</c>.
+    /// </summary>
+    private static string NormalizeToCallToolResult(string raw, JsonSerializerOptions options)
+    {
+        if (string.IsNullOrEmpty(raw))
+        {
+            return "{\"content\":[]}";
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+
+            // CallToolResult-like object with a content array.
+            // Validate that every item carries a "type" discriminator before returning as-is;
+            // the MCP SDK may strip the discriminator when mapping TextContentBlock →
+            // Microsoft.Extensions.AI.TextContent, producing {"content":[{"text":"..."}]}.
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("content", out var existing) &&
+                existing.ValueKind == JsonValueKind.Array)
+            {
+                bool needsNormalization = false;
+                foreach (var item in existing.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty("type", out _))
+                    {
+                        needsNormalization = true;
+                        break;
+                    }
+                }
+
+                if (!needsNormalization)
+                {
+                    return raw;
+                }
+
+                // Rebuild the content array, injecting "type":"text" for any text-only items.
+                var sb = new StringBuilder("{\"content\":[");
+                bool first = true;
+                foreach (var item in existing.EnumerateArray())
+                {
+                    if (!first) { sb.Append(','); }
+                    first = false;
+
+                    if (item.ValueKind == JsonValueKind.Object &&
+                        !item.TryGetProperty("type", out _) &&
+                        item.TryGetProperty("text", out var itemTextProp) &&
+                        itemTextProp.ValueKind == JsonValueKind.String)
+                    {
+                        string encodedText = JsonSerializer.Serialize(itemTextProp.GetString(), options.GetTypeInfo(typeof(string)));
+                        sb.Append($"{{\"type\":\"text\",\"text\":{encodedText}}}");
+                    }
+                    else
+                    {
+                        sb.Append(item.GetRawText());
+                    }
+                }
+                sb.Append("]}");
+                return sb.ToString();
+            }
+
+            // Single object with a "text" property (Microsoft.Extensions.AI TextContent — type stripped).
+            // Reconstruct as a proper MCP text content block.
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("text", out var textProp) &&
+                textProp.ValueKind == JsonValueKind.String)
+            {
+                string encodedText = JsonSerializer.Serialize(textProp.GetString(), options.GetTypeInfo(typeof(string)));
+                return $"{{\"content\":[{{\"type\":\"text\",\"text\":{encodedText}}}]}}";
+            }
+
+            // JSON string — SerializeResultContent encodes string/TextContent results as a JSON string.
+            if (root.ValueKind == JsonValueKind.String)
+            {
+                string encodedText = JsonSerializer.Serialize(root.GetString(), options.GetTypeInfo(typeof(string)));
+                return $"{{\"content\":[{{\"type\":\"text\",\"text\":{encodedText}}}]}}";
+            }
+
+            // Any other single JSON value — wrap it.
+            return $"{{\"content\":[{raw}]}}";
+        }
+        catch (JsonException)
+        {
+            // Plain string — wrap as a text content block.
+            string encodedRaw = JsonSerializer.Serialize(raw, options.GetTypeInfo(typeof(string)));
+            return $"{{\"content\":[{{\"type\":\"text\",\"text\":{encodedRaw}}}]}}";
+        }
     }
 }

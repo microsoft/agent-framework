@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net.Http;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -11,9 +12,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -387,6 +391,167 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         Assert.Equal("test_run_456", runStarted.GetProperty("runId").GetString());
     }
 
+    [Fact]
+    public async Task MapAGUIAgent_WithProxiedResultResolver_EmitsOnlyRunStartedAndRunFinishedAsync()
+    {
+        // Arrange
+        const string ThreadId = "proxy-thread";
+        const string RunId = "proxy-run";
+        int resolverCalls = 0;
+        int agentCalls = 0;
+
+        await using TestServerHost host = await TestServerHost.CreateAsync(
+            new CountingAgent(() => agentCalls++),
+            async (forwardedProperties, cancellationToken) =>
+            {
+                resolverCalls++;
+                Assert.Equal(JsonValueKind.Object, forwardedProperties.ValueKind);
+                Assert.Equal("resources/read", forwardedProperties.GetProperty("__proxiedMCPRequest").GetProperty("method").GetString());
+                await Task.CompletedTask.ConfigureAwait(false);
+                using JsonDocument document = JsonDocument.Parse("""
+                    {
+                      "contents": [
+                        {
+                          "uri": "ui://get-time.html",
+                          "mimeType": "text/html;profile=mcp-app",
+                          "text": "<html></html>"
+                        }
+                      ]
+                    }
+                    """);
+                return document.RootElement.Clone();
+            });
+
+        using StringContent content = new(BuildRequestJson(ThreadId, RunId, forwardedPropsJson: """
+            {
+              "__proxiedMCPRequest": {
+                "method": "resources/read",
+                "params": { "uri": "ui://get-time.html" }
+              }
+            }
+            """), Encoding.UTF8, "application/json");
+
+        // Act
+        HttpResponseMessage response = await host.Client.PostAsync(new Uri("/agent", UriKind.Relative), content);
+        response.EnsureSuccessStatusCode();
+        string responseContent = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        List<JsonElement> events = ParseSseEvents(responseContent);
+        Assert.Equal(1, resolverCalls);
+        Assert.Equal(0, agentCalls);
+        Assert.Collection(
+            events,
+            evt =>
+            {
+                Assert.Equal(AGUIEventTypes.RunStarted, evt.GetProperty("type").GetString());
+                Assert.Equal(ThreadId, evt.GetProperty("threadId").GetString());
+                Assert.Equal(RunId, evt.GetProperty("runId").GetString());
+            },
+            evt =>
+            {
+                Assert.Equal(AGUIEventTypes.RunFinished, evt.GetProperty("type").GetString());
+                Assert.Equal(ThreadId, evt.GetProperty("threadId").GetString());
+                Assert.Equal(RunId, evt.GetProperty("runId").GetString());
+                JsonElement result = evt.GetProperty("result");
+                JsonElement contents = result.GetProperty("contents");
+                Assert.Single(contents.EnumerateArray());
+                JsonElement firstContent = contents[0];
+                Assert.Equal("ui://get-time.html", firstContent.GetProperty("uri").GetString());
+            });
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_WithEmptyForwardedProperties_DoesNotInvokeProxiedResultResolverAsync()
+    {
+        // Arrange
+        int resolverCalls = 0;
+        int agentCalls = 0;
+
+        await using TestServerHost host = await TestServerHost.CreateAsync(
+            new CountingAgent(() => agentCalls++),
+            (forwardedProperties, cancellationToken) =>
+            {
+                resolverCalls++;
+                return ValueTask.FromResult<JsonElement?>(null);
+            });
+
+        using StringContent content = new(BuildRequestJson("thread1", "run1", forwardedPropsJson: "{}"), Encoding.UTF8, "application/json");
+
+        // Act
+        HttpResponseMessage response = await host.Client.PostAsync(new Uri("/agent", UriKind.Relative), content);
+        response.EnsureSuccessStatusCode();
+        string responseContent = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        List<JsonElement> events = ParseSseEvents(responseContent);
+        Assert.Equal(0, resolverCalls);
+        Assert.Equal(1, agentCalls);
+        Assert.Contains(events, static evt => evt.GetProperty("type").GetString() == AGUIEventTypes.TextMessageContent);
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_WithoutForwardedProperties_DoesNotInvokeProxiedResultResolverAsync()
+    {
+        // Arrange
+        int resolverCalls = 0;
+        int agentCalls = 0;
+
+        await using TestServerHost host = await TestServerHost.CreateAsync(
+            new CountingAgent(() => agentCalls++),
+            (forwardedProperties, cancellationToken) =>
+            {
+                resolverCalls++;
+                return ValueTask.FromResult<JsonElement?>(null);
+            });
+
+        using StringContent content = new(BuildRequestJson("thread1", "run1"), Encoding.UTF8, "application/json");
+
+        // Act
+        HttpResponseMessage response = await host.Client.PostAsync(new Uri("/agent", UriKind.Relative), content);
+        response.EnsureSuccessStatusCode();
+        string responseContent = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        List<JsonElement> events = ParseSseEvents(responseContent);
+        Assert.Equal(0, resolverCalls);
+        Assert.Equal(1, agentCalls);
+        Assert.Contains(events, static evt => evt.GetProperty("type").GetString() == AGUIEventTypes.RunFinished);
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_WhenProxiedResultResolverReturnsNull_FallsBackToAgentAsync()
+    {
+        // Arrange
+        int resolverCalls = 0;
+        int agentCalls = 0;
+
+        await using TestServerHost host = await TestServerHost.CreateAsync(
+            new CountingAgent(() => agentCalls++),
+            (forwardedProperties, cancellationToken) =>
+            {
+                resolverCalls++;
+                return ValueTask.FromResult<JsonElement?>(null);
+            });
+
+        using StringContent content = new(BuildRequestJson("thread1", "run1", forwardedPropsJson: """
+            {
+              "customProp": "value"
+            }
+            """), Encoding.UTF8, "application/json");
+
+        // Act
+        HttpResponseMessage response = await host.Client.PostAsync(new Uri("/agent", UriKind.Relative), content);
+        response.EnsureSuccessStatusCode();
+        string responseContent = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        List<JsonElement> events = ParseSseEvents(responseContent);
+        Assert.Equal(1, resolverCalls);
+        Assert.Equal(1, agentCalls);
+        Assert.Contains(events, static evt => evt.GetProperty("type").GetString() == AGUIEventTypes.TextMessageContent);
+    }
+
     private static List<JsonElement> ParseSseEvents(string responseContent)
     {
         List<JsonElement> events = [];
@@ -418,6 +583,19 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         }
 
         return events;
+    }
+
+    private static string BuildRequestJson(string threadId, string runId, string? forwardedPropsJson = null)
+    {
+        forwardedPropsJson ??= null;
+
+        return $$"""
+            {
+              "threadId": "{{threadId}}",
+              "runId": "{{runId}}",
+              "messages": [{ "id": "m1", "role": "user", "content": "Test" }]{{(forwardedPropsJson is null ? string.Empty : ",\n              \"forwardedProps\": " + forwardedPropsJson)}}
+            }
+            """;
     }
 
     private sealed class MultiResponseAgent : AIAgent
@@ -457,6 +635,88 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "First"));
             yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " part"));
             yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " of response"));
+        }
+    }
+
+    private sealed class CountingAgent(Action onRunStreaming) : AIAgent
+    {
+        protected override string? IdCore => "counting-agent";
+
+        public override string? Description => "Agent that counts streaming invocations";
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+            new(new TestAgentSession());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(serializedState.Deserialize<TestAgentSession>(jsonSerializerOptions)!);
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (session is not TestAgentSession testSession)
+            {
+                throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(TestAgentSession)}' can be serialized by this agent.");
+            }
+
+            return new(JsonSerializer.SerializeToElement(testSession, jsonSerializerOptions));
+        }
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
+        }
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            onRunStreaming();
+            await Task.CompletedTask;
+            yield return new AgentResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Test response"));
+        }
+    }
+
+    private sealed class TestServerHost : IAsyncDisposable
+    {
+        private readonly WebApplication _app;
+
+        private TestServerHost(WebApplication app, HttpClient client)
+        {
+            this._app = app;
+            this.Client = client;
+        }
+
+        public HttpClient Client { get; }
+
+        public static async Task<TestServerHost> CreateAsync(AIAgent agent, AGUIEndpointRouteBuilderExtensions.ProxiedResultResolver? proxiedResultResolver = null)
+        {
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Services.AddAGUI();
+            builder.WebHost.UseTestServer();
+
+            WebApplication app = builder.Build();
+            if (proxiedResultResolver is null)
+            {
+                app.MapAGUI("/agent", agent);
+            }
+            else
+            {
+                app.MapAGUI("/agent", agent, proxiedResultResolver);
+            }
+
+            await app.StartAsync().ConfigureAwait(false);
+
+            TestServer testServer = app.Services.GetRequiredService<IServer>() as TestServer
+                ?? throw new InvalidOperationException("TestServer not found");
+
+            return new TestServerHost(app, testServer.CreateClient());
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            this.Client.Dispose();
+            await this._app.DisposeAsync().ConfigureAwait(false);
         }
     }
 

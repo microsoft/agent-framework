@@ -106,6 +106,7 @@
     <PackageVersion Include="A2A.AspNetCore" Version="0.3.4-preview" />
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="1.1.0" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.1.0" />
     <!-- Inference SDKs -->
     <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.5.1" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />

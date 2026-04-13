@@ -199,6 +199,49 @@ cd Step05_StateManagement/Client
 dotnet run
 ```
 
+### Step06_McpApps
+
+Demonstrates AG-UI integration with MCP Apps: HTML UI resources attached to MCP tools and delivered to capable AG-UI clients through the event stream.
+
+If you are new to MCP Apps themselves, start with the official overview: [MCP Apps Overview](https://modelcontextprotocol.io/extensions/apps/overview).
+
+This sample is more involved than the earlier getting-started samples because it includes three moving parts:
+
+- An MCP server that exposes a `get-time` tool and a bundled HTML app resource
+- An AG-UI server that attaches those MCP tools to an `AIAgent` and proxies MCP `resources/read` and `tools/call` requests
+- A console client that shows the AG-UI protocol flow, including the `ACTIVITY_SNAPSHOT` event that carries the `ui://` resource URI
+
+The browser-side MCP App, proxied request flow, event ordering, and conformance coverage are documented in the dedicated sample guide:
+
+- [Step06_McpApps/README.md](Step06_McpApps/README.md)
+
+Use that README when you want the full architecture, request and response examples, or the exact MCP App protocol details.
+
+At a high level, `Step06_McpApps` demonstrates:
+
+- Binding a tool to an MCP App resource via MCP metadata
+- Returning `ACTIVITY_SNAPSHOT` events so a browser host can load the HTML app in-place
+- Short-circuiting proxied MCP `resources/read` and `tools/call` requests on the same AG-UI endpoint instead of invoking the agent again
+- Verifying the integration with sample-level conformance tests
+
+**Run the sample:**
+
+```bash
+# Terminal 1
+cd Step06_McpApps/McpServer
+dotnet run
+
+# Terminal 2
+cd Step06_McpApps/Server
+dotnet run
+
+# Terminal 3
+cd Step06_McpApps/Client
+dotnet run
+```
+
+Try asking: "What time is it?"
+
 ## How AG-UI Works
 
 ### Server-Side
@@ -297,6 +340,7 @@ For the most up-to-date AG-UI features, see the [Python samples](../../../../pyt
 ### Related Documentation
 
 - [AG-UI Overview](https://learn.microsoft.com/agent-framework/integrations/ag-ui/) - Complete AG-UI documentation
+- [MCP Apps Overview](https://modelcontextprotocol.io/extensions/apps/overview) - Conceptual overview of MCP Apps, rendering model, and host responsibilities
 - [Getting Started Tutorial](https://learn.microsoft.com/agent-framework/integrations/ag-ui/getting-started) - Step-by-step walkthrough
 - [Backend Tool Rendering](https://learn.microsoft.com/agent-framework/integrations/ag-ui/backend-tool-rendering) - Function tools tutorial
 - [Human-in-the-Loop](https://learn.microsoft.com/agent-framework/integrations/ag-ui/human-in-the-loop) - Approval workflows tutorial

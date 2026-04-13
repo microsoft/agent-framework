@@ -1,0 +1,15 @@
+{
+  "name": "get-time-mcp-app",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "INPUT=get-time.html vite build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "vite": "^8.0.7",
+    "vite-plugin-singlefile": "^2.3.2"
+  }
+}
