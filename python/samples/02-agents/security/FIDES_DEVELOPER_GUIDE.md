@@ -25,7 +25,6 @@ The defense system consists of eight main components:
 5. **Security Tools** - Specialized tools for safe handling of untrusted content (`quarantined_llm`, `inspect_variable`)
 6. **SecureAgentConfig** - Helper class for easy secure agent configuration
 7. **Message-Level Label Tracking** - Track labels on every message in the conversation (Phase 1)
-8. **Content Lineage Tracking** - Track how content is derived and transformed (Phase 2)
 
 ## Architecture
 
@@ -153,7 +152,8 @@ config = SecureAgentConfig(
     block_on_violation=True,
 )
 
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="assistant",
     instructions="You are a helpful assistant.",
     tools=[fetch_emails, calculate_stats],
@@ -279,7 +279,8 @@ policy_enforcer = PolicyEnforcementFunctionMiddleware(
     enable_audit_log=True
 )
 
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="assistant",
     instructions="You are a helpful assistant.",
     middleware=[label_tracker, policy_enforcer],
@@ -401,21 +402,21 @@ result = await inspect_variable(
 The easiest way to configure a secure agent with all security features. `SecureAgentConfig` extends `ContextProvider` and automatically injects tools, instructions, and middleware via the `before_run()` hook:
 
 ```python
-from agent_framework import SecureAgentConfig
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Agent, SecureAgentConfig
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 # Create main chat client
-main_client = AzureOpenAIChatClient(
-    endpoint="https://your-endpoint.openai.azure.com",
-    deployment_name="gpt-4o",
+main_client = OpenAIChatClient(
+    model="gpt-4o",
+    azure_endpoint="https://your-endpoint.openai.azure.com",
     credential=AzureCliCredential()
 )
 
 # Create a SEPARATE client for quarantined LLM calls (uses cheaper model)
-quarantine_client = AzureOpenAIChatClient(
-    endpoint="https://your-endpoint.openai.azure.com",
-    deployment_name="gpt-4o-mini",  # Cheaper model for processing untrusted content
+quarantine_client = OpenAIChatClient(
+    model="gpt-4o-mini",  # Cheaper model for processing untrusted content
+    azure_endpoint="https://your-endpoint.openai.azure.com",
     credential=AzureCliCredential()
 )
 
@@ -428,7 +429,8 @@ config = SecureAgentConfig(
 )
 
 # Configure agent — context provider injects everything automatically
-agent = main_client.as_agent(
+agent = Agent(
+    client=main_client,
     name="secure_assistant",
     instructions="You are a helpful assistant.",
     tools=[fetch_external_data, search_web],
@@ -457,7 +459,8 @@ The `SECURITY_TOOL_INSTRUCTIONS` constant provides detailed guidance that teache
 
 ```python
 # Instructions are injected automatically when using context_providers=[config]
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="assistant",
     instructions="You are a helpful assistant.",  # Just task instructions!
     tools=[my_tool],
@@ -467,7 +470,8 @@ agent = client.as_agent(
 # Or manually add instructions if not using context providers:
 from agent_framework import SECURITY_TOOL_INSTRUCTIONS
 
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="assistant",
     instructions=f"You are a helpful assistant.\n\n{SECURITY_TOOL_INSTRUCTIONS}",
     tools=[my_tool, quarantined_llm, inspect_variable],
@@ -531,36 +535,9 @@ msg = LabeledMessage(
 )
 ```
 
-### 10. Content Lineage Tracking (Phase 2)
-
-Track how content is derived and transformed to ensure labels propagate correctly:
-
-```python
-from agent_framework import ContentLineage, LabelTrackingFunctionMiddleware
-
-middleware = LabelTrackingFunctionMiddleware()
-
-# Track lineage when content is derived
-lineage = middleware.track_lineage(
-    content_id="summary_123",
-    derived_from=["var_abc", "var_def"],  # Source variable IDs
-    transformation="llm_summary",
-    combined_label=combined_label,
-    metadata={"prompt": "Summarize the data"}
-)
-
-# Query lineage
-lineage = middleware.get_lineage("summary_123")
-print(f"Derived from: {lineage.derived_from}")
-print(f"Transformation: {lineage.transformation}")
-
-# Get all tracked lineage
-all_lineage = middleware.get_all_lineage()
-```
-
 **quarantined_llm Auto-Hiding:**
 
-`quarantined_llm` now automatically hides UNTRUSTED results and tracks lineage:
+`quarantined_llm` automatically hides UNTRUSTED results:
 
 ```python
 # When processing UNTRUSTED content, result is auto-hidden
@@ -575,12 +552,6 @@ result = await quarantined_llm(
 #     "type": "variable_reference",
 #     "variable_id": "var_xyz789",  # Auto-hidden result
 #     "auto_hidden": True,
-#     "lineage": {
-#         "content_id": "qllm_abc123",
-#         "derived_from": ["var_abc123"],
-#         "transformation": "quarantined_llm",
-#         "combined_label": {"integrity": "untrusted", ...}
-#     },
 #     ...
 # }
 
@@ -609,7 +580,8 @@ config = SecureAgentConfig(
 )
 
 # Create agent with context provider — security is injected automatically!
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="secure_assistant",
     instructions="You are a helpful assistant that can search the web and fetch data.",
     tools=[search_web, fetch_data],
@@ -640,7 +612,8 @@ policy_enforcer = PolicyEnforcementFunctionMiddleware(
 )
 
 # Create agent with security (manual setup, no context provider)
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="secure_assistant",
     instructions=f"You are a helpful assistant.\n\n{SECURITY_TOOL_INSTRUCTIONS}",
     tools=[search_web, *get_security_tools()],
@@ -698,7 +671,8 @@ async def fetch_external_data(query: str) -> str:
     return external_response
 
 # Create agent with automatic hiding
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="secure_assistant",
     instructions="You are a helpful assistant.",
     tools=[fetch_external_data],
@@ -933,7 +907,7 @@ await post_to_slack(channel="#docs", message="Check out our docs!")
 | `confidentiality` | Declares output sensitivity | `"public"`, `"private"`, `"user_identity"` |
 | `max_allowed_confidentiality` | Gates outputs (maximum level) | `"public"` = blocks PRIVATE data exfiltration |
 
-See `samples/getting_started/security/repo_confidentiality_example.py` for a complete working example.
+See `samples/02-agents/security/repo_confidentiality_example.py` for a complete working example.
 
 ## Configuration Options
 
@@ -1092,9 +1066,8 @@ from agent_framework import (
     VariableReferenceContent,
     store_untrusted_content,
     
-    # Message & Lineage Tracking (Phase 1 & 2)
+    # Message-Level Tracking (Phase 1)
     LabeledMessage,
-    ContentLineage,
     
     # Middleware
     LabelTrackingFunctionMiddleware,
@@ -1130,23 +1103,6 @@ LabeledMessage.from_dict(data) -> LabeledMessage  # Deserialize
 LabeledMessage.from_message(msg, index) -> LabeledMessage  # Wrap standard message
 ```
 
-### ContentLineage (Phase 2)
-
-```python
-lineage = ContentLineage(
-    content_id: str,                          # Unique content identifier
-    derived_from: List[str] = None,           # Source content/variable IDs
-    transformation: str = None,               # Transformation type (e.g., "llm_summary")
-    combined_label: ContentLabel = None,      # Combined label from sources
-    metadata: Dict[str, Any] = None,
-)
-
-# Methods
-lineage.is_derived() -> bool                  # Check if content was derived
-lineage.to_dict() -> Dict[str, Any]           # Serialize
-ContentLineage.from_dict(data) -> ContentLineage  # Deserialize
-```
-
 ### LabelTrackingFunctionMiddleware Extensions
 
 ```python
@@ -1157,11 +1113,6 @@ middleware.label_message(message_index, label, source_labels=None)  # Label a me
 middleware.get_message_label(message_index) -> ContentLabel | None  # Get message label
 middleware.label_messages(messages) -> List[LabeledMessage]         # Batch label messages
 middleware.get_all_message_labels() -> Dict[int, ContentLabel]      # Get all message labels
-
-# Content lineage tracking (Phase 2)
-middleware.track_lineage(content_id, derived_from, transformation, combined_label, metadata=None) -> ContentLineage
-middleware.get_lineage(content_id) -> ContentLineage | None
-middleware.get_all_lineage() -> Dict[str, ContentLineage]
 ```
 
 ### SecureAgentConfig
@@ -1176,7 +1127,7 @@ config = SecureAgentConfig(
 )
 
 # Methods
-config.get_tools() -> List[AIFunction]        # Returns [quarantined_llm, inspect_variable]
+config.get_tools() -> List[FunctionTool]      # Returns [quarantined_llm, inspect_variable]
 config.get_instructions() -> str              # Returns SECURITY_TOOL_INSTRUCTIONS
 config.get_middleware() -> List[FunctionMiddleware]  # Returns configured middleware
 ```
@@ -1198,8 +1149,6 @@ result = await quarantined_llm(
 #     "security_label": dict,    # Combined label of all inputs
 #     "quarantined": True,
 #     "auto_hidden": False,
-#     "content_id": str,         # Unique ID for lineage tracking
-#     "lineage": dict,           # ContentLineage as dict (NEW!)
 #     "variables_processed": List[str],
 #     "content_summary": List[str],
 # }
@@ -1212,7 +1161,6 @@ result = await quarantined_llm(
 #     "security_label": dict,
 #     "quarantined": True,
 #     "auto_hidden": True,
-#     "lineage": dict,           # ContentLineage as dict (NEW!)
 #     "variables_processed": List[str],
 #     "content_summary": List[str],
 # }
@@ -1251,7 +1199,5 @@ Potential improvements:
 ## References
 
 - [ADR-0007: Agent Filtering Middleware](../../../docs/decisions/0007-agent-filtering-middleware.md)
-- [Security Module](_security.py)
-- [Security Middleware](_security_middleware.py)
-- [Security Tools](_security_tools.py)
+- [Security Module](_security.py) — All security primitives, middleware, tools, and configuration
 

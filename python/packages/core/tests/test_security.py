@@ -742,7 +742,7 @@ class TestAutomaticHiding:
         )
         
         async def next_fn():
-            from agent_framework._security_middleware import get_current_middleware
+            from agent_framework._security import get_current_middleware
             
             # Should be able to access middleware from thread-local
             current = get_current_middleware()
@@ -994,7 +994,7 @@ class TestMiddlewareSetCurrent:
     
     def test_set_and_clear_current(self):
         """Test setting and clearing thread-local middleware reference."""
-        from agent_framework._security_middleware import get_current_middleware
+        from agent_framework._security import get_current_middleware
         
         # Initially no middleware
         assert get_current_middleware() is None
@@ -1012,7 +1012,7 @@ class TestMiddlewareSetCurrent:
     
     def test_set_current_overwrites_previous(self):
         """Test that setting current overwrites previous middleware."""
-        from agent_framework._security_middleware import get_current_middleware
+        from agent_framework._security import get_current_middleware
         
         middleware1 = LabelTrackingFunctionMiddleware()
         middleware2 = LabelTrackingFunctionMiddleware()
@@ -1481,127 +1481,6 @@ class TestMiddlewareMessageLabeling:
         assert len(middleware.get_all_message_labels()) == 0
 
 
-# ========== Phase 2: Content Lineage Tracking Tests ==========
-
-class TestContentLineage:
-    """Tests for ContentLineage class."""
-    
-    def test_create_lineage(self):
-        """Test creating ContentLineage."""
-        from agent_framework import ContentLineage
-        
-        lineage = ContentLineage(
-            content_id="result_123",
-            derived_from=["var_abc", "var_def"],
-            transformation="llm_summary",
-            combined_label=ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
-        )
-        
-        assert lineage.content_id == "result_123"
-        assert lineage.derived_from == ["var_abc", "var_def"]
-        assert lineage.transformation == "llm_summary"
-        assert lineage.is_derived()
-    
-    def test_lineage_not_derived(self):
-        """Test lineage without derivation sources."""
-        from agent_framework import ContentLineage
-        
-        lineage = ContentLineage(content_id="original_123")
-        assert not lineage.is_derived()
-    
-    def test_lineage_serialization(self):
-        """Test ContentLineage serialization."""
-        from agent_framework import ContentLineage
-        
-        lineage = ContentLineage(
-            content_id="test_id",
-            derived_from=["src_1"],
-            transformation="extract",
-            combined_label=ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
-            metadata={"key": "value"}
-        )
-        
-        data = lineage.to_dict()
-        assert data["content_id"] == "test_id"
-        assert data["derived_from"] == ["src_1"]
-        assert data["transformation"] == "extract"
-        assert data["combined_label"]["integrity"] == "untrusted"
-    
-    def test_lineage_deserialization(self):
-        """Test ContentLineage deserialization."""
-        from agent_framework import ContentLineage
-        
-        data = {
-            "content_id": "test_id",
-            "derived_from": ["src_1", "src_2"],
-            "transformation": "combine",
-            "combined_label": {"integrity": "untrusted", "confidentiality": "private"}
-        }
-        
-        lineage = ContentLineage.from_dict(data)
-        assert lineage.content_id == "test_id"
-        assert len(lineage.derived_from) == 2
-        assert lineage.combined_label.integrity == IntegrityLabel.UNTRUSTED
-
-
-class TestMiddlewareLineageTracking:
-    """Tests for middleware lineage tracking."""
-    
-    def test_track_lineage(self):
-        """Test tracking content lineage."""
-        middleware = LabelTrackingFunctionMiddleware()
-        
-        lineage = middleware.track_lineage(
-            content_id="result_123",
-            derived_from=["var_abc", "var_def"],
-            transformation="llm_summary",
-            combined_label=ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
-            metadata={"prompt": "Summarize"}
-        )
-        
-        assert lineage.content_id == "result_123"
-        assert middleware.get_lineage("result_123") is not None
-    
-    def test_get_all_lineage(self):
-        """Test getting all tracked lineage."""
-        middleware = LabelTrackingFunctionMiddleware()
-        
-        middleware.track_lineage(
-            content_id="r1",
-            derived_from=["s1"],
-            transformation="t1",
-            combined_label=ContentLabel()
-        )
-        middleware.track_lineage(
-            content_id="r2",
-            derived_from=["s2"],
-            transformation="t2",
-            combined_label=ContentLabel()
-        )
-        
-        all_lineage = middleware.get_all_lineage()
-        assert len(all_lineage) == 2
-        assert "r1" in all_lineage
-        assert "r2" in all_lineage
-    
-    def test_reset_clears_lineage(self):
-        """Test that reset_context_label also clears lineage."""
-        middleware = LabelTrackingFunctionMiddleware()
-        
-        middleware.track_lineage(
-            content_id="r1",
-            derived_from=["s1"],
-            transformation="t1",
-            combined_label=ContentLabel()
-        )
-        
-        assert len(middleware.get_all_lineage()) == 1
-        
-        middleware.reset_context_label()
-        
-        assert len(middleware.get_all_lineage()) == 0
-
-
 # ========== Quarantined LLM Auto-Hide Tests ==========
 
 class TestQuarantinedLLMAutoHide:
@@ -1611,7 +1490,7 @@ class TestQuarantinedLLMAutoHide:
     async def test_quarantined_llm_auto_hides_untrusted_result(self):
         """Test that quarantined_llm auto-hides UNTRUSTED results."""
         from agent_framework import quarantined_llm, LabelTrackingFunctionMiddleware
-        from agent_framework._security_middleware import _current_middleware
+        from agent_framework._security import _current_middleware
         
         middleware = LabelTrackingFunctionMiddleware()
         
@@ -1636,11 +1515,6 @@ class TestQuarantinedLLMAutoHide:
             assert result["type"] == "variable_reference"
             assert "variable_id" in result
             assert result["variable_id"].startswith("var_")
-            
-            # Lineage should be included
-            assert "lineage" in result
-            assert result["lineage"]["derived_from"] == [var_id]
-            assert result["lineage"]["transformation"] == "quarantined_llm"
         finally:
             _current_middleware.instance = None
     
@@ -1648,7 +1522,7 @@ class TestQuarantinedLLMAutoHide:
     async def test_quarantined_llm_no_hide_when_disabled(self):
         """Test that auto_hide_result=False prevents hiding."""
         from agent_framework import quarantined_llm, LabelTrackingFunctionMiddleware
-        from agent_framework._security_middleware import _current_middleware
+        from agent_framework._security import _current_middleware
         
         middleware = LabelTrackingFunctionMiddleware()
         
@@ -1677,7 +1551,7 @@ class TestQuarantinedLLMAutoHide:
     async def test_quarantined_llm_trusted_result_not_hidden(self):
         """Test that TRUSTED results are not auto-hidden."""
         from agent_framework import quarantined_llm, LabelTrackingFunctionMiddleware
-        from agent_framework._security_middleware import _current_middleware
+        from agent_framework._security import _current_middleware
         
         middleware = LabelTrackingFunctionMiddleware()
         
@@ -1703,10 +1577,10 @@ class TestQuarantinedLLMAutoHide:
             _current_middleware.instance = None
     
     @pytest.mark.asyncio
-    async def test_quarantined_llm_includes_lineage(self):
-        """Test that quarantined_llm always includes lineage tracking."""
+    async def test_quarantined_llm_multiple_variables(self):
+        """Test that quarantined_llm handles multiple variables correctly."""
         from agent_framework import quarantined_llm, LabelTrackingFunctionMiddleware
-        from agent_framework._security_middleware import _current_middleware
+        from agent_framework._security import _current_middleware
         
         middleware = LabelTrackingFunctionMiddleware()
         
@@ -1727,16 +1601,9 @@ class TestQuarantinedLLMAutoHide:
                 variable_ids=[var1, var2]
             )
             
-            # Check lineage
-            lineage = result["lineage"]
-            assert var1 in lineage["derived_from"]
-            assert var2 in lineage["derived_from"]
-            assert lineage["transformation"] == "quarantined_llm"
-            assert lineage["combined_label"]["integrity"] == "untrusted"
-            
-            # Check middleware tracked the lineage
-            all_lineage = middleware.get_all_lineage()
-            assert len(all_lineage) == 1
+            # Check result has expected fields
+            assert result["quarantined"] is True
+            assert result["variables_processed"] == [var1, var2]
         finally:
             _current_middleware.instance = None
 
@@ -1822,7 +1689,7 @@ class TestQuarantineClient:
             ContentLabel,
             IntegrityLabel,
         )
-        from agent_framework._security_middleware import _current_middleware
+        from agent_framework._security import _current_middleware
         from unittest.mock import AsyncMock, MagicMock
         
         # Clear any existing client
@@ -1886,7 +1753,7 @@ class TestQuarantineClient:
             ContentLabel,
             IntegrityLabel,
         )
-        from agent_framework._security_middleware import _current_middleware
+        from agent_framework._security import _current_middleware
         
         # Clear the client
         set_quarantine_client(None)
@@ -1923,7 +1790,7 @@ class TestQuarantineClient:
             ContentLabel,
             IntegrityLabel,
         )
-        from agent_framework._security_middleware import _current_middleware
+        from agent_framework._security import _current_middleware
         from unittest.mock import AsyncMock, MagicMock
         
         # Create a mock client that raises an error
@@ -1966,7 +1833,7 @@ class TestQuarantineClient:
             ContentLabel,
             IntegrityLabel,
         )
-        from agent_framework._security_middleware import _current_middleware
+        from agent_framework._security import _current_middleware
         from unittest.mock import AsyncMock, MagicMock
         
         mock_response = MagicMock()

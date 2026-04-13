@@ -1339,7 +1339,7 @@ async def _auto_invoke_function(
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
 
-    tool: AIFunction[BaseModel, Any] | None = None
+    tool: FunctionTool | None = None
     # Track if this is a re-invocation after policy violation approval
     policy_approval_granted = False
     

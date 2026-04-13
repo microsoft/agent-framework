@@ -18,20 +18,20 @@ instructions, and middleware into any agent. Developers add it with a single lin
 no security knowledge required.
 
 ```python
-from agent_framework import SecureAgentConfig, tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Agent, SecureAgentConfig, tool
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 # 1. Create chat clients
-main_client = AzureOpenAIChatClient(
-    endpoint="https://your-endpoint.openai.azure.com",
-    deployment_name="gpt-4o",
+main_client = OpenAIChatClient(
+    model="gpt-4o",
+    azure_endpoint="https://your-endpoint.openai.azure.com",
     credential=AzureCliCredential()
 )
 
-quarantine_client = AzureOpenAIChatClient(
-    endpoint="https://your-endpoint.openai.azure.com",
-    deployment_name="gpt-4o-mini",  # Cheaper model for quarantine
+quarantine_client = OpenAIChatClient(
+    model="gpt-4o-mini",  # Cheaper model for quarantine
+    azure_endpoint="https://your-endpoint.openai.azure.com",
     credential=AzureCliCredential()
 )
 
@@ -45,7 +45,8 @@ config = SecureAgentConfig(
 )
 
 # 3. Create agent — security is injected automatically via context provider
-agent = main_client.as_agent(
+agent = Agent(
+    client=main_client,
     name="secure_agent",
     instructions="You are a helpful assistant.",
     tools=[your_tools],
@@ -98,7 +99,8 @@ config = SecureAgentConfig(
     quarantine_chat_client=quarantine_client,  # For quarantined_llm
 )
 
-agent = main_client.as_agent(
+agent = Agent(
+    client=main_client,
     name="agent",
     instructions="You are a helpful assistant.",
     tools=[*your_tools],
@@ -120,7 +122,8 @@ policy_enforcer = PolicyEnforcementFunctionMiddleware(
     block_on_violation=True,
 )
 
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="agent",
     instructions="You are a helpful assistant.",
     tools=[*your_tools],
@@ -290,7 +293,8 @@ config = SecureAgentConfig(
 )
 
 # Everything injected via context provider
-agent = main_client.as_agent(
+agent = Agent(
+    client=main_client,
     name="agent",
     instructions="You are a helpful assistant.",
     tools=[search_web, read_repo],

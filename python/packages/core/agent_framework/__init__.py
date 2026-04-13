@@ -111,22 +111,17 @@ from ._sessions import (
 )
 from ._security import (
     ContentLabel,
-    ContentLineage,
     IntegrityLabel,
     ConfidentialityLabel,
     ContentVariableStore,
     LabeledMessage,
+    LabelTrackingFunctionMiddleware,
+    PolicyEnforcementFunctionMiddleware,
+    SECURITY_TOOL_INSTRUCTIONS,
+    SecureAgentConfig,
     VariableReferenceContent,
     check_confidentiality_allowed,
     combine_labels,
-)
-from ._security_middleware import (
-    LabelTrackingFunctionMiddleware,
-    PolicyEnforcementFunctionMiddleware,
-    SecureAgentConfig,
-)
-from ._security_tools import (
-    SECURITY_TOOL_INSTRUCTIONS,
     get_quarantine_client,
     get_security_tools,
     quarantined_llm,
@@ -322,7 +317,6 @@ __all__ = [
     "ConfidentialityLabel",
     "Content",
     "ContentLabel",
-    "ContentLineage",
     "ContentVariableStore",
     "ContextProvider",
     "ContinuationToken",

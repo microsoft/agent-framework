@@ -46,6 +46,7 @@ from pydantic import Field
 load_dotenv(Path(__file__).parent / ".env")
 
 from agent_framework import (
+    Agent,
     MCPStdioTool,
     LabelTrackingFunctionMiddleware,
     SecureAgentConfig,
@@ -281,7 +282,8 @@ async def main():
             )
             
             # Create agent - security tools and instructions injected via context provider
-            agent = chat_client.as_agent(
+            agent = Agent(
+                client=chat_client,
                 name="github_assistant",
                 instructions="""You are a helpful GitHub assistant. You can read issues, search repositories, 
 read file contents, and help users with their GitHub tasks.
@@ -342,7 +344,7 @@ EXPECTED FLOW:
 ✅ Middleware can parse GitHub MCP label format automatically
 
 Key code locations:
-- Label parsing: agent_framework/_security_middleware.py
+- Label parsing: agent_framework/_security.py
   - Function: _parse_github_mcp_labels()
   - Handles: additional_properties.labels format
   - Maps: "low" → UNTRUSTED, "high" → TRUSTED
@@ -406,7 +408,8 @@ def run_demo():
                 allow_untrusted_tools=GITHUB_READ_TOOLS,
             )
             
-            agent = chat_client.as_agent(
+            agent = Agent(
+                client=chat_client,
                 name="github_assistant",
                 instructions="""You are a helpful GitHub assistant. You can read issues, search repositories, 
 read file contents, and help users with their GitHub tasks.
@@ -550,7 +553,8 @@ def run_devui():
                 allow_untrusted_tools=GITHUB_READ_TOOLS,
             )
             
-            agent = chat_client.as_agent(
+            agent = Agent(
+                client=chat_client,
                 name="github_assistant",
                 instructions="""You are a helpful GitHub assistant. You can read issues, search repositories, 
 read file contents, and help users with their GitHub tasks.

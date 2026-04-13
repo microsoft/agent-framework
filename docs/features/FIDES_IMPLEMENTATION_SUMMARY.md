@@ -11,11 +11,10 @@
 - **SecureAgentConfig** - One-line secure agent configuration via `context_providers=[config]`
 - **Data Exfiltration Prevention** - `max_allowed_confidentiality` prevents sensitive data leakage
 - **Message-Level Label Tracking** (Phase 1) - Track labels on every message in the conversation
-- **Content Lineage Tracking** (Phase 2) - Track how content is derived and transformed
 
 ## Architecture Components
 
-The FIDES defense system consists of eight main components:
+The FIDES defense system consists of seven main components:
 
 1. **Content Labeling Infrastructure** - Labels for tracking integrity and confidentiality
 2. **Label Tracking Middleware** - Automatically assigns, propagates labels, and hides untrusted content
@@ -24,61 +23,32 @@ The FIDES defense system consists of eight main components:
 5. **Security Tools** - Specialized tools for safe handling of untrusted content (`quarantined_llm`, `inspect_variable`)
 6. **SecureAgentConfig** - Context provider for easy secure agent configuration
 7. **Message-Level Label Tracking** - Track labels on every message in the conversation (Phase 1)
-8. **Content Lineage Tracking** - Track how content is derived and transformed (Phase 2)
 
 ## Implementation Details
 
 ### Files Created
 
-1. **`_security.py`** (~400+ lines)
+1. **`_security.py`** (~2950 lines — all security primitives, middleware, tools, and configuration in a single module)
    - `IntegrityLabel` enum (TRUSTED/UNTRUSTED)
    - `ConfidentialityLabel` enum (PUBLIC/PRIVATE/USER_IDENTITY)
    - `ContentLabel` class with serialization support
    - `combine_labels()` function for label composition
    - `ContentVariableStore` for client-side content storage
    - `VariableReferenceContent` for variable indirection
-   - `LabeledMessage` class for message-level tracking (Phase 1)
-   - `ContentLineage` class for lineage tracking (Phase 2)
+   - `LabeledMessage` class (inherits from `Message`) for message-level tracking
    - `check_confidentiality_allowed()` helper for data exfiltration prevention
-
-2. **`_security_middleware.py`** (~600+ lines)
    - `LabelTrackingFunctionMiddleware` - Tracks and propagates security labels
-     - **Tiered label propagation**: (1) embedded labels, (2) source_integrity, (3) input labels join
-     - Automatic variable hiding (`auto_hide_untrusted` flag)
-     - Per-middleware `ContentVariableStore` instance
-     - Thread-local storage for tool access
-     - Context-level label tracking (`get_context_label()`, `reset_context_label()`)
-     - Per-item embedded label processing
-     - Message-level tracking (`label_message()`, `label_messages()`, `get_all_message_labels()`)
-     - Content lineage tracking (`track_lineage()`, `get_lineage()`, `get_all_lineage()`)
    - `PolicyEnforcementFunctionMiddleware` - Enforces security policies
-     - Uses `context_label` (cumulative conversation state) for policy decisions
-     - Data exfiltration prevention via `max_allowed_confidentiality`
-     - Audit log for all violations
-
-3. **`_security_tools.py`** (~400+ lines)
+   - `SecureAgentConfig` extends `ContextProvider` - automatic secure agent configuration
    - `quarantined_llm()` - Isolated LLM calls with labeled data
-     - Supports `variable_ids` parameter for referencing hidden content
-     - `auto_hide_result` parameter for automatic result hiding
-     - Content lineage tracking integration
-     - Supports `quarantine_chat_client` for real LLM calls
    - `inspect_variable()` - Controlled variable content inspection
-     - Thread-local middleware access
-     - Prefers middleware's variable store over global
    - `store_untrusted_content()` - Helper for manual variable indirection (legacy)
    - `get_security_tools()` - Returns list of security tools
-   - Helper functions for variable store management
+   - `SECURITY_TOOL_INSTRUCTIONS` - Detailed guidance for agents
 
-4. **`_security_middleware.py`** (also contains `SecureAgentConfig`)
-   - `SecureAgentConfig` extends `ContextProvider` - automatic secure agent configuration
-     - `before_run(context)` - Injects tools, instructions, and middleware via `context.extend_tools()`, `context.extend_instructions()`, `context.extend_middleware()`
-     - `get_tools()` - Returns `[quarantined_llm, inspect_variable]`
-     - `get_instructions()` - Returns `SECURITY_TOOL_INSTRUCTIONS`
-     - `get_middleware()` - Returns configured middleware stack
-     - `get_quarantine_client()` - Returns quarantine chat client
-   - `SECURITY_TOOL_INSTRUCTIONS` - Detailed guidance for agents on handling hidden content
 
-5. **`FIDES_DEVELOPER_GUIDE.md`** (~1250 lines)
+2. **`FIDES_DEVELOPER_GUIDE.md`** (~1250 lines)
+   - Located at `python/samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md`
    - Complete documentation of the FIDES security system
    - Architecture overview and design rationale
    - Usage examples (6+ comprehensive scenarios)
@@ -86,7 +56,7 @@ The FIDES defense system consists of eight main components:
    - API reference with full parameter documentation
    - Data exfiltration prevention documentation
 
-6. **`tests/test_security.py`** (~800+ lines)
+3. **`tests/test_security.py`** (~800+ lines)
    - Unit tests for ContentLabel and label operations
    - Tests for ContentVariableStore functionality
    - Tests for VariableReferenceContent
@@ -95,15 +65,14 @@ The FIDES defense system consists of eight main components:
    - Per-item embedded label tests
    - Context label tracking tests
    - Message-level tracking tests (Phase 1)
-   - Content lineage tests (Phase 2)
    - Data exfiltration prevention tests
 
-7. **`docs/decisions/0011-prompt-injection-defense.md`**
+4. **`docs/decisions/0011-prompt-injection-defense.md`**
    - Architecture Decision Record (ADR)
    - Design rationale and alternatives considered
    - Security properties and guarantees
 
-8. **`QUICK_START_FIDES.md`**
+5. **`python/samples/02-agents/security/README.md`** (was `QUICK_START_FIDES.md`)
    - Quick reference guide for FIDES security features
    - Common patterns and troubleshooting
 
@@ -190,7 +159,8 @@ config = SecureAgentConfig(
 )
 
 # Context provider injects tools, instructions, and middleware automatically
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="secure_assistant",
     instructions="You are a helpful assistant.",
     tools=[my_tool],
@@ -206,19 +176,6 @@ Track security labels at the message level:
 labeled_messages = middleware.label_messages(messages)
 label = middleware.get_message_label(5)
 all_labels = middleware.get_all_message_labels()
-```
-
-### 8. Content Lineage Tracking (Phase 2)
-
-Track how content is derived and transformed:
-
-```python
-lineage = middleware.track_lineage(
-    content_id="summary_123",
-    derived_from=["var_abc", "var_def"],
-    transformation="llm_summary",
-    combined_label=combined_label,
-)
 ```
 
 ## Security Properties
@@ -276,7 +233,8 @@ config = SecureAgentConfig(
 )
 
 # Context provider injects everything automatically
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="secure_assistant",
     instructions="You are a helpful assistant.",
     tools=[search_web],
@@ -304,7 +262,6 @@ Comprehensive test suite with:
 - Automatic hiding with per-item labels
 - Context label tracking
 - Message-level tracking (Phase 1)
-- Content lineage tracking (Phase 2)
 - Data exfiltration prevention
 - Policy violation scenarios
 - Audit log verification
@@ -316,8 +273,8 @@ pytest tests/test_security.py -v
 
 ## Code Statistics
 
-- **Total lines**: ~4,000+ lines
-- **New modules**: 3 (`_security.py`, `_security_middleware.py`, `_security_tools.py`)
+- **Total lines**: ~2,950+ lines (single `_security.py` module)
+- **New modules**: 1 (`_security.py` — consolidated from 3 original modules)
 - **Total tests**: 115+ unit tests
 - **Documentation**: 1,250+ lines in developer guide
 - **Examples**: 6+ comprehensive scenarios
@@ -369,11 +326,6 @@ pytest tests/test_security.py -v
 ✅ `label_message()`, `get_message_label()`, `label_messages()` methods
 ✅ `get_all_message_labels()` method
 
-### Phase 2: Content Lineage Tracking
-✅ `ContentLineage` class for tracking derivation
-✅ `track_lineage()`, `get_lineage()`, `get_all_lineage()` methods
-✅ Integration with `quarantined_llm` auto-hiding
-
 ### Documentation & Testing
 ✅ Complete FIDES Developer Guide (~1250 lines)
 ✅ Architecture Decision Record (ADR)
@@ -391,7 +343,7 @@ pytest tests/test_security.py -v
 - **Granular control**: Per-item embedded labels via `Content.from_text()` for mixed-trust data
 - **Easy configuration**: `SecureAgentConfig` for one-line setup
 - **Data safety**: Exfiltration prevention via confidentiality gates
-- **Full traceability**: Message-level and content lineage tracking
+- **Full traceability**: Message-level label tracking
 - **Complete auditability**: All security events logged
 
 The system ensures that untrusted content never directly reaches the LLM context and that all tool calls are policy-checked based on the cumulative security state before execution.

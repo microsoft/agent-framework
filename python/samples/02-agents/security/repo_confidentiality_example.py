@@ -48,6 +48,7 @@ from typing import Any
 from pydantic import Field
 
 from agent_framework import (
+    Agent,
     Content,
     SecureAgentConfig,
     tool,
@@ -225,7 +226,8 @@ def setup_agent(*, approval_on_violation: bool = False):
     )
 
     # Create agent - security tools and instructions injected via context provider
-    agent = main_client.as_agent(
+    agent = Agent(
+        client=main_client,
         name="repo_assistant",
         instructions="""You are a helpful assistant that can read repositories, post to Slack,
 and send internal memos. Follow user instructions precisely.
