@@ -24,15 +24,21 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.0.0,<2",
-    "azure-ai-agentserver-core",
-    "azure-ai-agentserver-responses",
-    "azure-ai-agentserver-invocations"
+    "azure-ai-agentserver-core==2.0.0a20260410006",
+    "azure-ai-agentserver-responses==1.0.0a20260410006",
+    "azure-ai-agentserver-invocations==1.0.0a20260410006",
+    "azure-monitor-opentelemetry-exporter>=1.0.0a1"
 ]
 
 [tool.uv.sources]
-azure-ai-agentserver-responses = { git = "https://github.com/Azure/azure-sdk-for-python.git", branch = "agentserver/responses", subdirectory = "sdk/agentserver/azure-ai-agentserver-responses" }
-azure-ai-agentserver-invocations = { git = "https://github.com/Azure/azure-sdk-for-python.git", branch = "agentserver/responses", subdirectory = "sdk/agentserver/azure-ai-agentserver-invocations" }
-azure-ai-agentserver-core = { git = "https://github.com/Azure/azure-sdk-for-python.git", branch = "agentserver/responses", subdirectory = "sdk/agentserver/azure-ai-agentserver-core" }
+azure-ai-agentserver-responses = { index = "azure-sdk-for-python" }
+azure-ai-agentserver-invocations = { index = "azure-sdk-for-python" }
+azure-ai-agentserver-core = { index = "azure-sdk-for-python" }
+azure-monitor-opentelemetry-exporter = { index = "azure-sdk-for-python" }
+
+[[tool.uv.index]]
+name = "azure-sdk-for-python"
+url = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/"
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"

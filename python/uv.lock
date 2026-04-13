@@ -344,7 +344,6 @@ all = [
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-durabletask", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-foundry-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-foundry-local", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-github-copilot", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
     { name = "agent-framework-lab", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -373,7 +372,6 @@ requires-dist = [
     { name = "agent-framework-devui", marker = "extra == 'all'", editable = "packages/devui" },
     { name = "agent-framework-durabletask", marker = "extra == 'all'", editable = "packages/durabletask" },
     { name = "agent-framework-foundry", marker = "extra == 'all'", editable = "packages/foundry" },
-    { name = "agent-framework-foundry-hosting", marker = "extra == 'all'", editable = "packages/foundry_hosting" },
     { name = "agent-framework-foundry-local", marker = "extra == 'all'", editable = "packages/foundry_local" },
     { name = "agent-framework-github-copilot", marker = "python_full_version >= '3.11' and extra == 'all'", editable = "packages/github_copilot" },
     { name = "agent-framework-lab", marker = "extra == 'all'", editable = "packages/lab" },
@@ -502,21 +500,23 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0b260402"
+version = "1.0.0a260402"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-invocations", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-responses", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-monitor-opentelemetry-exporter", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-ai-agentserver-core", git = "https://github.com/Azure/azure-sdk-for-python.git?subdirectory=sdk%2Fagentserver%2Fazure-ai-agentserver-core&branch=agentserver%2Fresponses" },
-    { name = "azure-ai-agentserver-invocations", git = "https://github.com/Azure/azure-sdk-for-python.git?subdirectory=sdk%2Fagentserver%2Fazure-ai-agentserver-invocations&branch=agentserver%2Fresponses" },
-    { name = "azure-ai-agentserver-responses", git = "https://github.com/Azure/azure-sdk-for-python.git?subdirectory=sdk%2Fagentserver%2Fazure-ai-agentserver-responses&branch=agentserver%2Fresponses" },
+    { name = "azure-ai-agentserver-core", specifier = "==2.0.0a20260410006", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
+    { name = "azure-ai-agentserver-invocations", specifier = "==1.0.0a20260410006", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
+    { name = "azure-ai-agentserver-responses", specifier = "==1.0.0a20260410006", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
+    { name = "azure-monitor-opentelemetry-exporter", specifier = ">=1.0.0a1", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
 ]
 
 [[package]]
@@ -1020,8 +1020,8 @@ wheels = [
 
 [[package]]
 name = "azure-ai-agentserver-core"
-version = "2.0.0b1"
-source = { git = "https://github.com/Azure/azure-sdk-for-python.git?subdirectory=sdk%2Fagentserver%2Fazure-ai-agentserver-core&branch=agentserver%2Fresponses#43579f686f51ebed23b066d06c90a544c0070a0b" }
+version = "2.0.0a20260410006"
+source = { registry = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" }
 dependencies = [
     { name = "azure-monitor-opentelemetry-exporter", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "hypercorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1030,23 +1030,36 @@ dependencies = [
     { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "starlette", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-core/2a20260410006/azure_ai_agentserver_core-2.0.0a20260410006.tar.gz", hash = "sha256:834de1dca553ed964819faf5d1c7564e58e03c667c276d04d458c8bb81d2aac4" }
+wheels = [
+    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-core/2a20260410006/azure_ai_agentserver_core-2.0.0a20260410006-py3-none-any.whl", hash = "sha256:d0fd251635f4b52fbf24dbba916f7e8e173043f0ba9537bb335ab3a1ead1432a" },
+]
 
 [[package]]
 name = "azure-ai-agentserver-invocations"
-version = "1.0.0b1"
-source = { git = "https://github.com/Azure/azure-sdk-for-python.git?subdirectory=sdk%2Fagentserver%2Fazure-ai-agentserver-invocations&branch=agentserver%2Fresponses#43579f686f51ebed23b066d06c90a544c0070a0b" }
+version = "1.0.0a20260410006"
+source = { registry = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" }
 dependencies = [
     { name = "azure-ai-agentserver-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-invocations/1a20260410006/azure_ai_agentserver_invocations-1.0.0a20260410006.tar.gz", hash = "sha256:6419d8524fbf5e5a3d94937108f928da70d1406bdfd83cd2e6cba9f5e54f07af" }
+wheels = [
+    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-invocations/1a20260410006/azure_ai_agentserver_invocations-1.0.0a20260410006-py3-none-any.whl", hash = "sha256:5b9e3364d73bc2bb9581540cbf3172624fbc75be7739c95e4d70c83541bde008" },
 ]
 
 [[package]]
 name = "azure-ai-agentserver-responses"
-version = "1.0.0b1"
-source = { git = "https://github.com/Azure/azure-sdk-for-python.git?subdirectory=sdk%2Fagentserver%2Fazure-ai-agentserver-responses&branch=agentserver%2Fresponses#43579f686f51ebed23b066d06c90a544c0070a0b" }
+version = "1.0.0a20260410006"
+source = { registry = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" }
 dependencies = [
+    { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-responses/1a20260410006/azure_ai_agentserver_responses-1.0.0a20260410006.tar.gz", hash = "sha256:795862c6abdd2794be04f685d3995b174364f1280fe7be507bcfa64b6359ec53" }
+wheels = [
+    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-responses/1a20260410006/azure_ai_agentserver_responses-1.0.0a20260410006-py3-none-any.whl", hash = "sha256:e877eea7b2bb31c9766c69159e799aff112741eefb178bc3a3c7a07ce0b09dbb" },
 ]
 
 [[package]]
@@ -1163,8 +1176,8 @@ wheels = [
 
 [[package]]
 name = "azure-monitor-opentelemetry-exporter"
-version = "1.0.0b51"
-source = { registry = "https://pypi.org/simple" }
+version = "1.0.0a20260410001"
+source = { registry = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1173,9 +1186,9 @@ dependencies = [
     { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "psutil", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/a4/a6cd2d389bc1009300bcd57c9e2ace4b7e7ae1e5dc0bda415ee803629cf2/azure_monitor_opentelemetry_exporter-1.0.0b51.tar.gz", hash = "sha256:a6171c34326bcd6216938bb40d715c15f1f22984ac1986fc97231336d8ac4c3c", size = 319837, upload-time = "2026-04-06T21:45:46.378Z" }
+sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-monitor-opentelemetry-exporter/1a20260410001/azure_monitor_opentelemetry_exporter-1.0.0a20260410001.tar.gz", hash = "sha256:24be6d2fa88454b08f1aa82958917681ff434f8a19d64c474ac8caebe125217e" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ea/1a/6b0b7a6181b42709103a65a676c89fd5055cb1d1b281ebe10c49254a170f/azure_monitor_opentelemetry_exporter-1.0.0b51-py2.py3-none-any.whl", hash = "sha256:6572cac11f96e3b18ae1187cb35cf3b40d0004655dae8048896c41c765bea530", size = 242104, upload-time = "2026-04-06T21:45:47.856Z" },
+    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-monitor-opentelemetry-exporter/1a20260410001/azure_monitor_opentelemetry_exporter-1.0.0a20260410001-py2.py3-none-any.whl", hash = "sha256:77823990c3ec7f7bb400a1eb0d7edf99cad04f0b0e393d6f6dd3791bf7d0c0cf" },
 ]
 
 [[package]]
