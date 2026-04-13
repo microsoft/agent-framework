@@ -10,6 +10,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, 
 from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
 
 from agent_framework import (
+    AgentMiddlewareLayer,
     AgentMiddlewareTypes,
     AgentResponse,
     AgentResponseUpdate,
@@ -788,18 +789,19 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         )
 
 
-class GitHubCopilotAgent(AgentTelemetryLayer, RawGitHubCopilotAgent[OptionsT], Generic[OptionsT]):
-    """A GitHub Copilot Agent with OpenTelemetry instrumentation.
+class GitHubCopilotAgent(  # type: ignore[misc]
+    AgentMiddlewareLayer,
+    AgentTelemetryLayer,
+    RawGitHubCopilotAgent[OptionsT],
+    Generic[OptionsT],
+):
+    """A GitHub Copilot Agent with full middleware and telemetry support.
 
     This is the recommended agent class for most use cases. It includes
-    OpenTelemetry-based telemetry for observability. For a minimal
-    implementation without telemetry, use :class:`RawGitHubCopilotAgent`.
-
-    This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities
-    within the Agent Framework. It supports both streaming and non-streaming responses,
-    custom tools, and session management.
-
-    The agent can be used as an async context manager to ensure proper cleanup:
+    middleware support and OpenTelemetry-based telemetry for observability,
+    with middleware running outside the telemetry span so middleware execution
+    time is not captured in traces. For a minimal implementation without these
+    layers, use :class:`RawGitHubCopilotAgent`.
 
     Examples:
         Basic usage:
@@ -817,7 +819,7 @@ class GitHubCopilotAgent(AgentTelemetryLayer, RawGitHubCopilotAgent[OptionsT], G
             from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
 
             agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
-                default_options={"model": "claude-sonnet-4", "timeout": 120}
+                default_options={"model": "claude-sonnet-4-5", "timeout": 120}
             )
 
         With observability:
@@ -830,53 +832,3 @@ class GitHubCopilotAgent(AgentTelemetryLayer, RawGitHubCopilotAgent[OptionsT], G
             async with GitHubCopilotAgent() as agent:
                 response = await agent.run("Hello, world!")
     """
-
-    @overload  # type: ignore[override]
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[False] = ...,
-        session: AgentSession | None = None,
-        middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        options: OptionsT | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse]: ...
-
-    @overload  # type: ignore[override]
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[True],
-        session: AgentSession | None = None,
-        middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        options: OptionsT | None = None,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
-
-    def run(  # pyright: ignore[reportIncompatibleMethodOverride]  # type: ignore[override]
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        options: OptionsT | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
-        """Run the GitHub Copilot agent with telemetry enabled."""
-        from typing import cast
-
-        super_run = cast(
-            "Callable[..., Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]]",
-            super().run,
-        )
-        return super_run(
-            messages=messages,
-            stream=stream,
-            session=session,
-            middleware=middleware,
-            options=options,
-            **kwargs,
-        )
