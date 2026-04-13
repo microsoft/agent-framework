@@ -832,3 +832,52 @@ class GitHubCopilotAgent(  # type: ignore[misc]
             async with GitHubCopilotAgent() as agent:
                 response = await agent.run("Hello, world!")
     """
+
+    def __init__(
+        self,
+        instructions: str | None = None,
+        *,
+        client: CopilotClient | None = None,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        default_options: OptionsT | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize a GitHub Copilot Agent with full middleware and telemetry.
+
+        Args:
+            instructions: System message for the agent.
+
+        Keyword Args:
+            client: Optional pre-configured CopilotClient instance. If not provided,
+                a new client will be created using the other parameters.
+            id: ID of the agent.
+            name: Name of the agent.
+            description: Description of the agent.
+            context_providers: Context providers to be used by the agent.
+            middleware: Agent middleware used by the agent.
+            tools: Tools to use for the agent. Can be functions or tool definition dicts.
+                These are converted to Copilot SDK tools internally.
+            default_options: Default options for the agent. Can include cli_path, model,
+                timeout, log_level, etc.
+            env_file_path: Optional path to .env file for loading configuration.
+            env_file_encoding: Encoding of the .env file, defaults to 'utf-8'.
+        """
+        super().__init__(
+            instructions,
+            client=client,
+            id=id,
+            name=name,
+            description=description,
+            context_providers=context_providers,
+            middleware=middleware,
+            tools=tools,
+            default_options=default_options,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
