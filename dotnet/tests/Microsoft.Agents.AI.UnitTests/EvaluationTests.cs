@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Evaluation;
@@ -1414,5 +1415,166 @@ public sealed class EvaluationTests
         // Default is LastTurn, so should get the last user message
         Assert.Equal("Q2", item.Query);
         Assert.Equal("A2", item.Response);
+    }
+
+    // ---------------------------------------------------------------
+    // EvalItem.PerTurnItems edge case tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void PerTurnItems_EmptyConversation_ReturnsEmpty()
+    {
+        var result = EvalItem.PerTurnItems(new List<ChatMessage>());
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void PerTurnItems_NoUserMessages_ReturnsEmpty()
+    {
+        var conversation = new List<ChatMessage>
+        {
+            new(ChatRole.System, "You are a helpful assistant."),
+            new(ChatRole.Assistant, "Hello! How can I help?"),
+        };
+
+        var result = EvalItem.PerTurnItems(conversation);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void PerTurnItems_SystemAndAssistantOnly_ReturnsEmpty()
+    {
+        var conversation = new List<ChatMessage>
+        {
+            new(ChatRole.System, "Be helpful"),
+            new(ChatRole.Assistant, "First"),
+            new(ChatRole.Assistant, "Second"),
+        };
+
+        var result = EvalItem.PerTurnItems(conversation);
+        Assert.Empty(result);
+    }
+
+    // ---------------------------------------------------------------
+    // MeaiEvaluatorAdapter tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task MeaiEvaluatorAdapter_PassesQueryMessagesAndResponse_ToEvaluatorAsync()
+    {
+        // Arrange: a stub evaluator that records what it receives
+        var stub = new StubEvaluator();
+        var adapter = new MeaiEvaluatorAdapter(stub, new ChatConfiguration(new StubChatClient()));
+
+        var conversation = new List<ChatMessage>
+        {
+            new(ChatRole.User, "What is 2+2?"),
+            new(ChatRole.Assistant, "4"),
+        };
+        var items = new List<EvalItem>
+        {
+            new("What is 2+2?", "4", conversation),
+        };
+
+        // Act
+        var results = await adapter.EvaluateAsync(items);
+
+        // Assert: evaluator was called once with correct data
+        Assert.Single(stub.Calls);
+
+        // The adapter passes Split() query messages (not the full conversation)
+        var (messages, response, _) = stub.Calls[0];
+        Assert.Single(messages);
+        Assert.Equal(ChatRole.User, messages[0].Role);
+        Assert.Equal("What is 2+2?", messages[0].Text);
+
+        // Response should be a ChatResponse with the assistant text
+        Assert.Equal("4", response.Messages.Last().Text);
+
+        // Results should have inputItems populated
+        Assert.NotNull(results.InputItems);
+        Assert.Single(results.InputItems);
+        Assert.Equal("StubEvaluator", results.ProviderName);
+    }
+
+    [Fact]
+    public async Task MeaiEvaluatorAdapter_SyntheticResponse_WhenNoRawResponseAsync()
+    {
+        // When RawResponse is null, the adapter creates a synthetic ChatResponse
+        var stub = new StubEvaluator();
+        var adapter = new MeaiEvaluatorAdapter(stub, new ChatConfiguration(new StubChatClient()));
+
+        var items = new List<EvalItem>
+        {
+            new("query", "my response"),
+        };
+
+        await adapter.EvaluateAsync(items);
+
+        var (_, response, _) = stub.Calls[0];
+        Assert.Equal(ChatRole.Assistant, response.Messages.Last().Role);
+        Assert.Equal("my response", response.Messages.Last().Text);
+    }
+
+    [Fact]
+    public async Task MeaiEvaluatorAdapter_MultipleItems_AggregatesResultsAsync()
+    {
+        var stub = new StubEvaluator();
+        var adapter = new MeaiEvaluatorAdapter(stub, new ChatConfiguration(new StubChatClient()));
+
+        var items = new List<EvalItem>
+        {
+            new("q1", "r1"),
+            new("q2", "r2"),
+        };
+
+        var results = await adapter.EvaluateAsync(items);
+
+        Assert.Equal(2, stub.Calls.Count);
+        Assert.Equal(2, results.Items.Count);
+        Assert.Equal(2, results.Total);
+    }
+
+    /// <summary>Stub IEvaluator that records calls and returns a fixed BooleanMetric.</summary>
+    private sealed class StubEvaluator : IEvaluator
+    {
+        public List<(List<ChatMessage> Messages, ChatResponse Response, ChatConfiguration Config)> Calls { get; } = new();
+
+        public IReadOnlyCollection<string> EvaluationMetricNames { get; } = ["stub_check"];
+
+        public ValueTask<EvaluationResult> EvaluateAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatResponse modelResponse,
+            ChatConfiguration? chatConfiguration = null,
+            IEnumerable<EvaluationContext>? additionalContext = null,
+            CancellationToken cancellationToken = default)
+        {
+            this.Calls.Add((messages.ToList(), modelResponse, chatConfiguration!));
+            var result = new EvaluationResult(new BooleanMetric("stub_check", true));
+            return new ValueTask<EvaluationResult>(result);
+        }
+    }
+
+    /// <summary>Minimal IChatClient stub for ChatConfiguration (never called).</summary>
+    private sealed class StubChatClient : IChatClient
+    {
+        public void Dispose()
+        {
+        }
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
+        }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+        {
+            return null;
+        }
     }
 }
