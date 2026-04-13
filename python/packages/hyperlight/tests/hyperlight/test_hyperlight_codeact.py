@@ -462,7 +462,6 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkey
     assert "compute" in _FakeSandbox.instances[0].registered_tools
 
 
-@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> None:
     client = _FakeCodeActChatClient()
@@ -475,7 +474,6 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> N
     assert client.call_count == 2
 
 
-@pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_with_real_sandbox(
     tmp_path: Path,
