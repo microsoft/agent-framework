@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
 
 from agent_framework import ChatOptions, Content, HistoryProvider, Message, RawAgent, SupportsAgentRun
@@ -48,6 +49,8 @@ from azure.ai.agentserver.responses.streaming._builders import (
 )
 from typing_extensions import Any, Sequence, cast
 
+logger = logging.getLogger(__name__)
+
 
 class ResponsesHostServer(ResponsesAgentServerHost):
     """A responses server host for an agent."""
@@ -60,7 +63,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         *,
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
-        provider: ResponseProviderProtocol | None = None,
+        store: ResponseProviderProtocol | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -69,34 +72,27 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             agent: The agent to handle responses for.
             prefix: The URL prefix for the server.
             options: Optional server options.
-            provider: Optional response provider.
+            store: Optional response store.
             **kwargs: Additional keyword arguments.
 
         Note:
             The agent must not have a history provider with `load_messages=True`,
             because history is managed by the hosting infrastructure.
         """
-        super().__init__(prefix=prefix, options=options, provider=provider, **kwargs)
+        super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
-        self._validate_agent(agent)
-        self._agent = agent
-        self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
-
-        # Append the user agent prefix for telemetry purposes
-        append_to_user_agent(self.USER_AGENT_PREFIX)
-
-    @staticmethod
-    def _validate_agent(agent: SupportsAgentRun) -> None:
-        """Validate the agent to ensure it does not have a history provider with `load_messages=True`.
-
-        History is managed by the hosting infrastructure.
-        """
         for provider in getattr(agent, "context_providers", []):
             if isinstance(provider, HistoryProvider) and provider.load_messages:
                 raise RuntimeError(
                     "There shouldn't be a history provider with `load_messages=True` already present. "
                     "History is managed by the hosting infrastructure."
                 )
+        self._agent = agent
+
+        self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
+
+        # Append the user agent prefix for telemetry purposes
+        append_to_user_agent(self.USER_AGENT_PREFIX)
 
     async def _handle_create(
         self,
@@ -587,7 +583,8 @@ async def _to_outputs(stream: ResponseEventStream, content: Content) -> AsyncIte
         async for event in stream.aoutput_item_mcp_approval_response(content.id, content.approved):
             yield event
     else:
-        raise ValueError(f"Unsupported Content type: {content.type}")
+        # Log a warning for unsupported content types instead of raising an error, to avoid breaking the response stream.
+        logger.warning(f"Content type '{content.type}' is not supported yet.")
 
 
 # endregion

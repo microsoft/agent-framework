@@ -66,7 +66,7 @@ def main():
         .as_agent()
     )
 
-    server = ResponsesHostServer(workflow_agent, provider=InMemoryResponseProvider())
+    server = ResponsesHostServer(workflow_agent, store=InMemoryResponseProvider())
     server.run()
 
 
