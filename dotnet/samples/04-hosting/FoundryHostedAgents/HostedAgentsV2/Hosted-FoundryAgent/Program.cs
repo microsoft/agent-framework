@@ -62,6 +62,12 @@ app.Run();
 internal sealed class DevTemporaryTokenCredential : TokenCredential
 {
     private const string EnvironmentVariable = "AZURE_BEARER_TOKEN";
+    private readonly string? _token;
+
+    public DevTemporaryTokenCredential()
+    {
+        _token = Environment.GetEnvironmentVariable(EnvironmentVariable);
+    }
 
     public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
     {
@@ -73,14 +79,13 @@ internal sealed class DevTemporaryTokenCredential : TokenCredential
         return new ValueTask<AccessToken>(GetAccessToken());
     }
 
-    private static AccessToken GetAccessToken()
+    private AccessToken GetAccessToken()
     {
-        var token = Environment.GetEnvironmentVariable(EnvironmentVariable);
-        if (string.IsNullOrEmpty(token))
+        if (string.IsNullOrEmpty(_token))
         {
             throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
         }
 
-        return new AccessToken(token, DateTimeOffset.UtcNow.AddHours(1));
+        return new AccessToken(_token, DateTimeOffset.UtcNow.AddHours(1));
     }
 }
