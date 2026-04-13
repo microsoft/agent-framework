@@ -1323,6 +1323,12 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 from ._types import ChatResponse
 
                 try:
+                    if not result_stream._consumed:
+                        # Stream did not complete normally (e.g., it errored). Skip
+                        # get_final_response() to avoid firing result hooks such as
+                        # after_run context providers on error paths. The span is
+                        # still closed in the finally block below.
+                        return
                     response: ChatResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(attributes, response)
@@ -1579,6 +1585,12 @@ class AgentTelemetryLayer:
                 from ._types import AgentResponse
 
                 try:
+                    if not result_stream._consumed:
+                        # Stream did not complete normally (e.g., it errored). Skip
+                        # get_final_response() to avoid firing result hooks such as
+                        # after_run context providers on error paths. The span is
+                        # still closed in the finally block below.
+                        return
                     response: AgentResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(
