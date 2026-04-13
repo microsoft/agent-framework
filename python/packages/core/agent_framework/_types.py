@@ -2816,6 +2816,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             cleanup_hooks if cleanup_hooks is not None else []
         )
         self._cleanup_run: bool = False
+        self._stream_error: Exception | None = None
         self._inner_stream: ResponseStream[Any, Any] | None = None
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
@@ -2948,7 +2949,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             await self._run_cleanup_hooks()
             await self.get_final_response()
             raise
-        except Exception:
+        except Exception as exc:
+            self._stream_error = exc
             await self._run_cleanup_hooks()
             raise
         if self._map_update is not None:
@@ -3111,6 +3113,16 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             result = hook()
             if isawaitable(result):
                 await result
+
+    @property
+    def consumed(self) -> bool:
+        """True if the stream completed normally (StopAsyncIteration was reached)."""
+        return self._consumed
+
+    @property
+    def stream_error(self) -> Exception | None:
+        """The exception that caused the stream to fail, or None if it completed normally."""
+        return self._stream_error
 
     @property
     def updates(self) -> Sequence[UpdateT]:
