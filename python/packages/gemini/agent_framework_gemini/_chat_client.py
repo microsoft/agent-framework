@@ -176,6 +176,10 @@ class GoogleGeminiSettings(TypedDict, total=False):
 # endregion
 
 
+_GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com"
+_VERTEX_AI_BASE_URL = "https://aiplatform.googleapis.com"
+
+
 def _resolve_vertexai_mode(client: genai.Client, *, fallback: bool | None = None) -> bool:
     """Resolve whether a client targets Vertex AI, preferring the instantiated SDK client state."""
     api_client = getattr(client, "_api_client", None)
@@ -185,14 +189,47 @@ def _resolve_vertexai_mode(client: genai.Client, *, fallback: bool | None = None
     return bool(fallback)
 
 
-def _resolve_service_url(client: genai.Client) -> str:
-    """Resolve the base service URL from the instantiated SDK client."""
+def _resolve_service_url(client: genai.Client, *, vertexai: bool) -> str:
+    """Resolve the base service URL from the instantiated SDK client, with a stable fallback."""
     api_client = getattr(client, "_api_client", None)
     http_options = getattr(api_client, "_http_options", None)
     base_url = getattr(http_options, "base_url", None)
     if isinstance(base_url, str) and base_url:
         return base_url.rstrip("/")
-    raise ValueError("Gemini service URL is unavailable from the configured genai.Client.")
+    return _VERTEX_AI_BASE_URL if vertexai else _GEMINI_API_BASE_URL
+
+
+def _validate_client_auth_configuration(
+    *,
+    vertexai: bool | None,
+    api_key: SecretString | None,
+    project: str | None,
+    location: str | None,
+    credentials: Credentials | None,
+) -> None:
+    """Validate supported auth combinations before instantiating the SDK client."""
+    if vertexai is not True:
+        if api_key is None:
+            raise ValueError(
+                "Gemini client requires an API key when Vertex AI is not enabled. "
+                "Set GOOGLE_API_KEY or GEMINI_API_KEY, or pass api_key explicitly."
+            )
+        return
+
+    if api_key is not None or credentials is not None or (project and location):
+        return
+
+    if project or location:
+        raise ValueError(
+            "Gemini client requires both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION "
+            "when Vertex AI is enabled without an API key."
+        )
+
+    raise ValueError(
+        "Gemini client requires Vertex AI credentials or configuration when Vertex AI is enabled. "
+        "Provide GOOGLE_API_KEY for Vertex AI express mode, pass credentials, or set "
+        "GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION."
+    )
 
 
 # Keys mapping to a different GenerateContentConfig field name
@@ -306,30 +343,41 @@ class RawGeminiChatClient(
         if client:
             self._genai_client = client
         else:
+            resolved_key = google_settings.get("api_key") or settings.get("api_key")
+            resolved_project = google_settings.get("cloud_project")
+            resolved_location = google_settings.get("cloud_location")
+            _validate_client_auth_configuration(
+                vertexai=configured_vertexai,
+                api_key=resolved_key,
+                project=resolved_project,
+                location=resolved_location,
+                credentials=credentials,
+            )
+
             client_kwargs: dict[str, Any] = {
                 "http_options": {"headers": {"x-goog-api-client": AGENT_FRAMEWORK_USER_AGENT}},
             }
             if configured_vertexai is not None:
                 client_kwargs["vertexai"] = configured_vertexai
 
-            resolved_key = google_settings.get("api_key") or settings.get("api_key")
-            if resolved_key is not None:
+            if resolved_key is not None and (
+                configured_vertexai is not True
+                or (credentials is None and not (resolved_project and resolved_location))
+            ):
                 client_kwargs["api_key"] = resolved_key.get_secret_value()
 
-            resolved_project = google_settings.get("cloud_project")
-            if resolved_project:
+            if configured_vertexai is True and resolved_project:
                 client_kwargs["project"] = resolved_project
 
-            resolved_location = google_settings.get("cloud_location")
-            if resolved_location:
+            if configured_vertexai is True and resolved_location:
                 client_kwargs["location"] = resolved_location
-            if credentials is not None:
+            if configured_vertexai is True and credentials is not None:
                 client_kwargs["credentials"] = credentials
 
             self._genai_client = genai.Client(**client_kwargs)
 
         self._vertexai = _resolve_vertexai_mode(self._genai_client, fallback=configured_vertexai)
-        self._service_url = _resolve_service_url(self._genai_client)
+        self._service_url = _resolve_service_url(self._genai_client, vertexai=self._vertexai)
         self.model = google_settings.get("model") or settings.get("model")
 
         super().__init__(additional_properties=additional_properties)

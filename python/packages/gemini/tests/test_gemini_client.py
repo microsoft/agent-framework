@@ -36,7 +36,7 @@ skip_if_no_credentials = pytest.mark.skipif(
     reason="Gemini Developer API or Vertex AI credentials not set; skipping integration tests.",
 )
 
-_TEST_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+_TEST_MODEL = os.getenv("GOOGLE_MODEL") or os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 # stub helpers
 
@@ -217,10 +217,10 @@ def test_google_settings_take_precedence_over_gemini_aliases(monkeypatch: pytest
     with patch("agent_framework_gemini._chat_client.genai.Client", return_value=mock_client) as client_factory:
         client = GeminiChatClient()
 
-    assert client_factory.call_args.kwargs["api_key"] == "google-key"
     assert client_factory.call_args.kwargs["vertexai"] is True
     assert client_factory.call_args.kwargs["project"] == "google-project"
     assert client_factory.call_args.kwargs["location"] == "global"
+    assert "api_key" not in client_factory.call_args.kwargs
     assert client.model == "google-model"
     assert client.service_url() == "https://aiplatform.googleapis.com"
 
@@ -234,7 +234,54 @@ def test_missing_api_key_raises_when_no_client_injected(monkeypatch: pytest.Monk
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
 
-    with pytest.raises(ValueError, match="No API key was provided"):
+    with pytest.raises(ValueError, match="requires an API key when Vertex AI is not enabled"):
+        GeminiChatClient(model="gemini-2.5-flash")
+
+
+def test_vertex_ai_express_mode_uses_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Passes the API key in Vertex AI express mode when no project/location pair is configured."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-123")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+
+    mock_client = MagicMock()
+    mock_client._api_client.vertexai = True
+    mock_client._api_client._http_options.base_url = "https://aiplatform.googleapis.com/"
+
+    with patch("agent_framework_gemini._chat_client.genai.Client", return_value=mock_client) as client_factory:
+        client = GeminiChatClient(model="gemini-2.5-flash-lite")
+
+    assert client_factory.call_args.kwargs["vertexai"] is True
+    assert client_factory.call_args.kwargs["api_key"] == "test-key-123"
+    assert "project" not in client_factory.call_args.kwargs
+    assert "location" not in client_factory.call_args.kwargs
+    assert client.service_url() == "https://aiplatform.googleapis.com"
+
+
+def test_vertex_ai_requires_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Raises a deterministic error when Vertex AI is enabled without any auth configuration."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+
+    with pytest.raises(ValueError, match="requires Vertex AI credentials or configuration"):
+        GeminiChatClient(model="gemini-2.5-flash")
+
+
+def test_vertex_ai_requires_project_and_location_together(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Raises a deterministic error when only one Vertex AI location setting is present."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+
+    with pytest.raises(ValueError, match="requires both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION"):
         GeminiChatClient(model="gemini-2.5-flash")
 
 
@@ -1399,6 +1446,20 @@ def test_service_url() -> None:
     """Returns the Gemini API base URL."""
     client, _ = _make_gemini_client()
     assert client.service_url() == "https://generativelanguage.googleapis.com"
+
+
+def test_service_url_falls_back_when_sdk_base_url_is_unavailable() -> None:
+    """Falls back to the known service URL when the SDK client does not expose a base URL."""
+    gemini_sdk_client = MagicMock()
+    gemini_sdk_client._api_client.vertexai = False
+    gemini_client = GeminiChatClient(client=gemini_sdk_client, model="gemini-2.5-flash")
+
+    vertex_sdk_client = MagicMock()
+    vertex_sdk_client._api_client.vertexai = True
+    vertex_client = GeminiChatClient(client=vertex_sdk_client, model="gemini-2.5-flash")
+
+    assert gemini_client.service_url() == "https://generativelanguage.googleapis.com"
+    assert vertex_client.service_url() == "https://aiplatform.googleapis.com"
 
 
 # integration tests
