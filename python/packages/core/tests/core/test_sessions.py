@@ -620,6 +620,30 @@ class TestFileHistoryProvider:
         with pytest.raises(ValueError, match="Failed to deserialize history line 1"):
             await provider.get_messages("broken")
 
+    async def test_missing_session_file_returns_empty_messages(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+
+        loaded = await provider.get_messages("missing")
+
+        assert loaded == []
+
+    async def test_none_session_id_uses_default_jsonl_file(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+
+        await provider.save_messages(None, [Message(role="user", contents=["hello"])])
+
+        session_file = provider._session_file_path(None)
+        assert session_file.name == "default.jsonl"
+        loaded = await provider.get_messages(None)
+        assert [message.text for message in loaded] == ["hello"]
+
+    async def test_non_mapping_jsonl_line_raises(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+        await asyncio.to_thread(provider._session_file_path("non-mapping").write_text, "[1, 2, 3]\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="did not deserialize to a mapping"):
+            await provider.get_messages("non-mapping")
+
     async def test_skip_excluded_omits_excluded_messages(self, tmp_path: Path) -> None:
         provider = FileHistoryProvider(tmp_path, skip_excluded=True)
 

@@ -18,6 +18,7 @@ import copy
 import json
 import threading
 import uuid
+import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -880,9 +881,11 @@ class FileHistoryProvider(HistoryProvider):
     DEFAULT_SOURCE_ID: ClassVar[str] = "file_history"
     DEFAULT_SESSION_FILE_STEM: ClassVar[str] = "default"
     FILE_EXTENSION: ClassVar[str] = ".jsonl"
+    _FILE_LOCK_STRIPE_COUNT: ClassVar[int] = 64
     _ENCODED_SESSION_PREFIX: ClassVar[str] = "~session-"
-    _FILE_WRITE_LOCKS: ClassVar[dict[Path, threading.Lock]] = {}
-    _FILE_WRITE_LOCKS_GUARD: ClassVar[threading.Lock] = threading.Lock()
+    _FILE_WRITE_LOCKS: ClassVar[tuple[threading.Lock, ...]] = tuple(
+        threading.Lock() for _ in range(_FILE_LOCK_STRIPE_COUNT)
+    )
     _WINDOWS_RESERVED_FILE_STEMS: ClassVar[frozenset[str]] = frozenset({
         "CON",
         "PRN",
@@ -955,6 +958,10 @@ class FileHistoryProvider(HistoryProvider):
         self.skip_excluded = skip_excluded
         self.dumps = dumps or _default_json_dumps
         self.loads = loads or _default_json_loads
+        self._async_write_locks_by_loop: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop,
+            tuple[asyncio.Lock, ...],
+        ] = weakref.WeakKeyDictionary()
 
     async def get_messages(
         self,
@@ -966,38 +973,42 @@ class FileHistoryProvider(HistoryProvider):
         """Retrieve messages from the session's JSON Lines file."""
         del state, kwargs
         file_path = self._session_file_path(session_id)
+        async_lock = self._session_async_write_lock(file_path)
+        thread_lock = self._session_write_lock(file_path)
 
         def _read_messages() -> list[Message]:
-            if not file_path.exists():
-                return []
+            with thread_lock:
+                if not file_path.exists():
+                    return []
 
-            messages: list[Message] = []
-            with file_path.open(encoding="utf-8") as file_handle:
-                for line_number, line in enumerate(file_handle, start=1):
-                    serialized = line.strip()
-                    if not serialized:
-                        continue
-                    try:
-                        payload = self.loads(serialized)
-                    except (TypeError, ValueError) as exc:
-                        raise ValueError(
-                            f"Failed to deserialize history line {line_number} from '{file_path}'."
-                        ) from exc
-                    if not isinstance(payload, Mapping):
-                        raise ValueError(
-                            f"History line {line_number} in '{file_path}' did not deserialize to a mapping."
-                        )
+                messages: list[Message] = []
+                with file_path.open(encoding="utf-8") as file_handle:
+                    for line_number, line in enumerate(file_handle, start=1):
+                        serialized = line.strip()
+                        if not serialized:
+                            continue
+                        try:
+                            payload = self.loads(serialized)
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError(
+                                f"Failed to deserialize history line {line_number} from '{file_path}'."
+                            ) from exc
+                        if not isinstance(payload, Mapping):
+                            raise ValueError(
+                                f"History line {line_number} in '{file_path}' did not deserialize to a mapping."
+                            )
 
-                    try:
-                        message = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
-                    except ValueError as exc:
-                        raise ValueError(
-                            f"History line {line_number} in '{file_path}' is not a valid Message payload."
-                        ) from exc
-                    messages.append(message)
-            return messages
+                        try:
+                            message = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
+                        except ValueError as exc:
+                            raise ValueError(
+                                f"History line {line_number} in '{file_path}' is not a valid Message payload."
+                            ) from exc
+                        messages.append(message)
+                return messages
 
-        messages = await asyncio.to_thread(_read_messages)
+        async with async_lock:
+            messages = await asyncio.to_thread(_read_messages)
         if self.skip_excluded:
             messages = [m for m in messages if not m.additional_properties.get("_excluded", False)]
         return messages
@@ -1016,6 +1027,7 @@ class FileHistoryProvider(HistoryProvider):
             return
 
         file_path = self._session_file_path(session_id)
+        async_lock = self._session_async_write_lock(file_path)
         file_lock = self._session_write_lock(file_path)
 
         def _append_messages() -> None:
@@ -1023,7 +1035,8 @@ class FileHistoryProvider(HistoryProvider):
                 for message in messages:
                     file_handle.write(f"{self._serialize_message(message)}\n")
 
-        await asyncio.to_thread(_append_messages)
+        async with async_lock:
+            await asyncio.to_thread(_append_messages)
 
     def _serialize_message(self, message: Message) -> str:
         """Serialize a message payload to a single JSON Lines record."""
@@ -1055,11 +1068,24 @@ class FileHistoryProvider(HistoryProvider):
         encoded_session_id = urlsafe_b64encode(raw_session_id.encode("utf-8")).decode("ascii").rstrip("=")
         return f"{self._ENCODED_SESSION_PREFIX}{encoded_session_id or self.DEFAULT_SESSION_FILE_STEM}"
 
+    def _session_async_write_lock(self, file_path: Path) -> asyncio.Lock:
+        """Return the event-loop-local async lock for a session history file."""
+        loop = asyncio.get_running_loop()
+        locks = self._async_write_locks_by_loop.get(loop)
+        if locks is None:
+            locks = tuple(asyncio.Lock() for _ in range(self._FILE_LOCK_STRIPE_COUNT))
+            self._async_write_locks_by_loop[loop] = locks
+        return locks[self._lock_index(file_path)]
+
     @classmethod
     def _session_write_lock(cls, file_path: Path) -> threading.Lock:
-        """Return the process-local append lock for a session history file."""
-        with cls._FILE_WRITE_LOCKS_GUARD:
-            return cls._FILE_WRITE_LOCKS.setdefault(file_path, threading.Lock())
+        """Return the process-local thread lock for a session history file."""
+        return cls._FILE_WRITE_LOCKS[cls._lock_index(file_path)]
+
+    @classmethod
+    def _lock_index(cls, file_path: Path) -> int:
+        """Map a session history file to a bounded lock stripe."""
+        return hash(file_path) % cls._FILE_LOCK_STRIPE_COUNT
 
     @classmethod
     def _is_literal_session_file_stem_safe(cls, session_id: str) -> bool:
