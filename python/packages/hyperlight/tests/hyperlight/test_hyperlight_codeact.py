@@ -419,6 +419,56 @@ async def test_execute_code_tool_failure_returns_error_content(monkeypatch: pyte
     assert result[0].outputs[0].error_details == "sandbox boom"
 
 
+async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_rejects_host_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeStrictNetworkSandbox:
+        instances: list[_FakeStrictNetworkSandbox] = []
+
+        def __init__(
+            self,
+            *,
+            input_dir: str | None = None,
+            output_dir: str | None = None,
+            backend: str = "wasm",
+            module: str | None = None,
+            module_path: str | None = None,
+        ) -> None:
+            del input_dir, output_dir, backend, module, module_path
+            self.allowed_domains: list[tuple[str, list[str] | None]] = []
+            _FakeStrictNetworkSandbox.instances.append(self)
+
+        def register_tool(self, name_or_tool: Any, callback: Any | None = None) -> None:
+            del name_or_tool, callback
+
+        def allow_domain(self, target: str, methods: list[str] | None = None) -> None:
+            self.allowed_domains.append((target, methods))
+
+        def run(self, code: str) -> _FakeResult:
+            if code == "None" and any("://" not in target for target, _ in self.allowed_domains):
+                raise RuntimeError("invalid URL for network permission: ")
+            return _FakeResult(success=True)
+
+        def snapshot(self) -> str:
+            return "snapshot"
+
+        def restore(self, snapshot: Any) -> None:
+            del snapshot
+
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeStrictNetworkSandbox)
+
+    execute_code = HyperlightExecuteCodeTool(allowed_domains=[("127.0.0.1:8080", "get")])
+    result = await execute_code.invoke(arguments={"code": "None"})
+
+    assert result[0].type == "code_interpreter_tool_result"
+    assert len(_FakeStrictNetworkSandbox.instances) == 2
+    assert _FakeStrictNetworkSandbox.instances[0].allowed_domains == [("127.0.0.1:8080", ["GET"])]
+    assert _FakeStrictNetworkSandbox.instances[1].allowed_domains == [
+        ("http://127.0.0.1:8080", ["GET"]),
+        ("https://127.0.0.1:8080", ["GET"]),
+    ]
+
+
 async def test_provider_injects_run_scoped_execute_code_tool() -> None:
     runtime = _FakeRuntime()
     provider = HyperlightCodeActProvider(tools=[compute], _registry=runtime)

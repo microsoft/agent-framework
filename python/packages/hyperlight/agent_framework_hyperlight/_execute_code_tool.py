@@ -244,6 +244,23 @@ def _normalize_allowed_domain_input(allowed_domain: AllowedDomainInput) -> Allow
     )
 
 
+def _allowed_domain_registration_targets(*, target: str, expand_missing_scheme: bool) -> tuple[str, ...]:
+    if not expand_missing_scheme or "://" in target:
+        return (target,)
+    return (f"http://{target}", f"https://{target}")
+
+
+def _should_retry_allowed_domain_registration(
+    *,
+    error: RuntimeError,
+    allowed_domains: Sequence[AllowedDomain],
+) -> bool:
+    message = str(error).lower()
+    return "invalid url for network permission" in message and any(
+        "://" not in domain.target for domain in allowed_domains
+    )
+
+
 def _normalize_mount_path(mount_path: str) -> str:
     raw_path = mount_path.strip().replace("\\", "/")
     if not raw_path:
@@ -424,30 +441,49 @@ class _SandboxRegistry:
             _populate_input_dir(config=config, input_root=Path(input_dir_handle.name))
 
         sandbox_cls = _load_sandbox_class()
+
+        def _create_sandbox() -> Any:
+            try:
+                return sandbox_cls(
+                    backend=config.backend,
+                    module=config.module,
+                    module_path=config.module_path,
+                    input_dir=input_dir_handle.name if input_dir_handle is not None else None,
+                    output_dir=output_dir_handle.name if output_dir_handle is not None else None,
+                )
+            except ImportError as exc:
+                raise RuntimeError(
+                    "The selected Hyperlight backend is not installed or not supported on this platform. "
+                    "Install a compatible backend package, such as `hyperlight-sandbox-backend-wasm`."
+                ) from exc
+
+        def _configure_sandbox(*, sandbox: Any, expand_missing_scheme: bool) -> None:
+            for tool_obj in config.tools:
+                sandbox.register_tool(tool_obj.name, _make_sandbox_callback(tool_obj))
+
+            for allowed_domain in config.allowed_domains:
+                for target in _allowed_domain_registration_targets(
+                    target=allowed_domain.target,
+                    expand_missing_scheme=expand_missing_scheme,
+                ):
+                    sandbox.allow_domain(
+                        target,
+                        methods=list(allowed_domain.methods) if allowed_domain.methods is not None else None,
+                    )
+
+        sandbox = _create_sandbox()
+        _configure_sandbox(sandbox=sandbox, expand_missing_scheme=False)
+
         try:
-            sandbox = sandbox_cls(
-                backend=config.backend,
-                module=config.module,
-                module_path=config.module_path,
-                input_dir=input_dir_handle.name if input_dir_handle is not None else None,
-                output_dir=output_dir_handle.name if output_dir_handle is not None else None,
-            )
-        except ImportError as exc:
-            raise RuntimeError(
-                "The selected Hyperlight backend is not installed or not supported on this platform. "
-                "Install a compatible backend package, such as `hyperlight-sandbox-backend-wasm`."
-            ) from exc
+            sandbox.run("None")
+        except RuntimeError as exc:
+            if not _should_retry_allowed_domain_registration(error=exc, allowed_domains=config.allowed_domains):
+                raise
 
-        for tool_obj in config.tools:
-            sandbox.register_tool(tool_obj.name, _make_sandbox_callback(tool_obj))
+            sandbox = _create_sandbox()
+            _configure_sandbox(sandbox=sandbox, expand_missing_scheme=True)
+            sandbox.run("None")
 
-        for allowed_domain in config.allowed_domains:
-            sandbox.allow_domain(
-                allowed_domain.target,
-                methods=list(allowed_domain.methods) if allowed_domain.methods is not None else None,
-            )
-
-        sandbox.run("None")
         snapshot = sandbox.snapshot()
         return _SandboxEntry(
             sandbox=sandbox,
