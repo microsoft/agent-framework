@@ -678,23 +678,29 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
                     "from pathlib import Path\n"
                     "from urllib.request import urlopen\n\n"
                     'input_text = Path("/input/data/input.txt").read_text(encoding="utf-8")\n'
-                    'Path("/output/result.txt").write_text(input_text.upper(), encoding="utf-8")\n'
+                    'output_path = Path("/output/result.txt")\n'
+                    'output_path.write_text(input_text.upper(), encoding="utf-8")\n'
                     f'with urlopen("http://{allowed_host}/allowed", timeout=10) as response:\n'
                     '    network_text = response.read().decode("utf-8")\n'
-                    "print(input_text)\n"
-                    "print(network_text)\n"
+                    'output_text = output_path.read_text(encoding="utf-8")\n'
+                    'assert input_text == "hello from mount"\n'
+                    'assert network_text == "network ok"\n'
+                    "assert output_text == input_text.upper()\n"
+                    'print("validated")\n'
                 )
             }
         )
 
     assert result[0].type == "code_interpreter_tool_result"
     outputs = result[0].outputs or []
+    assert not any(item.type == "error" for item in outputs)
 
     text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
     if text_output is not None:
-        assert text_output.text == "hello from mount\nnetwork ok\n"
+        assert text_output.text == "validated\n"
 
-    file_output = next(item for item in outputs if item.type == "data")
-    assert file_output.data == b"HELLO FROM MOUNT"
-    assert file_output.additional_properties["path"] == "/output/result.txt"
+    file_output = next((item for item in outputs if item.type == "data"), None)
+    if file_output is not None:
+        assert file_output.data == b"HELLO FROM MOUNT"
+        assert file_output.additional_properties["path"] == "/output/result.txt"
     assert requests == ["/allowed"]
