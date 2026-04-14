@@ -33,24 +33,19 @@ from azure.ai.contentunderstanding.models import AnalysisInput, AnalysisResult
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
-
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
 from ._detection import (
-    derive_doc_key,
     detect_and_strip_files,
-    extract_binary,
-    is_supported_content,
-    sanitize_doc_key,
-    sniff_media_type,
 )
-from ._extraction import extract_field_value, extract_sections, flatten_field, format_result
+from ._extraction import extract_sections, format_result
 from ._models import AnalysisSection, DocumentEntry, DocumentStatus, FileSearchConfig
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.azure_ai_contentunderstanding")
 
@@ -163,9 +158,10 @@ class ContentUnderstandingContextProvider(ContextProvider):
 
     def __init__(
         self,
+        *,
         endpoint: str | None = None,
         credential: AzureCredentialTypes | None = None,
-        *,
+        client: ContentUnderstandingClient | None = None,
         analyzer_id: str | None = None,
         max_wait: float | None = DEFAULT_MAX_WAIT_SECONDS,
         output_sections: list[AnalysisSection] | None = None,
@@ -176,28 +172,35 @@ class ContentUnderstandingContextProvider(ContextProvider):
     ) -> None:
         super().__init__(source_id)
 
-        # Load settings — explicit args take priority over env vars.
-        # Env vars use the prefix AZURE_CONTENTUNDERSTANDING_ (e.g.,
-        # AZURE_CONTENTUNDERSTANDING_ENDPOINT).
-        settings = load_settings(
-            ContentUnderstandingSettings,
-            env_prefix="AZURE_CONTENTUNDERSTANDING_",
-            required_fields=["endpoint"],
-            endpoint=endpoint,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
-
-        resolved_endpoint: str = settings["endpoint"]  # type: ignore[assignment]  # validated by load_settings
-
-        if credential is None:
-            raise ValueError(
-                "Azure credential is required. Provide a 'credential' parameter "
-                "(e.g., AzureKeyCredential or AzureCliCredential)."
+        if client is not None:
+            # Use the pre-built client directly — endpoint/credential are ignored.
+            self._client = client
+            self._endpoint = ""
+            self._credential = None
+        else:
+            # Build a new client from endpoint + credential.
+            settings = load_settings(
+                ContentUnderstandingSettings,
+                env_prefix="AZURE_CONTENTUNDERSTANDING_",
+                required_fields=["endpoint"],
+                endpoint=endpoint,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
             )
+            resolved_endpoint: str = settings["endpoint"]  # type: ignore[assignment]  # validated by load_settings
 
-        self._endpoint = resolved_endpoint
-        self._credential = credential
+            if credential is None:
+                raise ValueError(
+                    "Azure credential is required. Provide a 'credential' keyword argument "
+                    "(e.g., AzureKeyCredential or AzureCliCredential), or pass a pre-built "
+                    "'client' (ContentUnderstandingClient) instead."
+                )
+
+            self._endpoint = resolved_endpoint
+            self._credential = credential
+            self._client = ContentUnderstandingClient(
+                self._endpoint, self._credential, user_agent=AGENT_FRAMEWORK_USER_AGENT
+            )
         self.analyzer_id = analyzer_id
         self.max_wait = max_wait
         self.output_sections: list[AnalysisSection] = output_sections or ["markdown", "fields"]
@@ -308,7 +311,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
             pending_uploads = remaining_uploads
 
         # 2. Detect CU-supported file attachments, strip them from input, and return for analysis
-        new_files = self._detect_and_strip_files(context)
+        new_files = detect_and_strip_files(context)
 
         # 3. Analyze new files using CU (track elapsed time for combined timeout)
         file_start_times: dict[str, float] = {}
@@ -410,7 +413,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     context.extend_messages(
                         self,
                         [
-                            Message(role="user", contents=[self._format_result(entry["filename"], entry["result"])]),
+                            Message(role="user", contents=[format_result(entry["filename"], entry["result"])]),
                         ],
                     )
                     context.extend_messages(
@@ -447,34 +450,6 @@ class ContentUnderstandingContextProvider(ContextProvider):
                 "- Use list_documents() for status queries (e.g. 'list docs', 'what's uploaded?').\n"
                 "- Do NOT call file_search for status queries — it wastes tokens.",
             )
-
-    # ------------------------------------------------------------------
-    # File Detection (delegates to _detection module)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _detect_and_strip_files(context: SessionContext) -> list[tuple[str, Any, bytes | None]]:
-        return detect_and_strip_files(context)
-
-    @staticmethod
-    def _sniff_media_type(binary_data: bytes | None, content: Any) -> str | None:
-        return sniff_media_type(binary_data, content)
-
-    @staticmethod
-    def _is_supported_content(content: Any) -> bool:
-        return is_supported_content(content)
-
-    @staticmethod
-    def _sanitize_doc_key(raw: str) -> str:
-        return sanitize_doc_key(raw)
-
-    @staticmethod
-    def _derive_doc_key(content: Any) -> str:
-        return derive_doc_key(content)
-
-    @staticmethod
-    def _extract_binary(content: Any) -> bytes | None:
-        return extract_binary(content)
 
     # ------------------------------------------------------------------
     # Analyzer Resolution
@@ -695,7 +670,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     context.extend_messages(
                         self,
                         [
-                            Message(role="user", contents=[self._format_result(entry["filename"], extracted)]),
+                            Message(role="user", contents=[format_result(entry["filename"], extracted)]),
                         ],
                     )
                 context.extend_messages(
@@ -736,18 +711,6 @@ class ContentUnderstandingContextProvider(ContextProvider):
 
     def _extract_sections(self, result: AnalysisResult) -> dict[str, object]:
         return extract_sections(result, self.output_sections)
-
-    @staticmethod
-    def _extract_field_value(field: Any) -> object:
-        return extract_field_value(field)
-
-    @staticmethod
-    def _flatten_field(field: Any) -> object:
-        return flatten_field(field)
-
-    @staticmethod
-    def _format_result(filename: str, result: dict[str, object]) -> str:
-        return format_result(filename, result)
 
     # ------------------------------------------------------------------
     # Tool Registration
@@ -838,7 +801,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
 
         # Upload the full formatted content (markdown + fields + segments),
         # not just raw markdown — consistent with what non-file_search mode injects.
-        formatted = self._format_result(entry["filename"], result)
+        formatted = format_result(entry["filename"], result)
         if not formatted:
             return False
 

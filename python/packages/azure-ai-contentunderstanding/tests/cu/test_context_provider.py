@@ -16,7 +16,8 @@ from agent_framework_azure_ai_contentunderstanding import (
     ContentUnderstandingContextProvider,
     DocumentStatus,
 )
-from agent_framework_azure_ai_contentunderstanding._detection import SUPPORTED_MEDIA_TYPES
+from agent_framework_azure_ai_contentunderstanding._detection import SUPPORTED_MEDIA_TYPES, derive_doc_key
+from agent_framework_azure_ai_contentunderstanding._extraction import format_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -417,17 +418,17 @@ class TestBeforeRunPendingFailure:
 class TestDocumentKeyDerivation:
     def test_filename_from_additional_properties(self) -> None:
         content = _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "my_report.pdf")
-        key = ContentUnderstandingContextProvider._derive_doc_key(content)
+        key = derive_doc_key(content)
         assert key == "my_report.pdf"
 
     def test_url_basename(self) -> None:
         content = Content.from_uri("https://example.com/docs/annual_report.pdf", media_type="application/pdf")
-        key = ContentUnderstandingContextProvider._derive_doc_key(content)
+        key = derive_doc_key(content)
         assert key == "annual_report.pdf"
 
     def test_content_hash_fallback(self) -> None:
         content = Content.from_data(_SAMPLE_PDF_BYTES, "application/pdf")
-        key = ContentUnderstandingContextProvider._derive_doc_key(content)
+        key = derive_doc_key(content)
         assert key.startswith("doc_")
         assert len(key) == 12  # "doc_" + 8 hex chars
 
@@ -1093,7 +1094,7 @@ class TestFormatResult:
             "markdown": "# Hello World",
             "fields": {"Name": {"type": "string", "value": "Test", "confidence": 0.9}},
         }
-        formatted = ContentUnderstandingContextProvider._format_result("test.pdf", result)
+        formatted = format_result("test.pdf", result)
 
         assert 'Document analysis of "test.pdf"' in formatted
         assert "# Hello World" in formatted
@@ -1102,7 +1103,7 @@ class TestFormatResult:
 
     def test_format_markdown_only(self) -> None:
         result: dict[str, object] = {"markdown": "# Just Text"}
-        formatted = ContentUnderstandingContextProvider._format_result("doc.pdf", result)
+        formatted = format_result("doc.pdf", result)
 
         assert "# Just Text" in formatted
         assert "Extracted Fields" not in formatted
@@ -1141,7 +1142,7 @@ class TestFormatResult:
                 },
             ],
         }
-        formatted = ContentUnderstandingContextProvider._format_result("demo.mp4", result)
+        formatted = format_result("demo.mp4", result)
 
         expected = (
             'Video analysis of "demo.mp4":\n'
@@ -1220,7 +1221,7 @@ class TestFormatResult:
                 },
             },
         }
-        formatted = ContentUnderstandingContextProvider._format_result("invoice.pdf", result)
+        formatted = format_result("invoice.pdf", result)
 
         expected = (
             'Document analysis of "invoice.pdf":\n'
