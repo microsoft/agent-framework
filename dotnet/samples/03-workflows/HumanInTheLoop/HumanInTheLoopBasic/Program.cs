@@ -53,7 +53,7 @@ public static class Program
                     Console.ForegroundColor = ConsoleColor.Red;
                     Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
                     Console.ResetColor();
-                    break;
+                    return;
             }
         }
     }

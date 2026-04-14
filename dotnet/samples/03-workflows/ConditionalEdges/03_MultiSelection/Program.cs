@@ -93,13 +93,11 @@ public static class Program
             {
                 Console.WriteLine($"{outputEvent}");
             }
-
-            if (evt is DatabaseEvent databaseEvent)
+            else if (evt is DatabaseEvent databaseEvent)
             {
                 Console.WriteLine($"{databaseEvent}");
             }
-
-            if (evt is WorkflowErrorEvent workflowError)
+            else if (evt is WorkflowErrorEvent workflowError)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
