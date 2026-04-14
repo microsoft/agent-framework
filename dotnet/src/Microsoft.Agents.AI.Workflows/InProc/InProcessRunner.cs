@@ -249,17 +249,33 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         Executor executor = await this.RunContext.EnsureExecutorAsync(receiverId, this.StepTracer, cancellationToken).ConfigureAwait(false);
 
         this.StepTracer.TraceActivated(receiverId);
-        while (envelopes.TryDequeue(out var envelope))
-        {
-            (object message, TypeId messageType) = await TranslateMessageAsync(envelope).ConfigureAwait(false);
 
-            await executor.ExecuteCoreAsync(
-                message,
-                messageType,
-                this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),
-                this.TelemetryContext,
-                cancellationToken
-            ).ConfigureAwait(false);
+        // TODO: #5084 - Add delivery-level activity (max one per step per executor) to capture non-message
+        // specific invocations of executor logic.
+        IWorkflowContext tracelessContext = this.RunContext.BindWorkflowContext(receiverId);
+
+        try
+        {
+            await executor.OnMessageDeliveryStartingAsync(tracelessContext, cancellationToken)
+                          .ConfigureAwait(false);
+
+            while (envelopes.TryDequeue(out var envelope))
+            {
+                (object message, TypeId messageType) = await TranslateMessageAsync(envelope).ConfigureAwait(false);
+
+                await executor.ExecuteCoreAsync(
+                    message,
+                    messageType,
+                    this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),
+                    this.TelemetryContext,
+                    cancellationToken
+                ).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            await executor.OnMessageDeliveryFinishedAsync(tracelessContext, cancellationToken)
+                          .ConfigureAwait(false);
         }
 
         async ValueTask<(object, TypeId)> TranslateMessageAsync(MessageEnvelope envelope)

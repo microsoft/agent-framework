@@ -14,7 +14,7 @@ using Microsoft.Extensions.AI;
 using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 var mem0ServiceUri = Environment.GetEnvironmentVariable("MEM0_ENDPOINT") ?? throw new InvalidOperationException("MEM0_ENDPOINT is not set.");
 var mem0ApiKey = Environment.GetEnvironmentVariable("MEM0_API_KEY") ?? throw new InvalidOperationException("MEM0_API_KEY is not set.");

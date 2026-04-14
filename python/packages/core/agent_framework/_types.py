@@ -1957,6 +1957,8 @@ class ContinuationToken(TypedDict):
 def _parse_structured_response_value(text: str, response_format: Any | None) -> Any | None:
     if response_format is None:
         return None
+    if not text:
+        return None
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
         return response_format.model_validate_json(text)
     if isinstance(response_format, Mapping):
@@ -2814,6 +2816,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             cleanup_hooks if cleanup_hooks is not None else []
         )
         self._cleanup_run: bool = False
+        self._stream_error: Exception | None = None
         self._inner_stream: ResponseStream[Any, Any] | None = None
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
@@ -2946,8 +2949,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             await self._run_cleanup_hooks()
             await self.get_final_response()
             raise
-        except Exception:
-            await self._run_cleanup_hooks()
+        except Exception as exc:
+            self._stream_error = exc
+            try:
+                await self._run_cleanup_hooks()
+            finally:
+                self._stream_error = None
             raise
         if self._map_update is not None:
             update = self._map_update(update)  # type: ignore[assignment]

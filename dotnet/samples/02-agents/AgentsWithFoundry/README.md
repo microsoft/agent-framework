@@ -10,7 +10,7 @@ The simplest way to create a Foundry agent is using the `FoundryAgent` type dire
 FoundryAgent agent = new(
     new Uri(endpoint),
     new AzureCliCredential(),
-    model: "gpt-4o-mini",
+    model: "gpt-5.4-mini",
     instructions: "You are good at telling jokes.",
     name: "JokerAgent");
 
@@ -38,7 +38,7 @@ Set:
 
 ```powershell
 $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 Some samples require extra tool-specific environment variables. See each sample for details.

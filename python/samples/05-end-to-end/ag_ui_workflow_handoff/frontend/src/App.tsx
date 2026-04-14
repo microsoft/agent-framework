@@ -54,6 +54,16 @@ const STARTER_PROMPTS = [
   "Help me with a damaged-order refund and replacement.",
 ];
 
+const DEFAULT_CASE_SNAPSHOT: CaseSnapshot = {
+  orderId: "Not captured",
+  refundAmount: "Not captured",
+  refundApproved: "pending",
+  shippingPreference: "Not selected",
+};
+
+const CLOSED_CASE_NOTICE =
+  "This case is already complete. Start a new case to open a fresh thread for a new request.";
+
 function randomId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -213,6 +223,10 @@ function normalizeTextForDedupe(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+function isCaseCompleteText(text: string): boolean {
+  return text.trim().toLowerCase().endsWith("case complete.");
+}
+
 function normalizeShippingPreference(text: string): string | null {
   const normalized = text.trim().toLowerCase();
   if (normalized.length === 0) {
@@ -263,24 +277,21 @@ export default function App(): JSX.Element {
   const assistantMessageIndexRef = useRef<Record<string, number>>({});
   const activeRunIdRef = useRef<string | null>(null);
   const pendingUsageRef = useRef<UsageDiagnostics | null>(null);
+  const caseClosedRef = useRef<boolean>(false);
 
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [requestInfoById, setRequestInfoById] = useState<Record<string, RequestInfoPayload>>({});
   const [pendingInterrupts, setPendingInterrupts] = useState<Interrupt[]>([]);
   const [activeAgent, setActiveAgent] = useState<AgentId>("triage_agent");
   const [visitedAgents, setVisitedAgents] = useState<Set<AgentId>>(new Set(["triage_agent"]));
-  const [caseSnapshot, setCaseSnapshot] = useState<CaseSnapshot>({
-    orderId: "Not captured",
-    refundAmount: "Not captured",
-    refundApproved: "pending",
-    shippingPreference: "Not selected",
-  });
+  const [caseSnapshot, setCaseSnapshot] = useState<CaseSnapshot>(DEFAULT_CASE_SNAPSHOT);
   const [statusText, setStatusText] = useState<string>("Ready");
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [inputText, setInputText] = useState<string>("");
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState<boolean>(false);
   const [latestUsage, setLatestUsage] = useState<UsageDiagnostics | null>(null);
   const [usageHistory, setUsageHistory] = useState<UsageDiagnostics[]>([]);
+  const [isCaseClosed, setIsCaseClosed] = useState<boolean>(false);
 
   const currentInterrupt = pendingInterrupts[0];
   const currentInterruptKind = currentInterrupt ? interruptKind(currentInterrupt) : "unknown";
@@ -288,6 +299,7 @@ export default function App(): JSX.Element {
   const interruptPrompt = currentInterrupt
     ? extractPromptFromInterrupt(currentInterrupt, currentRequestInfo)
     : "No pending interrupt.";
+  const canStartFreshCase = !currentInterrupt && isCaseClosed;
 
   const functionCall = currentInterrupt ? extractFunctionCallFromInterrupt(currentInterrupt) : null;
   const functionArguments = useMemo(() => parseFunctionArguments(functionCall), [functionCall]);
@@ -302,6 +314,34 @@ export default function App(): JSX.Element {
 
   const pushMessage = (message: DisplayMessage): void => {
     setMessages((prev) => [...prev, message]);
+  };
+
+  const pushSystemNotice = (text: string): void => {
+    setMessages((prev) => {
+      if (prev.length > 0 && prev[prev.length - 1]?.role === "system" && prev[prev.length - 1]?.text === text) {
+        return prev;
+      }
+      return [...prev, { id: randomId(), role: "system", text }];
+    });
+  };
+
+  const resetConversationState = (): void => {
+    threadIdRef.current = randomId();
+    assistantMessageIndexRef.current = {};
+    activeRunIdRef.current = null;
+    pendingUsageRef.current = null;
+    caseClosedRef.current = false;
+
+    setMessages([]);
+    setRequestInfoById({});
+    setPendingInterrupts([]);
+    setActiveAgent("triage_agent");
+    setVisitedAgents(new Set(["triage_agent"]));
+    setCaseSnapshot(DEFAULT_CASE_SNAPSHOT);
+    setStatusText("Ready");
+    setInputText("");
+    setIsApprovalModalOpen(false);
+    setIsCaseClosed(false);
   };
 
   const rebuildAssistantMessageIndex = (items: DisplayMessage[]): void => {
@@ -364,6 +404,10 @@ export default function App(): JSX.Element {
       }
       const candidate = prev[index];
       if (candidate.role === "user" || candidate.text.trim().length > 0) {
+        if (candidate.role === "assistant" && isCaseCompleteText(candidate.text)) {
+          caseClosedRef.current = true;
+          setIsCaseClosed(true);
+        }
         return prev;
       }
       const next = prev.filter((item) => item.id !== messageId);
@@ -565,7 +609,9 @@ export default function App(): JSX.Element {
         }
 
         setPendingInterrupts(interruptPayload);
-        setStatusText(interruptPayload.length > 0 ? "Waiting for input" : "Run complete");
+        setStatusText(
+          interruptPayload.length > 0 ? "Waiting for input" : caseClosedRef.current ? "Case complete" : "Run complete"
+        );
         setIsRunning(false);
         break;
       }
@@ -652,6 +698,12 @@ export default function App(): JSX.Element {
   };
 
   const startNewTurn = async (text: string): Promise<void> => {
+    if (caseClosedRef.current && pendingInterrupts.length === 0) {
+      pushSystemNotice(CLOSED_CASE_NOTICE);
+      setStatusText("Case complete");
+      return;
+    }
+
     pushMessage({ id: randomId(), role: "user", text });
 
     await runWithPayload({
@@ -873,7 +925,20 @@ export default function App(): JSX.Element {
 
           <article className="card interrupt-card">
             <h2>Pending Action</h2>
-            {!currentInterrupt && <p className="muted">No interrupt pending. Start with one of the prompts below.</p>}
+            {!currentInterrupt && (
+              <div className="pending-empty-state">
+                <p className="muted">
+                  {isCaseClosed
+                    ? "This case is closed. New top-level messages on this thread are blocked until you start a new case."
+                    : "No interrupt pending. Start with one of the prompts below."}
+                </p>
+                {canStartFreshCase && (
+                  <button type="button" className="case-reset" onClick={resetConversationState} disabled={isRunning}>
+                    Start New Case
+                  </button>
+                )}
+              </div>
+            )}
 
             {currentInterrupt && (
               <div className="interrupt-body">
@@ -907,7 +972,7 @@ export default function App(): JSX.Element {
               </div>
             )}
 
-            {!currentInterrupt && (
+            {!currentInterrupt && !isCaseClosed && (
               <div className="starter-prompts">
                 {STARTER_PROMPTS.map((prompt) => (
                   <button key={prompt} type="button" onClick={() => void startNewTurn(prompt)} disabled={isRunning}>
@@ -944,7 +1009,9 @@ export default function App(): JSX.Element {
                   ? "Waiting for reviewer approval..."
                   : currentInterruptKind === "handoff_input"
                     ? "Reply to continue..."
-                    : "Describe your issue..."
+                    : isCaseClosed
+                      ? "This case is complete. Click Start New Case to open a fresh thread..."
+                      : "Describe your issue..."
               }
               disabled={isRunning || currentInterruptKind === "approval"}
             />

@@ -19,6 +19,9 @@ internal static class TurnExtensions
 
     public static bool ShouldEmitStreamingEvents(bool? turnTokenSetting, bool? agentSetting)
         => turnTokenSetting ?? agentSetting ?? false;
+
+    public static bool ShouldEmitStreamingEvents(this HandoffState handoffState, bool? agentSetting)
+        => handoffState.TurnToken.ShouldEmitStreamingEvents(agentSetting);
 }
 
 internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
@@ -81,7 +84,11 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         // resumes can be processed in one invocation.
         return this.ProcessTurnMessagesAsync(async (pendingMessages, ctx, ct) =>
         {
-            pendingMessages.Add(new ChatMessage(ChatRole.User, [response]));
+            pendingMessages.Add(new ChatMessage(ChatRole.User, [response])
+            {
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+            });
 
             await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct).ConfigureAwait(false);
 
@@ -104,7 +111,12 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         // resumes can be processed in one invocation.
         return this.ProcessTurnMessagesAsync(async (pendingMessages, ctx, ct) =>
         {
-            pendingMessages.Add(new ChatMessage(ChatRole.Tool, [result]));
+            pendingMessages.Add(new ChatMessage(ChatRole.Tool, [result])
+            {
+                AuthorName = this._agent.Name ?? this._agent.Id,
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+            });
 
             await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct).ConfigureAwait(false);
 
@@ -186,16 +198,13 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
                                   TurnExtensions.ShouldEmitStreamingEvents(turnTokenSetting: emitEvents, this._options.EmitAgentUpdateEvents),
                                   cancellationToken);
 
-    private async ValueTask<AgentResponse> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitEvents, CancellationToken cancellationToken = default)
+    private async ValueTask<AgentResponse> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitUpdateEvents, CancellationToken cancellationToken = default)
     {
-#pragma warning disable MEAI001
-        Dictionary<string, ToolApprovalRequestContent> userInputRequests = new();
-        Dictionary<string, FunctionCallContent> functionCalls = new();
         AgentResponse response;
+        AIAgentUnservicedRequestsCollector collector = new(this._userInputHandler, this._functionCallHandler);
 
-        if (emitEvents)
+        if (emitUpdateEvents)
         {
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
             // Run the agent in streaming mode only when agent run update events are to be emitted.
             IAsyncEnumerable<AgentResponseUpdate> agentStream = this._agent.RunStreamingAsync(
                 messages,
@@ -206,7 +215,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
                 await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
-                ExtractUnservicedRequests(update.Contents);
+                collector.ProcessAgentResponseUpdate(update);
                 updates.Add(update);
             }
 
@@ -220,7 +229,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
                                                   cancellationToken: cancellationToken)
                                         .ConfigureAwait(false);
 
-            ExtractUnservicedRequests(response.Messages.SelectMany(message => message.Contents));
+            collector.ProcessAgentResponse(response);
         }
 
         if (this._options.EmitAgentResponseEvents)
@@ -228,45 +237,8 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             await context.YieldOutputAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
-        if (userInputRequests.Count > 0 || functionCalls.Count > 0)
-        {
-            Task userInputTask = this._userInputHandler?.ProcessRequestContentsAsync(userInputRequests, context, cancellationToken) ?? Task.CompletedTask;
-            Task functionCallTask = this._functionCallHandler?.ProcessRequestContentsAsync(functionCalls, context, cancellationToken) ?? Task.CompletedTask;
-
-            await Task.WhenAll(userInputTask, functionCallTask)
-                      .ConfigureAwait(false);
-        }
+        await collector.SubmitAsync(context, cancellationToken).ConfigureAwait(false);
 
         return response;
-
-        void ExtractUnservicedRequests(IEnumerable<AIContent> contents)
-        {
-            foreach (AIContent content in contents)
-            {
-                if (content is ToolApprovalRequestContent userInputRequest)
-                {
-                    // It is an error to simultaneously have multiple outstanding user input requests with the same ID.
-                    userInputRequests.Add(userInputRequest.RequestId, userInputRequest);
-                }
-                else if (content is ToolApprovalResponseContent userInputResponse)
-                {
-                    // If the set of messages somehow already has a corresponding user input response, remove it.
-                    _ = userInputRequests.Remove(userInputResponse.RequestId);
-                }
-                else if (content is FunctionCallContent functionCall)
-                {
-                    // For function calls, we emit an event to notify the workflow.
-                    //
-                    // possibility 1: this will be handled inline by the agent abstraction
-                    // possibility 2: this will not be handled inline by the agent abstraction
-                    functionCalls.Add(functionCall.CallId, functionCall);
-                }
-                else if (content is FunctionResultContent functionResult)
-                {
-                    _ = functionCalls.Remove(functionResult.CallId);
-                }
-            }
-        }
-#pragma warning restore MEAI001
     }
 }

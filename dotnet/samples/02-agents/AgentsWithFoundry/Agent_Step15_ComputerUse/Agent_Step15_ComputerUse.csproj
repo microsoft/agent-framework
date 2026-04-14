@@ -6,7 +6,7 @@
 
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <NoWarn>$(NoWarn);OPENAICUA001</NoWarn>
+    <NoWarn>$(NoWarn);OPENAICUA001;MEAI001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,13 +19,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="Assets\cua_browser_search.png">
+    <None Update="Assets\cua_browser_search.jpg">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Update="Assets\cua_search_results.png">
+    <None Update="Assets\cua_search_results.jpg">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Update="Assets\cua_search_typed.png">
+    <None Update="Assets\cua_search_typed.jpg">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>

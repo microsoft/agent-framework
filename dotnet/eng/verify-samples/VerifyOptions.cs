@@ -18,9 +18,20 @@ internal sealed class VerifyOptions
     public string? CsvFilePath { get; init; }
 
     /// <summary>
+    /// Path to write a Markdown summary file, or <c>null</c> to skip.
+    /// </summary>
+    public string? MarkdownFilePath { get; init; }
+
+    /// <summary>
     /// Path to write a sequential log file, or <c>null</c> to skip.
     /// </summary>
     public string? LogFilePath { get; init; }
+
+    /// <summary>
+    /// When true, samples are built as part of <c>dotnet run</c>.
+    /// When false (the default), <c>--no-build</c> is passed, assuming a prior build step.
+    /// </summary>
+    public bool BuildSamples { get; init; }
 
     /// <summary>
     /// The filtered list of samples to process.
@@ -49,6 +60,8 @@ internal sealed class VerifyOptions
         var categoryFilter = ExtractArg(argList, "--category");
         var logFilePath = ExtractArg(argList, "--log");
         var csvFilePath = ExtractArg(argList, "--csv");
+        var markdownFilePath = ExtractArg(argList, "--md");
+        var buildSamples = ExtractFlag(argList, "--build");
 
         int maxParallelism = 8;
         var parallelArg = ExtractArg(argList, "--parallel");
@@ -98,6 +111,8 @@ internal sealed class VerifyOptions
             MaxParallelism = maxParallelism,
             LogFilePath = logFilePath,
             CsvFilePath = csvFilePath,
+            MarkdownFilePath = markdownFilePath,
+            BuildSamples = buildSamples,
             Samples = samples,
         };
     }
@@ -120,5 +135,17 @@ internal sealed class VerifyOptions
         var value = list[idx + 1];
         list.RemoveRange(idx, 2);
         return value;
+    }
+
+    private static bool ExtractFlag(List<string> list, string flag)
+    {
+        var idx = list.IndexOf(flag);
+        if (idx < 0)
+        {
+            return false;
+        }
+
+        list.RemoveAt(idx);
+        return true;
     }
 }
