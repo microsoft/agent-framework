@@ -3118,16 +3118,6 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 await result
 
     @property
-    def consumed(self) -> bool:
-        """True if the stream completed normally (StopAsyncIteration was reached)."""
-        return self._consumed
-
-    @property
-    def stream_error(self) -> Exception | None:
-        """The exception that caused the stream to fail, or None if it completed normally."""
-        return self._stream_error
-
-    @property
     def updates(self) -> Sequence[UpdateT]:
         return self._updates
 
