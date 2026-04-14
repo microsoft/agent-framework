@@ -111,7 +111,6 @@ def group_messages(messages: list[Message]) -> list[dict[str, Any]]:
         Ordered list of lightweight span dicts with keys:
         ``group_id``, ``kind``, ``start_index``, ``end_index``, ``has_reasoning``.
     """
-    _ensure_message_ids(messages)
     spans: list[dict[str, Any]] = []
     i = 0
     group_index = 0
@@ -415,6 +414,8 @@ def annotate_message_groups(
     """
     if not messages:
         return []
+
+    _ensure_message_ids(messages)
 
     if force_reannotate:
         start_index = 0
