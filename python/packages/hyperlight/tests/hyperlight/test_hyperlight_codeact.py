@@ -673,12 +673,12 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
         assert isinstance(run_tool, HyperlightExecuteCodeTool)
 
         # The packaged guest on Windows 3.10 exposes a reduced stdlib, so keep
-        # this integration probe to builtins plus low-level modules.
+        # this integration probe to builtins plus low-level extension modules.
         result = await run_tool.invoke(
             arguments={
                 "code": (
                     "import os\n"
-                    "import socket\n\n"
+                    "import _socket\n\n"
                     'with open("/input/data/input.txt", encoding="utf-8") as input_file:\n'
                     "    input_text = input_file.read()\n"
                     'with open("/output/result.txt", "w", encoding="utf-8") as output_file:\n'
@@ -689,13 +689,18 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
                     'b"GET /allowed HTTP/1.1\\r\\n" '
                     f'b"Host: {allowed_host}\\r\\n" '
                     'b"Connection: close\\r\\n\\r\\n")\n'
-                    "with socket.create_connection((host, int(port_text)), timeout=10) as connection:\n"
+                    "connection = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)\n"
+                    "try:\n"
+                    "    connection.settimeout(10)\n"
+                    "    connection.connect((host, int(port_text)))\n"
                     "    connection.sendall(request)\n"
                     "    while True:\n"
                     "        chunk = connection.recv(4096)\n"
                     "        if not chunk:\n"
                     "            break\n"
                     "        response_bytes += chunk\n"
+                    "finally:\n"
+                    "    connection.close()\n"
                     'header_end = response_bytes.find(b"\\r\\n\\r\\n")\n'
                     "assert header_end != -1\n"
                     'network_text = response_bytes[header_end + 4 :].decode("utf-8")\n'
