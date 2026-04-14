@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +12,8 @@ from agent_framework import (
     AgentSession,
     ChatContext,
     ContextProvider,
+    ExperimentalFeature,
+    FileHistoryProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
@@ -505,3 +509,134 @@ class TestInMemoryHistoryProvider:
         ctx = SessionContext(session_id="s1", input_messages=[])
         ctx.extend_messages("custom-source", [Message(role="user", contents=["test"])])
         assert "custom-source" in ctx.context_messages
+
+
+class TestFileHistoryProvider:
+    def test_is_marked_experimental(self) -> None:
+        assert FileHistoryProvider.__feature_stage__ == "experimental"
+        assert FileHistoryProvider.__feature_id__ == ExperimentalFeature.FILE_HISTORY.value
+        assert FileHistoryProvider.__doc__ is not None
+        assert ".. warning:: Experimental" in FileHistoryProvider.__doc__
+
+    async def test_stores_and_loads_messages(self, tmp_path: Path) -> None:
+        from agent_framework import AgentResponse
+
+        provider = FileHistoryProvider(tmp_path)
+        session = AgentSession(session_id="s1")
+
+        input_message = Message(role="user", contents=["hello"])
+        response_message = Message(role="assistant", contents=["hi there"])
+        first_context = SessionContext(session_id=session.session_id, input_messages=[input_message])
+
+        await provider.before_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=first_context,
+            state={},
+        )
+        first_context._response = AgentResponse(messages=[response_message])
+        await provider.after_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=first_context,
+            state={},
+        )
+
+        session_file = provider._session_file_path(session.session_id)
+        assert session_file.name == "s1.jsonl"
+        assert session_file.exists()
+        raw_lines = (await asyncio.to_thread(session_file.read_text, encoding="utf-8")).splitlines()
+        assert len(raw_lines) == 2
+        payloads = [json.loads(line) for line in raw_lines]
+        assert all(payload["type"] == "message" for payload in payloads)
+        assert all("session_id" not in payload for payload in payloads)
+
+        second_context = SessionContext(
+            session_id=session.session_id, input_messages=[Message(role="user", contents=["again"])]
+        )
+        await provider.before_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=second_context,
+            state={},
+        )
+        loaded = second_context.context_messages.get(provider.source_id, [])
+        assert len(loaded) == 2
+        assert loaded[0].text == "hello"
+        assert loaded[1].text == "hi there"
+
+    def test_creates_storage_directory(self, tmp_path: Path) -> None:
+        nested_path = tmp_path / "nested" / "history"
+        provider = FileHistoryProvider(nested_path)
+        assert provider.storage_path == nested_path
+        assert nested_path.exists()
+        assert nested_path.is_dir()
+
+    async def test_uses_encoded_filename_for_unsafe_session_id(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+        unsafe_session_id = "../unsafe/session"
+
+        await provider.save_messages(unsafe_session_id, [Message(role="user", contents=["hello"])])
+
+        session_file = provider._session_file_path(unsafe_session_id)
+        assert session_file.parent == provider.storage_path
+        assert session_file.name.startswith("~session-")
+        assert session_file.suffix == ".jsonl"
+        assert session_file.exists()
+        jsonl_files = await asyncio.to_thread(
+            lambda: sorted(path.name for path in provider.storage_path.glob("*.jsonl"))
+        )
+        assert jsonl_files == [session_file.name]
+
+    async def test_allows_custom_serializers_returning_bytes(self, tmp_path: Path) -> None:
+        calls: list[str] = []
+
+        def dumps(payload: object) -> bytes:
+            calls.append("dumps")
+            return json.dumps(payload).encode("utf-8")
+
+        def loads(payload: str | bytes) -> object:
+            calls.append("loads")
+            if isinstance(payload, bytes):
+                payload = payload.decode("utf-8")
+            return json.loads(payload)
+
+        provider = FileHistoryProvider(tmp_path, dumps=dumps, loads=loads)
+
+        await provider.save_messages("custom-serializer", [Message(role="user", contents=["hello"])])
+        loaded = await provider.get_messages("custom-serializer")
+
+        assert calls == ["dumps", "loads"]
+        assert len(loaded) == 1
+        assert loaded[0].text == "hello"
+
+    async def test_invalid_jsonl_line_raises(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path)
+        await asyncio.to_thread(provider._session_file_path("broken").write_text, "{not-json}\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Failed to deserialize history line 1"):
+            await provider.get_messages("broken")
+
+    async def test_skip_excluded_omits_excluded_messages(self, tmp_path: Path) -> None:
+        provider = FileHistoryProvider(tmp_path, skip_excluded=True)
+
+        await provider.save_messages(
+            "skip-excluded",
+            [
+                Message(role="user", contents=["keep"]),
+                Message(role="assistant", contents=["skip"], additional_properties={"_excluded": True}),
+            ],
+        )
+
+        loaded = await provider.get_messages("skip-excluded")
+
+        assert [message.text for message in loaded] == ["keep"]
+
+    async def test_serializer_must_return_single_line_json(self, tmp_path: Path) -> None:
+        def dumps(payload: object) -> str:
+            return json.dumps(payload, indent=2)
+
+        provider = FileHistoryProvider(tmp_path, dumps=dumps)
+
+        with pytest.raises(ValueError, match="single-line JSON"):
+            await provider.save_messages("pretty-json", [Message(role="user", contents=["hello"])])

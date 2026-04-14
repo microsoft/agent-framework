@@ -8,16 +8,22 @@ This module provides the core types for the context provider pipeline:
 - HistoryProvider: Base class for history storage providers
 - AgentSession: Lightweight session state container
 - InMemoryHistoryProvider: Built-in in-memory history provider
+- FileHistoryProvider: Built-in JSON Lines file history provider
 """
 
 from __future__ import annotations
 
+import asyncio
 import copy
+import json
 import uuid
 from abc import abstractmethod
+from base64 import urlsafe_b64encode
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import ChatContext, ChatMiddleware
 from ._types import AgentResponse, ChatResponse, Message, ResponseStream
 from .exceptions import ChatClientInvalidResponseException
@@ -29,6 +35,17 @@ if TYPE_CHECKING:
 
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
+
+JsonDumps: TypeAlias = Callable[[Any], str | bytes]
+JsonLoads: TypeAlias = Callable[[str | bytes], Any]
+
+
+def _default_json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _default_json_loads(value: str | bytes) -> Any:
+    return json.loads(value)
 
 
 def _is_middleware_sequence(
@@ -837,3 +854,204 @@ class InMemoryHistoryProvider(HistoryProvider):
             return
         existing = state.get("messages", [])
         state["messages"] = [*existing, *messages]
+
+
+@experimental(feature_id=ExperimentalFeature.FILE_HISTORY)
+class FileHistoryProvider(HistoryProvider):
+    """File-backed history provider that stores one JSON Lines file per session.
+
+    Each persisted message is written as a single JSON object per line. The
+    provider does not serialize full session snapshots into the file. By default
+    it uses the standard library ``json`` module, but callers can inject
+    alternative ``dumps`` and ``loads`` callables compatible with the JSON
+    Lines format.
+    """
+
+    DEFAULT_SOURCE_ID: ClassVar[str] = "file_history"
+    DEFAULT_SESSION_FILE_STEM: ClassVar[str] = "default"
+    FILE_EXTENSION: ClassVar[str] = ".jsonl"
+    _ENCODED_SESSION_PREFIX: ClassVar[str] = "~session-"
+    _WINDOWS_RESERVED_FILE_STEMS: ClassVar[frozenset[str]] = frozenset({
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "COM1",
+        "COM2",
+        "COM3",
+        "COM4",
+        "COM5",
+        "COM6",
+        "COM7",
+        "COM8",
+        "COM9",
+        "LPT1",
+        "LPT2",
+        "LPT3",
+        "LPT4",
+        "LPT5",
+        "LPT6",
+        "LPT7",
+        "LPT8",
+        "LPT9",
+    })
+
+    def __init__(
+        self,
+        storage_path: str | Path,
+        *,
+        source_id: str = DEFAULT_SOURCE_ID,
+        load_messages: bool = True,
+        store_inputs: bool = True,
+        store_context_messages: bool = False,
+        store_context_from: set[str] | None = None,
+        store_outputs: bool = True,
+        skip_excluded: bool = False,
+        dumps: JsonDumps | None = None,
+        loads: JsonLoads | None = None,
+    ) -> None:
+        """Initialize the file history provider.
+
+        Args:
+            storage_path: Directory path where session history files will be stored.
+
+        Keyword Args:
+            source_id: Unique identifier for this provider instance.
+            load_messages: Whether to load messages before invocation.
+            store_inputs: Whether to store input messages.
+            store_context_messages: Whether to store context from other providers.
+            store_context_from: If set, only store context from these source_ids.
+            store_outputs: Whether to store response messages.
+            skip_excluded: When True, ``get_messages`` omits messages whose
+                ``additional_properties["_excluded"]`` is truthy.
+            dumps: Callable that serializes a message payload dict to JSON text
+                or UTF-8 bytes. The returned JSON must fit on a single line.
+            loads: Callable that deserializes JSON text or bytes back to a
+                message payload dict.
+        """
+        super().__init__(
+            source_id=source_id,
+            load_messages=load_messages,
+            store_inputs=store_inputs,
+            store_context_messages=store_context_messages,
+            store_context_from=store_context_from,
+            store_outputs=store_outputs,
+        )
+        self.storage_path = Path(storage_path)
+        self.storage_path.mkdir(parents=True, exist_ok=True)
+        self._storage_root = self.storage_path.resolve()
+        self.skip_excluded = skip_excluded
+        self.dumps = dumps or _default_json_dumps
+        self.loads = loads or _default_json_loads
+
+    async def get_messages(
+        self,
+        session_id: str | None,
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[Message]:
+        """Retrieve messages from the session's JSON Lines file."""
+        del state, kwargs
+        file_path = self._session_file_path(session_id)
+
+        def _read_messages() -> list[Message]:
+            if not file_path.exists():
+                return []
+
+            messages: list[Message] = []
+            with file_path.open(encoding="utf-8") as file_handle:
+                for line_number, line in enumerate(file_handle, start=1):
+                    serialized = line.strip()
+                    if not serialized:
+                        continue
+                    try:
+                        payload = self.loads(serialized)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(
+                            f"Failed to deserialize history line {line_number} from '{file_path}'."
+                        ) from exc
+                    if not isinstance(payload, Mapping):
+                        raise ValueError(
+                            f"History line {line_number} in '{file_path}' did not deserialize to a mapping."
+                        )
+
+                    try:
+                        message = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"History line {line_number} in '{file_path}' is not a valid Message payload."
+                        ) from exc
+                    messages.append(message)
+            return messages
+
+        messages = await asyncio.to_thread(_read_messages)
+        if self.skip_excluded:
+            messages = [m for m in messages if not m.additional_properties.get("_excluded", False)]
+        return messages
+
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[Message],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Append messages to the session's JSON Lines file."""
+        del state, kwargs
+        if not messages:
+            return
+
+        file_path = self._session_file_path(session_id)
+
+        def _append_messages() -> None:
+            serialized_messages = [self._serialize_message(message) for message in messages]
+            with file_path.open("a", encoding="utf-8") as file_handle:
+                file_handle.write("".join(f"{serialized_message}\n" for serialized_message in serialized_messages))
+
+        await asyncio.to_thread(_append_messages)
+
+    def _serialize_message(self, message: Message) -> str:
+        """Serialize a message payload to a single JSON Lines record."""
+        serialized = self.dumps(message.to_dict())
+        if isinstance(serialized, bytes):
+            serialized_text = serialized.decode("utf-8")
+        elif isinstance(serialized, str):
+            serialized_text = serialized
+        else:
+            raise TypeError("FileHistoryProvider.dumps must return str or bytes.")
+
+        if "\n" in serialized_text or "\r" in serialized_text:
+            raise ValueError("FileHistoryProvider.dumps must return single-line JSON for JSON Lines storage.")
+        return serialized_text
+
+    def _session_file_path(self, session_id: str | None) -> Path:
+        """Resolve the on-disk history file path for a session."""
+        file_path = (self._storage_root / f"{self._session_file_stem(session_id)}{self.FILE_EXTENSION}").resolve()
+        if not file_path.is_relative_to(self._storage_root):
+            raise ValueError(f"Session history path escaped storage directory: {session_id!r}")
+        return file_path
+
+    def _session_file_stem(self, session_id: str | None) -> str:
+        """Return the filename stem for a session."""
+        raw_session_id = session_id or self.DEFAULT_SESSION_FILE_STEM
+        if self._is_literal_session_file_stem_safe(raw_session_id):
+            return raw_session_id
+
+        encoded_session_id = urlsafe_b64encode(raw_session_id.encode("utf-8")).decode("ascii").rstrip("=")
+        return f"{self._ENCODED_SESSION_PREFIX}{encoded_session_id or self.DEFAULT_SESSION_FILE_STEM}"
+
+    @classmethod
+    def _is_literal_session_file_stem_safe(cls, session_id: str) -> bool:
+        """Return whether the session ID can be used directly as a filename stem."""
+        if (
+            not session_id
+            or session_id.startswith(".")
+            or session_id.endswith((" ", "."))
+            or session_id.upper() in cls._WINDOWS_RESERVED_FILE_STEMS
+        ):
+            return False
+        if any(ord(character) < 32 for character in session_id):
+            return False
+        return all(character.isalnum() or character in "._-" for character in session_id)
