@@ -9,12 +9,12 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal static class HandoffConstants
 {
-    internal const string CurrentAgentTrackerKey = "LastAgentId";
-    internal const string CurrentAgentTrackerScope = "HandoffOrchestration";
+    internal const string PreviousAgentTrackerKey = "LastAgentId";
+    internal const string PreviousAgentTrackerScope = "HandoffOrchestration";
 }
 
 /// <summary>Executor used at the start of a handoffs workflow to accumulate messages and emit them as HandoffState upon receiving a turn token.</summary>
-internal sealed class HandoffsStartExecutor(bool returnToPrevious) : ChatProtocolExecutor(ExecutorId, DefaultOptions, declareCrossRunShareable: true), IResettableExecutor
+internal sealed class HandoffStartExecutor(bool returnToPrevious) : ChatProtocolExecutor(ExecutorId, DefaultOptions, declareCrossRunShareable: true), IResettableExecutor
 {
     internal const string ExecutorId = "HandoffStart";
 
@@ -32,15 +32,15 @@ internal sealed class HandoffsStartExecutor(bool returnToPrevious) : ChatProtoco
         if (returnToPrevious)
         {
             return context.InvokeWithStateAsync(
-                async (string? currentAgentId, IWorkflowContext context, CancellationToken cancellationToken) =>
+                async (string? previousAgentId, IWorkflowContext context, CancellationToken cancellationToken) =>
                 {
-                    HandoffState handoffState = new(new(emitEvents), null, messages, currentAgentId);
+                    HandoffState handoffState = new(new(emitEvents), null, messages, previousAgentId);
                     await context.SendMessageAsync(handoffState, cancellationToken).ConfigureAwait(false);
 
-                    return currentAgentId;
+                    return previousAgentId;
                 },
-                HandoffConstants.CurrentAgentTrackerKey,
-                HandoffConstants.CurrentAgentTrackerScope,
+                HandoffConstants.PreviousAgentTrackerKey,
+                HandoffConstants.PreviousAgentTrackerScope,
                 cancellationToken);
         }
 
