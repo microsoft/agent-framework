@@ -258,8 +258,11 @@ class WorkflowAgent(BaseAgent):
         """
         input_messages = normalize_messages_input(messages)
 
-        if not any(
-            provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+        if (
+            not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
+            and session is not None
         ):
             self.context_providers.append(InMemoryHistoryProvider())
 
@@ -335,8 +338,11 @@ class WorkflowAgent(BaseAgent):
         """
         input_messages = normalize_messages_input(messages)
 
-        if not any(
-            provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+        if (
+            not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
+            and session is not None
         ):
             self.context_providers.append(InMemoryHistoryProvider())
 
