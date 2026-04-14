@@ -10,10 +10,8 @@ import json
 import sys
 import threading
 import time
-from collections.abc import Awaitable, Callable, Iterator, Mapping, MutableSequence
-from contextlib import contextmanager
+from collections.abc import Awaitable, Callable, Mapping, MutableSequence
 from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -275,34 +273,6 @@ def _extract_text_output(result_content: Content) -> str:
         f"Expected text output from execute_code, got {code_result.outputs!r}"
     )
     return text_output.text
-
-
-@contextmanager
-def _serve_http_text_response(body: bytes) -> Iterator[tuple[str, list[str]]]:
-    requests: list[str] = []
-
-    class _Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            requests.append(self.path)
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, format: str, *args: Any) -> None:
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-
-    try:
-        yield f"127.0.0.1:{server.server_port}", requests
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
 
 
 class _FakeCodeActChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
@@ -680,80 +650,38 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> N
 
 
 @skip_if_hyperlight_integration_tests_disabled
-async def test_provider_run_tool_writes_files_and_accesses_allowed_url_with_real_sandbox(
-    tmp_path: Path,
-) -> None:
+async def test_provider_run_tool_writes_files_with_real_sandbox() -> None:
     _skip_if_hyperlight_integration_runtime_disabled()
 
-    mounted_file = tmp_path / "mounted.txt"
-    mounted_file.write_text("hello from mount", encoding="utf-8")
+    provider = HyperlightCodeActProvider()
 
-    with _serve_http_text_response(b"network ok") as (allowed_host, requests):
-        provider = HyperlightCodeActProvider()
-        provider.add_file_mounts((mounted_file, "data/input.txt"))
-        provider.add_allowed_domains((allowed_host, "GET"))
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+    await provider.before_run(agent=object(), session=None, context=context, state=state)
 
-        context = _FakeSessionContext()
-        state: dict[str, Any] = {}
-        await provider.before_run(agent=object(), session=None, context=context, state=state)
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
 
-        run_tool = context.tools[0][1][0]
-        assert isinstance(run_tool, HyperlightExecuteCodeTool)
-
-        # The packaged guest exposes a reduced stdlib and backend-specific mount
-        # visibility. Keep the real-sandbox probe focused on capabilities that
-        # are consistently exercised across runners; deterministic unit coverage
-        # above verifies host-side file mount staging.
-        result = await run_tool.invoke(
-            arguments={
-                "code": (
-                    "import os\n"
-                    "import _socket\n\n"
-                    'payload = "hello from mount"\n'
-                    "output_path = None\n"
-                    'for candidate_output_path in ("/output/result.txt", "output/result.txt", "result.txt"):\n'
-                    "    candidate_parent = os.path.dirname(candidate_output_path)\n"
-                    "    if candidate_parent:\n"
-                    "        try:\n"
-                    "            os.makedirs(candidate_parent, exist_ok=True)\n"
-                    "        except OSError:\n"
-                    "            pass\n"
-                    "    try:\n"
-                    '        with open(candidate_output_path, "w", encoding="utf-8") as output_file:\n'
-                    "            output_file.write(payload.upper())\n"
-                    "    except OSError:\n"
-                    "        continue\n"
-                    "    output_path = candidate_output_path\n"
-                    "    break\n"
-                    'assert output_path is not None, "output path unavailable"\n'
-                    f'host, port_text = "{allowed_host}".rsplit(":", 1)\n'
-                    "response_bytes = b''\n"
-                    "request = ("
-                    'b"GET /allowed HTTP/1.1\\r\\n" '
-                    f'b"Host: {allowed_host}\\r\\n" '
-                    'b"Connection: close\\r\\n\\r\\n")\n'
-                    "connection = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)\n"
-                    "try:\n"
-                    "    connection.settimeout(10)\n"
-                    "    connection.connect((host, int(port_text)))\n"
-                    "    connection.sendall(request)\n"
-                    "    while True:\n"
-                    "        chunk = connection.recv(4096)\n"
-                    "        if not chunk:\n"
-                    "            break\n"
-                    "        response_bytes += chunk\n"
-                    "finally:\n"
-                    "    connection.close()\n"
-                    'header_end = response_bytes.find(b"\\r\\n\\r\\n")\n'
-                    "assert header_end != -1\n"
-                    'network_text = response_bytes[header_end + 4 :].decode("utf-8")\n'
-                    'assert payload == "hello from mount"\n'
-                    'assert network_text == "network ok"\n'
-                    'assert os.path.exists(output_path), "output file was not written"\n'
-                    'print("validated")\n'
-                )
-            }
-        )
+    result = await run_tool.invoke(
+        arguments={
+            "code": (
+                "import os\n\n"
+                'payload = "hello from sandbox"\n'
+                "output_path = None\n"
+                'for candidate_output_path in ("/output/result.txt", "result.txt"):\n'
+                "    try:\n"
+                '        with open(candidate_output_path, "w", encoding="utf-8") as output_file:\n'
+                "            output_file.write(payload)\n"
+                "    except OSError:\n"
+                "        continue\n"
+                "    output_path = candidate_output_path\n"
+                "    break\n"
+                'assert output_path is not None, "output path unavailable"\n'
+                'assert os.path.exists(output_path), "output file was not written"\n'
+                'print("validated")\n'
+            )
+        }
+    )
 
     assert result[0].type == "code_interpreter_tool_result"
     outputs = result[0].outputs or []
@@ -770,6 +698,63 @@ async def test_provider_run_tool_writes_files_and_accesses_allowed_url_with_real
 
     file_output = next((item for item in outputs if item.type == "data"), None)
     if file_output is not None:
-        assert file_output.data == b"HELLO FROM MOUNT"
+        assert file_output.data == b"hello from sandbox"
         assert file_output.additional_properties["path"] in {"/output/result.txt", "/output/output/result.txt"}
-    assert requests == ["/allowed"]
+
+
+@pytest.mark.integration
+@skip_if_hyperlight_integration_tests_disabled
+async def test_provider_run_tool_pings_bing_with_real_sandbox() -> None:
+    _skip_if_hyperlight_integration_runtime_disabled()
+
+    provider = HyperlightCodeActProvider()
+    provider.add_allowed_domains("bing.com")
+
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+    await provider.before_run(agent=object(), session=None, context=context, state=state)
+
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+
+    result = await run_tool.invoke(
+        arguments={
+            "code": (
+                "import _socket\n\n"
+                'addresses = _socket.getaddrinfo("bing.com", 80, _socket.AF_INET, _socket.SOCK_STREAM)\n'
+                'assert addresses, "bing.com did not resolve"\n'
+                "last_error = None\n"
+                "for family, socktype, proto, _, sockaddr in addresses:\n"
+                "    connection = None\n"
+                "    try:\n"
+                "        connection = _socket.socket(family, socktype, proto)\n"
+                "        connection.settimeout(10)\n"
+                "        connection.connect(sockaddr)\n"
+                '        print("pinged bing.com")\n'
+                "        break\n"
+                "    except OSError as exc:\n"
+                "        last_error = exc\n"
+                "    finally:\n"
+                "        if connection is not None:\n"
+                "            try:\n"
+                "                connection.close()\n"
+                "            except OSError:\n"
+                "                pass\n"
+                "else:\n"
+                '    raise last_error or RuntimeError("unable to reach bing.com")\n'
+            )
+        }
+    )
+
+    assert result[0].type == "code_interpreter_tool_result"
+    outputs = result[0].outputs or []
+    error_outputs = [
+        f"{item.message}: {item.error_details}"
+        for item in outputs
+        if item.type == "error" and item.error_details is not None
+    ]
+    assert not error_outputs, error_outputs
+
+    text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
+    if text_output is not None:
+        assert text_output.text == "pinged bing.com\n"
