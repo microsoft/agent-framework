@@ -33,7 +33,7 @@ from agent_framework_hyperlight import AllowedDomain, FileMount, HyperlightCodeA
 from agent_framework_hyperlight import _execute_code_tool as execute_code_module
 
 
-def _hyperlight_integration_skip_reason() -> str | None:
+def _hyperlight_integration_static_skip_reason() -> str | None:
     if sys.version_info >= (3, 14):
         return (
             "Hyperlight integration tests require Python < 3.14 because hyperlight-sandbox-backend-wasm is unsupported."
@@ -53,6 +53,13 @@ def _hyperlight_integration_skip_reason() -> str | None:
     except importlib.metadata.PackageNotFoundError:
         return "hyperlight-sandbox-backend-wasm is not installed."
 
+    return None
+
+
+def _hyperlight_integration_runtime_skip_reason() -> str | None:
+    if (reason := _hyperlight_integration_static_skip_reason()) is not None:
+        return reason
+
     try:
         sandbox_cls = execute_code_module._load_sandbox_class()
         sandbox = sandbox_cls(
@@ -68,8 +75,13 @@ def _hyperlight_integration_skip_reason() -> str | None:
     return None
 
 
+def _skip_if_hyperlight_integration_runtime_disabled() -> None:
+    if (reason := _hyperlight_integration_runtime_skip_reason()) is not None:
+        pytest.skip(reason)
+
+
 skip_if_hyperlight_integration_tests_disabled = pytest.mark.skipif(
-    (reason := _hyperlight_integration_skip_reason()) is not None,
+    (reason := _hyperlight_integration_static_skip_reason()) is not None,
     reason=reason or "Hyperlight integration tests are disabled.",
 )
 
@@ -481,7 +493,7 @@ async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_
     ]
 
 
-def test_hyperlight_integration_skip_reason_reports_missing_hypervisor(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hyperlight_integration_runtime_skip_reason_reports_missing_hypervisor(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FakeNoHypervisorSandbox:
         def __init__(
             self,
@@ -511,7 +523,7 @@ def test_hyperlight_integration_skip_reason_reports_missing_hypervisor(monkeypat
     monkeypatch.setattr(importlib.metadata, "version", lambda _: "0.0.0")
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeNoHypervisorSandbox)
 
-    assert _hyperlight_integration_skip_reason() == (
+    assert _hyperlight_integration_runtime_skip_reason() == (
         "Hyperlight integration tests require a runner with a working Hyperlight hypervisor."
     )
 
@@ -561,6 +573,8 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_fake_sandbox(monkey
 
 @skip_if_hyperlight_integration_tests_disabled
 async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> None:
+    _skip_if_hyperlight_integration_runtime_disabled()
+
     client = _FakeCodeActChatClient()
     provider = HyperlightCodeActProvider(tools=[compute])
     agent = Agent(client=client, context_providers=[provider])
@@ -575,6 +589,8 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> N
 async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_with_real_sandbox(
     tmp_path: Path,
 ) -> None:
+    _skip_if_hyperlight_integration_runtime_disabled()
+
     mounted_file = tmp_path / "mounted.txt"
     mounted_file.write_text("hello from mount", encoding="utf-8")
 
