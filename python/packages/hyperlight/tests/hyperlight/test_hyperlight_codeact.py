@@ -689,6 +689,22 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
                     '    with open(candidate_input_path, encoding="utf-8") as input_file:\n'
                     "        input_text = input_file.read()\n"
                     "    break\n"
+                    "if input_text is None:\n"
+                    '    for search_root in (".", "input", "/input"):\n'
+                    "        if not os.path.exists(search_root):\n"
+                    "            continue\n"
+                    "        try:\n"
+                    "            for root, _, files in os.walk(search_root):\n"
+                    '                if "input.txt" not in files:\n'
+                    "                    continue\n"
+                    '                input_path = os.path.join(root, "input.txt")\n'
+                    '                with open(input_path, encoding="utf-8") as input_file:\n'
+                    "                    input_text = input_file.read()\n"
+                    "                break\n"
+                    "        except OSError:\n"
+                    "            continue\n"
+                    "        if input_text is not None:\n"
+                    "            break\n"
                     'assert input_text is not None, "input file not found"\n'
                     "output_path = None\n"
                     'for candidate_output_path in ("/output/result.txt", "output/result.txt", "result.txt"):\n'
