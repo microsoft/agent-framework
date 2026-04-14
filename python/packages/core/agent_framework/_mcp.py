@@ -1058,7 +1058,14 @@ class MCPTool:
             tool_name: The name of the tool to call.
 
         Keyword Args:
-            kwargs: Arguments to pass to the tool.
+            _meta: Optional ``dict[str, Any]`` of MCP request metadata.
+                This is treated as a reserved key: it is **not** forwarded as a
+                tool argument but is instead passed as the ``meta`` parameter of
+                the underlying ``session.call_tool`` call.  If OpenTelemetry
+                tracing is active, propagation headers are merged into this
+                dict; user-supplied keys take precedence over injected ones.
+            **kwargs: Remaining keyword arguments are forwarded as tool
+                arguments to the MCP server.
 
         Returns:
             A list of Content items representing the tool output.  The default
@@ -1106,13 +1113,13 @@ class MCPTool:
 
         # Merge user-supplied _meta with OpenTelemetry trace context.
         # User keys take precedence; OTel keys fill in non-conflicting slots.
-        otel_meta = _inject_otel_into_mcp_meta(dict(user_meta) if user_meta else None)
+        mcp_meta = _inject_otel_into_mcp_meta(dict(user_meta) if user_meta else None)
 
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=mcp_meta)  # type: ignore
                 if result.isError:
                     parsed = parser(result)
                     text = (

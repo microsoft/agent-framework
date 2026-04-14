@@ -4038,13 +4038,21 @@ async def test_mcp_tool_call_tool_user_meta_wins_on_otel_conflict(span_exporter)
 
         tracer = trace.get_tracer("test")
         with tracer.start_as_current_span("conflict_span"):
-            # "traceparent" is the W3C key that OTel injects
-            await server.call_tool("test_tool", param="v", _meta={"traceparent": "user-override"})
+            # Discover which key(s) the active propagator actually injects so the
+            # test stays correct even if the propagator changes (e.g., B3).
+            from opentelemetry import propagate
+
+            probe: dict[str, str] = {}
+            propagate.inject(probe)
+            assert probe, "Expected at least one propagation header from the active propagator"
+            conflict_key = next(iter(probe))
+
+            await server.call_tool("test_tool", param="v", _meta={conflict_key: "user-override"})
 
         meta = server.session.call_tool.call_args.kwargs.get("meta")
         assert meta is not None
         # User value must win because _inject_otel_into_mcp_meta skips keys already present
-        assert meta["traceparent"] == "user-override"
+        assert meta[conflict_key] == "user-override"
 
 
 async def test_mcp_tool_call_tool_empty_meta_dict():
