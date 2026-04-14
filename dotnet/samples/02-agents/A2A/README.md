@@ -16,6 +16,7 @@ See the README.md for each sample for the prerequisites for that sample.
 |[A2A Agent As Function Tools](./A2AAgent_AsFunctionTools/)|This sample demonstrates how to represent an A2A agent as a set of function tools, where each function tool corresponds to a skill of the A2A agent, and register these function tools with another AI agent so it can leverage the A2A agent's skills.|
 |[A2A Agent Polling For Task Completion](./A2AAgent_PollingForTaskCompletion/)|This sample demonstrates how to poll for long-running task completion using continuation tokens with an A2A agent.|
 |[A2A Agent Stream Reconnection](./A2AAgent_StreamReconnection/)|This sample demonstrates how to reconnect to an A2A agent's streaming response using continuation tokens, allowing recovery from stream interruptions.|
+|[A2A Agent Protocol Selection](./A2AAgent_ProtocolSelection/)|This sample demonstrates how to select the A2A protocol binding (HTTP+JSON vs JSON-RPC) when creating an AIAgent from an A2A agent card using A2AClientOptions.|
 
 ## Running the samples from the console
 
