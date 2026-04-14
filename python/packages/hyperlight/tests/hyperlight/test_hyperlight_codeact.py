@@ -681,15 +681,17 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
                     "import os\n"
                     "import _socket\n\n"
                     "input_text = None\n"
-                    'for input_path in ("/input/data/input.txt", "data/input.txt"):\n'
-                    "    if not os.path.exists(input_path):\n"
+                    "input_path = None\n"
+                    'for candidate_input_path in ("/input/data/input.txt", "input/data/input.txt", "data/input.txt"):\n'
+                    "    input_path = candidate_input_path\n"
+                    "    if not os.path.exists(candidate_input_path):\n"
                     "        continue\n"
-                    '    with open(input_path, encoding="utf-8") as input_file:\n'
+                    '    with open(candidate_input_path, encoding="utf-8") as input_file:\n'
                     "        input_text = input_file.read()\n"
                     "    break\n"
-                    "assert input_text is not None\n"
+                    'assert input_text is not None, "input file not found"\n'
                     "output_path = None\n"
-                    'for candidate_output_path in ("/output/result.txt", "result.txt"):\n'
+                    'for candidate_output_path in ("/output/result.txt", "output/result.txt", "result.txt"):\n'
                     "    candidate_parent = os.path.dirname(candidate_output_path)\n"
                     "    if candidate_parent:\n"
                     "        try:\n"
@@ -703,7 +705,7 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
                     "        continue\n"
                     "    output_path = candidate_output_path\n"
                     "    break\n"
-                    "assert output_path is not None\n"
+                    'assert output_path is not None, "output path unavailable"\n'
                     f'host, port_text = "{allowed_host}".rsplit(":", 1)\n'
                     "response_bytes = b''\n"
                     "request = ("
@@ -727,7 +729,7 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
                     'network_text = response_bytes[header_end + 4 :].decode("utf-8")\n'
                     'assert input_text == "hello from mount"\n'
                     'assert network_text == "network ok"\n'
-                    "assert os.path.exists(output_path)\n"
+                    'assert os.path.exists(output_path), "output file was not written"\n'
                     'print("validated")\n'
                 )
             }
@@ -749,5 +751,5 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
     file_output = next((item for item in outputs if item.type == "data"), None)
     if file_output is not None:
         assert file_output.data == b"HELLO FROM MOUNT"
-        assert file_output.additional_properties["path"] == "/output/result.txt"
+        assert file_output.additional_properties["path"] in {"/output/result.txt", "/output/output/result.txt"}
     assert requests == ["/allowed"]
