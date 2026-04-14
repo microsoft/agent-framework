@@ -103,7 +103,7 @@ async def main() -> None:
                 "answer with the tool result in one sentence."
             ),
             tools=[lookup_weather],
-            # if orjson is available, use it for more faster JSON serialization in the FileHistoryProvider,
+            # if orjson is available, use it for faster JSON serialization in the FileHistoryProvider,
             # otherwise fall back to the default json module.
             context_providers=[
                 FileHistoryProvider(
