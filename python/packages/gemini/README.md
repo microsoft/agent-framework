@@ -12,11 +12,28 @@ The Gemini integration enables Microsoft Agent Framework applications to call Go
 
 ## Authentication
 
-Obtain an API key from [Google AI Studio](https://aistudio.google.com/apikey) and set it via environment variable:
+The connector supports both `google-genai` authentication modes.
+
+### Gemini Developer API
+
+Obtain an API key from [Google AI Studio](https://aistudio.google.com/apikey) and set either the package-prefixed or SDK-standard environment variable:
 
 ```bash
 export GEMINI_API_KEY="your-api-key"
-export GEMINI_MODEL="gemini-2.5-flash"
+# or: export GOOGLE_API_KEY="your-api-key"
+export GEMINI_MODEL="gemini-2.5-flash-lite"
+# or: export GOOGLE_MODEL="gemini-2.5-flash-lite"
+```
+
+### Vertex AI
+
+Set the standard Vertex AI environment variables used by `google-genai`:
+
+```bash
+export GOOGLE_GENAI_USE_VERTEXAI=true
+export GOOGLE_CLOUD_PROJECT="your-project-id"
+export GOOGLE_CLOUD_LOCATION="global"
+export GOOGLE_MODEL="gemini-2.5-flash-lite"
 ```
 
 ## Examples

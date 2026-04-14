@@ -906,6 +906,9 @@ def _tools_to_dict(  # pyright: ignore[reportUnusedFunction]
         if isinstance(tool_item, FunctionTool):
             results.append(tool_item.to_json_schema_spec())
             continue
+        if isinstance(tool_item, BaseModel):
+            results.append(tool_item.model_dump(exclude_none=True))
+            continue
         if isinstance(tool_item, SerializationMixin):
             results.append(tool_item.to_dict())
             continue
