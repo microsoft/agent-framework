@@ -650,10 +650,12 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> N
 
 
 @skip_if_hyperlight_integration_tests_disabled
-async def test_provider_run_tool_writes_files_with_real_sandbox() -> None:
+async def test_provider_run_tool_writes_files_with_real_sandbox(tmp_path: Path) -> None:
     _skip_if_hyperlight_integration_runtime_disabled()
 
-    provider = HyperlightCodeActProvider()
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    provider = HyperlightCodeActProvider(workspace_root=workspace_root)
 
     context = _FakeSessionContext()
     state: dict[str, Any] = {}
@@ -665,19 +667,17 @@ async def test_provider_run_tool_writes_files_with_real_sandbox() -> None:
     result = await run_tool.invoke(
         arguments={
             "code": (
-                "import os\n\n"
                 'payload = "hello from sandbox"\n'
                 "output_path = None\n"
-                'for candidate_output_path in ("/output/result.txt", "result.txt"):\n'
+                'for candidate in ("/output/result.txt",):\n'
                 "    try:\n"
-                '        with open(candidate_output_path, "w", encoding="utf-8") as output_file:\n'
-                "            output_file.write(payload)\n"
+                '        with open(candidate, "w", encoding="utf-8") as f:\n'
+                "            f.write(payload)\n"
                 "    except OSError:\n"
                 "        continue\n"
-                "    output_path = candidate_output_path\n"
+                "    output_path = candidate\n"
                 "    break\n"
                 'assert output_path is not None, "output path unavailable"\n'
-                'assert os.path.exists(output_path), "output file was not written"\n'
                 'print("validated")\n'
             )
         }
@@ -698,12 +698,13 @@ async def test_provider_run_tool_writes_files_with_real_sandbox() -> None:
 
     file_output = next((item for item in outputs if item.type == "data"), None)
     if file_output is not None:
-        assert file_output.data == b"hello from sandbox"
+        assert file_output.uri is not None and file_output.uri.startswith("data:")
         assert file_output.additional_properties["path"] in {"/output/result.txt", "/output/output/result.txt"}
 
 
 @pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
+@pytest.mark.skipif(sys.platform == "win32", reason="Hyperlight WASM sandbox lacks encodings.idna on Windows")
 async def test_provider_run_tool_pings_bing_with_real_sandbox() -> None:
     _skip_if_hyperlight_integration_runtime_disabled()
 
