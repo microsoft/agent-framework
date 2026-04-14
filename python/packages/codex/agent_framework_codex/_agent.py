@@ -5,10 +5,11 @@ from __future__ import annotations
 import contextlib
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, overload
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
 from agent_framework import (
+    AgentMiddlewareLayer,
     AgentMiddlewareTypes,
     AgentResponse,
     AgentResponseUpdate,
@@ -19,6 +20,7 @@ from agent_framework import (
     Content,
     FunctionTool,
     Message,
+    MiddlewareTypes,
     ResponseStream,
     ToolTypes,
     load_settings,
@@ -169,7 +171,11 @@ OptionsT = TypeVar(
 
 
 class RawCodexAgent(BaseAgent, Generic[OptionsT]):
-    """OpenAI Codex Agent using Codex CLI.
+    """OpenAI Codex Agent using Codex CLI without telemetry layers.
+
+    This is the core Codex agent implementation without OpenTelemetry instrumentation.
+    For most use cases, prefer :class:`CodexAgent` which includes telemetry and
+    middleware support.
 
     Wraps the Codex SDK to provide agentic coding capabilities including
     tool use, session management, and streaming responses.
@@ -239,11 +245,11 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None = None,
-        default_options: OptionsT | None = None,
+        default_options: OptionsT | MutableMapping[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a CodexAgent instance.
+        """Initialize a RawCodexAgent instance.
 
         Args:
             instructions: System prompt for the agent.
@@ -569,61 +575,19 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
             return ""
         return "\n".join([msg.text or "" for msg in messages])
 
-    @overload
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[True],
-        session: AgentSession | None = None,
-        options: OptionsT | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]: ...
+    @property
+    def default_options(self) -> dict[str, Any]:
+        """Expose options with ``instructions`` key.
 
-    @overload
-    async def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[False] = ...,
-        session: AgentSession | None = None,
-        options: OptionsT | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse[Any]: ...
-
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        options: OptionsT | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse[Any]]:
-        """Run the agent with the given messages.
-
-        Args:
-            messages: The messages to process.
-
-        Keyword Args:
-            stream: If True, returns an async iterable of updates. If False (default),
-                returns an awaitable AgentResponse.
-            session: The conversation session. If session has service_session_id set,
-                the agent will resume that session.
-            options: Runtime options (model, permission_mode can be changed per-request).
-            kwargs: Additional keyword arguments.
-
-        Returns:
-            When stream=True: An ResponseStream for streaming updates.
-            When stream=False: An Awaitable[AgentResponse] with the complete response.
+        Maps ``system_prompt`` to ``instructions`` for compatibility with
+        :class:`AgentTelemetryLayer`, which reads the system prompt from
+        the ``instructions`` key.
         """
-        response = ResponseStream(
-            self._get_stream(messages, session=session, options=options, **kwargs),
-            finalizer=self._finalize_response,
-        )
-        if stream:
-            return response
-        return response.get_final_response()
+        opts = dict(self._default_options)
+        system_prompt = opts.pop("system_prompt", None)
+        if system_prompt is not None:
+            opts["instructions"] = system_prompt
+        return opts
 
     def _finalize_response(self, updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
         """Build AgentResponse and propagate structured_output as value.
@@ -637,13 +601,69 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
         structured_output = getattr(self, "_structured_output", None)
         return AgentResponse.from_updates(updates, value=structured_output)
 
+    @overload
+    def run(  # type: ignore[override]
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        options: OptionsT | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(  # type: ignore[override]
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        options: OptionsT | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        options: OptionsT | None = None,
+        **kwargs: Any,  # type: ignore
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Run the agent with the given messages.
+
+        Args:
+            messages: The messages to process.
+
+        Keyword Args:
+            stream: If True, returns an async iterable of updates. If False (default),
+                returns an awaitable AgentResponse.
+            session: The conversation session. If session has service_session_id set,
+                the agent will resume that session.
+            options: Runtime options (model, permission_mode can be changed per-request).
+            kwargs: Additional keyword arguments for compatibility with the shared agent
+                interface (e.g. compaction_strategy, tokenizer). Not used by CodexAgent.
+
+        Returns:
+            When stream=True: An ResponseStream for streaming updates.
+            When stream=False: An Awaitable[AgentResponse] with the complete response.
+        """
+        response = ResponseStream(
+            self._get_stream(messages, session=session, options=options),
+            finalizer=self._finalize_response,
+        )
+        if stream:
+            return response
+        return response.get_final_response()
+
     async def _get_stream(
         self,
         messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal streaming implementation."""
         session = session or self.create_session()
@@ -724,12 +744,141 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
         self._structured_output = structured_output
 
 
-class CodexAgent(AgentTelemetryLayer, RawCodexAgent[OptionsT], Generic[OptionsT]):
-    """OpenAI Codex Agent with built-in OpenTelemetry instrumentation.
+class CodexAgent(AgentMiddlewareLayer, AgentTelemetryLayer, RawCodexAgent[OptionsT], Generic[OptionsT]):
+    """OpenAI Codex Agent with middleware and OpenTelemetry instrumentation.
 
-    Extends :class:`RawCodexAgent` with automatic telemetry spans via
-    :class:`AgentTelemetryLayer`. Use ``RawCodexAgent`` directly if you
-    need the agent without telemetry overhead.
+    This is the recommended agent class for most use cases. It includes
+    OpenTelemetry-based telemetry for observability and middleware support
+    for intercepting agent invocations. For a minimal implementation
+    without telemetry or middleware, use :class:`RawCodexAgent`.
+
+    Examples:
+        Basic usage with context manager:
+
+        .. code-block:: python
+
+            from agent_framework_codex import CodexAgent
+
+            async with CodexAgent(
+                instructions="You are a helpful coding assistant.",
+            ) as agent:
+                response = await agent.run("Hello!")
+                print(response.text)
     """
 
-    pass
+    def __init__(
+        self,
+        instructions: str | None = None,
+        *,
+        client: CodexSDKClient | None = None,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None = None,
+        default_options: OptionsT | MutableMapping[str, Any] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize a CodexAgent with middleware and telemetry.
+
+        Args:
+            instructions: System prompt for the agent.
+
+        Keyword Args:
+            client: Optional pre-configured CodexSDKClient instance. If not provided,
+                a new client will be created using the other parameters.
+            id: Unique identifier for the agent.
+            name: Name of the agent.
+            description: Description of the agent.
+            context_providers: Context providers for the agent.
+            middleware: Optional agent-level middleware for intercepting invocations.
+            tools: Tools for the agent. Can be:
+                - Strings for built-in tools (e.g., "Read", "Write", "Bash", "Glob")
+                - Functions for custom tools
+            default_options: Default CodexAgentOptions including system_prompt, model, etc.
+            env_file_path: Path to .env file.
+            env_file_encoding: Encoding of .env file.
+        """
+        super().__init__(
+            instructions=instructions,
+            client=client,
+            id=id,
+            name=name,
+            description=description,
+            context_providers=context_providers,
+            middleware=middleware,
+            tools=tools,
+            default_options=default_options,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+
+    @overload  # type: ignore[override]
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        options: OptionsT | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        compaction_strategy: Any = None,
+        tokenizer: Any = None,
+        function_invocation_kwargs: dict[str, Any] | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload  # type: ignore[override]
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        options: OptionsT | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        compaction_strategy: Any = None,
+        tokenizer: Any = None,
+        function_invocation_kwargs: dict[str, Any] | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(  # pyright: ignore[reportIncompatibleMethodOverride]  # type: ignore[override]
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        options: OptionsT | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        compaction_strategy: Any = None,
+        tokenizer: Any = None,
+        function_invocation_kwargs: dict[str, Any] | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Run the Codex agent with middleware and telemetry enabled."""
+        super_run = cast(
+            "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
+            super().run,
+        )
+        return super_run(
+            messages=messages,
+            stream=stream,
+            session=session,
+            middleware=middleware,
+            options=options,
+            tools=tools,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
+            **kwargs,
+        )
