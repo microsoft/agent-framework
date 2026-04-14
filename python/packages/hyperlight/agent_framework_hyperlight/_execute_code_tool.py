@@ -327,32 +327,50 @@ def _create_file_content(file_path: Path, *, relative_path: str) -> Content:
     )
 
 
+def _normalize_output_relative_path(*, output_file: object, root: Path) -> str | None:
+    candidate_path = Path(str(output_file))
+    if candidate_path.is_absolute():
+        try:
+            return candidate_path.relative_to(root).as_posix()
+        except ValueError:
+            return None
+
+    raw_path = str(output_file).replace("\\", "/")
+    pure_path = PurePosixPath(raw_path)
+    parts = [part for part in pure_path.parts if part not in {"", "/", "."}]
+    if parts and parts[0] == "output":
+        parts = parts[1:]
+    if not parts or any(part == ".." for part in parts):
+        return None
+    return "/".join(parts)
+
+
 def _parse_output_files(*, sandbox: Any, output_dir: TemporaryDirectory[str] | None) -> list[Content]:
-    if output_dir is None or not hasattr(sandbox, "get_output_files"):
+    if output_dir is None:
         return []
 
-    try:
-        output_files = sandbox.get_output_files()
-    except Exception:
-        return []
+    root = Path(output_dir.name)
+    relative_paths: set[str] = set()
+
+    if hasattr(sandbox, "get_output_files"):
+        try:
+            output_files = cast(Sequence[object], sandbox.get_output_files())
+        except Exception:
+            output_files = ()
+
+        for output_file in output_files:
+            if (relative_path := _normalize_output_relative_path(output_file=output_file, root=root)) is not None:
+                relative_paths.add(relative_path)
+
+    for host_path in root.rglob("*"):
+        if host_path.is_file():
+            relative_paths.add(host_path.relative_to(root).as_posix())
 
     contents: list[Content] = []
-    root = Path(output_dir.name)
-
-    for output_file in output_files:
-        raw_path = str(output_file).replace("\\", "/")
-        pure_path = PurePosixPath(raw_path)
-        parts = [part for part in pure_path.parts if part not in {"", "/", "."}]
-        if parts and parts[0] == "output":
-            parts = parts[1:]
-        if not parts or any(part == ".." for part in parts):
-            continue
-
-        relative_path = "/".join(parts)
-        host_path = root.joinpath(*parts)
+    for relative_path in sorted(relative_paths):
+        host_path = root.joinpath(*PurePosixPath(relative_path).parts)
         if host_path.is_file():
             contents.append(_create_file_content(host_path, relative_path=relative_path))
-
     return contents
 
 

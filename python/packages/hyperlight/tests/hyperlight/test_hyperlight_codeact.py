@@ -202,6 +202,11 @@ class _FakeRuntime:
         return [Content.from_text("ok")]
 
 
+class _FakeSandboxWithoutOutputListing(_FakeSandbox):
+    def get_output_files(self) -> list[str]:
+        return []
+
+
 class _FakeSessionContext:
     def __init__(self, *, tools: list[Any] | None = None) -> None:
         self.options: dict[str, Any] = {}
@@ -428,6 +433,23 @@ async def test_execute_code_tool_executes_with_structured_content(monkeypatch: p
     assert any(item.type == "data" for item in result[0].outputs)
     assert _FakeSandbox.instances[0].allowed_domains == [("api.example.com", ["GET"])]
     assert "compute" in _FakeSandbox.instances[0].registered_tools
+
+
+async def test_execute_code_tool_collects_output_files_without_backend_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithoutOutputListing)
+
+    execute_code = HyperlightExecuteCodeTool(
+        file_mounts=[FileMount(Path(__file__), "fixtures/source.py")],
+    )
+    result = await execute_code.invoke(arguments={"code": "create-output"})
+
+    assert result[0].type == "code_interpreter_tool_result"
+    assert result[0].outputs is not None
+    assert any(
+        item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result[0].outputs
+    )
 
 
 async def test_execute_code_tool_failure_returns_error_content(monkeypatch: pytest.MonkeyPatch) -> None:
