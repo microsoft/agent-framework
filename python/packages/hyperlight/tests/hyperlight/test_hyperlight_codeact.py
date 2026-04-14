@@ -676,13 +676,27 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
             arguments={
                 "code": (
                     "import os\n"
-                    "from urllib.request import urlopen\n\n"
+                    "import socket\n\n"
                     'with open("/input/data/input.txt", encoding="utf-8") as input_file:\n'
                     "    input_text = input_file.read()\n"
                     'with open("/output/result.txt", "w", encoding="utf-8") as output_file:\n'
                     "    output_file.write(input_text.upper())\n"
-                    f'with urlopen("http://{allowed_host}/allowed", timeout=10) as response:\n'
-                    '    network_text = response.read().decode("utf-8")\n'
+                    f'host, port_text = "{allowed_host}".rsplit(":", 1)\n'
+                    "response_bytes = b''\n"
+                    "request = ("
+                    'b"GET /allowed HTTP/1.1\\r\\n" '
+                    f'b"Host: {allowed_host}\\r\\n" '
+                    'b"Connection: close\\r\\n\\r\\n")\n'
+                    "with socket.create_connection((host, int(port_text)), timeout=10) as connection:\n"
+                    "    connection.sendall(request)\n"
+                    "    while True:\n"
+                    "        chunk = connection.recv(4096)\n"
+                    "        if not chunk:\n"
+                    "            break\n"
+                    "        response_bytes += chunk\n"
+                    'header_end = response_bytes.find(b"\\r\\n\\r\\n")\n'
+                    "assert header_end != -1\n"
+                    'network_text = response_bytes[header_end + 4 :].decode("utf-8")\n'
                     'assert input_text == "hello from mount"\n'
                     'assert network_text == "network ok"\n'
                     'assert os.path.exists("/output/result.txt")\n'
