@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import threading
 import uuid
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
@@ -871,6 +872,8 @@ class FileHistoryProvider(HistoryProvider):
     DEFAULT_SESSION_FILE_STEM: ClassVar[str] = "default"
     FILE_EXTENSION: ClassVar[str] = ".jsonl"
     _ENCODED_SESSION_PREFIX: ClassVar[str] = "~session-"
+    _FILE_WRITE_LOCKS: ClassVar[dict[Path, threading.Lock]] = {}
+    _FILE_WRITE_LOCKS_GUARD: ClassVar[threading.Lock] = threading.Lock()
     _WINDOWS_RESERVED_FILE_STEMS: ClassVar[frozenset[str]] = frozenset({
         "CON",
         "PRN",
@@ -1004,11 +1007,12 @@ class FileHistoryProvider(HistoryProvider):
             return
 
         file_path = self._session_file_path(session_id)
+        file_lock = self._session_write_lock(file_path)
 
         def _append_messages() -> None:
-            serialized_messages = [self._serialize_message(message) for message in messages]
-            with file_path.open("a", encoding="utf-8") as file_handle:
-                file_handle.write("".join(f"{serialized_message}\n" for serialized_message in serialized_messages))
+            with file_lock, file_path.open("a", encoding="utf-8") as file_handle:
+                for message in messages:
+                    file_handle.write(f"{self._serialize_message(message)}\n")
 
         await asyncio.to_thread(_append_messages)
 
@@ -1041,6 +1045,12 @@ class FileHistoryProvider(HistoryProvider):
 
         encoded_session_id = urlsafe_b64encode(raw_session_id.encode("utf-8")).decode("ascii").rstrip("=")
         return f"{self._ENCODED_SESSION_PREFIX}{encoded_session_id or self.DEFAULT_SESSION_FILE_STEM}"
+
+    @classmethod
+    def _session_write_lock(cls, file_path: Path) -> threading.Lock:
+        """Return the process-local append lock for a session history file."""
+        with cls._FILE_WRITE_LOCKS_GUARD:
+            return cls._FILE_WRITE_LOCKS.setdefault(file_path, threading.Lock())
 
     @classmethod
     def _is_literal_session_file_stem_safe(cls, session_id: str) -> bool:

@@ -2,8 +2,11 @@
 
 import asyncio
 import json
+import threading
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -640,3 +643,62 @@ class TestFileHistoryProvider:
 
         with pytest.raises(ValueError, match="single-line JSON"):
             await provider.save_messages("pretty-json", [Message(role="user", contents=["hello"])])
+
+    async def test_concurrent_writes_for_same_session_are_locked(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path)
+        session_id = "shared-session"
+        file_path = provider._session_file_path(session_id)
+        real_open = Path.open
+        write_started = threading.Event()
+        active_writes = 0
+        overlap_detected = False
+
+        class _TrackingFile:
+            def __init__(self, wrapped: Any) -> None:
+                self._wrapped = wrapped
+
+            def __enter__(self) -> "_TrackingFile":
+                self._wrapped.__enter__()
+                return self
+
+            def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+                self._wrapped.__exit__(exc_type, exc_val, exc_tb)
+
+            def write(self, data: str) -> int:
+                nonlocal active_writes, overlap_detected
+                write_started.set()
+                active_writes += 1
+                overlap_detected = overlap_detected or active_writes > 1
+                try:
+                    time.sleep(0.05)
+                    return int(self._wrapped.write(data))
+                finally:
+                    active_writes -= 1
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._wrapped, name)
+
+        def tracked_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+            handle = real_open(path, *args, **kwargs)
+            if path == file_path and args and args[0] == "a":
+                return _TrackingFile(handle)
+            return handle
+
+        monkeypatch.setattr(Path, "open", tracked_open)
+
+        first_save = asyncio.create_task(provider.save_messages(session_id, [Message(role="user", contents=["first"])]))
+        started = await asyncio.to_thread(write_started.wait, 1.0)
+        assert started
+
+        second_save = asyncio.create_task(
+            provider.save_messages(session_id, [Message(role="assistant", contents=["second"])])
+        )
+        await asyncio.gather(first_save, second_save)
+
+        assert not overlap_detected
+        loaded = await provider.get_messages(session_id)
+        assert [message.text for message in loaded] == ["first", "second"]

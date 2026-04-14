@@ -94,7 +94,7 @@ async def main() -> None:
         agent = Agent(
             client=FoundryChatClient(
                 project_endpoint=os.getenv("FOUNDRY_PROJECT_ENDPOINT"),
-                model="gpt-4.1-mini",
+                model=os.getenv("FOUNDRY_MODEL"),
                 credential=AzureCliCredential(),
             ),
             name="FileHistoryAgent",
