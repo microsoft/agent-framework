@@ -287,7 +287,7 @@ class HandoffAgentExecutor(AgentExecutor):
             name=agent.name,
             description=agent.description,
             context_providers=agent.context_providers,
-            middleware=agent.agent_middleware,
+            middleware=agent.middleware,
             require_per_service_call_history_persistence=agent.require_per_service_call_history_persistence,
             default_options=cloned_options,  # type: ignore[assignment]
         )

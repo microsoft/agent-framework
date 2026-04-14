@@ -1,12 +1,16 @@
 # Class-Based Agent Skills Sample
 
-This sample demonstrates how to define **Agent Skills as C# classes** using `AgentClassSkill`.
+This sample demonstrates how to define **Agent Skills as C# classes** using `AgentClassSkill`
+with **attributes** for automatic script and resource discovery.
 
 ## What it demonstrates
 
 - Creating skills as classes that extend `AgentClassSkill`
-- Bundling name, description, body, resources, and scripts into a single class
+- Using `[AgentSkillResource]` on properties to define resources
+- Using `[AgentSkillScript]` on methods to define scripts
+- Automatic discovery (no need to override `Resources`/`Scripts`)
 - Using the `AgentSkillsProvider` constructor with class-based skills
+- Overriding `SerializerOptions` for Native AOT compatibility
 
 ## Skills Included
 
