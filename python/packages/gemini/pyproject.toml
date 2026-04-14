@@ -103,9 +103,3 @@ name = "agent_framework_gemini"
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
 build-backend = "flit_core.buildapi"
-module-name = "agent_framework_gemini"
-module-root = ""
-
-[build-system]
-requires = ["uv_build>=0.8.2,<0.9.0"]
-build-backend = "uv_build"
