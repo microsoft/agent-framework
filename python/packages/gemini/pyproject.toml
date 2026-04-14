@@ -97,7 +97,12 @@ cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_gemini"
 help = "Run the default unit test suite for this package."
 cmd = 'pytest -m "not integration" --cov=agent_framework_gemini --cov-report=term-missing:skip-covered tests'
 
-[tool.uv.build-backend]
+[tool.flit.module]
+name = "agent_framework_gemini"
+
+[build-system]
+requires = ["flit-core >= 3.11,<4.0"]
+build-backend = "flit_core.buildapi"
 module-name = "agent_framework_gemini"
 module-root = ""
 
