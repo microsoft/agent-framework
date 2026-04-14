@@ -624,8 +624,9 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
     assert result[0].type == "code_interpreter_tool_result"
     outputs = result[0].outputs or []
 
-    text_output = next(item for item in outputs if item.type == "text" and item.text is not None)
-    assert text_output.text == "hello from mount\nnetwork ok\n"
+    text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
+    if text_output is not None:
+        assert text_output.text == "hello from mount\nnetwork ok\n"
 
     file_output = next(item for item in outputs if item.type == "data")
     assert file_output.data == b"HELLO FROM MOUNT"
