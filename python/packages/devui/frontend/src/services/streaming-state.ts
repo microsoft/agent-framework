@@ -159,19 +159,6 @@ export function loadStreamingState(conversationId: string): StreamingState | nul
   }
 }
 
-export function markStreamingCompleted(conversationId: string): void {
-  try {
-    const existing = readStreamingState(conversationId);
-    if (existing) {
-      existing.completed = true;
-      existing.timestamp = Date.now();
-      saveStreamingState(existing);
-    }
-  } catch (error) {
-    console.error("Failed to mark streaming as completed:", error);
-  }
-}
-
 /**
  * Clear streaming state for a conversation
  */
