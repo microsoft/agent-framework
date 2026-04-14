@@ -53,6 +53,18 @@ def _hyperlight_integration_skip_reason() -> str | None:
     except importlib.metadata.PackageNotFoundError:
         return "hyperlight-sandbox-backend-wasm is not installed."
 
+    try:
+        sandbox_cls = execute_code_module._load_sandbox_class()
+        sandbox = sandbox_cls(
+            backend=execute_code_module.DEFAULT_HYPERLIGHT_BACKEND,
+            module=execute_code_module.DEFAULT_HYPERLIGHT_MODULE,
+        )
+        sandbox.run("None")
+    except RuntimeError as exc:
+        message = str(exc)
+        if "no hypervisor was found for sandbox" in message.lower():
+            return "Hyperlight integration tests require a runner with a working Hyperlight hypervisor."
+
     return None
 
 
@@ -467,6 +479,40 @@ async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_
         ("http://127.0.0.1:8080", ["GET"]),
         ("https://127.0.0.1:8080", ["GET"]),
     ]
+
+
+def test_hyperlight_integration_skip_reason_reports_missing_hypervisor(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeNoHypervisorSandbox:
+        def __init__(
+            self,
+            *,
+            input_dir: str | None = None,
+            output_dir: str | None = None,
+            backend: str = "wasm",
+            module: str | None = None,
+            module_path: str | None = None,
+        ) -> None:
+            del input_dir, output_dir, backend, module, module_path
+
+        def run(self, code: str) -> _FakeResult:
+            del code
+            raise RuntimeError("failed to build ProtoWasmSandbox: No Hypervisor was found for Sandbox")
+
+    original_find_spec = importlib.util.find_spec
+
+    def _fake_find_spec(name: str) -> object | None:
+        if name in {"hyperlight_sandbox", "python_guest"}:
+            return object()
+        return original_find_spec(name)
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(importlib.util, "find_spec", _fake_find_spec)
+    monkeypatch.setattr(importlib.metadata, "version", lambda _: "0.0.0")
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeNoHypervisorSandbox)
+
+    assert _hyperlight_integration_skip_reason() == (
+        "Hyperlight integration tests require a runner with a working Hyperlight hypervisor."
+    )
 
 
 async def test_provider_injects_run_scoped_execute_code_tool() -> None:
