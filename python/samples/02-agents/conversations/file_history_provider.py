@@ -49,6 +49,13 @@ Key components:
   output while keeping the on-disk JSONL file compact and valid.
 - `USE_TEMP_DIRECTORY`: Toggle between a temporary directory and a persistent
   `sessions/` folder next to this sample file.
+
+Security posture:
+- The history files are plaintext JSONL on disk, so use a trusted storage
+  directory and treat the files as conversation logs, not as secure secret
+  storage.
+- Path safety checks protect the filename derived from the session id, but they
+  do not redact message contents or encrypt the file.
 """
 
 USE_TEMP_DIRECTORY = False

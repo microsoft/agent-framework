@@ -30,6 +30,8 @@ These samples demonstrate different approaches to managing conversation history 
 - `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
 - `FOUNDRY_MODEL`: The Foundry model deployment name
 - Azure CLI authentication (`az login`)
+- The sample writes plaintext JSONL conversation logs to disk; use a trusted
+  local directory and avoid treating the history files as secure secret storage
 
 **For Cosmos DB samples (`cosmos_history_provider*.py`):**
 - `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint

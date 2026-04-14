@@ -866,6 +866,15 @@ class FileHistoryProvider(HistoryProvider):
     it uses the standard library ``json`` module, but callers can inject
     alternative ``dumps`` and ``loads`` callables compatible with the JSON
     Lines format.
+
+    Security posture:
+        Persisted history is stored as plaintext JSONL on the local filesystem.
+        Treat ``storage_path`` as trusted application storage, not as a secret
+        store. Encoded fallback filenames and resolved-path validation help
+        prevent path traversal via ``session_id``, but they do not encrypt file
+        contents or provide cross-process / cross-host locking. Use OS-level
+        file permissions, trusted directories, and carefully review what agent
+        or tool output is allowed to be persisted.
     """
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "file_history"
