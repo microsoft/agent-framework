@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -27,11 +28,19 @@ internal sealed class SampleVerifier
                 instructions: """
                     You are a test output verifier. You will be given:
                     1. The actual stdout output of a program
-                    2. A list of expectations about what the output should contain or demonstrate
+                    2. The stderr output (if any)
+                    3. A list of expectations about what the output should contain or demonstrate
 
                     Your job is to determine whether the actual output satisfies each expectation.
                     Be reasonable — the output comes from an LLM so exact wording won't match, but the
                     semantic intent should be clearly satisfied.
+
+                    In your response, you MUST:
+                    - Always provide ai_reasoning with a brief overall assessment.
+                    - Always provide exactly one entry in expectation_results for each expectation,
+                      in the same order as the input list.
+                    - For each expectation_results entry, echo the expectation text in the expectation
+                      field and explain your assessment in the detail field, citing evidence from the output.
                     """,
                 name: "OutputVerifier");
         }
@@ -78,7 +87,7 @@ internal sealed class SampleVerifier
             }
             else
             {
-                var aiResult = await this.VerifyWithAIAsync(run.Stdout, sample.ExpectedOutputDescription);
+                var aiResult = await this.VerifyWithAIAsync(run.Stdout, run.Stderr, sample.ExpectedOutputDescription);
                 aiReasoning = aiResult.Reasoning;
 
                 foreach (var unmet in aiResult.UnmetExpectations)
@@ -100,16 +109,28 @@ internal sealed class SampleVerifier
     }
 
     private async Task<(string Reasoning, List<string> UnmetExpectations)> VerifyWithAIAsync(
-        string actualOutput,
+        string stdout,
+        string stderr,
         string[] expectations)
     {
         var expectationList = string.Join("\n", expectations.Select((e, i) => $"  {i + 1}. {e}"));
+
+        var stderrSection = string.IsNullOrWhiteSpace(stderr)
+            ? ""
+            : $"""
+
+                Stderr output:
+                ---
+                {Truncate(stderr, 2000)}
+                ---
+                """;
+
         var prompt = $"""
             Actual program output:
             ---
-            {Truncate(actualOutput, 4000)}
+            {Truncate(stdout, 4000)}
             ---
-
+            {stderrSection}
             Expectations to verify:
             {expectationList}
 
@@ -126,7 +147,9 @@ internal sealed class SampleVerifier
                 return ($"AI verification returned null result. Raw: {response.Text}", ["AI verification returned null result."]);
             }
 
-            var reasoning = result.Reasoning ?? "(no reasoning provided)";
+            var reasoning = string.IsNullOrWhiteSpace(result.AIReasoning)
+                ? "(no reasoning provided)"
+                : result.AIReasoning;
 
             // Collect unmet expectations as individual failures
             var unmet = new List<string>();
@@ -174,12 +197,14 @@ internal sealed class AIVerificationResponse
     public bool Pass { get; set; }
 
     /// <summary>Brief explanation of the overall assessment.</summary>
-    [JsonPropertyName("reasoning")]
-    public string? Reasoning { get; set; }
+    [JsonPropertyName("ai_reasoning")]
+    [Description("Always required. Brief explanation of the overall assessment, covering all expectations.")]
+    public string AIReasoning { get; set; } = string.Empty;
 
     /// <summary>Per-expectation results.</summary>
     [JsonPropertyName("expectation_results")]
-    public List<ExpectationResult>? ExpectationResults { get; set; }
+    [Description("Always required. One entry per expectation, in the same order as the input list.")]
+    public List<ExpectationResult> ExpectationResults { get; set; } = [];
 }
 
 /// <summary>
@@ -190,7 +215,8 @@ internal sealed class ExpectationResult
 {
     /// <summary>The expectation text that was evaluated.</summary>
     [JsonPropertyName("expectation")]
-    public string? Expectation { get; set; }
+    [Description("Echo back the expectation text being evaluated.")]
+    public string Expectation { get; set; } = string.Empty;
 
     /// <summary>Whether this expectation was met.</summary>
     [JsonPropertyName("met")]
@@ -198,5 +224,6 @@ internal sealed class ExpectationResult
 
     /// <summary>Detail about how the expectation was or was not met.</summary>
     [JsonPropertyName("detail")]
-    public string? Detail { get; set; }
+    [Description("Explain how the expectation was or was not met, citing specific evidence from the output.")]
+    public string Detail { get; set; } = string.Empty;
 }

@@ -8,7 +8,7 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 /// <summary>Executor used at the end of a handoff workflow to raise a final completed event.</summary>
-internal sealed class HandoffsEndExecutor(bool returnToPrevious) : Executor(ExecutorId, declareCrossRunShareable: true), IResettableExecutor
+internal sealed class HandoffEndExecutor(bool returnToPrevious) : Executor(ExecutorId, declareCrossRunShareable: true), IResettableExecutor
 {
     public const string ExecutorId = "HandoffEnd";
 
@@ -21,9 +21,9 @@ internal sealed class HandoffsEndExecutor(bool returnToPrevious) : Executor(Exec
     {
         if (returnToPrevious)
         {
-            await context.QueueStateUpdateAsync<string?>(HandoffConstants.CurrentAgentTrackerKey,
-                                                         handoff.CurrentAgentId,
-                                                         HandoffConstants.CurrentAgentTrackerScope,
+            await context.QueueStateUpdateAsync<string?>(HandoffConstants.PreviousAgentTrackerKey,
+                                                         handoff.PreviousAgentId,
+                                                         HandoffConstants.PreviousAgentTrackerScope,
                                                          cancellationToken)
                          .ConfigureAwait(false);
         }

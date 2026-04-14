@@ -871,7 +871,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
     public async Task Constructor_ClassSkillsEnumerable_ProvidesSkillsAsync()
     {
         // Arrange
-        var skills = new List<AgentClassSkill>
+        var skills = new List<AgentSkill>
         {
             new TestClassSkill("enum-class-a", "Class A", "Instructions A."),
             new TestClassSkill("enum-class-b", "Class B", "Instructions B."),
@@ -928,7 +928,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         }
     }
 
-    private sealed class TestClassSkill : AgentClassSkill
+    private sealed class TestClassSkill : AgentClassSkill<TestClassSkill>
     {
         private readonly string _instructions;
 
