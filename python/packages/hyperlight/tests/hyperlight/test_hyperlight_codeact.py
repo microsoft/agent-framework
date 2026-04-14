@@ -675,16 +675,17 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
         result = await run_tool.invoke(
             arguments={
                 "code": (
-                    "from pathlib import Path\n"
+                    "import os\n"
                     "from urllib.request import urlopen\n\n"
-                    'input_text = Path("/input/data/input.txt").read_text(encoding="utf-8")\n'
-                    'output_path = Path("/output/result.txt")\n'
-                    'output_path.write_text(input_text.upper(), encoding="utf-8")\n'
+                    'with open("/input/data/input.txt", encoding="utf-8") as input_file:\n'
+                    "    input_text = input_file.read()\n"
+                    'with open("/output/result.txt", "w", encoding="utf-8") as output_file:\n'
+                    "    output_file.write(input_text.upper())\n"
                     f'with urlopen("http://{allowed_host}/allowed", timeout=10) as response:\n'
                     '    network_text = response.read().decode("utf-8")\n'
                     'assert input_text == "hello from mount"\n'
                     'assert network_text == "network ok"\n'
-                    "assert output_path.exists()\n"
+                    'assert os.path.exists("/output/result.txt")\n'
                     'print("validated")\n'
                 )
             }
