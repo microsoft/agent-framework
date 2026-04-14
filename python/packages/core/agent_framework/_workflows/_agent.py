@@ -119,15 +119,11 @@ class WorkflowAgent(BaseAgent):
         if not any(is_type_compatible(list[Message], input_type) for input_type in start_executor.input_types):
             raise ValueError("Workflow's start executor cannot handle list[Message]")
 
-        resolved_context_providers = list(context_providers) if context_providers is not None else []
-        if not resolved_context_providers:
-            resolved_context_providers.append(InMemoryHistoryProvider())
-
         super().__init__(
             id=id,
             name=name,
             description=description,
-            context_providers=resolved_context_providers,
+            context_providers=context_providers,
             **kwargs,
         )
         self._workflow: Workflow = workflow
@@ -261,6 +257,15 @@ class WorkflowAgent(BaseAgent):
             An AgentResponse representing the workflow execution results.
         """
         input_messages = normalize_messages_input(messages)
+
+        if (
+            not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
+            and session is not None
+        ):
+            self.context_providers.append(InMemoryHistoryProvider())
+
         provider_session = session
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
@@ -332,6 +337,15 @@ class WorkflowAgent(BaseAgent):
             AgentResponseUpdate objects representing the workflow execution progress.
         """
         input_messages = normalize_messages_input(messages)
+
+        if (
+            not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
+            and session is not None
+        ):
+            self.context_providers.append(InMemoryHistoryProvider())
+
         provider_session = session
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
