@@ -3379,6 +3379,84 @@ async def test_prepare_options_with_conversation_id_keeps_reasoning_items() -> N
     assert options["previous_response_id"] == "resp_prev123"
 
 
+async def test_prepare_options_with_conversation_id_omits_reasoning_items_for_attributed_replay() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="search for hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_history123",
+                    text="I need to search history for hotels",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_history",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_history456"},
+                ),
+            ],
+            additional_properties={"_attribution": {"source_id": "history", "source_type": "InMemoryHistoryProvider"}},
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_history",
+                    result="Found 3 hotels in Paris",
+                ),
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_live123",
+                    text="I should refine the search for a live follow-up",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_live",
+                    name="search_hotels",
+                    arguments='{"city": "London"}',
+                    additional_properties={"fc_id": "fc_live456"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_live",
+                    result="Found 4 hotels in London",
+                ),
+            ],
+        ),
+    ]
+
+    options = await client._prepare_options(
+        messages,
+        ChatOptions(store=False, conversation_id="resp_prev123"),  # type: ignore[arg-type]
+    )
+
+    reasoning_items = [item for item in options["input"] if item.get("type") == "reasoning"]
+    assert [item["id"] for item in reasoning_items] == ["rs_live123"]
+    assert any(
+        item.get("type") == "function_call" and item.get("call_id") == "call_history" for item in options["input"]
+    )
+    assert any(item.get("type") == "function_call" and item.get("call_id") == "call_live" for item in options["input"])
+    assert any(
+        item.get("type") == "function_call_output" and item.get("call_id") == "call_history"
+        for item in options["input"]
+    )
+    assert any(
+        item.get("type") == "function_call_output" and item.get("call_id") == "call_live" for item in options["input"]
+    )
+    assert options["previous_response_id"] == "resp_prev123"
+
+
 def _create_mock_responses_text_response(*, response_id: str) -> MagicMock:
     mock_response = MagicMock()
     mock_response.id = response_id
