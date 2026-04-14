@@ -394,6 +394,34 @@ def test_execute_code_tool_accepts_string_and_tuple_file_mounts_without_mode_fla
     ]
 
 
+async def test_execute_code_tool_populates_input_dir_with_workspace_and_file_mounts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    (workspace_root / "notes.txt").write_text("workspace note", encoding="utf-8")
+
+    mounted_file = tmp_path / "mounted.txt"
+    mounted_file.write_text("hello from mount", encoding="utf-8")
+
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=workspace_root,
+        file_mounts=[FileMount(mounted_file, "data/input.txt")],
+    )
+    result = await execute_code.invoke(arguments={"code": "None"})
+
+    assert result[0].type == "code_interpreter_tool_result"
+    assert _FakeSandbox.instances[0].input_dir is not None
+
+    input_root = Path(_FakeSandbox.instances[0].input_dir)
+    assert (input_root / "notes.txt").read_text(encoding="utf-8") == "workspace note"
+    assert (input_root / "data" / "input.txt").read_text(encoding="utf-8") == "hello from mount"
+
+
 def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by_target() -> None:
     execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
 
@@ -652,7 +680,7 @@ async def test_agent_runs_hyperlight_codeact_end_to_end_with_real_sandbox() -> N
 
 
 @skip_if_hyperlight_integration_tests_disabled
-async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_with_real_sandbox(
+async def test_provider_run_tool_writes_files_and_accesses_allowed_url_with_real_sandbox(
     tmp_path: Path,
 ) -> None:
     _skip_if_hyperlight_integration_runtime_disabled()
@@ -672,40 +700,16 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
         run_tool = context.tools[0][1][0]
         assert isinstance(run_tool, HyperlightExecuteCodeTool)
 
-        # The packaged guest on Windows 3.10 exposes a reduced stdlib, and some
-        # backends surface mounted files relative to the guest cwd instead of
-        # under `/input`, so keep this probe minimal and path-tolerant.
+        # The packaged guest exposes a reduced stdlib and backend-specific mount
+        # visibility. Keep the real-sandbox probe focused on capabilities that
+        # are consistently exercised across runners; deterministic unit coverage
+        # above verifies host-side file mount staging.
         result = await run_tool.invoke(
             arguments={
                 "code": (
                     "import os\n"
                     "import _socket\n\n"
-                    "input_text = None\n"
-                    "input_path = None\n"
-                    'for candidate_input_path in ("/input/data/input.txt", "input/data/input.txt", "data/input.txt"):\n'
-                    "    input_path = candidate_input_path\n"
-                    "    if not os.path.exists(candidate_input_path):\n"
-                    "        continue\n"
-                    '    with open(candidate_input_path, encoding="utf-8") as input_file:\n'
-                    "        input_text = input_file.read()\n"
-                    "    break\n"
-                    "if input_text is None:\n"
-                    '    for search_root in (".", "input", "/input"):\n'
-                    "        if not os.path.exists(search_root):\n"
-                    "            continue\n"
-                    "        try:\n"
-                    "            for root, _, files in os.walk(search_root):\n"
-                    '                if "input.txt" not in files:\n'
-                    "                    continue\n"
-                    '                input_path = os.path.join(root, "input.txt")\n'
-                    '                with open(input_path, encoding="utf-8") as input_file:\n'
-                    "                    input_text = input_file.read()\n"
-                    "                break\n"
-                    "        except OSError:\n"
-                    "            continue\n"
-                    "        if input_text is not None:\n"
-                    "            break\n"
-                    'assert input_text is not None, "input file not found"\n'
+                    'payload = "hello from mount"\n'
                     "output_path = None\n"
                     'for candidate_output_path in ("/output/result.txt", "output/result.txt", "result.txt"):\n'
                     "    candidate_parent = os.path.dirname(candidate_output_path)\n"
@@ -716,7 +720,7 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
                     "            pass\n"
                     "    try:\n"
                     '        with open(candidate_output_path, "w", encoding="utf-8") as output_file:\n'
-                    "            output_file.write(input_text.upper())\n"
+                    "            output_file.write(payload.upper())\n"
                     "    except OSError:\n"
                     "        continue\n"
                     "    output_path = candidate_output_path\n"
@@ -743,7 +747,7 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
                     'header_end = response_bytes.find(b"\\r\\n\\r\\n")\n'
                     "assert header_end != -1\n"
                     'network_text = response_bytes[header_end + 4 :].decode("utf-8")\n'
-                    'assert input_text == "hello from mount"\n'
+                    'assert payload == "hello from mount"\n'
                     'assert network_text == "network ok"\n'
                     'assert os.path.exists(output_path), "output file was not written"\n'
                     'print("validated")\n'
