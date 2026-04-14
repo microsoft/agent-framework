@@ -31,15 +31,6 @@ These samples demonstrate different approaches to managing conversation history 
 - `FOUNDRY_MODEL`: The Foundry model deployment name
 - Azure CLI authentication (`az login`)
 
-**For `file_history_provider_orjson.py`:**
-- Run with a PEP 723-compatible runner so `orjson` is installed automatically, for example:
-  `uv run samples/02-agents/conversations/file_history_provider_orjson.py`
-- The serializer benchmark runs without external services.
-- For the optional live Foundry conversation:
-  - `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
-  - `FOUNDRY_MODEL`: The Foundry model deployment name
-  - Azure CLI authentication (`az login`)
-
 **For Cosmos DB samples (`cosmos_history_provider*.py`):**
 - `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
 - `FOUNDRY_MODEL`: The Foundry model deployment name
