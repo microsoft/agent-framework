@@ -505,6 +505,7 @@ def test_hyperlight_integration_skip_reason_reports_missing_hypervisor(monkeypat
             return object()
         return original_find_spec(name)
 
+    monkeypatch.setattr(sys, "version_info", (3, 13, 0))
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(importlib.util, "find_spec", _fake_find_spec)
     monkeypatch.setattr(importlib.metadata, "version", lambda _: "0.0.0")
