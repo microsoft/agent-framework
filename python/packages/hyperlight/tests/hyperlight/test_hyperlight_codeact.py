@@ -672,6 +672,8 @@ async def test_provider_run_tool_reads_writes_files_and_accesses_allowed_url_wit
         run_tool = context.tools[0][1][0]
         assert isinstance(run_tool, HyperlightExecuteCodeTool)
 
+        # The packaged guest on Windows 3.10 exposes a reduced stdlib, so keep
+        # this integration probe to builtins plus low-level modules.
         result = await run_tool.invoke(
             arguments={
                 "code": (
