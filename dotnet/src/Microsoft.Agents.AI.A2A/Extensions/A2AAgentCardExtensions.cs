@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using System.Net.Http;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.Logging;
@@ -29,8 +30,12 @@ public static class A2AAgentCardExtensions
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
     public static AIAgent AsAIAgent(this AgentCard card, HttpClient? httpClient = null, ILoggerFactory? loggerFactory = null)
     {
+        // TODO: Refactor to support interface selection from card.SupportedInterfaces.
+        var url = card.SupportedInterfaces?.FirstOrDefault()?.Url
+            ?? throw new InvalidOperationException("The AgentCard does not have any SupportedInterfaces with a URL.");
+
         // Create the A2A client using the agent URL from the card.
-        var a2aClient = new A2AClient(new Uri(card.Url), httpClient);
+        var a2aClient = new A2AClient(new Uri(url), httpClient);
 
         return a2aClient.AsAIAgent(name: card.Name, description: card.Description, loggerFactory: loggerFactory);
     }
