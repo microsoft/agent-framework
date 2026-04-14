@@ -7,6 +7,7 @@ import copy
 import mimetypes
 import shutil
 import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -24,6 +25,8 @@ from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountHostP
 DEFAULT_HYPERLIGHT_BACKEND = "wasm"
 DEFAULT_HYPERLIGHT_MODULE = "python_guest.path"
 EXECUTE_CODE_INPUT_DESCRIPTION = "Python code to execute in an isolated Hyperlight sandbox."
+OUTPUT_FILE_RETRY_ATTEMPTS = 10
+OUTPUT_FILE_RETRY_DELAY_SECONDS = 0.1
 
 
 class _ExecuteCodeInput(BaseModel):
@@ -345,11 +348,7 @@ def _normalize_output_relative_path(*, output_file: object, root: Path) -> str |
     return "/".join(parts)
 
 
-def _parse_output_files(*, sandbox: Any, output_dir: TemporaryDirectory[str] | None) -> list[Content]:
-    if output_dir is None:
-        return []
-
-    root = Path(output_dir.name)
+def _collect_output_relative_paths(*, sandbox: Any, root: Path) -> set[str]:
     relative_paths: set[str] = set()
 
     if hasattr(sandbox, "get_output_files"):
@@ -366,12 +365,41 @@ def _parse_output_files(*, sandbox: Any, output_dir: TemporaryDirectory[str] | N
         if host_path.is_file():
             relative_paths.add(host_path.relative_to(root).as_posix())
 
-    contents: list[Content] = []
-    for relative_path in sorted(relative_paths):
-        host_path = root.joinpath(*PurePosixPath(relative_path).parts)
-        if host_path.is_file():
-            contents.append(_create_file_content(host_path, relative_path=relative_path))
-    return contents
+    return relative_paths
+
+
+def _parse_output_files(
+    *,
+    sandbox: Any,
+    output_dir: TemporaryDirectory[str] | None,
+    expect_output_files: bool,
+) -> list[Content]:
+    if output_dir is None:
+        return []
+
+    root = Path(output_dir.name)
+
+    for attempt in range(OUTPUT_FILE_RETRY_ATTEMPTS):
+        relative_paths = _collect_output_relative_paths(sandbox=sandbox, root=root)
+        missing_files = expect_output_files and not relative_paths
+        contents: list[Content] = []
+
+        for relative_path in sorted(relative_paths):
+            host_path = root.joinpath(*PurePosixPath(relative_path).parts)
+            if not host_path.is_file():
+                missing_files = True
+                continue
+            try:
+                contents.append(_create_file_content(host_path, relative_path=relative_path))
+            except PermissionError:
+                missing_files = True
+
+        if not missing_files or attempt == OUTPUT_FILE_RETRY_ATTEMPTS - 1:
+            return contents
+
+        time.sleep(OUTPUT_FILE_RETRY_DELAY_SECONDS)
+
+    return []
 
 
 def _build_execution_contents(
@@ -379,6 +407,7 @@ def _build_execution_contents(
     result: Any,
     sandbox: Any,
     output_dir: TemporaryDirectory[str] | None,
+    code: str,
 ) -> list[Content]:
     success = bool(getattr(result, "success", False))
     stdout = str(getattr(result, "stdout", "") or "").replace("\r\n", "\n") or None
@@ -388,7 +417,13 @@ def _build_execution_contents(
     if stdout is not None:
         outputs.append(Content.from_text(stdout, raw_representation=result))
 
-    outputs.extend(_parse_output_files(sandbox=sandbox, output_dir=output_dir))
+    outputs.extend(
+        _parse_output_files(
+            sandbox=sandbox,
+            output_dir=output_dir,
+            expect_output_files="/output" in code,
+        )
+    )
 
     if success:
         if stderr is not None:
@@ -449,7 +484,12 @@ class _SandboxRegistry:
         with entry.lock:
             entry.sandbox.restore(entry.snapshot)
             result = entry.sandbox.run(code=code)
-            return _build_execution_contents(result=result, sandbox=entry.sandbox, output_dir=entry.output_dir)
+            return _build_execution_contents(
+                result=result,
+                sandbox=entry.sandbox,
+                output_dir=entry.output_dir,
+                code=code,
+            )
 
     def _create_entry(self, config: _RunConfig) -> _SandboxEntry:
         input_dir_handle = TemporaryDirectory() if config.filesystem_enabled else None

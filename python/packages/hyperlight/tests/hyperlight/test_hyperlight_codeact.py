@@ -9,6 +9,7 @@ import inspect
 import json
 import sys
 import threading
+import time
 from collections.abc import Awaitable, Callable, Iterator, Mapping, MutableSequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -205,6 +206,26 @@ class _FakeRuntime:
 class _FakeSandboxWithoutOutputListing(_FakeSandbox):
     def get_output_files(self) -> list[str]:
         return []
+
+
+class _FakeSandboxWithDelayedUnlistedOutput(_FakeSandboxWithoutOutputListing):
+    writer_threads: list[threading.Thread] = []
+
+    def run(self, code: str) -> _FakeResult:
+        if 'Path("/output/report.txt").write_text("artifact", encoding="utf-8")' in code:
+            if self.output_dir is None:
+                raise AssertionError("Expected output directory for delayed output test.")
+
+            def _write_file() -> None:
+                time.sleep(0.15)
+                Path(self.output_dir, "report.txt").write_text("artifact", encoding="utf-8")
+
+            writer_thread = threading.Thread(target=_write_file)
+            writer_thread.start()
+            self.writer_threads.append(writer_thread)
+            return _FakeResult(success=True)
+
+        return super().run(code)
 
 
 class _FakeSessionContext:
@@ -444,6 +465,29 @@ async def test_execute_code_tool_collects_output_files_without_backend_listing(
         file_mounts=[FileMount(Path(__file__), "fixtures/source.py")],
     )
     result = await execute_code.invoke(arguments={"code": "create-output"})
+
+    assert result[0].type == "code_interpreter_tool_result"
+    assert result[0].outputs is not None
+    assert any(
+        item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result[0].outputs
+    )
+
+
+async def test_execute_code_tool_waits_for_unlisted_output_files_to_appear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandboxWithDelayedUnlistedOutput.writer_threads.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithDelayedUnlistedOutput)
+
+    execute_code = HyperlightExecuteCodeTool(
+        file_mounts=[FileMount(Path(__file__), "fixtures/source.py")],
+    )
+    result = await execute_code.invoke(
+        arguments={"code": 'Path("/output/report.txt").write_text("artifact", encoding="utf-8")'}
+    )
+
+    for writer_thread in _FakeSandboxWithDelayedUnlistedOutput.writer_threads:
+        writer_thread.join()
 
     assert result[0].type == "code_interpreter_tool_result"
     assert result[0].outputs is not None
