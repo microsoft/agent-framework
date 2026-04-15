@@ -56,6 +56,21 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Throws<ArgumentNullException>(() => new A2AAgent(null!));
 
     [Fact]
+    public void Constructor_WithIA2AClient_InitializesCorrectly()
+    {
+        // Arrange
+        IA2AClient ia2aClient = this._a2aClient;
+
+        // Act
+        var agent = new A2AAgent(ia2aClient, "ia2a-id", "IA2A Agent", "An agent from IA2AClient");
+
+        // Assert
+        Assert.Equal("ia2a-id", agent.Id);
+        Assert.Equal("IA2A Agent", agent.Name);
+        Assert.Equal("An agent from IA2AClient", agent.Description);
+    }
+
+    [Fact]
     public void Constructor_WithDefaultParameters_UsesBaseProperties()
     {
         // Act
@@ -1371,17 +1386,31 @@ public sealed class A2AAgentTests : IDisposable
     #region GetService Method Tests
 
     /// <summary>
-    /// Verify that GetService returns A2AClient when requested.
+    /// Verify that GetService returns IA2AClient when requested.
     /// </summary>
     [Fact]
-    public void GetService_RequestingA2AClient_ReturnsA2AClient()
+    public void GetService_RequestingIA2AClient_ReturnsA2AClient()
+    {
+        // Arrange & Act
+        var result = this._agent.GetService(typeof(IA2AClient));
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Same(this._a2aClient, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null when requesting the concrete A2AClient type
+    /// since the agent now exposes IA2AClient instead.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingConcreteA2AClient_ReturnsNull()
     {
         // Arrange & Act
         var result = this._agent.GetService(typeof(A2AClient));
 
         // Assert
-        Assert.NotNull(result);
-        Assert.Same(this._a2aClient, result);
+        Assert.Null(result);
     }
 
     /// <summary>
@@ -1458,10 +1487,10 @@ public sealed class A2AAgentTests : IDisposable
     /// Verify that GetService calls base.GetService() first but continues to derived logic when base returns null.
     /// </summary>
     [Fact]
-    public void GetService_RequestingA2AClientWithServiceKey_CallsBaseFirstThenDerivedLogic()
+    public void GetService_RequestingIA2AClientWithServiceKey_CallsBaseFirstThenDerivedLogic()
     {
-        // Arrange & Act - Request A2AClient with a service key (base.GetService will return null due to serviceKey)
-        var result = this._agent.GetService(typeof(A2AClient), "some-key");
+        // Arrange & Act - Request IA2AClient with a service key (base.GetService will return null due to serviceKey)
+        var result = this._agent.GetService(typeof(IA2AClient), "some-key");
 
         // Assert
         Assert.NotNull(result);
