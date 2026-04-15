@@ -94,11 +94,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # Append the user agent prefix for telemetry purposes
         append_to_user_agent(self.USER_AGENT_PREFIX)
 
-        self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
-
-        # Append the user agent prefix for telemetry purposes
-        append_to_user_agent(self.USER_AGENT_PREFIX)
-
     async def _handle_create(
         self,
         request: CreateResponse,
