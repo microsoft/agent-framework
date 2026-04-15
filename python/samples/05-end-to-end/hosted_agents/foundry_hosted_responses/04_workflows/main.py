@@ -24,7 +24,7 @@ def round_robin_selector(state: GroupChatState) -> str:
 def main():
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
+        model=os.environ["MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

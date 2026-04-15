@@ -53,7 +53,7 @@ def run_bash(command: str) -> str:
 def main():
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
+        model=os.environ["MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
