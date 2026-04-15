@@ -3,7 +3,6 @@
 from typing import Annotated
 
 import uvicorn
-from pydantic import Field
 
 from dotenv import load_dotenv
 
@@ -18,7 +17,7 @@ from a2a.types import (
 
 from agent_framework import Agent, tool
 from agent_framework.a2a import A2AExecutor
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 
 load_dotenv()
 
@@ -55,7 +54,7 @@ if __name__ == "__main__":
     # --8<-- [end:AgentCard]
 
     agent = Agent(
-        client=OpenAIChatClient(),
+        client=OpenAIChatCompletionClient(),
         name="Europe Travel Agent",
         instructions="You are a helpful Europe Travel Agent. You can help users search and book flights and hotels across Europe."
     )

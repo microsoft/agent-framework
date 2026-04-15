@@ -2,6 +2,8 @@
 
 import logging
 from asyncio import CancelledError
+from functools import partial
+from typing import Any, Mapping
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -9,6 +11,8 @@ from a2a.server.tasks import TaskUpdater
 from a2a.types import FilePart, FileWithBytes, FileWithUri, Part, TaskState, TextPart
 from a2a.utils import new_task
 from agent_framework import (
+    AgentResponseUpdate,
+    AgentSession,
     Message,
     SupportsAgentRun,
 )
@@ -56,9 +60,14 @@ class A2AExecutor(AgentExecutor):
                 instructions="A simple agent that provides food-related information.",
             )
 
-            # Set up the A2A server with the A2AExecutor
+            # Set up the A2A server with the A2AExecutor enabled for streaming
+            # and passing custom keyword arguments to the agent's run method.
             request_handler = DefaultRequestHandler(
-                agent_executor=A2AExecutor(agent),
+                agent_executor=A2AExecutor(
+                    agent,
+                    stream=True,
+                    run_kwargs={"client_kwargs": {"max_tokens": 500}}
+                ),
                 task_store=InMemoryTaskStore(),
             )
 
@@ -69,25 +78,36 @@ class A2AExecutor(AgentExecutor):
 
     Args:
         agent: The AI agent to execute.
+        stream: Whether to stream the agent response. Defaults to False.
+        run_kwargs: Additional keyword arguments to pass to the agent's run method.
     """
 
-    def __init__(self, agent: SupportsAgentRun):
+    def __init__(
+            self,
+            agent: SupportsAgentRun,
+            stream: bool = False,
+            run_kwargs: Mapping[str, Any] | None = None
+    ):
         """Initialize the A2AExecutor with the specified agent.
-
-        Example:
-            .. code-block:: python
-
-                # Set up the A2A server with the A2AExecutor
-                request_handler = DefaultRequestHandler(
-                    agent_executor=A2AExecutor(agent),
-                    task_store=InMemoryTaskStore(),
-                )
 
         Args:
             agent: The AI agent or workflow to execute.
+            stream: Whether to stream the agent response. Defaults to False.
+            run_kwargs: Additional keyword arguments to pass to the agent's run method.
+                Cannot contain 'session' or 'stream' as these are managed by the executor.
+
+        Raises:
+            ValueError: If run_kwargs contains 'session' or 'stream'.
         """
         super().__init__()
         self._agent: SupportsAgentRun = agent
+        self._stream = stream
+        if run_kwargs:
+            if "session" in run_kwargs:
+                raise ValueError("run_kwargs cannot contain 'session' as it is managed by the executor.")
+            if "stream" in run_kwargs:
+                raise ValueError("run_kwargs cannot contain 'stream' as it is managed by the executor.")
+        self._run_kwargs = run_kwargs or {}
 
     @override
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -124,59 +144,77 @@ class A2AExecutor(AgentExecutor):
 
             session = self._agent.create_session(session_id=task.context_id)
 
-            # Run the agent with the message list
-            response = await self._agent.run(query, session=session)
-
-            response_messages = response.messages
-            if not isinstance(response_messages, list):
-                response_messages = [response_messages]
-
-            for message in response_messages:
-                await self.handle_events(message, updater)
+            if self._stream:
+                await self._run_stream(query, session, updater)
+            else:
+                await self._run(query, session, updater)
 
             # Mark as complete
             await updater.complete()
         except CancelledError:
             await updater.update_status(state=TaskState.canceled, final=True)
         except Exception as e:
+            logger.exception("A2AExecutor encountered an error during execution.", exc_info=e)
             await updater.update_status(
                 state=TaskState.failed,
                 final=True,
                 message=updater.new_agent_message([Part(root=TextPart(text=str(e.args)))]),
             )
 
-    async def handle_events(self, message: Message, updater: TaskUpdater) -> None:
-        """Convert agent response messages to A2A protocol events and update task status.
+    async def _run_stream(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
+        """Run the agent in streaming mode and publish updates to the task updater."""
+        response_stream = await self._agent.run(query, session=session, stream=True, **self._run_kwargs)
+        await (
+            response_stream.with_transform_hook(partial(self.handle_events, updater=updater))
+        ).get_final_response()
 
-        Processes Message objects returned by the agent and converts them into A2A protocol format.
+    async def _run(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
+        """Run the agent in non-streaming mode and publish messages to the task updater."""
+        response = await self._agent.run(query, session=session, stream=False, **self._run_kwargs)
+        response_messages = response.messages
+
+        if not isinstance(response_messages, list):
+            response_messages = [response_messages]
+
+        for message in response_messages:
+            await self.handle_events(message, updater)
+
+    async def handle_events(self, item: Message | AgentResponseUpdate, updater: TaskUpdater) -> None:
+        """Convert agent response items (Messages or Updates) to A2A protocol events.
+
+        Processes Message or AgentResponseUpdate objects and converts them into A2A protocol format.
         Handles text, data, and URI content. USER role messages are skipped.
 
         Users can override this method in a subclass to implement custom transformations
-        from their agent's Message format to A2A protocol events.
+        from their agent's output format to A2A protocol events.
 
         Example:
             .. code-block:: python
 
                 class CustomA2AExecutor(A2AExecutor):
-                    async def handle_events(self, message: Message, updater: TaskUpdater) -> None:
-                        # Custom logic to transform message contents
-                        if message.role == "assistant" and message.contents:
-                            parts = [Part(root=TextPart(text=f"Custom: {message.contents[0].text}"))]
+                    async def handle_events(self, item: Message | AgentResponseUpdate, updater: TaskUpdater) -> None:
+                        # Custom logic to transform item contents
+                        if item.role == "assistant" and item.contents:
+                            parts = [Part(root=TextPart(text=f"Custom: {item.contents[0].text}"))]
                             await updater.update_status(
                                 state=TaskState.working,
                                 message=updater.new_agent_message(parts=parts),
                             )
                         else:
-                            await super().handle_events(message, updater)
+                            await super().handle_events(item, updater)
         """
-        if message.role == "user":
+        role = getattr(item, "role", None)
+        if role == "user":
             # This is a user message, we can ignore it in the context of task updates
             return
 
         parts: list[Part] = []
-        metadata = getattr(message, "additional_properties", None)
+        metadata = getattr(item, "additional_properties", None)
 
-        for content in message.contents:
+        # AgentResponseUpdate uses 'contents', Message uses 'contents'
+        contents = getattr(item, "contents", [])
+
+        for content in contents:
             if content.type == "text" and content.text:
                 parts.append(Part(root=TextPart(text=content.text)))
             elif content.type == "data" and content.uri:
@@ -189,7 +227,17 @@ class A2AExecutor(AgentExecutor):
                 logger.warning("A2AExecutor does not yet support content type: %s. Omitted.", content.type)
 
         if parts:
-            await updater.update_status(
-                state=TaskState.working,
-                message=updater.new_agent_message(parts=parts, metadata=metadata),
-            )
+            if isinstance(item, AgentResponseUpdate):
+                # For streaming updates, we send TaskArtifactUpdateEvent via add_artifact
+                await updater.add_artifact(
+                    parts=parts,
+                    artifact_id=item.message_id,
+                    metadata=metadata,
+                    append=True if item.message_id else None,
+                )
+            else:
+                # For final messages, we send TaskStatusUpdateEvent with 'working' state
+                await updater.update_status(
+                    state=TaskState.working,
+                    message=updater.new_agent_message(parts=parts, metadata=metadata),
+                )

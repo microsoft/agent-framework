@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
-import base64
 from asyncio import CancelledError
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from a2a.types import Task, TaskState
 from agent_framework import (
-    Message,
+    AgentResponseUpdate,
     Content,
+    Message,
     SupportsAgentRun,
 )
 from agent_framework._types import AgentResponse
@@ -76,13 +76,43 @@ class TestA2AExecutorInitialization:
     def test_initialization_with_agent_only(self, mock_agent: MagicMock) -> None:
         """Arrange: Create mock agent
         Act: Initialize A2AExecutor with only agent
-        Assert: Executor is created
+        Assert: Executor is created with default values
         """
         # Act
         executor = A2AExecutor(agent=mock_agent)
 
         # Assert
         assert executor._agent is mock_agent
+        assert executor._stream is False
+        assert executor._run_kwargs == {}
+
+    def test_initialization_with_stream_and_kwargs(self, mock_agent: MagicMock) -> None:
+        """Arrange: Create mock agent
+        Act: Initialize A2AExecutor with stream and run_kwargs
+        Assert: Executor is created with specified values
+        """
+        # Arrange
+        run_kwargs = {"temperature": 0.5}
+
+        # Act
+        executor = A2AExecutor(agent=mock_agent, stream=True, run_kwargs=run_kwargs)
+
+        # Assert
+        assert executor._agent is mock_agent
+        assert executor._stream is True
+        assert executor._run_kwargs == run_kwargs
+
+    def test_initialization_with_invalid_run_kwargs(self, mock_agent: MagicMock) -> None:
+        """Arrange: Create mock agent
+        Act: Initialize A2AExecutor with reserved keys in run_kwargs
+        Assert: ValueError is raised
+        """
+        # Act & Assert
+        with raises(ValueError, match="run_kwargs cannot contain 'session'"):
+            A2AExecutor(agent=mock_agent, run_kwargs={"session": "something"})
+
+        with raises(ValueError, match="run_kwargs cannot contain 'stream'"):
+            A2AExecutor(agent=mock_agent, run_kwargs={"stream": True})
 
 
 class TestA2AExecutorCancel:
@@ -353,6 +383,7 @@ class TestA2AExecutorExecute:
             mock_updater.submit = AsyncMock()
             mock_updater.start_work = AsyncMock()
             mock_updater.complete = AsyncMock()
+            mock_updater.update_status = AsyncMock()
             mock_updater_class.return_value = mock_updater
 
             # Act
@@ -361,7 +392,7 @@ class TestA2AExecutorExecute:
             # Assert
             assert executor.handle_events.call_count == 2
 
-    async def test_execute_creates_message_with_user_role(
+    async def test_execute_passes_query_to_run(
         self,
         executor: A2AExecutor,
         mock_request_context: MagicMock,
@@ -370,7 +401,7 @@ class TestA2AExecutorExecute:
     ) -> None:
         """Arrange: Create executor with request
         Act: Call execute method
-        Assert: Message is created with USER role and query text
+        Assert: Query text is passed to run method with default stream and kwargs
         """
         # Arrange
         query_text = "Hello agent"
@@ -398,18 +429,115 @@ class TestA2AExecutorExecute:
             await executor.execute(mock_request_context, mock_event_queue)
 
             # Assert
-            executor._agent.run.assert_called_once()
-            call_args = executor._agent.run.call_args
+            executor._agent.run.assert_called_once_with(
+                query_text, session=executor._agent.create_session(), stream=False
+            )
 
-            # The input should be the new user message
-            user_message = call_args[0][0]
-            assert isinstance(user_message, Message)
-            assert user_message.role == "user"
-            assert user_message.text == query_text
+    async def test_execute_with_stream_enabled(
+        self,
+        mock_agent: MagicMock,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+        mock_task: Task,
+    ) -> None:
+        """Arrange: Create executor with stream=True
+        Act: Call execute method
+        Assert: _run_stream is called and passes stream=True to run
+        """
+        # Arrange
+        executor = A2AExecutor(agent=mock_agent, stream=True)
+        query_text = "Hello agent"
+        mock_request_context.get_user_input = MagicMock(return_value=query_text)
+        mock_request_context.current_task = mock_task
+        mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
+
+        mock_response_stream = AsyncMock()
+        mock_response_stream.with_transform_hook = MagicMock(return_value=mock_response_stream)
+        mock_response_stream.get_final_response = AsyncMock()
+        mock_agent.run = AsyncMock(return_value=mock_response_stream)
+        mock_agent.create_session = MagicMock()
+
+        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.submit = AsyncMock()
+            mock_updater.start_work = AsyncMock()
+            mock_updater.complete = AsyncMock()
+            mock_updater.update_status = AsyncMock()
+            mock_updater_class.return_value = mock_updater
+
+            # Act
+            await executor.execute(mock_request_context, mock_event_queue)
+
+            # Assert
+            mock_agent.run.assert_called_once_with(
+                query_text, session=mock_agent.create_session(), stream=True
+            )
+            mock_response_stream.with_transform_hook.assert_called_once()
+            mock_response_stream.get_final_response.assert_called_once()
+
+    async def test_execute_with_run_kwargs(
+        self,
+        mock_agent: MagicMock,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+        mock_task: Task,
+    ) -> None:
+        """Arrange: Create executor with run_kwargs
+        Act: Call execute method
+        Assert: run_kwargs are passed to run method
+        """
+        # Arrange
+        run_kwargs = {"temperature": 0.5, "max_tokens": 100}
+        executor = A2AExecutor(agent=mock_agent, run_kwargs=run_kwargs)
+        query_text = "Hello agent"
+        mock_request_context.get_user_input = MagicMock(return_value=query_text)
+        mock_request_context.current_task = mock_task
+        mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
+
+        response_message = Message(role="assistant", contents=[Content.from_text(text="Response")])
+        response = MagicMock(spec=AgentResponse)
+        response.messages = [response_message]
+        mock_agent.run = AsyncMock(return_value=response)
+        mock_agent.create_session = MagicMock()
+
+        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.submit = AsyncMock()
+            mock_updater.start_work = AsyncMock()
+            mock_updater.complete = AsyncMock()
+            mock_updater.update_status = AsyncMock()
+            mock_updater_class.return_value = mock_updater
+
+            # Act
+            await executor.execute(mock_request_context, mock_event_queue)
+
+            # Assert
+            mock_agent.run.assert_called_once_with(
+                query_text, session=mock_agent.create_session(), stream=False, **run_kwargs
+            )
 
 
 class TestA2AExecutorHandleEvents:
     """Tests for A2AExecutor.handle_events method."""
+
+    async def test_run_method_with_single_message(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+        """Test the private _run method with a single message (not a list)."""
+        # Arrange
+        query = "test query"
+        session = MagicMock()
+        response_message = Message(role="assistant", contents=[Content.from_text(text="Response")])
+        response = MagicMock(spec=AgentResponse)
+        response.messages = response_message  # Not a list
+        executor._agent.run = AsyncMock(return_value=response)
+        executor.handle_events = AsyncMock()
+
+        # Act
+        await executor._run(query, session, mock_updater)
+
+        # Assert
+        executor.handle_events.assert_called_once_with(response_message, mock_updater)
 
     @fixture
     def mock_updater(self) -> MagicMock:
@@ -611,6 +739,41 @@ class TestA2AExecutorHandleEvents:
         # Assert
         call_kwargs = mock_updater.update_status.call_args.kwargs
         assert call_kwargs["state"] == TaskState.working
+
+    async def test_handle_agent_response_update(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+        """Test handling AgentResponseUpdate (streaming)."""
+        # Arrange
+        update = AgentResponseUpdate(
+            contents=[Content.from_text(text="Streaming chunk")],
+            role="assistant",
+            message_id="msg-1",
+        )
+        mock_updater.add_artifact = AsyncMock()
+
+        # Act
+        await executor.handle_events(update, mock_updater)
+
+        # Assert
+        mock_updater.add_artifact.assert_called_once()
+        call_kwargs = mock_updater.add_artifact.call_args.kwargs
+        assert call_kwargs["artifact_id"] == "msg-1"
+        assert call_kwargs["append"] is True
+
+    async def test_handle_unsupported_content_type(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+        """Test handling messages with unsupported content types."""
+        # Arrange
+        message = Message(
+            contents=[Content(type="unknown", text="Some text")],
+            role="assistant",
+        )
+
+        # Act
+        with patch("agent_framework_a2a._a2a_executor.logger") as mock_logger:
+            await executor.handle_events(message, mock_updater)
+
+        # Assert
+        mock_logger.warning.assert_called_once()
+        mock_updater.update_status.assert_not_called()
 
 
 class TestA2AExecutorIntegration:
