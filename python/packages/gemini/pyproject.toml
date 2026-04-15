@@ -1,18 +1,18 @@
 [project]
-name = "agent-framework-devui"
-description = "Debug UI for Microsoft Agent Framework with OpenAI-compatible API server."
+name = "agent-framework-gemini"
+description = "Google Gemini integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260414"
+version = "1.0.0a260410"
 license-files = ["LICENSE"]
-urls.homepage = "https://github.com/microsoft/agent-framework"
+urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
 urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 4 - Beta",
+  "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -20,29 +20,13 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Framework :: Pydantic :: 2",
   "Typing :: Typed",
 ]
- dependencies = [
-     "agent-framework-core>=1.0.1,<2",
-     "openai>=1.99.0,<3",
-     "opentelemetry-sdk>=1.39.0,<2",
-     "fastapi>=0.115.0,<0.133.1",
-     "uvicorn[standard]>=0.30.0,<0.42.0"
- ]
-
-[project.optional-dependencies]
-dev = [
-    "pytest==9.0.2",
-    "watchdog==6.0.0",
-    "agent-framework-orchestrations==1.0.0b260402",
+dependencies = [
+    "agent-framework-core>=1.0.0,<2.0",
+    "google-genai>=1.0.0,<2.0.0",
 ]
-all = [
-    "pytest==9.0.2",
-    "watchdog==6.0.0",
-]
-
-[project.scripts]
-devui = "agent_framework_devui:main"
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
@@ -57,17 +41,21 @@ fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
 testpaths = 'tests'
-pythonpath = ["tests/devui"]
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
 markers = [
     "integration: marks tests as integration tests that require external services",
+    "flaky: marks tests as flaky and eligible for automatic retry",
 ]
+timeout = 120
 
 [tool.ruff]
 extend = "../../pyproject.toml"
+
+[tool.ruff.lint.extend-per-file-ignores]
+"samples/**" = ["S", "T201"]
 
 [tool.coverage.run]
 omit = [
@@ -76,6 +64,8 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_gemini"]
+exclude = ['tests']
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -90,10 +80,9 @@ show_error_codes = true
 warn_unused_ignores = false
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
-disallow_any_unimported = true
 
 [tool.bandit]
-targets = ["agent_framework_devui"]
+targets = ["agent_framework_gemini"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
@@ -102,11 +91,14 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks.mypy]
 help = "Run MyPy for this package."
-cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_devui"
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_gemini"
 
 [tool.poe.tasks.test]
 help = "Run the default unit test suite for this package."
-cmd = 'pytest -m "not integration" --cov=agent_framework_devui --cov-report=term-missing:skip-covered tests'
+cmd = 'pytest -m "not integration" --cov=agent_framework_gemini --cov-report=term-missing:skip-covered tests'
+
+[tool.flit.module]
+name = "agent_framework_gemini"
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
