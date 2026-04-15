@@ -112,10 +112,12 @@ def group_messages(messages: list[Message]) -> list[dict[str, Any]]:
         ``group_id``, ``kind``, ``start_index``, ``end_index``, ``has_reasoning``.
 
     Note:
-        Callers must ensure ``message_id`` is set on each message before
-        calling this function.  ``annotate_message_groups`` handles this
-        automatically via ``_ensure_message_ids``.
+        When called standalone, this function will assign ``message_id``
+        values to messages that lack them (using list index).  When called
+        via ``annotate_message_groups``, IDs are pre-assigned with absolute
+        indices to avoid collisions across incremental calls.
     """
+    _ensure_message_ids(messages)
     spans: list[dict[str, Any]] = []
     i = 0
     group_index = 0
@@ -443,9 +445,12 @@ def annotate_message_groups(
         if previous_group_index is not None:
             group_index_offset = previous_group_index + 1
 
-    # Assign message IDs over the *full* list before slicing to avoid
-    # index-based collisions across incremental calls (fixes #5237).
-    _ensure_message_ids(messages)
+    # Assign message IDs only to the *new* suffix using absolute indices
+    # so that IDs are globally unique without re-scanning the full list
+    # on every incremental call (fixes #5237).
+    for absolute_index, message in enumerate(messages[start_index:], start=start_index):
+        if not message.message_id:
+            message.message_id = f"msg_{absolute_index}"
 
     spans = group_messages(messages[start_index:])
     for span_index, span in enumerate(spans):
