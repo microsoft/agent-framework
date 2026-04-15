@@ -287,10 +287,6 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         {
             // Discard each event (including InternalCompletionSignals)
         }
-
-        // After clearing, signal the run loop to continue if needed
-        // The run loop will send a new completion signal when it finishes processing from the restored state
-        this.SignalInput();
     }
 
     public async ValueTask StopAsync()

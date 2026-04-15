@@ -20,23 +20,32 @@ internal static class SampleRunner
 {
     /// <summary>
     /// Runs <c>dotnet run --framework net10.0</c> in the given project directory.
+    /// When <paramref name="build"/> is false (the default), <c>--no-build</c> is passed
+    /// to skip building, assuming the project was pre-built.
     /// </summary>
     public static Task<SampleRunResult> RunAsync(
         string projectPath,
         TimeSpan timeout,
+        bool build = false,
         CancellationToken cancellationToken = default)
-        => RunAsync(projectPath, "run --framework net10.0", timeout, inputs: null, inputDelayMs: 0, cancellationToken: cancellationToken);
+        => RunAsync(projectPath, DotnetRunArgs(build), timeout, inputs: null, inputDelayMs: 0, cancellationToken: cancellationToken);
 
     /// <summary>
     /// Runs <c>dotnet run --framework net10.0</c> with stdin inputs.
+    /// When <paramref name="build"/> is false (the default), <c>--no-build</c> is passed
+    /// to skip building, assuming the project was pre-built.
     /// </summary>
     public static Task<SampleRunResult> RunAsync(
         string projectPath,
         TimeSpan timeout,
         string?[]? inputs,
         int inputDelayMs = 2000,
+        bool build = false,
         CancellationToken cancellationToken = default)
-        => RunAsync(projectPath, "run --framework net10.0", timeout, inputs, inputDelayMs, cancellationToken);
+        => RunAsync(projectPath, DotnetRunArgs(build), timeout, inputs, inputDelayMs, cancellationToken);
+
+    private static string DotnetRunArgs(bool build) =>
+        $"run {(build ? "" : "--no-build")} --framework net10.0";
 
     /// <summary>
     /// Runs an arbitrary <c>dotnet</c> command in the given working directory.

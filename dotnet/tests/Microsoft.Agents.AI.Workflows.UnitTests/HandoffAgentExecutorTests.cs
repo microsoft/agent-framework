@@ -29,7 +29,7 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
                                                   emitAgentResponseUpdateEvents: executorSetting,
                                                   HandoffToolCallFilteringBehavior.None);
 
-        HandoffAgentExecutor executor = new(agent, options);
+        HandoffAgentExecutor executor = new(agent, [], options);
         testContext.ConfigureExecutor(executor);
 
         // Act
@@ -57,7 +57,7 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
                                                   emitAgentResponseUpdateEvents: false,
                                                   HandoffToolCallFilteringBehavior.None);
 
-        HandoffAgentExecutor executor = new(agent, options);
+        HandoffAgentExecutor executor = new(agent, [], options);
         testContext.ConfigureExecutor(executor);
 
         // Act
