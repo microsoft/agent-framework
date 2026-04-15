@@ -7,7 +7,7 @@ consulted: {}
 informed: {}
 ---
 
-# FIDES - Deterministic Prompt Injection Defense[Costa'et al., 2025]
+# FIDES - Deterministic Prompt Injection Defense [Costa et al., 2025]
 
 ## Context and Problem Statement
 
@@ -133,6 +133,7 @@ Monitor agent behavior and block suspicious actions post-facto.
 
 ## References
 
+- [Securing AI Agents with Information-Flow Control (Costa et al., 2025)](https://arxiv.org/abs/2505.23643)
 - [Prompt Injection Attack Examples](https://simonwillison.net/2023/Apr/14/worst-that-can-happen/)
 - [Information Flow Control](https://en.wikipedia.org/wiki/Information_flow_(information_theory))
 - [Taint Analysis](https://en.wikipedia.org/wiki/Taint_checking)
