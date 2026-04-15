@@ -39,41 +39,53 @@ See `samples/02-agents/conversations/cosmos_history_provider.py` for a runnable 
 
 ## Azure Cosmos DB Context Provider
 
-The Azure Cosmos DB integration also provides `AzureCosmosContextProvider` for context injection before model invocation. It also writes input and response messages back into the same Cosmos container after each run so the knowledge container can accumulate additional context over time.
+The Azure Cosmos DB integration also provides `CosmosContextProvider` for context injection before model invocation. It also writes input and response messages back into the same Cosmos container after each run so the knowledge container can accumulate additional context over time.
 
 ### Basic Usage Example
 
 ```python
 from azure.identity.aio import DefaultAzureCredential
-from agent_framework_azure_cosmos import AzureCosmosContextProvider, CosmosContextSearchMode
+from agent_framework_azure_cosmos import CosmosContextProvider, CosmosContextSearchMode
 
-provider = AzureCosmosContextProvider(
+provider = CosmosContextProvider(
     endpoint="https://<account>.documents.azure.com:443/",
     credential=DefaultAzureCredential(),
     database_name="agent-framework",
     container_name="knowledge",
-    default_search_mode=CosmosContextSearchMode.FULL_TEXT,
+    embedding_function=my_embedding_function,
     content_field_names=("content", "text"),
 )
 ```
 
 Supported retrieval configuration includes:
 
-- `default_search_mode`: `CosmosContextSearchMode.FULL_TEXT`, `.VECTOR`, or `.HYBRID`
-- `search_mode` override in `before_run(...)` for advanced callers
-- `weights` in `before_run(...)` for hybrid RRF runs
-- `top_k` override in `before_run(...)` for per-run final result count
-- `scan_limit` override in `before_run(...)` for per-run candidate scan size
-- `partition_key` override in `before_run(...)` for per-run Cosmos retrieval scope
+- `search_mode`: `CosmosContextSearchMode.VECTOR` (default), `.FULL_TEXT`, or `.HYBRID`
+- `weights` for hybrid RRF runs (optional, omitted by default)
+- `top_k` for controlling the number of context messages injected
+- `scan_limit` for controlling the number of Cosmos candidate items scanned
+- `partition_key` for scoping Cosmos retrieval
 
-When the provider is attached to an agent through `context_providers=[...]`, the framework uses the provider's constructor defaults for normal agent runs. Advanced callers can still invoke `before_run(...)` directly and override `default_search_mode`, `top_k`, `scan_limit`, and `partition_key` for a single run. RRF weights are only used for hybrid runs:
+All configuration is set on the constructor. The default search mode is `VECTOR`, which requires an `embedding_function`. For full-text mode, set `search_mode=CosmosContextSearchMode.FULL_TEXT`:
 
 ```python
-await provider.before_run(
-    agent=agent,
-    session=session,
-    context=context,
-    state=session.state.setdefault(provider.source_id, {}),
+provider = CosmosContextProvider(
+    endpoint="https://<account>.documents.azure.com:443/",
+    credential=DefaultAzureCredential(),
+    database_name="agent-framework",
+    container_name="knowledge",
+    search_mode=CosmosContextSearchMode.FULL_TEXT,
+)
+```
+
+For hybrid retrieval with optional weights:
+
+```python
+provider = CosmosContextProvider(
+    endpoint="https://<account>.documents.azure.com:443/",
+    credential=DefaultAzureCredential(),
+    database_name="agent-framework",
+    container_name="knowledge",
+    embedding_function=my_embedding_function,
     search_mode=CosmosContextSearchMode.HYBRID,
     weights=[2.0, 1.0],
     top_k=3,
@@ -82,13 +94,11 @@ await provider.before_run(
 )
 ```
 
-`AzureCosmosContextProvider` contributes retrieval context in `before_run(...)` and persists input/response messages in `after_run(...)`.
+`CosmosContextProvider` contributes retrieval context in `before_run(...)` and persists input/response messages in `after_run(...)`.
 
-The provider builds retrieval input by joining the filtered `user` and `assistant` messages from the current run into a single query string. That joined query text is then used for full-text tokenization, vector embedding generation, or hybrid retrieval depending on the resolved search mode.
+The provider builds retrieval input by joining the filtered `user` and `assistant` messages from the current run into a single query string. That joined query text is then used for full-text tokenization, vector embedding generation, or hybrid retrieval depending on the configured search mode.
 
-The provider writes the request/response messages back into the same knowledge container configured by `container_name`. Those writeback documents are tagged with an internal `document_type` marker and excluded from retrieval queries.
-
-Constructor values for `top_k`, `scan_limit`, and `partition_key` remain the provider defaults. Passing those same names to `before_run(...)` only affects that invocation and does not mutate the provider instance for future runs.
+The provider writes the request/response messages back into the same knowledge container configured by `container_name`.
 
 The provider assumes the Cosmos account, database, container, partitioning strategy, and any required Cosmos full-text/vector/hybrid indexing policies already exist and are correctly configured by the application owner. It does not create or manage Cosmos resources, schema, or search policies for you.
 
