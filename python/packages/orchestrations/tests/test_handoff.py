@@ -18,11 +18,16 @@ from agent_framework import (
     ResponseStream,
     WorkflowEvent,
     WorkflowRunState,
+    function_middleware,
     resolve_agent_id,
     tool,
 )
 from agent_framework._clients import BaseChatClient
-from agent_framework._middleware import ChatMiddlewareLayer, FunctionInvocationContext, MiddlewareTermination
+from agent_framework._middleware import (
+    ChatMiddlewareLayer,
+    FunctionInvocationContext,
+    MiddlewareTermination,
+)
 from agent_framework._tools import FunctionInvocationLayer, FunctionTool
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder, HandoffSentEvent
 from pytest import param
@@ -743,6 +748,42 @@ async def test_handoff_clone_preserves_per_service_call_history_persistence() ->
     assert [message.role for message in stored_messages] == ["user", "assistant"]
     assert any(content.type == "function_call" for content in stored_messages[-1].contents)
     assert all(message.role != "tool" for message in stored_messages)
+
+
+async def test_handoff_clone_preserves_all_middleware_types() -> None:
+    """Handoff clones should preserve function and agent middleware from the original agent."""
+
+    @function_middleware
+    async def tracking_middleware(context: FunctionInvocationContext, call_next):
+        await call_next()
+
+    agent_a = Agent(
+        id="agent_a",
+        name="agent_a",
+        client=MockChatClient(name="agent_a", handoff_to="agent_b"),
+        middleware=[tracking_middleware],
+        require_per_service_call_history_persistence=True,
+    )
+    agent_b = Agent(
+        id="agent_b",
+        name="agent_b",
+        client=MockChatClient(name="agent_b"),
+        default_options={"tool_choice": "none"},
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(participants=[agent_a, agent_b], termination_condition=lambda _: False)
+        .with_start_agent(agent_a)
+        .add_handoff(agent_a, [agent_b])
+        .add_handoff(agent_b, [agent_a])
+        .build()
+    )
+
+    executor = workflow.executors[resolve_agent_id(agent_a)]
+    assert isinstance(executor, HandoffAgentExecutor)
+    cloned_middleware = executor._agent.middleware or []
+    assert tracking_middleware in cloned_middleware, "User function middleware should be preserved on cloned agent"
 
 
 def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:

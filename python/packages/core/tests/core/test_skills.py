@@ -296,6 +296,15 @@ class TestDiscoverAndLoadSkills:
         skills = _discover_file_skills([str(tmp_path)])
         assert len(skills) == 0
 
+    def test_skips_skill_with_name_directory_mismatch(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "wrong-dir-name"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: actual-skill-name\ndescription: A skill.\n---\nBody.", encoding="utf-8"
+        )
+        skills = _discover_file_skills([str(tmp_path)])
+        assert len(skills) == 0
+
     def test_deduplicates_skill_names(self, tmp_path: Path) -> None:
         dir1 = tmp_path / "dir1"
         dir2 = tmp_path / "dir2"
@@ -904,6 +913,11 @@ class TestSkill:
         provider = SkillsProvider(skills=[invalid_skill])
         assert len(provider._skills) == 0
 
+    def test_name_with_consecutive_hyphens_skipped(self) -> None:
+        invalid_skill = Skill(name="consecutive--hyphens", description="A skill.", content="Body")
+        provider = SkillsProvider(skills=[invalid_skill])
+        assert len(provider._skills) == 0
+
     def test_name_too_long_skipped(self) -> None:
         invalid_skill = Skill(name="a" * 65, description="A skill.", content="Body")
         provider = SkillsProvider(skills=[invalid_skill])
@@ -1421,6 +1435,11 @@ class TestValidateSkillMetadata:
         assert result is not None
         assert "invalid name" in result
 
+    def test_name_with_consecutive_hyphens(self) -> None:
+        result = _validate_skill_metadata("consecutive--hyphens", "desc", "source")
+        assert result is not None
+        assert "invalid name" in result
+
     def test_single_char_name(self) -> None:
         assert _validate_skill_metadata("a", "desc", "source") is None
 
@@ -1523,6 +1542,15 @@ class TestReadAndParseSkillFile:
         skill_dir = tmp_path / "bad-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("No frontmatter at all.", encoding="utf-8")
+        result = _read_and_parse_skill_file(str(skill_dir))
+        assert result is None
+
+    def test_name_directory_mismatch_returns_none(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "wrong-dir-name"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: actual-skill-name\ndescription: A skill.\n---\nBody.", encoding="utf-8"
+        )
         result = _read_and_parse_skill_file(str(skill_dir))
         assert result is None
 
