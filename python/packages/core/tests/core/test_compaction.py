@@ -952,3 +952,31 @@ async def test_in_memory_history_provider_default_loads_all() -> None:
 
     loaded = await provider.get_messages(session_id="test", state=state)
     assert len(loaded) == 3
+
+
+def test_incremental_annotation_produces_unique_message_ids() -> None:
+    """Incremental calls to annotate_message_groups must not produce colliding message_id values.
+
+    Previously, _ensure_message_ids was called inside group_messages on a
+    *slice* of the full list, so the slice always started at index 0 and
+    produced msg_0, msg_1, ... colliding with IDs assigned in earlier calls.
+
+    Fixes #5237.
+    """
+    messages: list[Message] = []
+
+    # Simulate a multi-turn conversation where messages are appended and
+    # annotated incrementally (as the CompactionProvider does).
+    for turn in range(4):
+        messages.append(Message(role="user", contents=[f"Turn {turn + 1} user"]))
+        messages.append(Message(role="assistant", contents=[f"Turn {turn + 1} assistant"]))
+        annotate_message_groups(messages)
+
+    # Every message should have a message_id
+    assert all(m.message_id for m in messages)
+
+    # All message_ids must be unique
+    ids = [m.message_id for m in messages]
+    assert len(ids) == len(set(ids)), (
+        f"Colliding message_ids detected: {ids}"
+    )

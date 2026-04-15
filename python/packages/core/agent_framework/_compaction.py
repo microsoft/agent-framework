@@ -110,8 +110,12 @@ def group_messages(messages: list[Message]) -> list[dict[str, Any]]:
     Returns:
         Ordered list of lightweight span dicts with keys:
         ``group_id``, ``kind``, ``start_index``, ``end_index``, ``has_reasoning``.
+
+    Note:
+        Callers must ensure ``message_id`` is set on each message before
+        calling this function.  ``annotate_message_groups`` handles this
+        automatically via ``_ensure_message_ids``.
     """
-    _ensure_message_ids(messages)
     spans: list[dict[str, Any]] = []
     i = 0
     group_index = 0
@@ -438,6 +442,10 @@ def annotate_message_groups(
         previous_group_index = _group_index(messages[start_index - 1])
         if previous_group_index is not None:
             group_index_offset = previous_group_index + 1
+
+    # Assign message IDs over the *full* list before slicing to avoid
+    # index-based collisions across incremental calls (fixes #5237).
+    _ensure_message_ids(messages)
 
     spans = group_messages(messages[start_index:])
     for span_index, span in enumerate(spans):
