@@ -289,6 +289,9 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-Workflows/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-Workflows/HostedWorkflows.csproj" />
   </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-McpTools/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-McpTools/HostedMcpTools.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Using-Samples/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Using-Samples/SimpleAgent/SimpleAgent.csproj" />
   </Folder>
