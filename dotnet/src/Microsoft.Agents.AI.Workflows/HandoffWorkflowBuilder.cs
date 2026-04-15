@@ -8,6 +8,10 @@ using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
+using ExecutorFactoryFunc = System.Func<Microsoft.Agents.AI.Workflows.ExecutorConfig<Microsoft.Agents.AI.Workflows.ExecutorOptions>,
+                                        string,
+                                        System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Specialized.HandoffAgentExecutor>>;
+
 namespace Microsoft.Agents.AI.Workflows;
 
 internal static class DiagnosticConstants
@@ -233,6 +237,57 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
         return (TBuilder)this;
     }
 
+    private Dictionary<string, ExecutorBinding> CreateExecutorBindings(WorkflowBuilder builder)
+    {
+        HandoffAgentExecutorOptions options = new(this.HandoffInstructions,
+                                                  this._emitAgentResponseEvents,
+                                                  this._emitAgentResponseUpdateEvents,
+                                                  this._toolCallFilteringBehavior);
+
+        // There are two types of ids being used in this method, and it is critical that we are clear about
+        // which one we are using, and where.
+        // AgentId...: comes from AIAgent.Id, is often an unreadable machine identifier (e.g. a Guid), and is used to address
+        //             the handoffs
+        // ExecutorId: uses AIAgent.GetDescriptiveId() to use a friendlier name in telemetry, and is used for ExecutorBinding,
+        //             which are subsequently used in building the workflow
+
+        // The outgoing dictionary maps from AgentId => ExecutorBinding
+        return this._allAgents.ToDictionary(keySelector: a => a.Id, elementSelector: CreateFactoryBinding);
+
+        ExecutorBinding CreateFactoryBinding(AIAgent agent)
+        {
+            if (!this._targets.TryGetValue(agent, out HashSet<HandoffTarget>? handoffs))
+            {
+                handoffs = new();
+            }
+
+            // Use the ExecutorId as the placeholder id for a (possibly) future-bound factory
+            builder.AddSwitch(HandoffAgentExecutor.IdFor(agent), (SwitchBuilder sb) =>
+            {
+                foreach (HandoffTarget handoff in handoffs)
+                {
+                    sb.AddCase<HandoffState>(state => state?.RequestedHandoffTargetAgentId == handoff.Target.Id, // Use AgentId for target matching
+                                             HandoffAgentExecutor.IdFor(handoff.Target)); // Use ExecutorId in for routing at the workflow level
+                }
+
+                sb.WithDefault(HandoffEndExecutor.ExecutorId);
+            });
+
+            ExecutorFactoryFunc factory =
+                (config, sessionId) => new(
+                    new HandoffAgentExecutor(agent,
+                                             handoffs,
+                                             options));
+
+            // Make sure to use ExecutorId when binding the executor, not AgentId
+            ExecutorBinding binding = factory.BindExecutor(HandoffAgentExecutor.IdFor(agent));
+
+            builder.BindExecutor(binding);
+
+            return binding;
+        }
+    }
+
     /// <summary>
     /// Builds a <see cref="Workflow"/> composed of agents that operate via handoffs, with the next
     /// agent to process messages selected by the current agent.
@@ -240,17 +295,12 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     /// <returns>The workflow built based on the handoffs in the builder.</returns>
     public Workflow Build()
     {
-        HandoffsStartExecutor start = new(this._returnToPrevious);
-        HandoffsEndExecutor end = new(this._returnToPrevious);
+        HandoffStartExecutor start = new(this._returnToPrevious);
+        HandoffEndExecutor end = new(this._returnToPrevious);
         WorkflowBuilder builder = new(start);
 
-        HandoffAgentExecutorOptions options = new(this.HandoffInstructions,
-                                                  this._emitAgentResponseEvents,
-                                                  this._emitAgentResponseUpdateEvents,
-                                                  this._toolCallFilteringBehavior);
-
-        // Create an AgentExecutor for each agent.
-        Dictionary<string, HandoffAgentExecutor> executors = this._allAgents.ToDictionary(a => a.Id, a => new HandoffAgentExecutor(a, options));
+        // Create an factory-based ExecutorBinding for each agent.
+        Dictionary<string, ExecutorBinding> executors = this.CreateExecutorBindings(builder);
 
         // Connect the start executor to the initial agent (or use dynamic routing when ReturnToPrevious is enabled).
         if (this._returnToPrevious)
@@ -263,7 +313,7 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
                     if (agent.Id != initialAgentId)
                     {
                         string agentId = agent.Id;
-                        sb.AddCase<HandoffState>(state => state?.CurrentAgentId == agentId, executors[agentId]);
+                        sb.AddCase<HandoffState>(state => state?.PreviousAgentId == agentId, executors[agentId]);
                     }
                 }
 
@@ -273,13 +323,6 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
         else
         {
             builder.AddEdge(start, executors[this._initialAgent.Id]);
-        }
-
-        // Initialize each executor with its handoff targets to the other executors.
-        foreach (var agent in this._allAgents)
-        {
-            executors[agent.Id].Initialize(builder, end, executors,
-                this._targets.TryGetValue(agent, out HashSet<HandoffTarget>? targets) ? targets : []);
         }
 
         // Build the workflow.
