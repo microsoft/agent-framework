@@ -24,13 +24,13 @@ public static class A2AAgentCardExtensions
     /// </remarks>
     /// <param name="card">The <see cref="AgentCard" /> to use for the agent creation.</param>
     /// <param name="httpClient">The <see cref="HttpClient"/> to use for HTTP requests.</param>
-    /// <param name="loggerFactory">The logger factory for enabling logging within the agent.</param>
     /// <param name="options">
     /// Optional <see cref="A2AClientOptions"/> controlling protocol binding preference.
     /// When not provided, defaults to preferring HTTP+JSON first, with JSON-RPC as fallback.
     /// </param>
+    /// <param name="loggerFactory">The logger factory for enabling logging within the agent.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static AIAgent AsAIAgent(this AgentCard card, HttpClient? httpClient = null, ILoggerFactory? loggerFactory = null, A2AClientOptions? options = null)
+    public static AIAgent AsAIAgent(this AgentCard card, HttpClient? httpClient = null, A2AClientOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
         var a2aClient = A2AClientFactory.Create(card, httpClient, options);
 
