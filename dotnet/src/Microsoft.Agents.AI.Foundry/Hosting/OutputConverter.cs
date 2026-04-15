@@ -161,7 +161,6 @@ internal static class OutputConverter
                         yield return summaryPart.EmitTextDelta(text);
                         yield return summaryPart.EmitTextDone(text);
                         yield return summaryPart.EmitDone();
-                        reasoningBuilder.EmitSummaryPartDone(summaryPart);
 
                         yield return reasoningBuilder.EmitDone();
                         break;
@@ -236,8 +235,8 @@ internal static class OutputConverter
         if (textBuilder is not null)
         {
             var finalText = accumulatedText?.ToString() ?? string.Empty;
-            yield return textBuilder.EmitDone(finalText);
-            yield return messageBuilder.EmitContentDone(textBuilder);
+            yield return textBuilder.EmitTextDone(finalText);
+            yield return textBuilder.EmitDone();
         }
 
         yield return messageBuilder.EmitDone();
