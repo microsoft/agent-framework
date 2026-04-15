@@ -373,7 +373,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 update = AgentResponseUpdate(
                     contents=contents,
                     role="assistant" if item.role == A2ARole.agent else "user",
-                    response_id=str(getattr(item, "message_id", uuid.uuid4())),
+                    response_id=str(getattr(item, "task_id", None) or uuid.uuid4()),
+                    message_id=str(getattr(item, "message_id", uuid.uuid4())),
+                    additional_properties=item.metadata,
                     raw_representation=item,
                 )
                 all_updates.append(update)
@@ -508,6 +510,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     role="assistant",
                     response_id=update_event.task_id,
                     message_id=update_event.artifact.artifact_id,
+                    additional_properties=update_event.artifact.metadata,
                     raw_representation=update_event,
                 )
             ]
@@ -528,6 +531,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 contents=contents,
                 role="assistant" if message.role == A2ARole.agent else "user",
                 response_id=update_event.task_id,
+                additional_properties=message.metadata,
                 raw_representation=update_event,
             )
         ]
