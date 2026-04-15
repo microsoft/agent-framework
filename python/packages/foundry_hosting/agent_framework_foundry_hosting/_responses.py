@@ -20,6 +20,10 @@ from azure.ai.agentserver.responses.models import (
     ComputerScreenshotContent,
     CreateResponse,
     FunctionCallOutputItemParam,
+    FunctionShellAction,
+    FunctionShellCallOutputContent,
+    FunctionShellCallOutputExitOutcome,
+    LocalEnvironmentResource,
     MessageContent,
     MessageContentInputFileContent,
     MessageContentInputImageContent,
@@ -89,12 +93,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
         self._agent = agent
 
-        self.create_handler(self._handle_create)  # pyright: ignore[reportUnknownMemberType]
+        self.response_handler(self._handler)  # pyright: ignore[reportUnknownMemberType]
 
         # Append the user agent prefix for telemetry purposes
         append_to_user_agent(self.USER_AGENT_PREFIX)
 
-    async def _handle_create(
+    async def _handler(
         self,
         request: CreateResponse,
         context: ResponseContext,
@@ -546,24 +550,26 @@ async def _to_outputs(stream: ResponseEventStream, content: Content) -> AsyncIte
         async for event in stream.aoutput_item_custom_tool_call_output(content.call_id or "", output):
             yield event
     elif content.type == "shell_tool_call":
-        action: dict[str, Any] = {"type": "exec", "command": content.commands or []}
+        action = FunctionShellAction(commands=content.commands or [], timeout_ms=0, max_output_length=0)
         async for event in stream.aoutput_item_function_shell_call(
             content.call_id or "",
             action,
-            {},
+            LocalEnvironmentResource(),
             status=content.status or "completed",
         ):
             yield event
     elif content.type == "shell_tool_result":
-        output_items: list[dict[str, Any]] = []
+        output_items: list[FunctionShellCallOutputContent] = []
         if content.outputs:
             for out in content.outputs:
-                output_items.append({
-                    "type": "shell_output",
-                    "stdout": getattr(out, "stdout", "") or "",
-                    "stderr": getattr(out, "stderr", "") or "",
-                    "exit_code": getattr(out, "exit_code", None),
-                })
+                exit_code = getattr(out, "exit_code", None)
+                output_items.append(
+                    FunctionShellCallOutputContent(
+                        stdout=getattr(out, "stdout", "") or "",
+                        stderr=getattr(out, "stderr", "") or "",
+                        outcome=FunctionShellCallOutputExitOutcome(exit_code=exit_code if exit_code is not None else 0),
+                    )
+                )
         async for event in stream.aoutput_item_function_shell_call_output(
             content.call_id or "",
             output_items,
