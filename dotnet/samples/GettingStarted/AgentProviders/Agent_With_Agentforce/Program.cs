@@ -49,4 +49,30 @@ await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Tell me mo
 }
 
 Console.WriteLine();
-Console.WriteLine("\nDone.");
+
+// ---------------------------------------------------------------------------
+// 5. Multi-turn conversation using a shared session
+// ---------------------------------------------------------------------------
+Console.WriteLine("\n=== Multi-turn Conversation ===\n");
+
+// Create a session that will be reused across multiple turns.
+AgentSession session = await agent.CreateSessionAsync();
+
+string[] questions =
+[
+    "Hi, can you help me with my recent order?",
+    "My order number is 12345.",
+    "Can you check the delivery status?",
+];
+
+foreach (string question in questions)
+{
+    Console.WriteLine($"User: {question}");
+
+    // Pass the same session to each call so the agent retains context.
+    AgentResponse turnResponse = await agent.RunAsync(question, session);
+
+    Console.WriteLine($"Agent: {turnResponse}\n");
+}
+
+Console.WriteLine("Done.");
