@@ -1407,9 +1407,7 @@ async def test_streaming_terminal_task_only_emits_unstreamed_artifacts(
 
 async def test_message_response_id_uses_task_id(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test that response_id is derived from task_id, not message_id (#5263)."""
-    mock_a2a_client.add_message_response(
-        "msg-abc", "Hello", task_id="task-xyz"
-    )
+    mock_a2a_client.add_message_response("msg-abc", "Hello", task_id="task-xyz")
 
     response = await a2a_agent.run("Hi")
 
@@ -1426,7 +1424,9 @@ async def test_message_response_id_fallback_without_task_id(
 
     # Should be a valid UUID string, not message_id
     assert response.response_id != "msg-no-task"
-    assert len(response.response_id) > 0
+    from uuid import UUID
+
+    UUID(response.response_id)  # raises ValueError if not a valid UUID
 
 
 async def test_message_metadata_forwarded_as_additional_properties(
@@ -1434,7 +1434,9 @@ async def test_message_metadata_forwarded_as_additional_properties(
 ) -> None:
     """Test that A2AMessage metadata is forwarded as additional_properties (#5240)."""
     mock_a2a_client.add_message_response(
-        "msg-meta", "Hello", task_id="task-meta",
+        "msg-meta",
+        "Hello",
+        task_id="task-meta",
         metadata={"custom_key": "custom_value", "priority": "high"},
     )
 
@@ -1502,9 +1504,7 @@ async def test_message_id_preserved_separately_from_response_id(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
     """Test that message_id is set separately from response_id (#5263)."""
-    mock_a2a_client.add_message_response(
-        "msg-unique", "Hello", task_id="task-parent"
-    )
+    mock_a2a_client.add_message_response("msg-unique", "Hello", task_id="task-parent")
 
     updates: list[AgentResponseUpdate] = []
     async for update in a2a_agent.run("Hi", stream=True):
