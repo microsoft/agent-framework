@@ -164,8 +164,10 @@ class A2AExecutor(AgentExecutor):
     async def _run_stream(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
         """Run the agent in streaming mode and publish updates to the task updater."""
         response_stream = await self._agent.run(query, session=session, stream=True, **self._run_kwargs)
+        streamed_artifact_ids = set()
         await (
-            response_stream.with_transform_hook(partial(self.handle_events, updater=updater))
+            response_stream.with_transform_hook(
+                partial(self.handle_events, updater=updater, streamed_artifact_ids=streamed_artifact_ids))
         ).get_final_response()
 
     async def _run(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
@@ -179,7 +181,12 @@ class A2AExecutor(AgentExecutor):
         for message in response_messages:
             await self.handle_events(message, updater)
 
-    async def handle_events(self, item: Message | AgentResponseUpdate, updater: TaskUpdater) -> None:
+    async def handle_events(
+            self,
+            item: Message | AgentResponseUpdate,
+            updater: TaskUpdater,
+            streamed_artifact_ids: set[str] | None = None
+    ) -> None:
         """Convert agent response items (Messages or Updates) to A2A protocol events.
 
         Processes Message or AgentResponseUpdate objects and converts them into A2A protocol format.
@@ -188,11 +195,22 @@ class A2AExecutor(AgentExecutor):
         Users can override this method in a subclass to implement custom transformations
         from their agent's output format to A2A protocol events.
 
+        Args:
+            item: The agent response item (Message or AgentResponseUpdate) to process.
+            updater: The task updater to publish events to.
+            streamed_artifact_ids: A set of artifact IDs that have already been streamed.
+                Used to prevent duplicate updates for the same artifact.
+
         Example:
             .. code-block:: python
 
                 class CustomA2AExecutor(A2AExecutor):
-                    async def handle_events(self, item: Message | AgentResponseUpdate, updater: TaskUpdater) -> None:
+                    async def handle_events(
+                            self,
+                            item: Message | AgentResponseUpdate,
+                            updater: TaskUpdater,
+                            streamed_artifact_ids: set[str] | None = None
+                    ) -> None:
                         # Custom logic to transform item contents
                         if item.role == "assistant" and item.contents:
                             parts = [Part(root=TextPart(text=f"Custom: {item.contents[0].text}"))]
@@ -233,9 +251,16 @@ class A2AExecutor(AgentExecutor):
                     parts=parts,
                     artifact_id=item.message_id,
                     metadata=metadata,
-                    append=True if item.message_id else None,
+                    append=(
+                        True
+                        if streamed_artifact_ids is not None and item.message_id in (streamed_artifact_ids or set())
+                        else None
+                    ),
                 )
+                if item.message_id and streamed_artifact_ids is not None:
+                    streamed_artifact_ids.add(item.message_id)
             else:
+
                 # For final messages, we send TaskStatusUpdateEvent with 'working' state
                 await updater.update_status(
                     state=TaskState.working,

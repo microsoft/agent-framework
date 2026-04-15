@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 from asyncio import CancelledError
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -740,8 +741,8 @@ class TestA2AExecutorHandleEvents:
         call_kwargs = mock_updater.update_status.call_args.kwargs
         assert call_kwargs["state"] == TaskState.working
 
-    async def test_handle_agent_response_update(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
-        """Test handling AgentResponseUpdate (streaming)."""
+    async def test_handle_agent_response_update_no_streamed_set(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+        """Test handling AgentResponseUpdate (streaming) without a tracking set."""
         # Arrange
         update = AgentResponseUpdate(
             contents=[Content.from_text(text="Streaming chunk")],
@@ -757,6 +758,45 @@ class TestA2AExecutorHandleEvents:
         mock_updater.add_artifact.assert_called_once()
         call_kwargs = mock_updater.add_artifact.call_args.kwargs
         assert call_kwargs["artifact_id"] == "msg-1"
+        assert call_kwargs["append"] is None
+
+    async def test_handle_agent_response_update_first_time(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+        """Test handling AgentResponseUpdate (streaming) for the first time with a tracking set."""
+        # Arrange
+        update = AgentResponseUpdate(
+            contents=[Content.from_text(text="Streaming chunk")],
+            role="assistant",
+            message_id="msg-1",
+        )
+        mock_updater.add_artifact = AsyncMock()
+        streamed_artifact_ids = set()
+
+        # Act
+        await executor.handle_events(update, mock_updater, streamed_artifact_ids=streamed_artifact_ids)
+
+        # Assert
+        mock_updater.add_artifact.assert_called_once()
+        call_kwargs = mock_updater.add_artifact.call_args.kwargs
+        assert call_kwargs["append"] is None
+        assert "msg-1" in streamed_artifact_ids
+
+    async def test_handle_agent_response_update_subsequent_time(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+        """Test handling AgentResponseUpdate (streaming) for subsequent times with a tracking set."""
+        # Arrange
+        update = AgentResponseUpdate(
+            contents=[Content.from_text(text="Next chunk")],
+            role="assistant",
+            message_id="msg-1",
+        )
+        mock_updater.add_artifact = AsyncMock()
+        streamed_artifact_ids = {"msg-1"}
+
+        # Act
+        await executor.handle_events(update, mock_updater, streamed_artifact_ids=streamed_artifact_ids)
+
+        # Assert
+        mock_updater.add_artifact.assert_called_once()
+        call_kwargs = mock_updater.add_artifact.call_args.kwargs
         assert call_kwargs["append"] is True
 
     async def test_handle_unsupported_content_type(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
