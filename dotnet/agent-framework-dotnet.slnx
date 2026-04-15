@@ -288,6 +288,7 @@
     <File Path="samples/02-agents/A2A/README.md" />
     <Project Path="samples/02-agents/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
     <Project Path="samples/02-agents/A2A/A2AAgent_PollingForTaskCompletion/A2AAgent_PollingForTaskCompletion.csproj" />
+    <Project Path="samples/02-agents/A2A/A2AAgent_StreamReconnection/A2AAgent_StreamReconnection.csproj" />
   </Folder>  
   <Folder Name="/Samples/05-end-to-end/">
     <Project Path="samples/05-end-to-end/AgentWithPurview/AgentWithPurview.csproj" />
