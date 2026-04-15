@@ -270,6 +270,7 @@ public sealed class A2AAgent : AIAgent
         // so we manually advance the enumerator within try/catch and yield outside it.
         // The outer try/finally (no catch) is allowed to contain yield return in C#.
         StreamResponse? fallbackResponse = null;
+        bool disposed = false;
 
         try
         {
@@ -283,6 +284,10 @@ public sealed class A2AAgent : AIAgent
                 catch (A2AException ex) when (ex.ErrorCode == A2AErrorCode.UnsupportedOperation)
                 {
                     this._logger.LogA2ASubscribeToTaskFallback(this.Id, this.Name, taskId, ex.Message);
+
+                    // Dispose the enumerator before the fallback call to release the HTTP/SSE connection.
+                    await enumerator.DisposeAsync().ConfigureAwait(false);
+                    disposed = true;
 
                     AgentTask agentTask = await this._a2aClient.GetTaskAsync(new GetTaskRequest { Id = taskId }, cancellationToken).ConfigureAwait(false);
 
@@ -305,7 +310,10 @@ public sealed class A2AAgent : AIAgent
         }
         finally
         {
-            await enumerator.DisposeAsync().ConfigureAwait(false);
+            if (!disposed)
+            {
+                await enumerator.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 
