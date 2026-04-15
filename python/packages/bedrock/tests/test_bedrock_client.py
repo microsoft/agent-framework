@@ -137,3 +137,57 @@ def test_prepare_options_tool_choice_required_includes_any() -> None:
 
     assert "toolConfig" in request
     assert request["toolConfig"]["toolChoice"] == {"any": {}}
+
+
+def test_prepare_options_tool_choice_auto_no_tools_omits_tool_config() -> None:
+    """When tool_choice='auto' but no tools are provided, toolConfig must be omitted.
+
+    Bedrock rejects requests that include toolConfig.toolChoice without
+    toolConfig.tools. Previously, ``tool_config or {}`` would create an
+    empty dict and set toolChoice on it, producing {"toolChoice": {"auto": {}}}
+    with no tools key.
+
+    Fixes #5165.
+    """
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="What is AI?")])]
+
+    options: dict[str, Any] = {
+        "tool_choice": "auto",
+        # No tools provided
+    }
+
+    request = client._prepare_options(messages, options)
+
+    assert "toolConfig" not in request, (
+        f"toolConfig should be omitted when tool_choice='auto' and no tools are provided, got: {request.get('toolConfig')}"
+    )
+
+
+def test_prepare_options_tool_choice_required_no_tools_omits_tool_config() -> None:
+    """When tool_choice='required' but no tools are provided, toolConfig must be omitted.
+
+    Fixes #5165.
+    """
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="What is AI?")])]
+
+    options: dict[str, Any] = {
+        "tool_choice": "required",
+    }
+
+    request = client._prepare_options(messages, options)
+
+    assert "toolConfig" not in request, (
+        f"toolConfig should be omitted when tool_choice='required' and no tools are provided, got: {request.get('toolConfig')}"
+    )
+
+
+def test_prepare_options_no_tools_no_tool_choice_omits_tool_config() -> None:
+    """When neither tools nor tool_choice are provided, toolConfig should be absent."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(messages, {})
+
+    assert "toolConfig" not in request
