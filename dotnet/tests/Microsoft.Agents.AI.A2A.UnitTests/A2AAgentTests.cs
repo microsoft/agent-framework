@@ -674,6 +674,105 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
+    public async Task RunStreamingAsync_WithContinuationToken_WhenSubscribeFailsWithUnsupportedOperation_FallsBackToGetTaskAsync()
+    {
+        // Arrange
+        const string TaskId = "completed-task-123";
+        const string ContextId = "ctx-completed";
+
+        this._handler.StreamingErrorCodeToReturn = A2AErrorCode.UnsupportedOperation;
+        this._handler.AgentTaskToReturn = new AgentTask
+        {
+            Id = TaskId,
+            ContextId = ContextId,
+            Status = new() { State = TaskState.Completed },
+            Artifacts =
+            [
+                new() { ArtifactId = "art-1", Parts = [new Part { Text = "Final result" }] }
+            ]
+        };
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync([], null, options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - should yield one update from GetTaskAsync fallback
+        Assert.Single(updates);
+        var update0 = updates[0];
+        Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Equal(ChatFinishReason.Stop, update0.FinishReason);
+        Assert.IsType<AgentTask>(update0.RawRepresentation);
+        Assert.Equal(TaskId, ((AgentTask)update0.RawRepresentation!).Id);
+
+        // Assert - both SubscribeToTask and GetTask were called
+        Assert.Equal(2, this._handler.CapturedJsonRpcRequests.Count);
+        Assert.Equal("SubscribeToTask", this._handler.CapturedJsonRpcRequests[0].Method);
+        Assert.Equal("GetTask", this._handler.CapturedJsonRpcRequests[1].Method);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithContinuationToken_WhenSubscribeFailsWithUnsupportedOperation_UpdatesSessionAsync()
+    {
+        // Arrange
+        const string TaskId = "completed-task-456";
+        const string ContextId = "ctx-completed-456";
+
+        this._handler.StreamingErrorCodeToReturn = A2AErrorCode.UnsupportedOperation;
+        this._handler.AgentTaskToReturn = new AgentTask
+        {
+            Id = TaskId,
+            ContextId = ContextId,
+            Status = new() { State = TaskState.Completed }
+        };
+
+        var session = await this._agent.CreateSessionAsync();
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
+
+        // Act
+        await foreach (var _ in this._agent.RunStreamingAsync([], session, options))
+        {
+            // Just iterate through to trigger the logic
+        }
+
+        // Assert - session should be updated with the task state from GetTaskAsync
+        var a2aSession = (A2AAgentSession)session;
+        Assert.Equal(ContextId, a2aSession.ContextId);
+        Assert.Equal(TaskId, a2aSession.TaskId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithContinuationToken_WhenSubscribeAndGetTaskBothFail_PropagatesExceptionAsync()
+    {
+        // Arrange
+        const string TaskId = "failed-task-789";
+
+        this._handler.StreamingErrorCodeToReturn = A2AErrorCode.UnsupportedOperation;
+        this._handler.GetTaskErrorCodeToReturn = A2AErrorCode.TaskNotFound;
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
+
+        // Act & Assert - the A2AException from GetTaskAsync should propagate to the caller
+        var exception = await Assert.ThrowsAsync<A2AException>(async () =>
+        {
+            await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
+            {
+            }
+        });
+
+        Assert.Equal(A2AErrorCode.TaskNotFound, exception.ErrorCode);
+
+        // Assert - both SubscribeToTask and GetTask were called
+        Assert.Equal(2, this._handler.CapturedJsonRpcRequests.Count);
+        Assert.Equal("SubscribeToTask", this._handler.CapturedJsonRpcRequests[0].Method);
+        Assert.Equal("GetTask", this._handler.CapturedJsonRpcRequests[1].Method);
+    }
+
+    [Fact]
     public async Task RunStreamingAsync_WithTaskInSessionAndMessage_AddTaskAsReferencesToMessageAsync()
     {
         // Arrange
@@ -1512,6 +1611,23 @@ public sealed class A2AAgentTests : IDisposable
 
         public StreamResponse? StreamingResponseToReturn { get; set; }
 
+        /// <summary>
+        /// When set, streaming requests for SubscribeToTask will return a JSON-RPC error
+        /// with this error code. Used to simulate UnsupportedOperation errors.
+        /// </summary>
+        public A2AErrorCode? StreamingErrorCodeToReturn { get; set; }
+
+        /// <summary>
+        /// Error message to include when <see cref="StreamingErrorCodeToReturn"/> is set.
+        /// </summary>
+        public string StreamingErrorMessage { get; set; } = "Task is in a terminal state and cannot be subscribed to.";
+
+        /// <summary>
+        /// When set, GetTask requests will return a JSON-RPC error with this error code.
+        /// Used to simulate failures in the GetTaskAsync fallback path.
+        /// </summary>
+        public A2AErrorCode? GetTaskErrorCodeToReturn { get; set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             // Capture the request content
@@ -1537,6 +1653,25 @@ public sealed class A2AAgentTests : IDisposable
                 this.CapturedGetTaskRequest = this.CapturedJsonRpcRequest?.Params?.Deserialize<GetTaskRequest>(A2AJsonUtilities.DefaultOptions);
             }
             catch { /* Ignore deserialization errors for non-GetTaskRequest requests */ }
+
+            // Return a JSON-RPC error for GetTask when configured
+            if (this.GetTaskErrorCodeToReturn is not null && this.CapturedJsonRpcRequest?.Method == "GetTask")
+            {
+                var jsonRpcResponse = new JsonRpcResponse
+                {
+                    Id = "response-id",
+                    Error = new JsonRpcError
+                    {
+                        Code = (int)this.GetTaskErrorCodeToReturn.Value,
+                        Message = "Simulated GetTask error."
+                    }
+                };
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(jsonRpcResponse), Encoding.UTF8, "application/json")
+                };
+            }
 
             // Return the pre-configured AgentTask response (for tasks/get)
             if (this.AgentTaskToReturn is not null && this.CapturedJsonRpcRequest?.Method == "GetTask")
@@ -1565,6 +1700,36 @@ public sealed class A2AAgentTests : IDisposable
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(JsonSerializer.Serialize(jsonRpcResponse), Encoding.UTF8, "application/json")
+                };
+            }
+            // Return a streaming JSON-RPC error (e.g., UnsupportedOperation for SubscribeToTask)
+            else if (this.StreamingErrorCodeToReturn is not null
+                     && this.CapturedJsonRpcRequest?.Method is "SubscribeToTask")
+            {
+                var jsonRpcResponse = new JsonRpcResponse
+                {
+                    Id = "response-id",
+                    Error = new JsonRpcError
+                    {
+                        Code = (int)this.StreamingErrorCodeToReturn.Value,
+                        Message = this.StreamingErrorMessage
+                    }
+                };
+
+                var stream = new MemoryStream();
+                var writer = new StreamWriter(stream);
+                await writer.WriteAsync($"data: {JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions)}\n\n");
+#pragma warning disable CA2016 // Forward the 'CancellationToken' parameter to methods; overload doesn't exist downlevel
+                await writer.FlushAsync();
+#pragma warning restore CA2016
+                stream.Position = 0;
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StreamContent(stream)
+                    {
+                        Headers = { { "Content-Type", "text/event-stream" } }
+                    }
                 };
             }
             // Return the pre-configured streaming response
