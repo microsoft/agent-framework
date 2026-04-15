@@ -1,3 +1,5 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
 // Foundry Responses Client REPL
 //
 // Connects to a Foundry Responses agent running on a given endpoint
@@ -66,10 +68,16 @@ while (true)
     Console.ResetColor();
 
     string? input = Console.ReadLine();
-    if (string.IsNullOrWhiteSpace(input)) continue;
+    if (string.IsNullOrWhiteSpace(input))
+    {
+        continue;
+    }
+
     if (input.Equals("quit", StringComparison.OrdinalIgnoreCase) ||
         input.Equals("exit", StringComparison.OrdinalIgnoreCase))
+    {
         break;
+    }
 
     try
     {
