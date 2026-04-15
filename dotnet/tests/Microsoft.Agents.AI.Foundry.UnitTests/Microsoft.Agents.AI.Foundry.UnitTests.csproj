@@ -12,6 +12,7 @@
   <!-- Evaluation tests require net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->
   <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <Compile Remove="FoundryEvalConverterTests.cs" />
+    <Compile Remove="FoundryEvalsTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

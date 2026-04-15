@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -287,5 +288,39 @@ public sealed class WorkflowEvaluationTests
         Assert.DoesNotContain("input-conversation", result.Keys);
         Assert.DoesNotContain("end-conversation", result.Keys);
         Assert.DoesNotContain("end", result.Keys);
+    }
+
+    // ---------------------------------------------------------------
+    // EvaluateAsync integration test
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task EvaluateAsync_WithSequentialWorkflow_ReturnsPerAgentSubResults()
+    {
+        // Arrange: two agents in a sequential workflow
+        var agent1 = new TestEchoAgent(name: "agent-one");
+        var agent2 = new TestEchoAgent(name: "agent-two");
+        var workflow = AgentWorkflowBuilder.BuildSequential(agent1, agent2);
+        var input = new List<ChatMessage> { new(ChatRole.User, "Hello world") };
+
+        var evaluator = new LocalEvaluator(
+            FunctionEvaluator.Create("has_content", (EvalItem item) => item.Conversation.Count > 0));
+
+        // Act
+        await using var run = await InProcessExecution.RunAsync(workflow, input);
+        var results = await run.EvaluateAsync(evaluator, includeOverall: false, includePerAgent: true);
+
+        // Assert — results returned
+        Assert.NotNull(results);
+
+        // Assert — per-agent sub-results are populated
+        Assert.NotNull(results.SubResults);
+        Assert.True(results.SubResults.Count >= 2, $"Expected at least 2 agent sub-results, got {results.SubResults.Count}");
+
+        // Each sub-result should have evaluated items
+        foreach (var (agentId, subResult) in results.SubResults)
+        {
+            Assert.True(subResult.Total > 0, $"Agent '{agentId}' should have at least one evaluated item");
+        }
     }
 }

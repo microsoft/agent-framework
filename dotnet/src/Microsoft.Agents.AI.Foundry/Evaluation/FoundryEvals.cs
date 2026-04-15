@@ -147,7 +147,7 @@ public sealed class FoundryEvals : IAgentEvaluator
 
         // Filter out tool evaluators if no items have tools; auto-add ToolCallAccuracy if tools present
         var evaluators = FilterToolEvaluators(this._evaluatorNames, hasTools);
-        if (hasTools && !evaluators.Any(e => FoundryEvalConverter.ToolEvaluators.Contains(e)))
+        if (hasTools && !evaluators.Any(e => FoundryEvalConverter.ToolEvaluators.Contains(FoundryEvalConverter.ResolveEvaluator(e))))
         {
             evaluators = [.. evaluators, ToolCallAccuracy];
         }
@@ -890,7 +890,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         return result;
     }
 
-    private static string[] FilterToolEvaluators(string[] evaluators, bool hasTools)
+    internal static string[] FilterToolEvaluators(string[] evaluators, bool hasTools)
     {
         if (hasTools)
         {

@@ -166,6 +166,21 @@ public sealed class EvaluationTests
         Assert.Empty(item.Metrics);
     }
 
+    [Fact]
+    public async Task LocalEvaluator_WithCancelledToken_ThrowsOperationCanceledExceptionAsync()
+    {
+        // Arrange
+        var evaluator = new LocalEvaluator(
+            FunctionEvaluator.Create("check", (string _) => true));
+        var items = new List<EvalItem> { CreateItem() };
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => evaluator.EvaluateAsync(items, cancellationToken: cts.Token));
+    }
+
     // ---------------------------------------------------------------
     // FunctionEvaluator tests
     // ---------------------------------------------------------------
