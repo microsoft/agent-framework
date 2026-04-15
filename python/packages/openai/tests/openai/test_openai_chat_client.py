@@ -1015,6 +1015,84 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
         assert len(local_shell_outputs) == 0
 
 
+async def test_tool_loop_store_false_omits_reasoning_items_from_second_request() -> None:
+    """Stateless tool-loop replay must omit response-scoped reasoning items."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response1 = MagicMock()
+    mock_response1.output_parsed = None
+    mock_response1.metadata = {}
+    mock_response1.usage = None
+    mock_response1.id = "resp-1"
+    mock_response1.model = "test-model"
+    mock_response1.created_at = 1000000000
+    mock_response1.status = "completed"
+    mock_response1.finish_reason = "tool_calls"
+    mock_response1.incomplete = None
+    mock_response1.conversation = None
+
+    mock_reasoning_item = MagicMock()
+    mock_reasoning_item.type = "reasoning"
+    mock_reasoning_item.id = "rs_local_only"
+    mock_reasoning_item.content = []
+    mock_reasoning_item.summary = []
+    mock_reasoning_item.encrypted_content = None
+
+    mock_function_call_item = MagicMock()
+    mock_function_call_item.type = "function_call"
+    mock_function_call_item.id = "fc_tool123"
+    mock_function_call_item.call_id = "call_123"
+    mock_function_call_item.name = "get_weather"
+    mock_function_call_item.arguments = '{"location":"Amsterdam"}'
+    mock_function_call_item.status = "completed"
+
+    mock_response1.output = [mock_reasoning_item, mock_function_call_item]
+
+    mock_response2 = MagicMock()
+    mock_response2.output_parsed = None
+    mock_response2.metadata = {}
+    mock_response2.usage = None
+    mock_response2.id = "resp-2"
+    mock_response2.model = "test-model"
+    mock_response2.created_at = 1000000001
+    mock_response2.status = "completed"
+    mock_response2.finish_reason = "stop"
+    mock_response2.incomplete = None
+    mock_response2.conversation = None
+
+    mock_text_item = MagicMock()
+    mock_text_item.type = "message"
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "The weather in Amsterdam is sunny."
+    mock_text_item.content = [mock_text_content]
+    mock_response2.output = [mock_text_item]
+
+    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["What's the weather in Amsterdam?"])],
+            options={
+                "store": False,
+                "tools": [get_weather],
+                "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
+            },
+        )
+
+    assert response.text == "The weather in Amsterdam is sunny."
+    assert mock_create.call_count == 2
+
+    second_call_input = mock_create.call_args_list[1].kwargs["input"]
+    assert not any(item.get("type") == "reasoning" for item in second_call_input)
+
+    function_calls = [item for item in second_call_input if item.get("type") == "function_call"]
+    assert len(function_calls) == 1
+    assert function_calls[0]["id"] == "fc_tool123"
+
+    function_outputs = [item for item in second_call_input if item.get("type") == "function_call_output"]
+    assert len(function_outputs) == 1
+    assert function_outputs[0]["call_id"] == "call_123"
+
+
 def test_response_content_creation_with_shell_call() -> None:
     """Test _parse_response_from_openai with shell_call output."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -3301,6 +3379,164 @@ async def test_prepare_options_store_parameter_handling() -> None:
     options = await client._prepare_options(messages, chat_options)  # type: ignore
     assert "store" not in options
     assert "previous_response_id" not in options
+
+
+async def test_prepare_options_store_false_omits_reasoning_items_for_stateless_replay() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="search for hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_test123",
+                    text="I need to search for hotels",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_test456"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_1",
+                    result="Found 3 hotels in Paris",
+                ),
+            ],
+        ),
+    ]
+
+    options = await client._prepare_options(messages, ChatOptions(store=False))  # type: ignore[arg-type]
+
+    assert not any(item.get("type") == "reasoning" for item in options["input"])
+    assert any(item.get("type") == "function_call" for item in options["input"])
+    assert any(item.get("type") == "function_call_output" for item in options["input"])
+
+
+async def test_prepare_options_with_conversation_id_keeps_reasoning_items() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="search for hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_test123",
+                    text="I need to search for hotels",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_test456"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_1",
+                    result="Found 3 hotels in Paris",
+                ),
+            ],
+        ),
+    ]
+
+    options = await client._prepare_options(
+        messages,
+        ChatOptions(store=False, conversation_id="resp_prev123"),  # type: ignore[arg-type]
+    )
+
+    reasoning_items = [item for item in options["input"] if item.get("type") == "reasoning"]
+    assert len(reasoning_items) == 1
+    assert reasoning_items[0]["id"] == "rs_test123"
+    assert options["previous_response_id"] == "resp_prev123"
+
+
+async def test_prepare_options_with_conversation_id_omits_reasoning_items_for_attributed_replay() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="search for hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_history123",
+                    text="I need to search history for hotels",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_history",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_history456"},
+                ),
+            ],
+            additional_properties={"_attribution": {"source_id": "history", "source_type": "InMemoryHistoryProvider"}},
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_history",
+                    result="Found 3 hotels in Paris",
+                ),
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_live123",
+                    text="I should refine the search for a live follow-up",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_live",
+                    name="search_hotels",
+                    arguments='{"city": "London"}',
+                    additional_properties={"fc_id": "fc_live456"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_live",
+                    result="Found 4 hotels in London",
+                ),
+            ],
+        ),
+    ]
+
+    options = await client._prepare_options(
+        messages,
+        ChatOptions(store=False, conversation_id="resp_prev123"),  # type: ignore[arg-type]
+    )
+
+    reasoning_items = [item for item in options["input"] if item.get("type") == "reasoning"]
+    assert [item["id"] for item in reasoning_items] == ["rs_live123"]
+    assert any(
+        item.get("type") == "function_call" and item.get("call_id") == "call_history" for item in options["input"]
+    )
+    assert any(item.get("type") == "function_call" and item.get("call_id") == "call_live" for item in options["input"])
+    assert any(
+        item.get("type") == "function_call_output" and item.get("call_id") == "call_history"
+        for item in options["input"]
+    )
+    assert any(
+        item.get("type") == "function_call_output" and item.get("call_id") == "call_live" for item in options["input"]
+    )
+    assert options["previous_response_id"] == "resp_prev123"
 
 
 def _create_mock_responses_text_response(*, response_id: str) -> MagicMock:
