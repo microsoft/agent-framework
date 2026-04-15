@@ -17,7 +17,6 @@ class InvocationsHostServer(InvocationAgentServerHost):
         self,
         agent: BaseAgent,
         *,
-        stream: bool = False,
         openapi_spec: Optional[dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
@@ -25,7 +24,6 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
         Args:
             agent: The agent to handle responses for.
-            stream: Whether to stream the responses. Defaults to True.
             openapi_spec: The OpenAPI specification for the server.
             **kwargs: Additional keyword arguments.
 
@@ -40,7 +38,6 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
         append_to_user_agent(self.USER_AGENT_PREFIX)
         self._agent = agent
-        self._stream = stream
         self._sessions: dict[str, AgentSession] = {}
         self.invoke_handler(self._handle_invoke)  # pyright: ignore[reportUnknownMemberType]
 
@@ -49,16 +46,17 @@ class InvocationsHostServer(InvocationAgentServerHost):
         data = await request.json()
         session_id: str = request.state.session_id
 
+        stream = data.get("stream", False)
         user_message = data.get("message", None)
         if user_message is None:
             error = "Missing 'message' in request"
-            if self._stream:
+            if stream:
                 return StreamingResponse(content=error, status_code=400)
             return Response(content=error, status_code=400)
 
         session = self._sessions.setdefault(session_id, AgentSession(session_id=session_id))
 
-        if self._stream:
+        if stream:
 
             async def stream_response() -> AsyncGenerator[str]:
                 async for update in self._agent.run(user_message, session=session, stream=True):
@@ -70,7 +68,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
             )
 
-        response = await self._agent.run([user_message], session=session, stream=self._stream)
+        response = await self._agent.run([user_message], session=session, stream=stream)
         return JSONResponse({
             "response": response.text,
             "session_id": session_id,

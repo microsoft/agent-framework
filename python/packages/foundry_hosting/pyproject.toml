@@ -24,9 +24,9 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.0.0,<2",
-    "azure-ai-agentserver-core==2.0.0a20260410006",
-    "azure-ai-agentserver-responses==1.0.0a20260410006",
-    "azure-ai-agentserver-invocations==1.0.0a20260410006",
+    "azure-ai-agentserver-core==2.0.0a20260414006",
+    "azure-ai-agentserver-responses==1.0.0a20260414006",
+    "azure-ai-agentserver-invocations==1.0.0a20260414006",
     "azure-monitor-opentelemetry-exporter>=1.0.0a1"
 ]
 

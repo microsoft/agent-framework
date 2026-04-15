@@ -1,12 +1,6 @@
 # Basic example of hosting an agent with the `responses` API
 
-## Running the server locally
-
-Run the following command to start the server:
-
-```bash
-python main.py
-```
+This agent only contains an instruction (personal). It's the most basic agent with an LLM and no tools.
 
 ## Interacting with the agent
 
@@ -16,7 +10,11 @@ Send a POST request to the server with a JSON body containing a "message" field 
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Hi"}'
 ```
 
-The server will respond with a JSON object containing the response text and a response ID. You can use this response ID to continue the conversation in subsequent requests.
+### Invoke with `azd`
+
+```bash
+azd ai agent invoke --local "Hi"
+```
 
 ## Multi-turn conversation
 
@@ -26,10 +24,10 @@ To have a multi-turn conversation with the agent, include the previous response 
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "How are you?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
 ```
 
-## Deploying to Foundry
+Invoke with `azd`:
 
-TODO
+```bash
+azd ai agent invoke --local "Hi!" --conversation-id "my_conv"
 
-## Using the deployed agent in Agent Framework
-
-TODO
+azd ai agent invoke --local "How are you?" --conversation-id "my_conv"
+```

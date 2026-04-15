@@ -3,6 +3,7 @@ description: >
   A basic Agent Framework agent hosted by Foundry.
 metadata:
   tags:
+    - Agent Framework
     - AI Agent Hosting
     - Azure AI AgentServer
     - Responses Protocol
@@ -12,4 +13,11 @@ template:
   kind: hosted
   protocols:
     - protocol: responses
-      version: v0.1.0
+      version: 1.0.0
+  environment_variables:
+    - name: MODEL_DEPLOYMENT_NAME
+      value: "{{MODEL_DEPLOYMENT_NAME}}"
+resources:
+  - kind: model
+    id: gpt-4.1-mini
+    name: MODEL_DEPLOYMENT_NAME
