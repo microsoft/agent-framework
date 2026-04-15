@@ -15,7 +15,7 @@ Before running this sample, ensure you have:
 
 1. .NET 10 SDK installed
 2. An Azure OpenAI endpoint configured
-3. A deployment of a chat model (e.g., gpt-4o-mini)
+3. A deployment of a chat model (e.g., gpt-5.4-mini)
 4. Azure CLI installed and authenticated (`az login`)
 
 ## Environment Variables
@@ -26,8 +26,8 @@ Set the following environment variables:
 # Replace with your Azure OpenAI endpoint
 $env:AZURE_OPENAI_ENDPOINT="https://your-openai-resource.openai.azure.com/"
 
-# Optional, defaults to gpt-4o-mini
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+# Optional, defaults to gpt-5.4-mini
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 ## How It Works

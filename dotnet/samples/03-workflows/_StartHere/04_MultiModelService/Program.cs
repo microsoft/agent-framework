@@ -19,7 +19,7 @@ IChatClient anthropic = new Anthropic.AnthropicClient(
 IChatClient openai = new OpenAI.OpenAIClient(
     Environment.GetEnvironmentVariable("OPENAI_API_KEY"))
     .GetResponsesClient()
-    .AsIChatClient("gpt-4o-mini");
+    .AsIChatClient("gpt-5.4-mini");
 
 // Define our agents.
 AIAgent researcher = new ChatClientAgent(google,

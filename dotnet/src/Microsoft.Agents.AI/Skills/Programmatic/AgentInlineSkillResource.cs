@@ -2,6 +2,8 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -40,11 +42,39 @@ internal sealed class AgentInlineSkillResource : AgentSkillResource
     /// <param name="name">The resource name.</param>
     /// <param name="method">A method that produces the resource value when requested.</param>
     /// <param name="description">An optional description of the resource.</param>
-    public AgentInlineSkillResource(string name, Delegate method, string? description = null)
+    /// <param name="serializerOptions">
+    /// Optional <see cref="JsonSerializerOptions"/> used to marshal the delegate's parameters and return value.
+    /// When <see langword="null"/>, <see cref="AIJsonUtilities.DefaultOptions"/> is used.
+    /// </param>
+    public AgentInlineSkillResource(string name, Delegate method, string? description = null, JsonSerializerOptions? serializerOptions = null)
         : base(name, description)
     {
         Throw.IfNull(method);
-        this._function = AIFunctionFactory.Create(method, name: this.Name);
+
+        var options = new AIFunctionFactoryOptions { Name = this.Name, SerializerOptions = serializerOptions };
+        this._function = AIFunctionFactory.Create(method, options);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentInlineSkillResource"/> class from a <see cref="MethodInfo"/>.
+    /// The method is invoked via an <see cref="AIFunction"/> each time <see cref="ReadAsync"/> is called,
+    /// producing a dynamic (computed) value.
+    /// </summary>
+    /// <param name="name">The resource name.</param>
+    /// <param name="method">A method that produces the resource value when requested.</param>
+    /// <param name="target">The target instance for instance methods, or <see langword="null"/> for static methods.</param>
+    /// <param name="description">An optional description of the resource.</param>
+    /// <param name="serializerOptions">
+    /// Optional <see cref="JsonSerializerOptions"/> used to marshal the method's parameters and return value.
+    /// When <see langword="null"/>, <see cref="AIJsonUtilities.DefaultOptions"/> is used.
+    /// </param>
+    public AgentInlineSkillResource(string name, MethodInfo method, object? target, string? description = null, JsonSerializerOptions? serializerOptions = null)
+        : base(name, description)
+    {
+        Throw.IfNull(method);
+
+        var options = new AIFunctionFactoryOptions { Name = this.Name, SerializerOptions = serializerOptions };
+        this._function = AIFunctionFactory.Create(method, target, options);
     }
 
     /// <inheritdoc/>

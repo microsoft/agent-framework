@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Reflection;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -116,6 +118,28 @@ public sealed class AgentInlineSkillScriptTests
     }
 
     [Fact]
+    public async Task RunAsync_WithSerializerOptions_MarshalsCustomTypesAsync()
+    {
+        // Arrange — script accepts a custom type; the JSO includes a source-generated context for it
+        var jso = SkillTestJsonContext.Default.Options;
+        var script = new AgentInlineSkillScript("lookup", (LookupRequest request) => new LookupResponse
+        {
+            Items = ["result-1", "result-2"],
+            TotalCount = request.MaxResults,
+        }, serializerOptions: jso);
+        var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
+        var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "test", MaxResults = 5 }, jso);
+        var args = new AIFunctionArguments { ["request"] = inputJson };
+
+        // Act
+        var result = await script.RunAsync(skill, args, CancellationToken.None);
+
+        // Assert — the custom input type was deserialized and the response was produced
+        Assert.NotNull(result);
+        Assert.Contains("5", result!.ToString()!);
+    }
+
+    [Fact]
     public async Task RunAsync_StringParameter_WorksAsync()
     {
         // Arrange
@@ -129,4 +153,77 @@ public sealed class AgentInlineSkillScriptTests
         // Assert
         Assert.Equal("hello world", result?.ToString());
     }
+
+    [Fact]
+    public void Constructor_MethodInfo_SetsNameAndDescription()
+    {
+        // Arrange
+        var method = typeof(AgentInlineSkillScriptTests).GetMethod(nameof(StaticScriptHelper), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        // Act
+        var script = new AgentInlineSkillScript("method-script", method, target: null, description: "A method script.");
+
+        // Assert
+        Assert.Equal("method-script", script.Name);
+        Assert.Equal("A method script.", script.Description);
+    }
+
+    [Fact]
+    public async Task RunAsync_MethodInfo_StaticMethod_InvokesAndReturnsAsync()
+    {
+        // Arrange
+        var method = typeof(AgentInlineSkillScriptTests).GetMethod(nameof(StaticScriptHelper), BindingFlags.NonPublic | BindingFlags.Static)!;
+        var script = new AgentInlineSkillScript("static-method-script", method, target: null);
+        var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
+        var args = new AIFunctionArguments { ["input"] = "hello" };
+
+        // Act
+        var result = await script.RunAsync(skill, args, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("HELLO", result?.ToString());
+    }
+
+    [Fact]
+    public async Task RunAsync_MethodInfo_InstanceMethod_InvokesAndReturnsAsync()
+    {
+        // Arrange
+        var method = typeof(AgentInlineSkillScriptTests).GetMethod(nameof(InstanceScriptHelper), BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var script = new AgentInlineSkillScript("instance-method-script", method, target: this);
+        var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
+        var args = new AIFunctionArguments { ["input"] = "test" };
+
+        // Act
+        var result = await script.RunAsync(skill, args, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("test-suffix", result?.ToString());
+    }
+
+    [Fact]
+    public void Constructor_MethodInfo_NullMethod_Throws()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            new AgentInlineSkillScript("my-script", null!, target: null));
+    }
+
+    [Fact]
+    public void ParametersSchema_MethodInfo_ContainsParameterNames()
+    {
+        // Arrange
+        var method = typeof(AgentInlineSkillScriptTests).GetMethod(nameof(StaticScriptHelper), BindingFlags.NonPublic | BindingFlags.Static)!;
+        var script = new AgentInlineSkillScript("param-script", method, target: null);
+
+        // Act
+        var schema = script.ParametersSchema;
+
+        // Assert
+        Assert.NotNull(schema);
+        Assert.Contains("input", schema!.Value.GetRawText());
+    }
+
+    private static string StaticScriptHelper(string input) => input.ToUpperInvariant();
+
+    private string InstanceScriptHelper(string input) => input + "-suffix";
 }
