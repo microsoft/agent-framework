@@ -27,5 +27,7 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
 Invoke with `azd`:
 
 ```bash
-azd ai agent invoke --local "How are you?" --conversation-id "REPLACE_WITH_CONVERSATION_ID"
+azd ai agent invoke --local "Hi!" --conversation-id "my_conv"
+
+azd ai agent invoke --local "How are you?" --conversation-id "my_conv"
 ```

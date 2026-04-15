@@ -31,7 +31,7 @@ def main():
         credential=AzureCliCredential(),
     )
 
-    # Foundry Toolbox MCP server
+    # Foundry Toolbox as a MCP tool
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     toolbox_name = os.environ["FOUNDRY_AGENT_TOOLBOX_NAME"]
     toolbox_endpoint = f"{project_endpoint.rstrip('/')}/toolboxes/{toolbox_name}/mcp?api-version=v1"

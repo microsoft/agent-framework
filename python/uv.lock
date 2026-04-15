@@ -514,9 +514,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-ai-agentserver-core", specifier = "==2.0.0a20260414002", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
-    { name = "azure-ai-agentserver-invocations", specifier = "==1.0.0a20260414002", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
-    { name = "azure-ai-agentserver-responses", specifier = "==1.0.0a20260414002", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
+    { name = "azure-ai-agentserver-core", specifier = "==2.0.0a20260414006", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
+    { name = "azure-ai-agentserver-invocations", specifier = "==1.0.0a20260414006", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
+    { name = "azure-ai-agentserver-responses", specifier = "==1.0.0a20260414006", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
     { name = "azure-monitor-opentelemetry-exporter", specifier = ">=1.0.0a1", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" },
 ]
 
@@ -1036,7 +1036,7 @@ wheels = [
 
 [[package]]
 name = "azure-ai-agentserver-core"
-version = "2.0.0a20260414002"
+version = "2.0.0a20260414006"
 source = { registry = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" }
 dependencies = [
     { name = "azure-monitor-opentelemetry-exporter", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1046,26 +1046,26 @@ dependencies = [
     { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "starlette", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-core/2a20260414002/azure_ai_agentserver_core-2.0.0a20260414002.tar.gz", hash = "sha256:4161b6f58f10b97782929eee208863c7a022af42c4b8630f22f0f07dcf150f73" }
+sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-core/2a20260414006/azure_ai_agentserver_core-2.0.0a20260414006.tar.gz", hash = "sha256:b8d6c5d753650b0eae7468f4dce58faec52baec98ad31744fd5a505c8f3f9267" }
 wheels = [
-    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-core/2a20260414002/azure_ai_agentserver_core-2.0.0a20260414002-py3-none-any.whl", hash = "sha256:51d6a5834459a3a2f38fb20351ef5f8f6877371fa6b2b61eadd94e93853b2b40" },
+    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-core/2a20260414006/azure_ai_agentserver_core-2.0.0a20260414006-py3-none-any.whl", hash = "sha256:1e816ee611ecdd82d49aee836d6229fae5db1d2321919691afa77de08ad65119" },
 ]
 
 [[package]]
 name = "azure-ai-agentserver-invocations"
-version = "1.0.0a20260414002"
+version = "1.0.0a20260414006"
 source = { registry = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" }
 dependencies = [
     { name = "azure-ai-agentserver-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-invocations/1a20260414002/azure_ai_agentserver_invocations-1.0.0a20260414002.tar.gz", hash = "sha256:66e7507c0fa6895cb0503abfdcf01c1564c97efa8fffc75db674375ae529812e" }
+sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-invocations/1a20260414006/azure_ai_agentserver_invocations-1.0.0a20260414006.tar.gz", hash = "sha256:5503f95be679d4245d51d7416e4264fdab471a3bb9db633385cc2d5e950f9df2" }
 wheels = [
-    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-invocations/1a20260414002/azure_ai_agentserver_invocations-1.0.0a20260414002-py3-none-any.whl", hash = "sha256:375133ac029c10946960e2afcb03e9cc1d4bda6045e19ba4f80494be6f08fdb2" },
+    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-invocations/1a20260414006/azure_ai_agentserver_invocations-1.0.0a20260414006-py3-none-any.whl", hash = "sha256:ccae5703c38e25a177075fdfca45fe7cac55c39776ecb0f84c12d7438cfda0cf" },
 ]
 
 [[package]]
 name = "azure-ai-agentserver-responses"
-version = "1.0.0a20260414002"
+version = "1.0.0a20260414006"
 source = { registry = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple/" }
 dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1073,9 +1073,9 @@ dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-responses/1a20260414002/azure_ai_agentserver_responses-1.0.0a20260414002.tar.gz", hash = "sha256:d3ba32bd4fc6f7bb03edcdd1a49d728a2887346dbdc2dcbad638ede44bb5e872" }
+sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-responses/1a20260414006/azure_ai_agentserver_responses-1.0.0a20260414006.tar.gz", hash = "sha256:671a93454cae3a0efdc37fc481e4eb45b1356e5339c8d3a8a0a171632ec8cae5" }
 wheels = [
-    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-responses/1a20260414002/azure_ai_agentserver_responses-1.0.0a20260414002-py3-none-any.whl", hash = "sha256:3ba36487c9c5e3207e543cd7cd0a6e2b05325fc66ef1953d47568b96eaf8a756" },
+    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-agentserver-responses/1a20260414006/azure_ai_agentserver_responses-1.0.0a20260414006-py3-none-any.whl", hash = "sha256:70a497fd78a1c139568b15ef1035e0ff8cf5eaa2d512772398c866fa19e9d2ef" },
 ]
 
 [[package]]

@@ -2,6 +2,8 @@
 
 This agent is equipped with a GitHub MCP server and a Foundry Toolbox, which are both remote MCPs.
 
+> Note that there are other ways to interact with Foundry toolboxes. Using it as a MCP is just one of the options.
+
 ## Interacting with the agent
 
 Send a POST request to the server with a JSON body containing a "message" field to interact with the agent. For example:
