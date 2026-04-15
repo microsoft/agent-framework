@@ -9,9 +9,15 @@ informed:
 
 # CodeAct integration through backend-specific context providers and an `execute_code` tool
 
+## Introduction
+
+**CodeAct** is a pattern in which the model writes executable code — rather than emitting a fixed function-call JSON schema — to plan, transform data, and orchestrate tool calls inside a single sandbox invocation. Instead of requiring a separate model round-trip for every tool call, conditional branch, or data transformation, the model produces a short program that runs in a controlled runtime, calls host-provided tools through a `call_tool(...)` bridge, and returns structured results. This reduces latency, lowers token cost, and lets the model express richer multi-step logic that is difficult to capture in a flat tool-call sequence.
+
+Throughout this ADR, **CodeAct** is the primary term. **Code mode** and **programmatic tool calling** refer to the same capability.
+
 ## Context and Problem Statement
 
-We need an architecture design that supports CodeAct in both Python and .NET. This is a necessary capability for the current generation of long-running agents, which need to plan, iterate, transform tool outputs, and execute bounded code inside a controlled runtime instead of pushing every intermediate step back through the model. The design should preserve the same behavioral contract across SDKs, but it does not need to use the same internal extension point in each runtime. We also want to standardize on Hyperlight as the initial backend, using the existing Python package and an anticipated .NET binding package once it is available.
+We need an architecture design that supports CodeAct in both Python and .NET. This is a necessary capability for the current generation of long-running agents, which need to plan, iterate, transform tool outputs, and execute bounded code inside a controlled runtime — for example, filtering a large result set, computing derived values, or chaining several tool calls with conditional logic — instead of requiring a separate model round-trip for each of those steps. The design should preserve the same behavioral contract across SDKs, but it does not need to use the same internal extension point in each runtime. We also want to standardize on Hyperlight as the initial backend, using the existing Python package and an anticipated .NET binding package once it is available.
 
 Throughout this ADR, **CodeAct** is the primary term. **Code mode** and **programmatic tool calling** refer to the same capability. This ADR uses **CodeAct** consistently.
 
@@ -60,7 +66,7 @@ The agent's direct tool surface remains separate. If a tool should be available 
 - Good, because a provider-owned CodeAct tool registry avoids mutating or inferring the agent's direct tool surface and can work consistently in both SDKs.
 - Good, because the same conceptual design can remain open to `HyperlightCodeActProvider`, a future `MontyCodeActProvider`, and other backend-specific providers over time.
 - Good, because `execute_code` can evolve into multiple backend-specific runtime modes rather than being hard-wired to one Python-plus-tools mode.
-- Bad, because it is a bolt-on, which might make it less runtime efficient.
+- Bad, because the provider indirection adds per-run overhead — snapshotting the tool registry, dispatching lifecycle hooks, and building instructions — that a deeper integration point could skip. In practice this overhead is negligible relative to model inference latency and sandbox startup cost.
 
 ### Option 2: Implement CodeAct as a dedicated chat-client decorator/wrapper
 

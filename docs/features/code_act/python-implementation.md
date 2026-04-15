@@ -23,6 +23,8 @@ Implementation-free outcome:
 
 ## What is the problem being solved?
 
+The cross-SDK problem statement and decision rationale live in the [ADR](../../decisions/0024-codeact-integration.md). The items below narrow that statement to Python-specific design concerns:
+
 - Today, the easiest way to prototype CodeAct is to infer or reshape the agent's direct tool surface, which is fragile and hard to reason about.
 - In Python, inferring a CodeAct tool surface from generic agent tool configuration is fragile and hard to reason about.
 - There is no first-class Python design that simultaneously covers Hyperlight-backed CodeAct now, future backend-specific providers such as Monty, and both tool-enabled and interpreter modes.
@@ -229,6 +231,8 @@ Optional lifecycle hook:
 - adding `execute_code` to the run through `SessionContext.extend_tools(...)`,
 - and wiring any backend-specific execution state needed for the run.
 
+These steps run on every invocation rather than once at construction time because the provider supports CRUD mutations between runs, concurrent runs need independent snapshots, and the effective approval and instructions depend on the tool registry state captured at run start. When the tool registry and capability configuration are fixed for the lifetime of the agent, the manual wiring pattern (see `codeact_manual_wiring.py`) can be used instead, which passes the tool and instructions directly to the `Agent` constructor and avoids the per-run provider lifecycle entirely.
+
 If the provider stores anything in `state`, that value must stay JSON-serializable.
 
 Mutating the provider after `before_run(...)` has captured a run-scoped snapshot is allowed, but it affects subsequent runs only. Provider implementations should synchronize state capture and CRUD operations so shared provider instances remain safe across concurrent runs.
@@ -347,13 +351,35 @@ agent = Agent(
 ### Standard code interpreter mode
 
 ```python
-code_interpreter = HyperlightCodeActProvider(
+codeact = HyperlightCodeActProvider(
     workspace_root="./data",
 )
 
 agent = Agent(
     client=client,
     name="interpreter",
-    context_providers=[code_interpreter],
+    context_providers=[codeact],
+)
+```
+
+### Manual static wiring (no per-run provider lifecycle)
+
+When the tool registry and capability configuration are fixed, the provider lifecycle can be skipped entirely. Build the `execute_code` tool and instructions once and pass them directly to the agent:
+
+```python
+execute_code = HyperlightExecuteCodeTool(
+    tools=[fetch_docs, query_data],
+    workspace_root="./workdir",
+    allowed_domains=[("api.github.com", "GET")],
+    approval_mode="never_require",
+)
+
+codeact_instructions = execute_code.build_instructions(tools_visible_to_model=False)
+
+agent = Agent(
+    client=client,
+    name="assistant",
+    instructions=f"You are a helpful assistant.\n\n{codeact_instructions}",
+    tools=[send_email, execute_code],
 )
 ```
