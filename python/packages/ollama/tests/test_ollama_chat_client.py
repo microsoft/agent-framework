@@ -439,7 +439,9 @@ async def test_cmc_fails_when_allow_multiple_tool_calls_leaks(
     This reproduces the bug where HandoffBuilder sets allow_multiple_tool_calls=False,
     and the option leaks through to AsyncClient.chat() as an unexpected keyword argument.
     """
-    mock_chat.side_effect = TypeError("AsyncClient.chat() got an unexpected keyword argument 'allow_multiple_tool_calls'")
+    mock_chat.side_effect = TypeError(
+        "AsyncClient.chat() got an unexpected keyword argument 'allow_multiple_tool_calls'"
+    )
     chat_history.append(Message(contents=["hello world"], role="user"))
 
     ollama_client = OllamaChatClient()
