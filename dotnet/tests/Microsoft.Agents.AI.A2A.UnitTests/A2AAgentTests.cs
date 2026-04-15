@@ -1717,11 +1717,14 @@ public sealed class A2AAgentTests : IDisposable
                 };
 
                 var stream = new MemoryStream();
-                var writer = new StreamWriter(stream);
-                await writer.WriteAsync($"data: {JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions)}\n\n");
+                using (var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true))
+                {
+                    await writer.WriteAsync($"data: {JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions)}\n\n");
 #pragma warning disable CA2016 // Forward the 'CancellationToken' parameter to methods; overload doesn't exist downlevel
-                await writer.FlushAsync();
+                    await writer.FlushAsync();
 #pragma warning restore CA2016
+                }
+
                 stream.Position = 0;
 
                 return new HttpResponseMessage(HttpStatusCode.OK)
@@ -1742,11 +1745,14 @@ public sealed class A2AAgentTests : IDisposable
                 };
 
                 var stream = new MemoryStream();
-                var writer = new StreamWriter(stream);
-                await writer.WriteAsync($"data: {JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions)}\n\n");
+                using (var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true))
+                {
+                    await writer.WriteAsync($"data: {JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions)}\n\n");
 #pragma warning disable CA2016 // Forward the 'CancellationToken' parameter to methods; overload doesn't exist downlevel
-                await writer.FlushAsync();
+                    await writer.FlushAsync();
 #pragma warning restore CA2016
+                }
+
                 stream.Position = 0;
 
                 return new HttpResponseMessage(HttpStatusCode.OK)

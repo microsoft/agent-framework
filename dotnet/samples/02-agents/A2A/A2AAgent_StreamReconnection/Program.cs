@@ -49,7 +49,7 @@ if (continuationToken is not null)
     {
         if (!string.IsNullOrEmpty(update.Text))
         {
-            Console.WriteLine(update);
+            Console.WriteLine(update.Text);
         }
     }
 }
