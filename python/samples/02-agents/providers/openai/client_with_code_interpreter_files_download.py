@@ -39,8 +39,11 @@ def extract_file_citations(result) -> list[dict[str, str]]:
             for ann in content.annotations:
                 if ann.get("type") == "citation" and ann.get("file_id"):
                     props = ann.get("additional_properties", {})
+                    container_id = props.get("container_id")
+                    if not container_id:
+                        continue
                     citations.append({
-                        "container_id": props.get("container_id", ""),
+                        "container_id": container_id,
                         "file_id": ann["file_id"],
                         "filename": ann.get("url", ann["file_id"]),
                     })
