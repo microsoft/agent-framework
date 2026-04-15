@@ -45,7 +45,7 @@ def extract_file_citations(result) -> list[dict[str, str]]:
                     citations.append({
                         "container_id": container_id,
                         "file_id": ann["file_id"],
-                        "filename": ann.get("url", ann["file_id"]),
+                        "filename": ann.get("url") or "",
                     })
     return citations
 
