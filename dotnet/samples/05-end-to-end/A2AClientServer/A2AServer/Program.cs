@@ -38,14 +38,15 @@ IConfigurationRoot configuration = new ConfigurationBuilder()
 string? apiKey = configuration["OPENAI_API_KEY"];
 string model = configuration["OPENAI_CHAT_MODEL_NAME"] ?? "gpt-5.4-mini";
 string? endpoint = configuration["AZURE_AI_PROJECT_ENDPOINT"];
+string[] agentUrls = (app.Configuration["urls"] ?? "http://localhost:5000").Split(';');
 
 var invoiceQueryPlugin = new InvoiceQuery();
 IList<AITool> tools =
-    [
+[
     AIFunctionFactory.Create(invoiceQueryPlugin.QueryInvoices),
     AIFunctionFactory.Create(invoiceQueryPlugin.QueryByTransactionId),
     AIFunctionFactory.Create(invoiceQueryPlugin.QueryByInvoiceId)
-    ];
+];
 
 AIAgent hostA2AAgent;
 AgentCard hostA2AAgentCard;
@@ -54,9 +55,9 @@ if (!string.IsNullOrEmpty(endpoint) && !string.IsNullOrEmpty(agentName))
 {
     (hostA2AAgent, hostA2AAgentCard) = agentType.ToUpperInvariant() switch
     {
-        "INVOICE" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentName, tools),
-        "POLICY" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentName),
-        "LOGISTICS" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentName),
+        "INVOICE" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentName, agentUrls, tools),
+        "POLICY" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentName, agentUrls),
+        "LOGISTICS" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentName, agentUrls),
         _ => throw new ArgumentException($"Unsupported agent type: {agentType}"),
     };
 }
@@ -68,7 +69,7 @@ else if (!string.IsNullOrEmpty(apiKey))
             agentType, model, apiKey, "InvoiceAgent",
             """
             You specialize in handling queries related to invoices.
-            """, tools),
+            """, agentUrls, tools),
         "POLICY" => await HostAgentFactory.CreateChatCompletionHostAgentAsync(
             agentType, model, apiKey, "PolicyAgent",
             """
@@ -84,7 +85,7 @@ else if (!string.IsNullOrEmpty(apiKey))
             resolution in SAP CRM and notify the customer via email within 2 business days, referencing the
             original invoice and the credit memo number. Use the 'Formal Credit Notification' email
             template."
-            """),
+            """, agentUrls),
         "LOGISTICS" => await HostAgentFactory.CreateChatCompletionHostAgentAsync(
             agentType, model, apiKey, "LogisticsAgent",
             """
@@ -95,7 +96,7 @@ else if (!string.IsNullOrEmpty(apiKey))
             Shipment number: SHPMT-SAP-001
             Item: TSHIRT-RED-L
             Quantity: 900
-            """),
+            """, agentUrls),
         _ => throw new ArgumentException($"Unsupported agent type: {agentType}"),
     };
 }
@@ -104,10 +105,9 @@ else
     throw new ArgumentException("Either A2AServer:ApiKey or A2AServer:ConnectionString & agentName must be provided");
 }
 
-var a2aTaskManager = app.MapA2A(
+app.MapA2A(
     hostA2AAgent,
     path: "/",
-    agentCard: hostA2AAgentCard,
-    taskManager => app.MapWellKnownAgentCard(taskManager, "/"));
+    agentCard: hostA2AAgentCard);
 
 await app.RunAsync();
