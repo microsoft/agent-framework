@@ -92,7 +92,7 @@ If you omit the `agents:` parameter entirely, the aggregator defaults to a singl
 ## Running the sample
 
 ```bash
-cd dotnet/samples/DevUIIntegration
+cd dotnet/samples/05-end-to-end/DevUIAspireIntegration
 aspire run
 ```
 

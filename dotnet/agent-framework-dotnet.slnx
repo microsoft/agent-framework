@@ -40,11 +40,11 @@
     <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
   </Folder>
-  <Folder Name="/Samples/DevUIIntegration/">
-    <Project Path="samples/DevUIIntegration/DevUIIntegration.AppHost/DevUIIntegration.AppHost.csproj" />
-    <Project Path="samples/DevUIIntegration/DevUIIntegration.ServiceDefaults/DevUIIntegration.ServiceDefaults.csproj" />
-    <Project Path="samples/DevUIIntegration/EditorAgent/EditorAgent.csproj" />
-    <Project Path="samples/DevUIIntegration/WriterAgent/WriterAgent.csproj" />
+  <Folder Name="/Samples/05-end-to-end/DevUIAspireIntegration/">
+    <Project Path="samples/05-end-to-end/DevUIAspireIntegration/DevUIIntegration.AppHost/DevUIIntegration.AppHost.csproj" />
+    <Project Path="samples/05-end-to-end/DevUIAspireIntegration/DevUIIntegration.ServiceDefaults/DevUIIntegration.ServiceDefaults.csproj" />
+    <Project Path="samples/05-end-to-end/DevUIAspireIntegration/EditorAgent/EditorAgent.csproj" />
+    <Project Path="samples/05-end-to-end/DevUIAspireIntegration/WriterAgent/WriterAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/Agents/">
     <File Path="samples/02-agents/Agents/README.md" />
