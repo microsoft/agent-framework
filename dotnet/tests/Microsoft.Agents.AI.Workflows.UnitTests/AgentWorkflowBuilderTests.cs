@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -11,7 +12,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 #pragma warning disable SYSLIB1045 // Use GeneratedRegex
 #pragma warning disable RCS1186 // Use Regex instance instead of static method
@@ -52,6 +55,51 @@ public class AgentWorkflowBuilderTests
 
         var noDescriptionAgent = new ChatClientAgent(new MockChatClient(delegate { return new(); }));
         Assert.Throws<ArgumentException>("to", () => handoffs.WithHandoff(agent, noDescriptionAgent));
+
+        var emptyDescriptionAgent = new MockChatClient(delegate { return new(); }).AsAIAgent(description: "");
+        Assert.Throws<ArgumentException>("to", () => handoffs.WithHandoff(agent, emptyDescriptionAgent));
+
+        var emptyNameAgent = new MockChatClient(delegate { return new(); }).AsAIAgent(name: "");
+        Assert.Throws<ArgumentException>("to", () => handoffs.WithHandoff(agent, emptyNameAgent));
+    }
+
+    private sealed class NullLogger : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull
+        {
+            return null;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return false;
+        }
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+        }
+    }
+
+    [Fact]
+    public void BuildHandoffs_DelegatingAIAgent_DoesNotThrow()
+    {
+        DoubleEchoAgent agent = new("agent");
+        HandoffWorkflowBuilder handoffs = AgentWorkflowBuilder.CreateHandoffBuilderWith(agent);
+        Assert.NotNull(handoffs);
+
+        ChatClientAgent instructionsOnlyAgent = new MockChatClient(delegate { return new(); }).AsAIAgent(instructions: "instructions");
+        LoggingAgent delegatingAgent = new(instructionsOnlyAgent, new NullLogger());
+
+        handoffs.WithHandoff(agent, delegatingAgent);
+
+        // get the _targets field from the HandoffWorkflowBuilder (need to use the base type)
+        FieldInfo field = typeof(HandoffWorkflowBuilder).BaseType!.GetField("_targets", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Dictionary<AIAgent, HashSet<HandoffTarget>>? targets = field.GetValue(handoffs) as Dictionary<AIAgent, HashSet<HandoffTarget>>;
+
+        targets.Should().NotBeNull();
+
+        HandoffTarget target = targets[agent].Single();
+        target.Reason.Should().Be("instructions");
     }
 
     [Fact]
