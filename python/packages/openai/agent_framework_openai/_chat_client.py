@@ -1595,9 +1595,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if isinstance(value, BaseModel):
             return value.model_dump(mode="json", exclude_none=True)
         if isinstance(value, Mapping):
-            return {str(key): RawOpenAIChatClient._serialize_provider_payload(item) for key, item in value.items()}
+            return {str(key): RawOpenAIChatClient._serialize_provider_payload(item) for key, item in value.items()}  # type: ignore[reportUnknownVariableType]
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-            return [RawOpenAIChatClient._serialize_provider_payload(item) for item in value]
+            return [RawOpenAIChatClient._serialize_provider_payload(item) for item in value]  # type: ignore[reportUnknownVariableType]
         return value
 
     @staticmethod
