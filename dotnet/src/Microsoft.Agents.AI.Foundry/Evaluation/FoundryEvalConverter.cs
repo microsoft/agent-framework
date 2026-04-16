@@ -238,7 +238,7 @@ internal static class FoundryEvalConverter
     /// </summary>
     internal static string ResolveEvaluator(string name)
     {
-        if (name.StartsWith("builtin.", StringComparison.Ordinal))
+        if (name.StartsWith("builtin.", StringComparison.OrdinalIgnoreCase))
         {
             return name;
         }
@@ -254,7 +254,7 @@ internal static class FoundryEvalConverter
     }
 
     // Agent evaluators that accept query/response as conversation arrays.
-    internal static readonly HashSet<string> AgentEvaluators = new(StringComparer.Ordinal)
+    internal static readonly HashSet<string> AgentEvaluators = new(StringComparer.OrdinalIgnoreCase)
     {
         "builtin.intent_resolution",
         "builtin.task_adherence",
@@ -268,7 +268,7 @@ internal static class FoundryEvalConverter
     };
 
     // Evaluators that additionally require tool_definitions.
-    internal static readonly HashSet<string> ToolEvaluators = new(StringComparer.Ordinal)
+    internal static readonly HashSet<string> ToolEvaluators = new(StringComparer.OrdinalIgnoreCase)
     {
         "builtin.tool_call_accuracy",
         "builtin.tool_selection",
@@ -278,7 +278,7 @@ internal static class FoundryEvalConverter
     };
 
     // Short name → fully-qualified name mapping.
-    internal static readonly Dictionary<string, string> BuiltinEvaluators = new(StringComparer.Ordinal)
+    internal static readonly Dictionary<string, string> BuiltinEvaluators = new(StringComparer.OrdinalIgnoreCase)
     {
         // Agent behavior
         ["intent_resolution"] = "builtin.intent_resolution",

@@ -4,6 +4,7 @@ using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
@@ -222,6 +223,16 @@ public sealed class FoundryEvals : IAgentEvaluator
         var fetchResult = await this.FetchOutputItemResultsAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
 
         // Pad MEAI results if we got fewer than items (e.g. partial output)
+        if (fetchResult.MeaiResults.Count < items.Count)
+        {
+            Trace.TraceWarning(
+                "Foundry returned {0} result(s) but {1} item(s) were submitted. " +
+                "Padding {2} missing item(s) with empty results — these items will count as failed.",
+                fetchResult.MeaiResults.Count,
+                items.Count,
+                items.Count - fetchResult.MeaiResults.Count);
+        }
+
         while (fetchResult.MeaiResults.Count < items.Count)
         {
             fetchResult.MeaiResults.Add(new EvaluationResult());
