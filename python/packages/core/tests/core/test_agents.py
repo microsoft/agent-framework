@@ -2773,8 +2773,7 @@ async def test_chat_agent_as_tool_inner_approval_executes_tool() -> None:
         # Verify the outer tool result has the correct call_id matching the original tool call.
         messages = session.state.get("in_memory", {}).get("messages", [])
         assert any(
-            getattr(content, "type", None) == "function_result"
-            and getattr(content, "call_id", None) == "outer_call_1"
+            getattr(content, "type", None) == "function_result" and getattr(content, "call_id", None) == "outer_call_1"
             for message in messages
             for content in (getattr(message, "contents", None) or [])
         ), "Expected persisted outer tool result with call_id='outer_call_1' in session history"

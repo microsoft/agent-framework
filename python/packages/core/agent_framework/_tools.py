@@ -1368,9 +1368,11 @@ async def _auto_invoke_function(
                 # we assume it is a hosted tool
                 return function_call_content
             # Re-invoke through the parent sub-agent tool with approval context.
-            parent_tool_call_id = function_call_content.additional_properties.get(
-                "_parent_tool_call_id"
-            ) or function_call_content.id or function_call_content.call_id
+            parent_tool_call_id = (
+                function_call_content.additional_properties.get("_parent_tool_call_id")
+                or function_call_content.id
+                or function_call_content.call_id
+            )
             function_call_content = Content(
                 type="function_call",
                 name=parent_tool_name,
