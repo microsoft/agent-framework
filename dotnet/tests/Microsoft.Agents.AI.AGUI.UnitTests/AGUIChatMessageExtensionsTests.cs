@@ -565,6 +565,59 @@ public sealed class AGUIChatMessageExtensionsTests
     }
 
     [Fact]
+    public void AsAGUIMessages_WithMixedReasoningAndTextContent_EmitsBothMessages()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("Thinking about the answer.") { ProtectedData = "enc-tok" },
+                new TextContent("The answer is 42.")
+            ]) { MessageId = "msg-mixed" }
+        ];
+
+        // Act
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        Assert.Equal(2, aguiMessages.Count);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(aguiMessages[0]);
+        Assert.Equal("msg-mixed", reasoningMessage.Id);
+        Assert.Equal("Thinking about the answer.", reasoningMessage.Content);
+        Assert.Equal("enc-tok", reasoningMessage.EncryptedValue);
+        var assistantMessage = Assert.IsType<AGUIAssistantMessage>(aguiMessages[1]);
+        Assert.Equal("msg-mixed", assistantMessage.Id);
+        Assert.Equal("The answer is 42.", assistantMessage.Content);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithReasoningAndToolCallInSameMessage_EmitsBothMessages()
+    {
+        // Arrange
+        var arguments = new Dictionary<string, object?> { ["location"] = "Seattle" };
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("I should look up the weather."),
+                new FunctionCallContent("call-1", "GetWeather", arguments)
+            ]) { MessageId = "msg-toolcall" }
+        ];
+
+        // Act
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        Assert.Equal(2, aguiMessages.Count);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(aguiMessages[0]);
+        Assert.Equal("I should look up the weather.", reasoningMessage.Content);
+        var assistantMessage = Assert.IsType<AGUIAssistantMessage>(aguiMessages[1]);
+        Assert.NotNull(assistantMessage.ToolCalls);
+        var toolCall = Assert.Single(assistantMessage.ToolCalls);
+        Assert.Equal("call-1", toolCall.Id);
+        Assert.Equal("GetWeather", toolCall.Function.Name);
+    }
+
+    [Fact]
     public void RoundTrip_ReasoningMessage_PreservesData()
     {
         // Arrange

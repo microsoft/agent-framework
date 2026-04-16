@@ -466,6 +466,25 @@ internal static class ChatResponseUpdateAGUIExtensions
                 chatResponse.Contents[0] is TextContent &&
                 !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
             {
+                // Close any open reasoning block before opening a text message, so AG-UI
+                // events are properly bracketed. MEAI providers share one MessageId across
+                // reasoning and text content, so the reasoning-block state alone wouldn't
+                // detect the transition.
+                if (currentReasoningMessageId is not null)
+                {
+                    yield return new ReasoningMessageEndEvent
+                    {
+                        MessageId = currentReasoningMessageId
+                    };
+                    yield return new ReasoningEndEvent
+                    {
+                        MessageId = currentReasoningId!
+                    };
+                    currentReasoningBaseId = null;
+                    currentReasoningId = null;
+                    currentReasoningMessageId = null;
+                }
+
                 // End the previous message if there was one
                 if (currentMessageId is not null)
                 {
@@ -503,6 +522,22 @@ internal static class ChatResponseUpdateAGUIExtensions
                 {
                     if (content is FunctionCallContent functionCallContent)
                     {
+                        // Close any open reasoning block before emitting tool events.
+                        if (currentReasoningMessageId is not null)
+                        {
+                            yield return new ReasoningMessageEndEvent
+                            {
+                                MessageId = currentReasoningMessageId
+                            };
+                            yield return new ReasoningEndEvent
+                            {
+                                MessageId = currentReasoningId!
+                            };
+                            currentReasoningBaseId = null;
+                            currentReasoningId = null;
+                            currentReasoningMessageId = null;
+                        }
+
                         yield return new ToolCallStartEvent
                         {
                             ToolCallId = functionCallContent.CallId,
@@ -525,6 +560,22 @@ internal static class ChatResponseUpdateAGUIExtensions
                     }
                     else if (content is FunctionResultContent functionResultContent)
                     {
+                        // Close any open reasoning block before emitting tool result events.
+                        if (currentReasoningMessageId is not null)
+                        {
+                            yield return new ReasoningMessageEndEvent
+                            {
+                                MessageId = currentReasoningMessageId
+                            };
+                            yield return new ReasoningEndEvent
+                            {
+                                MessageId = currentReasoningId!
+                            };
+                            currentReasoningBaseId = null;
+                            currentReasoningId = null;
+                            currentReasoningMessageId = null;
+                        }
+
                         yield return new ToolCallResultEvent
                         {
                             MessageId = chatResponse.MessageId,
