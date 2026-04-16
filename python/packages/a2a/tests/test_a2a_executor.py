@@ -453,10 +453,10 @@ class TestA2AExecutorExecute:
         mock_request_context.context_id = "ctx-123"
         mock_request_context.message = MagicMock()
 
-        mock_response_stream = AsyncMock()
+        mock_response_stream = MagicMock()
         mock_response_stream.with_transform_hook = MagicMock(return_value=mock_response_stream)
         mock_response_stream.get_final_response = AsyncMock()
-        mock_agent.run = AsyncMock(return_value=mock_response_stream)
+        mock_agent.run = MagicMock(return_value=mock_response_stream)
         mock_agent.create_session = MagicMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:

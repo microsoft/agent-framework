@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Annotated
-
 import uvicorn
 
 from dotenv import load_dotenv
@@ -15,9 +13,9 @@ from a2a.types import (
     AgentSkill,
 )
 
-from agent_framework import Agent, tool
+from agent_framework import Agent
 from agent_framework.a2a import A2AExecutor
-from agent_framework.openai import OpenAIChatCompletionClient
+from agent_framework.openai import OpenAIChatClient
 
 load_dotenv()
 
@@ -54,7 +52,7 @@ if __name__ == "__main__":
     # --8<-- [end:AgentCard]
 
     agent = Agent(
-        client=OpenAIChatCompletionClient(),
+        client=OpenAIChatClient(),
         name="Europe Travel Agent",
         instructions="You are a helpful Europe Travel Agent. You can help users search and book flights and hotels across Europe."
     )

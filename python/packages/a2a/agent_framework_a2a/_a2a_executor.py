@@ -163,7 +163,7 @@ class A2AExecutor(AgentExecutor):
 
     async def _run_stream(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
         """Run the agent in streaming mode and publish updates to the task updater."""
-        response_stream = await self._agent.run(query, session=session, stream=True, **self._run_kwargs)
+        response_stream = self._agent.run(query, session=session, stream=True, **self._run_kwargs)
         streamed_artifact_ids: set[str] = set()
         await (
             response_stream.with_transform_hook(
