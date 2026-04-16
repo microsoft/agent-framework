@@ -18,12 +18,16 @@
 using System.ComponentModel;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using DotNetEnv;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
+
+// Load .env file if present (for local development)
+Env.TraversePath().Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,7 +38,7 @@ var endpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT
 var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4o";
 
 var azureClient = new AzureOpenAIClient(endpoint, new DefaultAzureCredential());
-IChatClient chatClient = azureClient.GetChatClient(deployment).AsIChatClient();
+IChatClient chatClient = azureClient.GetResponsesClient().AsIChatClient(deployment);
 
 // ---------------------------------------------------------------------------
 // 2. DEMO 1: Tool Agent — local tools + Microsoft Learn MCP
@@ -128,9 +132,9 @@ app.MapGet("/workflow-demo", () => Results.Content(Pages.WorkflowDemo, "text/htm
 app.MapGet("/js/sse-validator.js", () => Results.Content(Pages.ValidationScript, "application/javascript"));
 
 // Validation endpoint: accepts captured SSE lines and validates them
-app.MapPost("/api/validate", (FoundryResponsesHosting.CapturedSseStream captured) =>
+app.MapPost("/api/validate", (HostedWorkflowHandoff.CapturedSseStream captured) =>
 {
-    var validator = new FoundryResponsesHosting.ResponseStreamValidator();
+    var validator = new HostedWorkflowHandoff.ResponseStreamValidator();
     foreach (var evt in captured.Events)
     {
         validator.ProcessEvent(evt.EventType, evt.Data);

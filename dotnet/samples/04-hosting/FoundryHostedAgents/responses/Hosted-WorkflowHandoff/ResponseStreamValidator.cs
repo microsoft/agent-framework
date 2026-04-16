@@ -3,7 +3,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace FoundryResponsesHosting;
+namespace HostedWorkflowHandoff;
 
 /// <summary>Captured SSE event for validation.</summary>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1812:AvoidUninstantiatedInternalClasses", Justification = "Instantiated by JSON deserialization")]
