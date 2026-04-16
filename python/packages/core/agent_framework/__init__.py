@@ -103,6 +103,7 @@ from ._middleware import (
 from ._sessions import (
     AgentSession,
     ContextProvider,
+    FileHistoryProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
     SessionContext,
@@ -318,6 +319,7 @@ __all__ = [
     "FanInEdgeGroup",
     "FanOutEdgeGroup",
     "FileCheckpointStorage",
+    "FileHistoryProvider",
     "FinalT",
     "FinishReason",
     "FinishReasonLiteral",
