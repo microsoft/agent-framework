@@ -113,6 +113,25 @@ AGENT_MERGED_INSTRUCTIONS: Final[contextvars.ContextVar[str | list[str] | None]]
 )
 
 
+def _recapture_system_instructions(span: trace.Span) -> None:
+    """Re-capture gen_ai.system_instructions from the AGENT_MERGED_INSTRUCTIONS ContextVar.
+
+    Called after execute() completes so the span reflects provider-extended instructions
+    rather than just the base instructions captured before execution.
+    """
+    if not OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        return
+    merged_instructions = AGENT_MERGED_INSTRUCTIONS.get()
+    if merged_instructions is not None:
+        if not isinstance(merged_instructions, list):
+            merged_instructions = [merged_instructions]
+        otel_sys_instructions = [{"type": "text", "content": instruction} for instruction in merged_instructions]
+        span.set_attribute(
+            OtelAttr.SYSTEM_INSTRUCTIONS,
+            json.dumps(otel_sys_instructions, ensure_ascii=False),
+        )
+
+
 OTEL_METRICS: Final[str] = "__otel_metrics__"
 TOKEN_USAGE_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
     1,
@@ -1612,18 +1631,7 @@ class AgentTelemetryLayer:
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
 
                     # Re-capture system_instructions if context providers extended them.
-                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
-                        merged_instructions = AGENT_MERGED_INSTRUCTIONS.get()
-                        if merged_instructions is not None:
-                            if not isinstance(merged_instructions, list):
-                                merged_instructions = [merged_instructions]
-                            otel_sys_instructions = [
-                                {"type": "text", "content": instruction} for instruction in merged_instructions
-                            ]
-                            span.set_attribute(
-                                OtelAttr.SYSTEM_INSTRUCTIONS,
-                                json.dumps(otel_sys_instructions, ensure_ascii=False),
-                            )
+                    _recapture_system_instructions(span)
 
                     if (
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
@@ -1647,7 +1655,14 @@ class AgentTelemetryLayer:
             wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = result_stream.with_cleanup_hook(
                 _record_duration
             ).with_cleanup_hook(_finalize_stream)
-            weakref.finalize(wrapped_stream, _close_span)
+
+            def _gc_cleanup() -> None:
+                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                AGENT_MERGED_INSTRUCTIONS.reset(agent_merged_instructions_token)
+                _close_span()
+
+            weakref.finalize(wrapped_stream, _gc_cleanup)
             return wrapped_stream
 
         async def _run() -> AgentResponse[Any]:
@@ -1671,18 +1686,7 @@ class AgentTelemetryLayer:
                     # The initial capture above only sees base instructions from merged_options;
                     # AGENT_MERGED_INSTRUCTIONS is set by _prepare_session_and_messages()
                     # after context providers have run and merged their contributions.
-                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
-                        merged_instructions = AGENT_MERGED_INSTRUCTIONS.get()
-                        if merged_instructions is not None:
-                            if not isinstance(merged_instructions, list):
-                                merged_instructions = [merged_instructions]
-                            otel_sys_instructions = [
-                                {"type": "text", "content": instruction} for instruction in merged_instructions
-                            ]
-                            span.set_attribute(
-                                OtelAttr.SYSTEM_INSTRUCTIONS,
-                                json.dumps(otel_sys_instructions, ensure_ascii=False),
-                            )
+                    _recapture_system_instructions(span)
 
                     duration = perf_counter() - start_time_stamp
                     if response:
