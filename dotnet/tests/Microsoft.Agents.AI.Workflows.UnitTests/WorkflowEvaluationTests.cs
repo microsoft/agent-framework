@@ -295,7 +295,7 @@ public sealed class WorkflowEvaluationTests
     // ---------------------------------------------------------------
 
     [Fact]
-    public async Task EvaluateAsync_WithSequentialWorkflow_ReturnsPerAgentSubResults()
+    public async Task EvaluateAsync_WithSequentialWorkflow_ReturnsPerAgentSubResultsAsync()
     {
         // Arrange: two agents in a sequential workflow
         var agent1 = new TestEchoAgent(name: "agent-one");
