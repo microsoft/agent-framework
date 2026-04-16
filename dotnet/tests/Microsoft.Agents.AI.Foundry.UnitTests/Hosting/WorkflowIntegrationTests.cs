@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -31,7 +31,7 @@ public class WorkflowIntegrationTests
     // ===== Sequential Workflow Tests =====
 
     [Fact]
-    public async Task SequentialWorkflow_SingleAgent_ProducesTextOutput()
+    public async Task SequentialWorkflow_SingleAgent_ProducesTextOutputAsync()
     {
         // Arrange: single-agent sequential workflow
         var echoAgent = new StreamingTextAgent("echo", "Hello from the workflow!");
@@ -59,7 +59,7 @@ public class WorkflowIntegrationTests
     }
 
     [Fact]
-    public async Task SequentialWorkflow_TwoAgents_ProducesOutputFromBoth()
+    public async Task SequentialWorkflow_TwoAgents_ProducesOutputFromBothAsync()
     {
         // Arrange: two agents in sequence
         var agent1 = new StreamingTextAgent("agent1", "First agent says hello");
@@ -90,7 +90,7 @@ public class WorkflowIntegrationTests
     // ===== Workflow Error Propagation =====
 
     [Fact]
-    public async Task Workflow_AgentThrowsException_ProducesErrorOutput()
+    public async Task Workflow_AgentThrowsException_ProducesErrorOutputAsync()
     {
         // Arrange: workflow with an agent that throws
         var throwingAgent = new ThrowingStreamingAgent("thrower", new InvalidOperationException("Agent crashed"));
@@ -120,7 +120,7 @@ public class WorkflowIntegrationTests
     // ===== Workflow Action Lifecycle Events =====
 
     [Fact]
-    public async Task Workflow_ExecutorEvents_ProduceWorkflowActionItems()
+    public async Task Workflow_ExecutorEvents_ProduceWorkflowActionItemsAsync()
     {
         // Arrange
         var agent = new StreamingTextAgent("test-agent", "Result");
@@ -144,7 +144,7 @@ public class WorkflowIntegrationTests
     // ===== Keyed Workflow Registration =====
 
     [Fact]
-    public async Task WorkflowAgent_RegisteredWithKey_ResolvesCorrectly()
+    public async Task WorkflowAgent_RegisteredWithKey_ResolvesCorrectlyAsync()
     {
         // Arrange: workflow agent registered with a keyed service name
         var agent = new StreamingTextAgent("inner", "Keyed workflow response");
@@ -177,7 +177,7 @@ public class WorkflowIntegrationTests
     // These test the OutputConverter directly with update patterns that mirror real workflows.
 
     [Fact]
-    public async Task OutputConverter_SequentialWorkflowPattern_ProducesCorrectEvents()
+    public async Task OutputConverter_SequentialWorkflowPattern_ProducesCorrectEventsAsync()
     {
         // Simulate what WorkflowSession produces for a 2-agent sequential workflow
         var (stream, _) = CreateTestStream();
@@ -210,7 +210,7 @@ public class WorkflowIntegrationTests
     }
 
     [Fact]
-    public async Task OutputConverter_GroupChatPattern_ProducesCorrectEvents()
+    public async Task OutputConverter_GroupChatPattern_ProducesCorrectEventsAsync()
     {
         // Simulate round-robin group chat: agent1 → agent2 → agent1 → terminate
         var (stream, _) = CreateTestStream();
@@ -246,7 +246,7 @@ public class WorkflowIntegrationTests
     }
 
     [Fact]
-    public async Task OutputConverter_CodeExecutorPattern_ProducesCorrectEvents()
+    public async Task OutputConverter_CodeExecutorPattern_ProducesCorrectEventsAsync()
     {
         // Simulate a code-based FunctionExecutor: invoked → completed, no text content
         // (code executors don't produce AgentResponseUpdateEvent, just executor lifecycle)
@@ -278,7 +278,7 @@ public class WorkflowIntegrationTests
     }
 
     [Fact]
-    public async Task OutputConverter_SubworkflowPattern_ProducesCorrectEvents()
+    public async Task OutputConverter_SubworkflowPattern_ProducesCorrectEventsAsync()
     {
         // Simulate a parent workflow that invokes a sub-workflow executor
         var (stream, _) = CreateTestStream();
@@ -308,7 +308,7 @@ public class WorkflowIntegrationTests
     }
 
     [Fact]
-    public async Task OutputConverter_WorkflowWithMultipleContentTypes_HandlesAllCorrectly()
+    public async Task OutputConverter_WorkflowWithMultipleContentTypes_HandlesAllCorrectlyAsync()
     {
         // Simulate a workflow producing reasoning, text, function calls, and usage
         var (stream, _) = CreateTestStream();

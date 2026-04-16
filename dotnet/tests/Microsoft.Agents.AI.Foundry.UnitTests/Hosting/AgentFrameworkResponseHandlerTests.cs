@@ -7,9 +7,9 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Foundry.Hosting;
 using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
+using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 public class AgentFrameworkResponseHandlerTests
 {
     [Fact]
-    public async Task CreateAsync_WithDefaultAgent_ProducesStreamEvents()
+    public async Task CreateAsync_WithDefaultAgent_ProducesStreamEventsAsync()
     {
         // Arrange
         var agent = CreateTestAgent("Hello from the agent!");
@@ -60,7 +60,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_WithKeyedAgent_ResolvesCorrectAgent()
+    public async Task CreateAsync_WithKeyedAgent_ResolvesCorrectAgentAsync()
     {
         // Arrange
         var agent = CreateTestAgent("Keyed agent response");
@@ -98,7 +98,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_NoAgentRegistered_ThrowsInvalidOperationException()
+    public async Task CreateAsync_NoAgentRegistered_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         var services = new ServiceCollection();
@@ -144,7 +144,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_ResolvesAgentByModelField()
+    public async Task CreateAsync_ResolvesAgentByModelFieldAsync()
     {
         // Arrange
         var agent = CreateTestAgent("model agent");
@@ -180,7 +180,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_ResolvesAgentByEntityIdMetadata()
+    public async Task CreateAsync_ResolvesAgentByEntityIdMetadataAsync()
     {
         // Arrange
         var agent = CreateTestAgent("entity agent");
@@ -219,7 +219,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_NamedAgentNotFound_FallsBackToDefault()
+    public async Task CreateAsync_NamedAgentNotFound_FallsBackToDefaultAsync()
     {
         // Arrange
         var agent = CreateTestAgent("default agent");
@@ -257,7 +257,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_NoAgentFound_ErrorMessageIncludesAgentName()
+    public async Task CreateAsync_NoAgentFound_ErrorMessageIncludesAgentNameAsync()
     {
         // Arrange
         var services = new ServiceCollection();
@@ -292,7 +292,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_NoAgentNoName_ErrorMessageIsGeneric()
+    public async Task CreateAsync_NoAgentNoName_ErrorMessageIsGenericAsync()
     {
         // Arrange
         var services = new ServiceCollection();
@@ -325,7 +325,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_AgentResolvedBeforeEmitCreated_ExceptionHasNoEvents()
+    public async Task CreateAsync_AgentResolvedBeforeEmitCreated_ExceptionHasNoEventsAsync()
     {
         // Arrange
         var services = new ServiceCollection();
@@ -367,7 +367,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_WithHistory_PrependsHistoryToMessages()
+    public async Task CreateAsync_WithHistory_PrependsHistoryToMessagesAsync()
     {
         // Arrange
         var agent = new CapturingAgent();
@@ -414,7 +414,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_WithInputItems_UsesResolvedInputItems()
+    public async Task CreateAsync_WithInputItems_UsesResolvedInputItemsAsync()
     {
         // Arrange
         var agent = new CapturingAgent();
@@ -456,7 +456,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_NoInputItems_FallsBackToRawRequestInput()
+    public async Task CreateAsync_NoInputItems_FallsBackToRawRequestInputAsync()
     {
         // Arrange
         var agent = new CapturingAgent();
@@ -494,7 +494,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_PassesInstructionsToAgent()
+    public async Task CreateAsync_PassesInstructionsToAgentAsync()
     {
         // Arrange
         var agent = new CapturingAgent();
@@ -533,7 +533,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_AgentThrows_EmitsFailedEventWithErrorMessage()
+    public async Task CreateAsync_AgentThrows_EmitsFailedEventWithErrorMessageAsync()
     {
         // Arrange
         var agent = new ThrowingAgent(new InvalidOperationException("Agent crashed"));
@@ -571,7 +571,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_MultipleKeyedAgents_ResolvesCorrectOne()
+    public async Task CreateAsync_MultipleKeyedAgents_ResolvesCorrectOneAsync()
     {
         // Arrange
         var agent1 = CreateTestAgent("Agent 1 response");
@@ -611,7 +611,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_CancellationDuringExecution_PropagatesOperationCanceledException()
+    public async Task CreateAsync_CancellationDuringExecution_PropagatesOperationCanceledExceptionAsync()
     {
         // Arrange
         var agent = new CancellationCheckingAgent();

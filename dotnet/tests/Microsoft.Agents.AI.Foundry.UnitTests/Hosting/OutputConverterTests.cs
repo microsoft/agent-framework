@@ -1,13 +1,13 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Foundry.Hosting;
 using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
+using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Moq;
@@ -26,7 +26,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_EmptyStream_EmitsCompleted()
+    public async Task ConvertUpdatesToEventsAsync_EmptyStream_EmitsCompletedAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = ToAsync(Array.Empty<AgentResponseUpdate>());
@@ -42,7 +42,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_SingleTextUpdate_EmitsMessageAndCompleted()
+    public async Task ConvertUpdatesToEventsAsync_SingleTextUpdate_EmitsMessageAndCompletedAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -64,7 +64,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_MultipleTextUpdates_EmitsStreamingDeltas()
+    public async Task ConvertUpdatesToEventsAsync_MultipleTextUpdates_EmitsStreamingDeltasAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -85,7 +85,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCall_EmitsFunctionCallEvents()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCall_EmitsFunctionCallEventsAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -107,7 +107,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ErrorContent_EmitsFailed()
+    public async Task ConvertUpdatesToEventsAsync_ErrorContent_EmitsFailedAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -125,7 +125,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ErrorContent_DoesNotEmitCompleted()
+    public async Task ConvertUpdatesToEventsAsync_ErrorContent_DoesNotEmitCompletedAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -143,7 +143,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_UsageContent_IncludesUsageInCompleted()
+    public async Task ConvertUpdatesToEventsAsync_UsageContent_IncludesUsageInCompletedAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -175,7 +175,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ReasoningContent_EmitsReasoningEvents()
+    public async Task ConvertUpdatesToEventsAsync_ReasoningContent_EmitsReasoningEventsAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -195,7 +195,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_CancellationRequested_Throws()
+    public async Task ConvertUpdatesToEventsAsync_CancellationRequested_ThrowsAsync()
     {
         var (stream, _) = CreateTestStream();
         using var cts = new CancellationTokenSource();
@@ -214,7 +214,7 @@ public class OutputConverterTests
 
     // F-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_EmptyTextContent_NoTextDeltaEmitted()
+    public async Task ConvertUpdatesToEventsAsync_EmptyTextContent_NoTextDeltaEmittedAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent("")] };
@@ -231,7 +231,7 @@ public class OutputConverterTests
 
     // F-04
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_NullTextContent_NoTextDeltaEmitted()
+    public async Task ConvertUpdatesToEventsAsync_NullTextContent_NoTextDeltaEmittedAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent(null!)] };
@@ -248,7 +248,7 @@ public class OutputConverterTests
 
     // F-07
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_DifferentMessageIds_CreatesMultipleMessages()
+    public async Task ConvertUpdatesToEventsAsync_DifferentMessageIds_CreatesMultipleMessagesAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -268,7 +268,7 @@ public class OutputConverterTests
 
     // F-08
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_NullMessageIds_TreatedAsSameMessage()
+    public async Task ConvertUpdatesToEventsAsync_NullMessageIds_TreatedAsSameMessageAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -288,7 +288,7 @@ public class OutputConverterTests
 
     // G-02
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCallClosesOpenMessage()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallClosesOpenMessageAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -310,7 +310,7 @@ public class OutputConverterTests
 
     // G-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithNullArguments_EmitsEmptyJson()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithNullArguments_EmitsEmptyJsonAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -329,7 +329,7 @@ public class OutputConverterTests
 
     // G-04
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_GeneratesCallId()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_GeneratesCallIdAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -348,7 +348,7 @@ public class OutputConverterTests
 
     // G-05
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_MultipleFunctionCalls_EmitsSeparateBuilders()
+    public async Task ConvertUpdatesToEventsAsync_MultipleFunctionCalls_EmitsSeparateBuildersAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -368,7 +368,7 @@ public class OutputConverterTests
 
     // H-02
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ReasoningWithNullText_EmitsEmptyString()
+    public async Task ConvertUpdatesToEventsAsync_ReasoningWithNullText_EmitsEmptyStringAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { Contents = [new TextReasoningContent(null)] };
@@ -385,7 +385,7 @@ public class OutputConverterTests
 
     // H-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ReasoningClosesOpenMessage()
+    public async Task ConvertUpdatesToEventsAsync_ReasoningClosesOpenMessageAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -405,7 +405,7 @@ public class OutputConverterTests
 
     // I-02
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ErrorContentWithNullMessage_UsesDefaultMessage()
+    public async Task ConvertUpdatesToEventsAsync_ErrorContentWithNullMessage_UsesDefaultMessageAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { Contents = [new ErrorContent(null!)] };
@@ -421,7 +421,7 @@ public class OutputConverterTests
 
     // I-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ErrorContentClosesOpenMessage()
+    public async Task ConvertUpdatesToEventsAsync_ErrorContentClosesOpenMessageAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -442,7 +442,7 @@ public class OutputConverterTests
 
     // I-06
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ErrorAfterPartialText_ClosesMessageThenFails()
+    public async Task ConvertUpdatesToEventsAsync_ErrorAfterPartialText_ClosesMessageThenFailsAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -464,7 +464,7 @@ public class OutputConverterTests
 
     // J-02
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_MultipleUsageUpdates_AccumulatesTokens()
+    public async Task ConvertUpdatesToEventsAsync_MultipleUsageUpdates_AccumulatesTokensAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -485,7 +485,7 @@ public class OutputConverterTests
 
     // J-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_UsageWithZeroTokens_StillCompletes()
+    public async Task ConvertUpdatesToEventsAsync_UsageWithZeroTokens_StillCompletesAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -504,7 +504,7 @@ public class OutputConverterTests
 
     // K-01
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_DataContent_IsSkippedWithNoEvents()
+    public async Task ConvertUpdatesToEventsAsync_DataContent_IsSkippedWithNoEventsAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { Contents = [new DataContent("data:image/png;base64,aWNv", "image/png")] };
@@ -521,7 +521,7 @@ public class OutputConverterTests
 
     // K-02
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_UriContent_IsSkippedWithNoEvents()
+    public async Task ConvertUpdatesToEventsAsync_UriContent_IsSkippedWithNoEventsAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { Contents = [new UriContent("https://example.com/file.txt", "text/plain")] };
@@ -538,7 +538,7 @@ public class OutputConverterTests
 
     // K-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionResultContent_IsSkippedWithNoEvents()
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultContent_IsSkippedWithNoEventsAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "result data")] };
@@ -555,7 +555,7 @@ public class OutputConverterTests
 
     // L-01
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ExecutorInvokedEvent_EmitsWorkflowActionItem()
+    public async Task ConvertUpdatesToEventsAsync_ExecutorInvokedEvent_EmitsWorkflowActionItemAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { RawRepresentation = new ExecutorInvokedEvent("executor_1", "invoked") };
@@ -573,7 +573,7 @@ public class OutputConverterTests
 
     // L-02
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ExecutorCompletedEvent_EmitsCompletedWorkflowAction()
+    public async Task ConvertUpdatesToEventsAsync_ExecutorCompletedEvent_EmitsCompletedWorkflowActionAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { RawRepresentation = new ExecutorCompletedEvent("executor_1", null) };
@@ -591,7 +591,7 @@ public class OutputConverterTests
 
     // L-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ExecutorFailedEvent_EmitsFailedWorkflowAction()
+    public async Task ConvertUpdatesToEventsAsync_ExecutorFailedEvent_EmitsFailedWorkflowActionAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { RawRepresentation = new ExecutorFailedEvent("executor_1", new InvalidOperationException("test error")) };
@@ -609,7 +609,7 @@ public class OutputConverterTests
 
     // L-04
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_WorkflowEventClosesOpenMessage()
+    public async Task ConvertUpdatesToEventsAsync_WorkflowEventClosesOpenMessageAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -629,7 +629,7 @@ public class OutputConverterTests
 
     // L-06
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_InterleavedWorkflowAndTextEvents()
+    public async Task ConvertUpdatesToEventsAsync_InterleavedWorkflowAndTextEventsAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -651,7 +651,7 @@ public class OutputConverterTests
 
     // M-01
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_TextThenFunctionCallThenText_ProducesCorrectSequence()
+    public async Task ConvertUpdatesToEventsAsync_TextThenFunctionCallThenText_ProducesCorrectSequenceAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -672,7 +672,7 @@ public class OutputConverterTests
 
     // M-02
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ReasoningThenText_ProducesCorrectSequence()
+    public async Task ConvertUpdatesToEventsAsync_ReasoningThenText_ProducesCorrectSequenceAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -692,7 +692,7 @@ public class OutputConverterTests
 
     // M-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_TextThenError_EmitsMessageThenFailed()
+    public async Task ConvertUpdatesToEventsAsync_TextThenError_EmitsMessageThenFailedAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -714,7 +714,7 @@ public class OutputConverterTests
 
     // M-04
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCallThenTextThenFunctionCall_ProducesThreeItems()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallThenTextThenFunctionCall_ProducesThreeItemsAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -739,7 +739,7 @@ public class OutputConverterTests
 
     // W-01: Multi-executor text output — different MessageIds cause separate messages
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_MultiExecutorTextOutput_CreatesSeparateMessages()
+    public async Task ConvertUpdatesToEventsAsync_MultiExecutorTextOutput_CreatesSeparateMessagesAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -773,7 +773,7 @@ public class OutputConverterTests
 
     // W-02: Workflow error via ErrorContent (as produced by WorkflowSession for WorkflowErrorEvent)
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_WorkflowErrorAsContent_EmitsFailed()
+    public async Task ConvertUpdatesToEventsAsync_WorkflowErrorAsContent_EmitsFailedAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -798,7 +798,7 @@ public class OutputConverterTests
 
     // W-03: Function call from workflow executor (e.g. handoff agent calling transfer_to_agent)
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_WorkflowFunctionCall_EmitsFunctionCallEvents()
+    public async Task ConvertUpdatesToEventsAsync_WorkflowFunctionCall_EmitsFunctionCallEventsAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -831,7 +831,7 @@ public class OutputConverterTests
 
     // W-04: Informational events (superstep, workflow started) are silently skipped
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_InformationalWorkflowEvents_AreSkipped()
+    public async Task ConvertUpdatesToEventsAsync_InformationalWorkflowEvents_AreSkippedAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -856,7 +856,7 @@ public class OutputConverterTests
 
     // W-05: Warning events are silently skipped
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_WorkflowWarningEvent_IsSkipped()
+    public async Task ConvertUpdatesToEventsAsync_WorkflowWarningEvent_IsSkippedAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -877,7 +877,7 @@ public class OutputConverterTests
 
     // W-06: Streaming text from multiple workflow turns (same executor, different message IDs)
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_MultiTurnSameExecutor_CreatesSeparateMessages()
+    public async Task ConvertUpdatesToEventsAsync_MultiTurnSameExecutor_CreatesSeparateMessagesAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -904,7 +904,7 @@ public class OutputConverterTests
 
     // W-07: Executor failure mid-stream with partial text
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_ExecutorFailureAfterPartialText_ClosesMessageAndEmitsFailure()
+    public async Task ConvertUpdatesToEventsAsync_ExecutorFailureAfterPartialText_ClosesMessageAndEmitsFailureAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -929,7 +929,7 @@ public class OutputConverterTests
 
     // W-08: Full handoff pattern — triage → function call → target agent text
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FullHandoffPattern_ProducesCorrectEventSequence()
+    public async Task ConvertUpdatesToEventsAsync_FullHandoffPattern_ProducesCorrectEventSequenceAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -973,7 +973,7 @@ public class OutputConverterTests
 
     // W-09: SubworkflowErrorEvent treated as informational (error content comes separately)
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_SubworkflowErrorEvent_IsSkipped()
+    public async Task ConvertUpdatesToEventsAsync_SubworkflowErrorEvent_IsSkippedAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -995,7 +995,7 @@ public class OutputConverterTests
 
     // W-10: Mixed content types from workflow — reasoning + text
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_WorkflowReasoningThenText_ProducesCorrectSequence()
+    public async Task ConvertUpdatesToEventsAsync_WorkflowReasoningThenText_ProducesCorrectSequenceAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -1021,7 +1021,7 @@ public class OutputConverterTests
 
     // W-11: Usage content accumulated across workflow executors
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_WorkflowUsageAcrossExecutors_AccumulatesCorrectly()
+    public async Task ConvertUpdatesToEventsAsync_WorkflowUsageAcrossExecutors_AccumulatesCorrectlyAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -1048,7 +1048,7 @@ public class OutputConverterTests
 
     // W-12: Empty workflow — only lifecycle events, no content
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_EmptyWorkflowOnlyLifecycle_EmitsOnlyCompleted()
+    public async Task ConvertUpdatesToEventsAsync_EmptyWorkflowOnlyLifecycle_EmitsOnlyCompletedAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
