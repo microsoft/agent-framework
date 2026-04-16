@@ -157,13 +157,11 @@ internal static class AGUIChatMessageExtensions
                 {
                     yield return reasoningMessage;
                 }
-                else
+
+                var assistantMessage = MapAssistantMessage(jsonSerializerOptions, message);
+                if (assistantMessage != null)
                 {
-                    var assistantMessage = MapAssistantMessage(jsonSerializerOptions, message);
-                    if (assistantMessage != null)
-                    {
-                        yield return assistantMessage;
-                    }
+                    yield return assistantMessage;
                 }
             }
             else

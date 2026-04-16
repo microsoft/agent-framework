@@ -947,6 +947,77 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
+    public async Task AsAGUIEventStreamAsync_WithReasoningThenTextSharingSameMessageId_ClosesReasoningBlockBeforeTextStartAsync()
+    {
+        // Arrange
+        List<ChatResponseUpdate> updates =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("thinking")]) { MessageId = "shared1" },
+            new(ChatRole.Assistant, [new TextContent("Hello")]) { MessageId = "shared1" }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert
+        int reasoningMessageEndIndex = outputEvents.FindIndex(e => e is ReasoningMessageEndEvent);
+        int reasoningEndIndex = outputEvents.FindIndex(e => e is ReasoningEndEvent);
+        int textMessageStartIndex = outputEvents.FindIndex(e => e is TextMessageStartEvent);
+        Assert.True(reasoningMessageEndIndex < textMessageStartIndex);
+        Assert.True(reasoningEndIndex < textMessageStartIndex);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithReasoningThenToolCallSharingSameMessageId_ClosesReasoningBlockBeforeToolCallStartAsync()
+    {
+        // Arrange
+        List<ChatResponseUpdate> updates =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("thinking about which tool to use")]) { MessageId = "shared1" },
+            new(ChatRole.Assistant, [new FunctionCallContent("call-1", "GetWeather", new Dictionary<string, object?> { ["location"] = "Seattle" })]) { MessageId = "shared1" }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert
+        int reasoningEndIndex = outputEvents.FindIndex(e => e is ReasoningEndEvent);
+        int toolCallStartIndex = outputEvents.FindIndex(e => e is ToolCallStartEvent);
+        Assert.True(reasoningEndIndex < toolCallStartIndex);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithReasoningThenToolResultSharingSameMessageId_ClosesReasoningBlockBeforeToolResultAsync()
+    {
+        // Arrange
+        List<ChatResponseUpdate> updates =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("reflecting on result")]) { MessageId = "shared1" },
+            new(ChatRole.Tool, [new FunctionResultContent("call-1", "72F and sunny")]) { MessageId = "shared1" }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert
+        int reasoningEndIndex = outputEvents.FindIndex(e => e is ReasoningEndEvent);
+        int toolCallResultIndex = outputEvents.FindIndex(e => e is ToolCallResultEvent);
+        Assert.True(reasoningEndIndex < toolCallResultIndex);
+    }
+
+    [Fact]
     public async Task AsChatResponseUpdatesAsync_WithReasoningMessageSequence_ProducesTextReasoningContentPerDeltaAsync()
     {
         // Arrange
