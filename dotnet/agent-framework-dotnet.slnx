@@ -261,7 +261,6 @@
     <Project Path="samples/03-workflows/_StartHere/07_WriterCriticWorkflow/07_WriterCriticWorkflow.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/">
-    <Project Path="samples/04-hosting/FoundryResponsesRepl/FoundryResponsesRepl.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/" />
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/invocations/" />
