@@ -155,6 +155,7 @@ public class WorkflowIntegrationTests
             executionEnvironment: InProcessExecution.OffThread);
 
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddKeyedSingleton("my-workflow", workflowAgent);
         var sp = services.BuildServiceProvider();
 
@@ -356,6 +357,7 @@ public class WorkflowIntegrationTests
         CreateHandlerWithAgent(AIAgent agent, string userMessage)
     {
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton(agent);
         services.AddSingleton<ILogger<AgentFrameworkResponseHandler>>(NullLogger<AgentFrameworkResponseHandler>.Instance);
         var sp = services.BuildServiceProvider();

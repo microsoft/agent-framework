@@ -27,6 +27,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = CreateTestAgent("Hello from the agent!");
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         services.AddSingleton<ILogger<AgentFrameworkResponseHandler>>(NullLogger<AgentFrameworkResponseHandler>.Instance);
         var sp = services.BuildServiceProvider();
@@ -65,6 +66,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = CreateTestAgent("Keyed agent response");
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddKeyedSingleton<AIAgent>("my-agent", agent);
         var sp = services.BuildServiceProvider();
 
@@ -102,6 +104,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -149,6 +152,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = CreateTestAgent("model agent");
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddKeyedSingleton<AIAgent>("my-agent", agent);
         var sp = services.BuildServiceProvider();
 
@@ -185,6 +189,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = CreateTestAgent("entity agent");
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddKeyedSingleton<AIAgent>("entity-agent", agent);
         var sp = services.BuildServiceProvider();
 
@@ -224,6 +229,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = CreateTestAgent("default agent");
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -261,6 +267,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -296,6 +303,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -329,6 +337,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -372,6 +381,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -419,6 +429,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -461,6 +472,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -499,6 +511,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -538,6 +551,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new ThrowingAgent(new InvalidOperationException("Agent crashed"));
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -577,6 +591,7 @@ public class AgentFrameworkResponseHandlerTests
         var agent1 = CreateTestAgent("Agent 1 response");
         var agent2 = CreateTestAgent("Agent 2 response");
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddKeyedSingleton<AIAgent>("agent-1", agent1);
         services.AddKeyedSingleton<AIAgent>("agent-2", agent2);
         var sp = services.BuildServiceProvider();
@@ -616,6 +631,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new CancellationCheckingAgent();
         var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
