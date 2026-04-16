@@ -1447,6 +1447,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             else:
                 chat_options["instructions"] = combined_instructions
 
+        # Publish the final merged instructions so AgentTelemetryLayer can
+        # re-capture gen_ai.system_instructions with provider-extended content.
+        from .observability import AGENT_MERGED_INSTRUCTIONS
+
+        AGENT_MERGED_INSTRUCTIONS.set(chat_options.get("instructions"))
+
         return session_context, chat_options
 
     def as_mcp_server(
