@@ -699,19 +699,19 @@ public class AgentFrameworkResponseHandlerTests
 
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(new SimpleAgentSession());
 
         protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
             AgentSession session,
             JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(JsonDocument.Parse("{}").RootElement);
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
             JsonElement serializedState,
             JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(new SimpleAgentSession());
     }
 
     private sealed class ThrowingAgent(Exception exception) : AIAgent
@@ -732,19 +732,19 @@ public class AgentFrameworkResponseHandlerTests
 
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(new SimpleAgentSession());
 
         protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
             AgentSession session,
             JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(JsonDocument.Parse("{}").RootElement);
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
             JsonElement serializedState,
             JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(new SimpleAgentSession());
     }
 
     private sealed class CapturingAgent : AIAgent
@@ -776,19 +776,19 @@ public class AgentFrameworkResponseHandlerTests
 
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(new SimpleAgentSession());
 
         protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
             AgentSession session,
             JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(JsonDocument.Parse("{}").RootElement);
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
             JsonElement serializedState,
             JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(new SimpleAgentSession());
     }
 
     private sealed class CancellationCheckingAgent : AIAgent
@@ -813,18 +813,20 @@ public class AgentFrameworkResponseHandlerTests
 
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(new SimpleAgentSession());
 
         protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
             AgentSession session,
             JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(JsonDocument.Parse("{}").RootElement);
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
             JsonElement serializedState,
             JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
+            new(new SimpleAgentSession());
     }
+
+    private sealed class SimpleAgentSession : AgentSession { }
 }
