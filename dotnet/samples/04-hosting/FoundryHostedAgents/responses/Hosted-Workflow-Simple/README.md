@@ -77,7 +77,7 @@ docker run --rm -p 8088:8088 \
   -e AGENT_NAME=hosted-workflow-simple \
   -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN \
   --env-file .env \
-  hosted-workflows
+  hosted-workflow-simple
 ```
 
 ### 4. Test it

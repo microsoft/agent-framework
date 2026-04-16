@@ -17,6 +17,7 @@
 
 using System.ComponentModel;
 using Azure.AI.OpenAI;
+using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
 using Microsoft.Agents.AI;
@@ -37,7 +38,9 @@ var builder = WebApplication.CreateBuilder(args);
 var endpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set."));
 var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4o";
 
-var azureClient = new AzureOpenAIClient(endpoint, new DefaultAzureCredential());
+var azureClient = new AzureOpenAIClient(endpoint, new ChainedTokenCredential(
+    new DevTemporaryTokenCredential(),
+    new DefaultAzureCredential()));
 IChatClient chatClient = azureClient.GetResponsesClient().AsIChatClient(deployment);
 
 // ---------------------------------------------------------------------------
@@ -109,6 +112,10 @@ Workflow triageWorkflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(triageAg
 builder.AddAIAgent("triage-workflow", (_, key) =>
     triageWorkflow.AsAIAgent(name: key));
 
+// Register triage-workflow as the non-keyed default so azd invoke (no model) works
+builder.Services.AddSingleton(sp =>
+    sp.GetRequiredKeyedService<AIAgent>("triage-workflow"));
+
 // ---------------------------------------------------------------------------
 // 4. Wire up the agent-framework handler and Responses Server SDK
 // ---------------------------------------------------------------------------
@@ -150,6 +157,13 @@ app.Run();
 // Local tool definitions
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Dev-only credential: reads a pre-fetched bearer token from AZURE_BEARER_TOKEN.
+// When the value is missing or set to "DefaultAzureCredential", this credential
+// throws CredentialUnavailableException so the ChainedTokenCredential falls
+// through to DefaultAzureCredential.
+// ---------------------------------------------------------------------------
+
 [Description("Gets the current date and time in the specified timezone.")]
 static string GetCurrentTime(
     [Description("IANA timezone (e.g. 'America/New_York', 'Europe/London', 'UTC'). Defaults to UTC.")]
@@ -177,4 +191,31 @@ static string GetWeather(
     string[] conditions = ["sunny", "partly cloudy", "overcast", "rainy", "snowy", "windy", "foggy"];
     var condition = conditions[rng.Next(conditions.Length)];
     return $"Weather in {location}: {temp}C, {condition}. Humidity: {rng.Next(30, 90)}%. Wind: {rng.Next(5, 30)} km/h.";
+}
+
+internal sealed class DevTemporaryTokenCredential : TokenCredential
+{
+    private const string EnvironmentVariable = "AZURE_BEARER_TOKEN";
+    private readonly string? _token;
+
+    public DevTemporaryTokenCredential()
+    {
+        this._token = Environment.GetEnvironmentVariable(EnvironmentVariable);
+    }
+
+    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
+        => this.GetAccessToken();
+
+    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
+        => new(this.GetAccessToken());
+
+    private AccessToken GetAccessToken()
+    {
+        if (string.IsNullOrEmpty(this._token) || this._token == "DefaultAzureCredential")
+        {
+            throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
+        }
+
+        return new AccessToken(this._token, DateTimeOffset.UtcNow.AddHours(1));
+    }
 }
