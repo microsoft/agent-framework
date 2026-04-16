@@ -1100,6 +1100,7 @@ class TestGitHubCopilotAgentMCPServers:
         config = call_args.kwargs
         assert config["mcp_servers"] is None
 
+
 class TestGitHubCopilotAgentProvider:
     """Test cases for provider configuration (BYOK / Managed Identity)."""
 
