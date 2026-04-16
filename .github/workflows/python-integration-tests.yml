@@ -171,7 +171,7 @@ jobs:
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
-          --retries 2 --retry-delay 5
+          --retries 2 --retry-delay 30
       - name: Stop local MCP server
         if: always()
         shell: bash
