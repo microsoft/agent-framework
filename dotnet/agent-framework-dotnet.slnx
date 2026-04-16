@@ -264,36 +264,34 @@
     <Project Path="samples/04-hosting/FoundryResponsesRepl/FoundryResponsesRepl.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/" />
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV1/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV1/AgentsInWorkflows/AgentsInWorkflows.csproj" />
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV1/AgentThreadAndHITL/AgentThreadAndHITL.csproj" />
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV1/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV1/AgentWithLocalTools/AgentWithLocalTools.csproj" />
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV1/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV1/FoundryMultiAgent/FoundryMultiAgent.csproj" />
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV1/FoundrySingleAgent/FoundrySingleAgent.csproj" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/invocations/" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/invocations/Hosted-Invocations-EchoAgent/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/invocations/Hosted-Invocations-EchoAgent/Hosted-Invocations-EchoAgent.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/" />
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-ChatClientAgent/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-ChatClientAgent/HostedChatClientAgent.csproj" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/invocations/Using-Samples/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/invocations/Using-Samples/SimpleInvocationsAgent/SimpleInvocationsAgent.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-FoundryAgent/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-FoundryAgent/HostedFoundryAgent.csproj" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent/HostedChatClientAgent.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-TextRag/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-TextRag/HostedTextRag.csproj" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-FoundryAgent/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-FoundryAgent/HostedFoundryAgent.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-LocalTools/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-LocalTools/HostedLocalTools.csproj" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalTools/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalTools/HostedLocalTools.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-Workflows/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-Workflows/HostedWorkflows.csproj" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-McpTools/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-McpTools/HostedMcpTools.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-McpTools/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Hosted-McpTools/HostedMcpTools.csproj" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-TextRag/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-TextRag/HostedTextRag.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Using-Samples/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/HostedAgentsV2/Using-Samples/SimpleAgent/SimpleAgent.csproj" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflows/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflows/HostedWorkflows.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent/SimpleAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryResponsesHosting/">
     <Project Path="samples/04-hosting/FoundryResponsesHosting/FoundryResponsesHosting.csproj" />
