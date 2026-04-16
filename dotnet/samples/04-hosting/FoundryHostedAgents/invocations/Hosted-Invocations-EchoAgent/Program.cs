@@ -1,8 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.AgentServer.Invocations;
+using DotNetEnv;
 using HostedInvocationsEchoAgent;
 using Microsoft.Agents.AI;
+
+// Load .env file if present (for local development)
+Env.TraversePath().Load();
 
 var builder = WebApplication.CreateBuilder(args);
 

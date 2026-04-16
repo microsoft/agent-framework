@@ -120,7 +120,7 @@ internal sealed class DevTemporaryTokenCredential : TokenCredential
     private static AccessToken GetAccessToken()
     {
         var token = Environment.GetEnvironmentVariable(EnvironmentVariable);
-        if (string.IsNullOrEmpty(token))
+        if (string.IsNullOrEmpty(token) || token == "DefaultAzureCredential")
         {
             throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
         }

@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.AgentServer.Invocations" />
+    <PackageReference Include="DotNetEnv" />
   </ItemGroup>
 
   <!-- For contributors: uses ProjectReference to build against local source -->

@@ -6,6 +6,16 @@ A minimal echo agent hosted as a Foundry Hosted Agent using the **Invocations pr
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 
+## Configuration
+
+Copy the template:
+
+```bash
+cp .env.example .env
+```
+
+> **Note:** `.env` is gitignored. The `.env.example` template is checked in as a reference.
+
 ## Running directly (contributors)
 
 This project uses `ProjectReference` to build against the local Agent Framework source.
