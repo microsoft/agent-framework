@@ -153,6 +153,12 @@
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step22_MemorySearch/Agent_Step22_MemorySearch.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step23_LocalMCP/Agent_Step23_LocalMCP.csproj" />
   </Folder>
+  <Folder Name="/Samples/02-agents/Evaluation/">
+    <Project Path="samples/02-agents/Evaluation/Evaluation_SimpleEval/Evaluation_SimpleEval.csproj" />
+    <Project Path="samples/02-agents/Evaluation/Evaluation_CustomEvals/Evaluation_CustomEvals.csproj" />
+    <Project Path="samples/02-agents/Evaluation/Evaluation_ExpectedOutputs/Evaluation_ExpectedOutputs.csproj" />
+    <Project Path="samples/02-agents/Evaluation/Evaluation_Multimodal/Evaluation_Multimodal.csproj" />
+  </Folder>
   <Folder Name="/Samples/02-agents/AgentWithMemory/">
     <File Path="samples/02-agents/AgentWithMemory/README.md" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
@@ -243,6 +249,9 @@
   <Folder Name="/Samples/03-workflows/HumanInTheLoop/">
     <Project Path="samples/03-workflows/HumanInTheLoop/HumanInTheLoopBasic/HumanInTheLoopBasic.csproj" />
   </Folder>
+  <Folder Name="/Samples/03-workflows/Orchestration/">
+    <Project Path="samples/03-workflows/Orchestration/Handoff/Handoff.csproj" />
+  </Folder>
   <Folder Name="/Samples/03-workflows/Observability/">
     <Project Path="samples/03-workflows/Observability/ApplicationInsights/ApplicationInsights.csproj" />
     <Project Path="samples/03-workflows/Observability/AspireDashboard/AspireDashboard.csproj" />
@@ -259,6 +268,9 @@
     <Project Path="samples/03-workflows/_StartHere/05_SubWorkflows/05_SubWorkflows.csproj" />
     <Project Path="samples/03-workflows/_StartHere/06_MixedWorkflowAgentsAndExecutors/06_MixedWorkflowAgentsAndExecutors.csproj" />
     <Project Path="samples/03-workflows/_StartHere/07_WriterCriticWorkflow/07_WriterCriticWorkflow.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/Evaluation/">
+    <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowEval/Evaluation_WorkflowEval.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/" />
   <Folder Name="/Samples/04-hosting/DurableAgents/" />
@@ -288,10 +300,15 @@
     <File Path="samples/04-hosting/A2A/README.md" />
     <Project Path="samples/04-hosting/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
     <Project Path="samples/04-hosting/A2A/A2AAgent_PollingForTaskCompletion/A2AAgent_PollingForTaskCompletion.csproj" />
-  </Folder>  
+  </Folder>
   <Folder Name="/Samples/05-end-to-end/">
     <Project Path="samples/05-end-to-end/AgentWithPurview/AgentWithPurview.csproj" />
     <Project Path="samples/05-end-to-end/M365Agent/M365Agent.csproj" />
+  </Folder>
+  <Folder Name="/Samples/05-end-to-end/Evaluation/">
+    <Project Path="samples/05-end-to-end/Evaluation/Evaluation_FoundryQuality/Evaluation_FoundryQuality.csproj" />
+    <Project Path="samples/05-end-to-end/Evaluation/Evaluation_MixedProviders/Evaluation_MixedProviders.csproj" />
+    <Project Path="samples/05-end-to-end/Evaluation/Evaluation_ConversationSplits/Evaluation_ConversationSplits.csproj" />
   </Folder>
   <Folder Name="/Samples/05-end-to-end/A2AClientServer/">
     <File Path="samples/05-end-to-end/A2AClientServer/README.md" />

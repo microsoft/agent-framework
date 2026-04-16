@@ -1879,6 +1879,12 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model is not None:
             response.model = update.model
+    if (
+        isinstance(response, AgentResponse)
+        and isinstance(update, AgentResponseUpdate)
+        and update.finish_reason is not None
+    ):
+        response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
 
 
@@ -2435,6 +2441,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         response_id: str | None = None,
         agent_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: ResponseModelT | None = None,
         response_format: StructuredResponseFormat = None,
@@ -2450,6 +2457,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             agent_id: The identifier of the agent that produced this response. Useful in multi-agent
                 scenarios to track which agent generated the response.
             created_at: A timestamp for the chat response.
+            finish_reason: The reason the model stopped generating. Common values include
+                ``"stop"`` (natural completion), ``"length"`` (token limit), and
+                ``"tool_calls"`` (the model invoked a tool).
             usage_details: The usage details for the chat response.
             value: The structured output of the agent run response, if applicable.
             response_format: Optional response format for the agent response.
@@ -2476,6 +2486,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         self.response_id = response_id
         self.agent_id = agent_id
         self.created_at = created_at
+        self.finish_reason = finish_reason
         self.usage_details = usage_details
         self._value: ResponseModelT | None = value
         self._response_format: type[BaseModel] | Mapping[str, Any] | None = response_format
@@ -2688,6 +2699,7 @@ class AgentResponseUpdate(SerializationMixin):
         response_id: str | None = None,
         message_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2703,6 +2715,9 @@ class AgentResponseUpdate(SerializationMixin):
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             created_at: Optional timestamp for the chat response update.
+            finish_reason: The reason the model stopped generating. Common values include
+                ``"stop"`` (natural completion), ``"length"`` (token limit), and
+                ``"tool_calls"`` (the model invoked a tool).
             continuation_token: Optional token for resuming a long-running background operation.
                 When present, indicates the operation is still in progress.
             additional_properties: Optional additional properties associated with the chat response update.
@@ -2729,6 +2744,7 @@ class AgentResponseUpdate(SerializationMixin):
         self.response_id = response_id
         self.message_id = message_id
         self.created_at = created_at
+        self.finish_reason = finish_reason
         self.continuation_token = continuation_token
         self.additional_properties = _restore_compaction_annotation_in_additional_properties(
             additional_properties,
@@ -2761,6 +2777,7 @@ def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None)
         response_id=update.response_id,
         message_id=update.message_id,
         created_at=update.created_at,
+        finish_reason=update.finish_reason,  # type: ignore[arg-type]
         continuation_token=update.continuation_token,
         additional_properties=update.additional_properties,
         raw_representation=update,
