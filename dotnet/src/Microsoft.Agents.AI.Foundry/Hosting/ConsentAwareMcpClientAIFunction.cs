@@ -25,15 +25,15 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <c>mcp_approval_request</c> output item and marks the response as <c>incomplete</c>.
 /// </para>
 /// </remarks>
-internal sealed class ConsentAwareMcpClientTool : AIFunction
+internal sealed class ConsentAwareMcpClientAIFunction : AIFunction
 {
     private readonly McpClientTool _inner;
-    private readonly string _toolsetName;
+    private readonly string _toolboxName;
 
-    internal ConsentAwareMcpClientTool(McpClientTool inner, string toolsetName)
+    internal ConsentAwareMcpClientAIFunction(McpClientTool inner, string toolboxName)
     {
         this._inner = inner;
-        this._toolsetName = toolsetName;
+        this._toolboxName = toolboxName;
     }
 
     public override string Name => this._inner.Name;
@@ -59,7 +59,7 @@ internal sealed class ConsentAwareMcpClientTool : AIFunction
             var state = McpConsentContext.Current.Value;
             if (state is not null)
             {
-                state.Pending = new McpConsentInfo(this._toolsetName, this._inner.Name, ex.Message);
+                state.Pending = new McpConsentInfo(this._toolboxName, this._inner.Name, ex.Message);
                 state.CancellationSource?.Cancel();
             }
 

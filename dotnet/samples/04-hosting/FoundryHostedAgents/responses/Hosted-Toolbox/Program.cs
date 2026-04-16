@@ -12,7 +12,7 @@
 //                                       (injected automatically by Foundry platform at runtime)
 //
 // Optional:
-//   FOUNDRY_TOOLSET_NAME              - Name of the toolset to load (default: my-toolset)
+//   FOUNDRY_TOOLBOX_NAME              - Name of the toolset to load (default: my-toolset)
 //   FOUNDRY_AGENT_NAME                - Client name reported to MCP server
 //   FOUNDRY_AGENT_VERSION             - Client version reported to MCP server
 //   FOUNDRY_AGENT_TOOLSET_FEATURES    - Feature flags sent to Foundry proxy via header
@@ -30,7 +30,7 @@ Env.TraversePath().Load();
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
-string toolsetName = Environment.GetEnvironmentVariable("FOUNDRY_TOOLSET_NAME") ?? "my-toolset";
+string toolboxName = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_NAME") ?? "my-toolset";
 
 // Use a chained credential: try a temporary dev token first (for local Docker debugging),
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
@@ -62,7 +62,7 @@ builder.Services.AddFoundryResponses(agent);
 // The toolset name must match a toolset registered in your Foundry project.
 // When FOUNDRY_AGENT_TOOLSET_ENDPOINT is absent (e.g., in local development without Foundry
 // infrastructure), startup succeeds without error and no toolbox tools are loaded.
-builder.Services.AddFoundryToolboxes(toolsetName);
+builder.Services.AddFoundryToolboxes(toolboxName);
 
 var app = builder.Build();
 app.MapFoundryResponses();

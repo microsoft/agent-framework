@@ -16,7 +16,7 @@ using ModelContextProtocol.Client;
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
-/// An <see cref="IHostedService"/> that eagerly connects to the Foundry Toolsets MCP proxy at
+/// An <see cref="IHostedService"/> that eagerly connects to the Foundry Toolboxes MCP proxy at
 /// container startup, discovers tools via <c>tools/list</c>, and caches them so they can be
 /// injected into every <see cref="ChatOptions"/> by
 /// <see cref="AgentFrameworkResponseHandler"/>.
@@ -28,7 +28,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </para>
 /// <para>
 /// Initialization is performed in <see cref="StartAsync"/> so the readiness probe is only satisfied
-/// after all configured toolsets are connected and their tools discovered (spec §3.1 SHOULD).
+/// after all configured toolboxes are connected and their tools discovered (spec §3.1 SHOULD).
 /// </para>
 /// </remarks>
 public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
@@ -41,8 +41,8 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     private readonly List<HttpClient> _httpClients = [];
 
     /// <summary>
-    /// Gets the cached list of <see cref="AITool"/> instances discovered from all connected toolsets.
-    /// Always non-null after startup; returns an empty list when no toolset endpoint is configured.
+    /// Gets the cached list of <see cref="AITool"/> instances discovered from all connected toolboxes.
+    /// Always non-null after startup; returns an empty list when no toolbox endpoint is configured.
     /// </summary>
     public IReadOnlyList<AITool> Tools { get; private set; } = [];
 
@@ -75,9 +75,9 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             return;
         }
 
-        if (this._options.ToolsetNames.Count == 0)
+        if (this._options.ToolboxNames.Count == 0)
         {
-            this._logger.LogInformation("No toolset names configured; toolbox support is disabled.");
+            this._logger.LogInformation("No toolbox names configured; toolbox support is disabled.");
             this.Tools = [];
             return;
         }
@@ -88,21 +88,21 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 
         var allTools = new List<AITool>();
 
-        // Deduplicate toolset names to avoid duplicate MCP clients and ambiguous tool exposure
+        // Deduplicate toolbox names to avoid duplicate MCP clients and ambiguous tool exposure
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var toolsetName in this._options.ToolsetNames)
+        foreach (var toolboxName in this._options.ToolboxNames)
         {
-            if (!seen.Add(toolsetName))
+            if (!seen.Add(toolboxName))
             {
                 continue;
             }
 
-            var proxyUrl = $"{endpoint.TrimEnd('/')}/{toolsetName}/mcp?api-version={this._options.ApiVersion}";
+            var proxyUrl = $"{endpoint.TrimEnd('/')}/{toolboxName}/mcp?api-version={this._options.ApiVersion}";
 
             if (this._logger.IsEnabled(LogLevel.Information))
             {
-                this._logger.LogInformation("Connecting to toolset '{ToolsetName}' at {ProxyUrl}.", toolsetName, proxyUrl);
+                this._logger.LogInformation("Connecting to toolbox '{ToolboxName}' at {ProxyUrl}.", toolboxName, proxyUrl);
             }
 
             try
@@ -118,7 +118,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 var transportOptions = new HttpClientTransportOptions
                 {
                     Endpoint = new Uri(proxyUrl),
-                    Name = toolsetName,
+                    Name = toolboxName,
                 };
 
                 var transport = new HttpClientTransport(transportOptions, httpClient);
@@ -144,22 +144,22 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 if (this._logger.IsEnabled(LogLevel.Information))
                 {
                     this._logger.LogInformation(
-                        "Toolset '{ToolsetName}': discovered {ToolCount} tool(s).",
-                        toolsetName,
+                        "Toolbox '{ToolboxName}': discovered {ToolCount} tool(s).",
+                        toolboxName,
                         tools.Count);
                 }
 
                 foreach (var tool in tools)
                 {
-                    allTools.Add(new ConsentAwareMcpClientTool(tool, toolsetName));
+                    allTools.Add(new ConsentAwareMcpClientAIFunction(tool, toolboxName));
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 this._logger.LogError(
                     ex,
-                    "Failed to connect to toolset '{ToolsetName}'. Tools from this toolset will not be available.",
-                    toolsetName);
+                    "Failed to connect to toolbox '{ToolboxName}'. Tools from this toolbox will not be available.",
+                    toolboxName);
             }
         }
 

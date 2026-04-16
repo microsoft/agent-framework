@@ -170,7 +170,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 {
                     // Emit mcp_approval_request output item + incomplete for the consent URL.
                     foreach (var approvalEvent in stream.OutputItemMcpApprovalRequest(
-                        consentInfo.ToolsetName,
+                        consentInfo.ToolboxName,
                         consentInfo.ToolName,
                         consentInfo.ConsentUrl))
                     {
