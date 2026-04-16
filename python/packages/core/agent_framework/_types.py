@@ -1877,8 +1877,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.conversation_id = update.conversation_id
         if update.finish_reason is not None:
             response.finish_reason = update.finish_reason
-        if update.model_id is not None:
-            response.model_id = update.model_id
+        if update.model is not None:
+            response.model = update.model
     if isinstance(response, AgentResponse) and isinstance(update, AgentResponseUpdate):
         if update.finish_reason is not None:
             response.finish_reason = update.finish_reason
