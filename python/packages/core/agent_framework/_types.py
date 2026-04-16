@@ -1879,9 +1879,12 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model is not None:
             response.model = update.model
-    if isinstance(response, AgentResponse) and isinstance(update, AgentResponseUpdate):
-        if update.finish_reason is not None:
-            response.finish_reason = update.finish_reason
+    if (
+        isinstance(response, AgentResponse)
+        and isinstance(update, AgentResponseUpdate)
+        and update.finish_reason is not None
+    ):
+        response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
 
 
