@@ -1161,7 +1161,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             # First turn: prepend instructions as system message
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
         # Continuation turn: instructions already exist in conversation context, skip prepending
-        request_input = self._prepare_messages_for_openai(messages)
+        request_uses_service_side_storage = False
+        for key in ("conversation_id", "previous_response_id", "conversation"):
+            value = options.get(key)
+            if isinstance(value, str) and value:
+                request_uses_service_side_storage = True
+                break
+        request_input = self._prepare_messages_for_openai(
+            messages,
+            request_uses_service_side_storage=request_uses_service_side_storage,
+        )
         if not request_input:
             raise ChatClientInvalidRequestException("Messages are required for chat completions")
         conversation_id = options.get("conversation_id")
@@ -1235,7 +1244,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 raise ValueError("model must be a non-empty string")
             options["model"] = self.model
 
-    def _prepare_messages_for_openai(self, chat_messages: Sequence[Message]) -> list[dict[str, Any]]:
+    def _prepare_messages_for_openai(
+        self,
+        chat_messages: Sequence[Message],
+        *,
+        request_uses_service_side_storage: bool = True,
+    ) -> list[dict[str, Any]]:
         """Prepare the chat messages for a request.
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
@@ -1248,31 +1262,27 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
         Args:
             chat_messages: The chat history to prepare.
+            request_uses_service_side_storage: Whether this request continues a service-managed
+                response/conversation and can safely reference service-scoped response items.
 
         Returns:
             The prepared chat messages for a request.
         """
-        list_of_list = [self._prepare_message_for_openai(message) for message in chat_messages]
+        list_of_list = [
+            self._prepare_message_for_openai(
+                message,
+                request_uses_service_side_storage=request_uses_service_side_storage,
+            )
+            for message in chat_messages
+        ]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
-
-    @staticmethod
-    def _message_replays_provider_context(message: Message) -> bool:
-        """Return whether the message came from provider-attributed replay context.
-
-        Responses ``fc_id`` values are response-scoped and only valid while replaying
-        the same live tool loop. Once a message comes back through a context provider
-        (for example, loaded session history), that message is historical input and
-        must not reuse the original response-scoped ``fc_id``.
-        """
-        additional_properties = getattr(message, "additional_properties", None)
-        if not additional_properties:
-            return False
-        return "_attribution" in additional_properties
 
     def _prepare_message_for_openai(
         self,
         message: Message,
+        *,
+        request_uses_service_side_storage: bool = True,
     ) -> list[dict[str, Any]]:
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
@@ -1280,34 +1290,63 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             "type": "message",
             "role": message.role,
         }
+        additional_properties = message.additional_properties
+        replays_local_storage = "_attribution" in additional_properties
+        uses_service_side_storage = request_uses_service_side_storage and not replays_local_storage
         # Reasoning items are only valid in input when they directly preceded a function_call
-        # in the same response.  Including a reasoning item that preceded a text response
+        # in the same response. Including a reasoning item that preceded a text response
         # (i.e. no function_call in the same message) causes an API error:
         # "reasoning was provided without its required following item."
+        #
+        # Local storage is stricter: response-scoped reasoning items (rs_*) cannot be replayed
+        # back to the service unless that message is using service-side storage.
+        # In that mode we omit reasoning items and rely on function call + tool output replay.
         has_function_call = any(c.type == "function_call" for c in message.contents)
         for content in message.contents:
             match content.type:
                 case "text_reasoning":
-                    if not has_function_call:
+                    if not uses_service_side_storage or not has_function_call:
                         continue  # reasoning not followed by a function_call is invalid in input
-                    reasoning = self._prepare_content_for_openai(message.role, content, message=message)
+                    reasoning = self._prepare_content_for_openai(
+                        message.role,
+                        content,
+                        replays_local_storage=replays_local_storage,
+                    )
                     if reasoning:
                         all_messages.append(reasoning)
                 case "function_result":
                     new_args: dict[str, Any] = {}
-                    new_args.update(self._prepare_content_for_openai(message.role, content, message=message))
+                    new_args.update(
+                        self._prepare_content_for_openai(
+                            message.role,
+                            content,
+                            replays_local_storage=replays_local_storage,
+                        )
+                    )
                     if new_args:
                         all_messages.append(new_args)
                 case "function_call":
-                    function_call = self._prepare_content_for_openai(message.role, content, message=message)
+                    function_call = self._prepare_content_for_openai(
+                        message.role,
+                        content,
+                        replays_local_storage=replays_local_storage,
+                    )
                     if function_call:
                         all_messages.append(function_call)
                 case "function_approval_response" | "function_approval_request":
-                    prepared = self._prepare_content_for_openai(message.role, content, message=message)
+                    prepared = self._prepare_content_for_openai(
+                        message.role,
+                        content,
+                        replays_local_storage=replays_local_storage,
+                    )
                     if prepared:
                         all_messages.append(prepared)
                 case _:
-                    prepared_content = self._prepare_content_for_openai(message.role, content, message=message)
+                    prepared_content = self._prepare_content_for_openai(
+                        message.role,
+                        content,
+                        replays_local_storage=replays_local_storage,
+                    )
                     if prepared_content:
                         if "content" not in args:
                             args["content"] = []
@@ -1321,7 +1360,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         role: Role | str,
         content: Content,
         *,
-        message: Message | None = None,
+        replays_local_storage: bool = False,
     ) -> dict[str, Any]:
         """Prepare content for the OpenAI Responses API format."""
         role = Role(role)
@@ -1401,11 +1440,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     logger.warning(f"FunctionCallContent missing call_id for function '{content.name}'")
                     return {}
                 fc_id = content.call_id
-                if (
-                    message is not None
-                    and not self._message_replays_provider_context(message)
-                    and content.additional_properties
-                ):
+                if not replays_local_storage and content.additional_properties:
                     live_fc_id = content.additional_properties.get("fc_id")
                     if isinstance(live_fc_id, str) and live_fc_id:
                         fc_id = live_fc_id
