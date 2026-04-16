@@ -5,8 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
-    <RootNamespace>HostedWorkflows</RootNamespace>
-    <AssemblyName>HostedWorkflows</AssemblyName>
+    <RootNamespace>HostedWorkflowSimple</RootNamespace>
+    <AssemblyName>HostedWorkflowSimple</AssemblyName>
     <NoWarn>$(NoWarn);</NoWarn>
   </PropertyGroup>
 

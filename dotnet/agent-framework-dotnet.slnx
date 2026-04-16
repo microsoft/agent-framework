@@ -287,14 +287,14 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-TextRag/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-TextRag/HostedTextRag.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflows/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflows/HostedWorkflows.csproj" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Simple/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Simple/HostedWorkflowSimple.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent/SimpleAgent.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/FoundryResponsesHosting/">
-    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-WorkflowHandoff/HostedWorkflowHandoff.csproj" />
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Handoff/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Handoff/HostedWorkflowHandoff.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/DurableAgents/" />
   <Folder Name="/Samples/04-hosting/DurableAgents/AzureFunctions/">

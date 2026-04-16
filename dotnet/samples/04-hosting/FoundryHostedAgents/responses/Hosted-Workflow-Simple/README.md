@@ -1,4 +1,4 @@
-# Hosted-Workflows
+# Hosted-Workflow-Simple
 
 A hosted agent that demonstrates **multi-agent workflow orchestration**. Three translation agents are composed into a sequential pipeline: English → French → Spanish → English, showing how agents can be chained as workflow executors using `WorkflowBuilder`.
 
@@ -30,7 +30,7 @@ AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
 ## Running directly (contributors)
 
 ```bash
-cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflows
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Simple
 AGENT_NAME=hosted-workflows dotnet run
 ```
 
@@ -49,7 +49,7 @@ Or with curl:
 ```bash
 curl -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
-  -d '{"input": "The quick brown fox jumps over the lazy dog", "model": "hosted-workflows"}'
+  -d '{"input": "The quick brown fox jumps over the lazy dog", "model": "hosted-workflow-simple"}'
 ```
 
 The text will be translated through the chain: English → French → Spanish → English.
@@ -65,7 +65,7 @@ dotnet publish -c Debug -f net10.0 -r linux-musl-x64 --self-contained false -o o
 ### 2. Build the Docker image
 
 ```bash
-docker build -f Dockerfile.contributor -t hosted-workflows .
+docker build -f Dockerfile.contributor -t hosted-workflow-simple .
 ```
 
 ### 3. Run the container
@@ -74,7 +74,7 @@ docker build -f Dockerfile.contributor -t hosted-workflows .
 export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
 
 docker run --rm -p 8088:8088 \
-  -e AGENT_NAME=hosted-workflows \
+  -e AGENT_NAME=hosted-workflow-simple \
   -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN \
   --env-file .env \
   hosted-workflows
@@ -106,4 +106,4 @@ Each agent in the chain receives the output of the previous agent. The final res
 
 ## NuGet package users
 
-Use the standard `Dockerfile` instead of `Dockerfile.contributor`. See the commented section in `HostedWorkflows.csproj` for the `PackageReference` alternative.
+Use the standard `Dockerfile` instead of `Dockerfile.contributor`. See the commented section in `HostedWorkflowSimple.csproj` for the `PackageReference` alternative.
