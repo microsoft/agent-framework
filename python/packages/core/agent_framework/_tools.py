@@ -1368,10 +1368,13 @@ async def _auto_invoke_function(
                 # we assume it is a hosted tool
                 return function_call_content
             # Re-invoke through the parent sub-agent tool with approval context.
+            parent_tool_call_id = function_call_content.additional_properties.get(
+                "_parent_tool_call_id"
+            ) or function_call_content.id or function_call_content.call_id
             function_call_content = Content(
                 type="function_call",
                 name=parent_tool_name,
-                call_id=function_call_content.call_id,
+                call_id=parent_tool_call_id,
                 arguments=function_call_content.additional_properties.get("_parent_tool_args"),
                 additional_properties={
                     "_approval_messages": [function_call_content],
@@ -1420,6 +1423,8 @@ async def _auto_invoke_function(
     approval_msgs = function_call_content.additional_properties.get("_approval_messages")
     if approval_msgs:
         approval_metadata = {"_approval_messages": approval_msgs}
+        # Remove internal routing metadata so it doesn't persist in session messages.
+        function_call_content.additional_properties.pop("_approval_messages", None)
 
     if middleware_pipeline is None or not middleware_pipeline.has_middlewares:
         # No middleware - execute directly
@@ -1641,8 +1646,10 @@ async def _try_execute_function_calls(
                             item.id = function_call.call_id  # type: ignore[attr-defined]
                         # Tag with parent tool info so approval responses can be
                         # routed back through the sub-agent on re-invocation.
-                        item.additional_properties["_parent_tool_name"] = function_call.name
-                        item.additional_properties["_parent_tool_args"] = function_call.arguments
+                        # Use setdefault to preserve inner routing metadata for nested sub-agents.
+                        item.additional_properties.setdefault("_parent_tool_name", function_call.name)
+                        item.additional_properties.setdefault("_parent_tool_args", function_call.arguments)
+                        item.additional_properties.setdefault("_parent_tool_call_id", function_call.call_id)
                         propagated.append(item)
                 if propagated:
                     extra_user_input_contents.extend(propagated[1:])

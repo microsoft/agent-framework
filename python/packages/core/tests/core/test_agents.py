@@ -2655,7 +2655,6 @@ async def test_as_tool_raises_on_user_input_request(client: SupportsChatGetRespo
     assert exc_info.value.contents[0].consent_link == "https://login.microsoftonline.com/consent"
 
 
-@pytest.mark.asyncio
 async def test_chat_agent_as_tool_inner_approval_executes_tool() -> None:
     """Test that approving a sub-agent's inner tool actually executes it.
 
@@ -2771,8 +2770,16 @@ async def test_chat_agent_as_tool_inner_approval_executes_tool() -> None:
         )
         assert "Amsterdam" in response2.text
 
+        # Verify the outer tool result has the correct call_id matching the original tool call.
+        messages = session.state.get("in_memory", {}).get("messages", [])
+        assert any(
+            getattr(content, "type", None) == "function_result"
+            and getattr(content, "call_id", None) == "outer_call_1"
+            for message in messages
+            for content in (getattr(message, "contents", None) or [])
+        ), "Expected persisted outer tool result with call_id='outer_call_1' in session history"
 
-@pytest.mark.asyncio
+
 async def test_chat_agent_as_tool_inner_approval_rejected() -> None:
     """Test that rejecting a sub-agent's inner tool approval does not execute it."""
     from unittest.mock import patch as mock_patch
@@ -2854,10 +2861,11 @@ async def test_chat_agent_as_tool_inner_approval_rejected() -> None:
 
         # Reject the approval
         rejection_content = approval_request.to_function_approval_response(False)
-        await outer_agent.run(
+        response2 = await outer_agent.run(
             [Message("user", [rejection_content])],
             session=session,
             stream=False,
         )
 
         assert not inner_tool_executed, "Inner tool should NOT execute when approval is rejected"
+        assert response2.text, "Outer agent should still produce a response after rejection"
