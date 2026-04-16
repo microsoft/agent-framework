@@ -70,4 +70,27 @@ public class ServiceCollectionExtensionsTests
         Assert.Throws<ArgumentNullException>(
             () => services.AddFoundryResponses(null!));
     }
+
+    [Fact]
+    public void ApplyOpenTelemetry_NonInstrumentedAgent_WrapsWithOpenTelemetryAgent()
+    {
+        var mockAgent = new Mock<AIAgent>();
+
+        var result = FoundryHostingExtensions.ApplyOpenTelemetry(mockAgent.Object);
+
+        Assert.NotNull(result.GetService<OpenTelemetryAgent>());
+    }
+
+    [Fact]
+    public void ApplyOpenTelemetry_AlreadyInstrumentedAgent_ReturnsSameReference()
+    {
+        var mockAgent = new Mock<AIAgent>();
+        var instrumented = mockAgent.Object.AsBuilder()
+            .UseOpenTelemetry()
+            .Build();
+
+        var result = FoundryHostingExtensions.ApplyOpenTelemetry(instrumented);
+
+        Assert.Same(instrumented, result);
+    }
 }

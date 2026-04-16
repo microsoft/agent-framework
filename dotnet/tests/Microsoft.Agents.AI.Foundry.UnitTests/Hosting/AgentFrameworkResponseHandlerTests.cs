@@ -662,6 +662,44 @@ public class AgentFrameworkResponseHandlerTests
         });
     }
 
+    [Fact]
+    public async Task CreateAsync_DefaultAgent_IsAutoWrappedWithOpenTelemetryAsync()
+    {
+        // Arrange — register a plain (non-instrumented) agent
+        var agent = CreateTestAgent("otel test response");
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AIAgent>(agent);
+        var sp = services.BuildServiceProvider();
+
+        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+
+        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        request.Input = BinaryData.FromObjectAsJson(new[]
+        {
+            new { type = "message", id = "msg_1", status = "completed", role = "user",
+                  content = new[] { new { type = "input_text", text = "Hello" } } }
+        });
+
+        var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
+        mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<OutputItem>());
+        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Item>());
+
+        // Act — OTel wrapping must not break the stream
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert — stream events are still produced correctly through the wrapper
+        Assert.True(events.Count >= 4, $"Expected at least 4 events, got {events.Count}");
+        Assert.IsType<ResponseCreatedEvent>(events[0]);
+        Assert.IsType<ResponseInProgressEvent>(events[1]);
+    }
+
     private static TestAgent CreateTestAgent(string responseText)
     {
         return new TestAgent(responseText);
