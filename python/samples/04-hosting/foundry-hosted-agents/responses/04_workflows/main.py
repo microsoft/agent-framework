@@ -2,11 +2,10 @@
 
 import os
 
-from agent_framework import Agent
+from agent_framework import Agent, AgentExecutor, WorkflowBuilder
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
+from agent_framework.orchestrations import GroupChatState
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.ai.agentserver.responses import InMemoryResponseProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -30,35 +29,48 @@ def main():
 
     writer_agent = Agent(
         client=client,
-        instructions=(
-            "You are an excellent content writer. You create new content and edit contents based on the feedback."
-        ),
+        instructions=("You are an excellent slogan writer. You create new slogans based on the given topic."),
         name="writer",
     )
 
-    reviewer_agent = Agent(
+    legal_agent = Agent(
         client=client,
         instructions=(
-            "You are an excellent content reviewer."
-            "Provide actionable feedback to the writer about the provided content."
-            "Provide the feedback in the most concise manner possible."
+            "You are an excellent legal reviewer. "
+            "Make necessary corrections to the slogan so that it is legally compliant."
         ),
-        name="reviewer",
+        name="legal_reviewer",
     )
 
+    format_agent = Agent(
+        client=client,
+        instructions=(
+            "You are an excellent content formatter. "
+            "You take the slogan and format it in a cool retro style when printing to a terminal."
+        ),
+        name="formatter",
+    )
+
+    # Set the context mode to `last_agent` so that each agent only sees the output of the
+    # previous agent instead of the full conversation history
+    writer_executor = AgentExecutor(writer_agent, context_mode="last_agent")
+    legal_executor = AgentExecutor(legal_agent, context_mode="last_agent")
+    format_executor = AgentExecutor(format_agent, context_mode="last_agent")
+
     workflow_agent = (
-        GroupChatBuilder(
-            participants=[writer_agent, reviewer_agent],
-            # Set a hard termination condition to stop after 4 messages:
-            # User message + writer message + reviewer message + writer message
-            termination_condition=lambda conversation: len(conversation) >= 4,
-            selection_func=round_robin_selector,
+        WorkflowBuilder(
+            start_executor=writer_executor,
+            # Limiting the output to only the final formatted result.
+            # If this is not set, all intermediate results will be included in the output.
+            output_executors=[format_executor],
         )
+        .add_edge(writer_executor, legal_executor)
+        .add_edge(legal_executor, format_executor)
         .build()
         .as_agent()
     )
 
-    server = ResponsesHostServer(workflow_agent, store=InMemoryResponseProvider())
+    server = ResponsesHostServer(workflow_agent)
     server.run()
 
 

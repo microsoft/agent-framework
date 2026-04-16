@@ -7,7 +7,6 @@ from random import randint
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.ai.agentserver.responses import InMemoryResponseProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -67,7 +66,7 @@ def main():
         default_options={"store": False},
     )
 
-    server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+    server = ResponsesHostServer(agent)
     server.run()
 
 

@@ -5,7 +5,6 @@ import os
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.ai.agentserver.responses import InMemoryResponseProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -29,7 +28,7 @@ def main():
         default_options={"store": False},
     )
 
-    server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+    server = ResponsesHostServer(agent)
     server.run()
 
 

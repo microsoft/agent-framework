@@ -13,5 +13,5 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
 Invoke with `azd`:
 
 ```bash
-azd ai agent invoke --local "List all the repositories I own on GitHub."
+azd ai agent invoke --local "Create a slogan for a new electric SUV that is affordable and fun to drive."
 ```
