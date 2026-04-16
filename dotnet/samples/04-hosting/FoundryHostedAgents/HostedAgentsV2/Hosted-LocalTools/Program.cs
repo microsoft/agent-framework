@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Seattle Hotel Agent - A hosted agent with local C# function tools.
 // Demonstrates how to define and wire local tools that the LLM can invoke,

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Translation Chain Workflow Agent — demonstrates how to compose multiple AI agents
 // into a sequential workflow pipeline. Three translation agents are connected:
