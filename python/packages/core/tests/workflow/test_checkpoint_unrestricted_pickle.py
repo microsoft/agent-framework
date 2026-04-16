@@ -216,3 +216,50 @@ def test_restricted_unpickler_raises_pickle_error():
     unpickler = _RestrictedUnpickler(pickled, frozenset())
     with pytest.raises(pickle.UnpicklingError, match="deserialization blocked"):
         unpickler.load()
+
+
+def test_restricted_decode_allows_openai_types():
+    """OpenAI SDK types are always allowed during restricted deserialization."""
+    from openai.types.chat.chat_completion import ChatCompletion, Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.completion_usage import CompletionUsage
+
+    completion = ChatCompletion(
+        id="chatcmpl-test",
+        choices=[
+            Choice(
+                finish_reason="stop",
+                index=0,
+                message=ChatCompletionMessage(role="assistant", content="hello"),
+            )
+        ],
+        created=1700000000,
+        model="gpt-4",
+        object="chat.completion",
+        usage=CompletionUsage(completion_tokens=1, prompt_tokens=1, total_tokens=2),
+    )
+    encoded = encode_checkpoint_value(completion)
+    decoded = decode_checkpoint_value(encoded, allowed_types=frozenset())
+
+    assert isinstance(decoded, ChatCompletion)
+    assert decoded.id == "chatcmpl-test"
+    assert decoded.choices[0].message.content == "hello"
+
+
+def test_restricted_decode_allows_openai_response_types():
+    """OpenAI Responses API types are always allowed during restricted deserialization."""
+    from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
+
+    usage = ResponseUsage(
+        input_tokens=10,
+        output_tokens=20,
+        total_tokens=30,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+    )
+    encoded = encode_checkpoint_value(usage)
+    decoded = decode_checkpoint_value(encoded, allowed_types=frozenset())
+
+    assert isinstance(decoded, ResponseUsage)
+    assert decoded.input_tokens == 10
+    assert decoded.output_tokens == 20
