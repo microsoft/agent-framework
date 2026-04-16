@@ -186,7 +186,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             var agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
             if (agent is not null)
             {
-                return agent;
+                return FoundryHostingExtensions.ApplyOpenTelemetry(agent);
             }
 
             if (this._logger.IsEnabled(LogLevel.Warning))
@@ -199,7 +199,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var defaultAgent = this._serviceProvider.GetService<AIAgent>();
         if (defaultAgent is not null)
         {
-            return defaultAgent;
+            return FoundryHostingExtensions.ApplyOpenTelemetry(defaultAgent);
         }
 
         var errorMessage = string.IsNullOrEmpty(agentName)

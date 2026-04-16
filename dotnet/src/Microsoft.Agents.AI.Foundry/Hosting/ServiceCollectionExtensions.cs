@@ -117,6 +117,24 @@ public static class FoundryHostingExtensions
         return endpoints;
     }
 
+    /// <summary>
+    /// Wraps <paramref name="agent"/> with <see cref="OpenTelemetryAgent"/> instrumentation
+    /// so that agent invocations emit spans into the pipeline registered by
+    /// <c>Azure.AI.AgentServer.Core</c>'s <c>AddAgentHostTelemetry()</c>.
+    /// If the agent is already instrumented the original instance is returned unchanged.
+    /// </summary>
+    internal static AIAgent ApplyOpenTelemetry(AIAgent agent)
+    {
+        if (agent.GetService<OpenTelemetryAgent>() is not null)
+        {
+            return agent;
+        }
+
+        return agent.AsBuilder()
+                    .UseOpenTelemetry(sourceName: AgentHostTelemetry.ResponsesSourceName)
+                    .Build();
+    }
+
     private sealed class AgentFrameworkUserAgentMiddleware(RequestDelegate next)
     {
         private static readonly string s_userAgentValue = CreateUserAgentValue();
