@@ -549,12 +549,30 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
-            stream = self.run(
-                str(kwargs.get(arg_name, "")),
-                stream=True,
-                session=ctx.session if propagate_session else None,
-                function_invocation_kwargs=dict(ctx.kwargs),
-            )
+            # Check if this invocation carries approval responses that need to be
+            # forwarded to the inner agent (sub-agent approval re-routing).
+            approval_messages: list[Any] | None = ctx.metadata.get("_approval_messages") if ctx else None
+            if approval_messages:
+                input_messages: list[Message] = []
+                for item in approval_messages:
+                    # Include the function call as an assistant message so the inner
+                    # agent has proper conversation context for the function result.
+                    if hasattr(item, "function_call") and item.function_call is not None:
+                        input_messages.append(Message("assistant", [item.function_call]))
+                    input_messages.append(Message("user", [item]))
+                stream = self.run(
+                    input_messages,
+                    stream=True,
+                    session=ctx.session if propagate_session else None,
+                    function_invocation_kwargs=dict(ctx.kwargs),
+                )
+            else:
+                stream = self.run(
+                    str(kwargs.get(arg_name, "")),
+                    stream=True,
+                    session=ctx.session if propagate_session else None,
+                    function_invocation_kwargs=dict(ctx.kwargs),
+                )
             if stream_callback is not None:
                 stream.with_transform_hook(stream_callback)
             final_response = await stream.get_final_response()

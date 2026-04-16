@@ -2653,3 +2653,211 @@ async def test_as_tool_raises_on_user_input_request(client: SupportsChatGetRespo
     assert len(exc_info.value.contents) == 1
     assert exc_info.value.contents[0].type == "oauth_consent_request"
     assert exc_info.value.contents[0].consent_link == "https://login.microsoftonline.com/consent"
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_as_tool_inner_approval_executes_tool() -> None:
+    """Test that approving a sub-agent's inner tool actually executes it.
+
+    When a sub-agent used via as_tool() has an inner tool with approval_mode="always_require",
+    the approval request propagates to the outer caller. Sending the approval response back
+    must re-invoke the sub-agent and execute the approved inner tool.
+    """
+    from unittest.mock import patch as mock_patch
+
+    from tests.core.conftest import MockBaseChatClient
+
+    inner_tool_executed = False
+
+    @tool(approval_mode="always_require")
+    def get_detail(location: str) -> str:
+        """Get details for a location."""
+        nonlocal inner_tool_executed
+        inner_tool_executed = True
+        return f"Details for {location}: cloudy, 15C."
+
+    # Inner agent uses streaming (as_tool always calls run with stream=True)
+    inner_client = MockBaseChatClient()
+    inner_client.streaming_responses = [
+        # Inner LLM requests get_detail (needs approval)
+        [
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="inner_call_1",
+                        name="get_detail",
+                        arguments='{"location": "Amsterdam"}',
+                    )
+                ],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ],
+        # After approval + execution, inner LLM produces final text
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("Details for Amsterdam: cloudy, 15C.")],
+                role="assistant",
+                finish_reason="stop",
+            )
+        ],
+    ]
+
+    inner_agent = Agent(
+        client=inner_client,
+        name="detail_agent",
+        description="Agent that provides detail information.",
+        instructions="You are a helpful detail assistant.",
+        tools=[get_detail],
+    )
+
+    # Outer agent uses non-streaming run_responses
+    outer_client = MockBaseChatClient()
+    outer_client.run_responses = [
+        # Outer LLM requests the sub-agent tool
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="outer_call_1",
+                        name="detail_agent_tool",
+                        arguments='{"task": "Get details for Amsterdam"}',
+                    )
+                ],
+            ),
+        ),
+        # After tool result, outer LLM generates final text
+        ChatResponse(
+            messages=Message(role="assistant", contents=["Details for Amsterdam: cloudy, 15C."]),
+        ),
+    ]
+
+    with mock_patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", 5):
+        outer_agent = Agent(
+            client=outer_client,
+            name="coordinator_agent",
+            description="Coordinator agent.",
+            instructions="Use the detail_agent_tool for detail questions.",
+            tools=[
+                inner_agent.as_tool(
+                    name="detail_agent_tool",
+                    description="A detail agent tool.",
+                    approval_mode="never_require",
+                )
+            ],
+        )
+
+        session = outer_agent.create_session()
+
+        # First run: should propagate approval request from inner tool
+        response1 = await outer_agent.run("Get details for Amsterdam", session=session, stream=False)
+
+        assert response1.user_input_requests, "Expected approval request from inner tool"
+        approval_request = response1.user_input_requests[0]
+        assert approval_request.type == "function_approval_request"
+        assert approval_request.function_call.name == "get_detail"
+
+        # Second run: send approval response — inner tool must execute
+        approval_response_content = approval_request.to_function_approval_response(True)
+        response2 = await outer_agent.run(
+            [Message("user", [approval_response_content])],
+            session=session,
+            stream=False,
+        )
+
+        assert inner_tool_executed, (
+            "Inner tool was never executed after approval. The approval response was not routed through the sub-agent."
+        )
+        assert "Amsterdam" in response2.text
+
+
+@pytest.mark.asyncio
+async def test_chat_agent_as_tool_inner_approval_rejected() -> None:
+    """Test that rejecting a sub-agent's inner tool approval does not execute it."""
+    from unittest.mock import patch as mock_patch
+
+    from tests.core.conftest import MockBaseChatClient
+
+    inner_tool_executed = False
+
+    @tool(approval_mode="always_require")
+    def get_detail(location: str) -> str:
+        """Get details for a location."""
+        nonlocal inner_tool_executed
+        inner_tool_executed = True
+        return f"Details for {location}: cloudy, 15C."
+
+    inner_client = MockBaseChatClient()
+    inner_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="inner_call_1",
+                        name="get_detail",
+                        arguments='{"location": "Amsterdam"}',
+                    )
+                ],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ],
+    ]
+
+    inner_agent = Agent(
+        client=inner_client,
+        name="detail_agent",
+        description="Agent that provides detail information.",
+        instructions="You are a helpful detail assistant.",
+        tools=[get_detail],
+    )
+
+    outer_client = MockBaseChatClient()
+    outer_client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="outer_call_1",
+                        name="detail_agent_tool",
+                        arguments='{"task": "Get details for Amsterdam"}',
+                    )
+                ],
+            ),
+        ),
+        ChatResponse(
+            messages=Message(role="assistant", contents=["I could not get the details."]),
+        ),
+    ]
+
+    with mock_patch("agent_framework._tools.DEFAULT_MAX_ITERATIONS", 5):
+        outer_agent = Agent(
+            client=outer_client,
+            name="coordinator_agent",
+            description="Coordinator agent.",
+            tools=[
+                inner_agent.as_tool(
+                    name="detail_agent_tool",
+                    description="A detail agent tool.",
+                    approval_mode="never_require",
+                )
+            ],
+        )
+
+        session = outer_agent.create_session()
+        response1 = await outer_agent.run("Get details for Amsterdam", session=session, stream=False)
+
+        assert response1.user_input_requests
+        approval_request = response1.user_input_requests[0]
+
+        # Reject the approval
+        rejection_content = approval_request.to_function_approval_response(False)
+        await outer_agent.run(
+            [Message("user", [rejection_content])],
+            session=session,
+            stream=False,
+        )
+
+        assert not inner_tool_executed, "Inner tool should NOT execute when approval is rejected"

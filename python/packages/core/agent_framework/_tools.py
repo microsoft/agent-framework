@@ -1359,9 +1359,26 @@ async def _auto_invoke_function(
             return function_call_content
         tool = tool_map.get(inner_call.name)  # type: ignore[attr-defined, union-attr, arg-type]
         if tool is None:
-            # we assume it is a hosted tool
-            return function_call_content
-        function_call_content = inner_call  # type: ignore[assignment]
+            # Check if this is a sub-agent approval that needs re-routing
+            # through the parent tool (the sub-agent wrapper).
+            parent_tool_name = function_call_content.additional_properties.get("_parent_tool_name")
+            if parent_tool_name:
+                tool = tool_map.get(parent_tool_name)
+            if tool is None:
+                # we assume it is a hosted tool
+                return function_call_content
+            # Re-invoke through the parent sub-agent tool with approval context.
+            function_call_content = Content(
+                type="function_call",
+                name=parent_tool_name,
+                call_id=function_call_content.call_id,
+                arguments=function_call_content.additional_properties.get("_parent_tool_args"),
+                additional_properties={
+                    "_approval_messages": [function_call_content],
+                },
+            )
+        else:
+            function_call_content = inner_call  # type: ignore[assignment]
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
@@ -1397,6 +1414,13 @@ async def _auto_invoke_function(
 
     from ._middleware import FunctionInvocationContext
 
+    # Carry sub-agent approval context through to the FunctionInvocationContext
+    # so _agent_wrapper can forward approval messages to the inner agent.
+    approval_metadata: dict[str, Any] | None = None
+    approval_msgs = function_call_content.additional_properties.get("_approval_messages")
+    if approval_msgs:
+        approval_metadata = {"_approval_messages": approval_msgs}
+
     if middleware_pipeline is None or not middleware_pipeline.has_middlewares:
         # No middleware - execute directly
         try:
@@ -1406,6 +1430,7 @@ async def _auto_invoke_function(
                     function=tool,
                     arguments=args,
                     session=invocation_session,
+                    metadata=approval_metadata,
                     kwargs=runtime_kwargs.copy(),
                 )
             function_result = await tool.invoke(
@@ -1435,6 +1460,7 @@ async def _auto_invoke_function(
         function=tool,
         arguments=args,
         session=invocation_session,
+        metadata=approval_metadata,
         kwargs=runtime_kwargs.copy(),
     )
 
@@ -1613,6 +1639,10 @@ async def _try_execute_function_calls(
                         item.call_id = function_call.call_id  # type: ignore[attr-defined]
                         if not item.id:  # type: ignore[attr-defined]
                             item.id = function_call.call_id  # type: ignore[attr-defined]
+                        # Tag with parent tool info so approval responses can be
+                        # routed back through the sub-agent on re-invocation.
+                        item.additional_properties["_parent_tool_name"] = function_call.name
+                        item.additional_properties["_parent_tool_args"] = function_call.arguments
                         propagated.append(item)
                 if propagated:
                     extra_user_input_contents.extend(propagated[1:])
