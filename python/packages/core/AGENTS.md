@@ -63,6 +63,8 @@ agent_framework/
 - **`SessionContext`** - Context object for session-scoped data during agent runs
 - **`ContextProvider`** - Base class for context providers (RAG, memory systems)
 - **`HistoryProvider`** - Base class for conversation history storage
+- **`InMemoryHistoryProvider`** - Built-in session-state history provider for local runs
+- **`FileHistoryProvider`** - JSON Lines file-backed history provider storing one file per session with one message record per line
 
 ### Skills (`_skills.py`)
 
