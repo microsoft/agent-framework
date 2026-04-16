@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.AI;
@@ -11,19 +12,25 @@ internal sealed class MultiPartyConversation
     private readonly List<ChatMessage> _history = [];
     private readonly object _mutex = new();
 
-    public List<ChatMessage> CloneAllMessages() => this._history.ToList();
+    public List<ChatMessage> CloneAllMessages()
+    {
+        lock (this._mutex)
+        {
+            return this._history.ToList();
+        }
+    }
 
     public (ChatMessage[], int) CollectNewMessages(int bookmark)
     {
         lock (this._mutex)
         {
             int count = this._history.Count - bookmark;
-            if (count > 0)
+            if (count < 0)
             {
-                return (this._history.Skip(bookmark).ToArray(), this.CurrentBookmark);
+                throw new InvalidOperationException($"Bookmark value too large: {bookmark} vs count={count}");
             }
 
-            return ([], this.CurrentBookmark);
+            return (this._history.Skip(bookmark).ToArray(), this.CurrentBookmark);
         }
     }
 
