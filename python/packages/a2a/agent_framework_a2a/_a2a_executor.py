@@ -101,13 +101,13 @@ class A2AExecutor(AgentExecutor):
         """
         super().__init__()
         self._agent: SupportsAgentRun = agent
-        self._stream = stream
+        self._stream: bool = stream
         if run_kwargs:
             if "session" in run_kwargs:
                 raise ValueError("run_kwargs cannot contain 'session' as it is managed by the executor.")
             if "stream" in run_kwargs:
                 raise ValueError("run_kwargs cannot contain 'stream' as it is managed by the executor.")
-        self._run_kwargs = run_kwargs or {}
+        self._run_kwargs: Mapping[str, Any] = run_kwargs or {}
 
     @override
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -164,7 +164,7 @@ class A2AExecutor(AgentExecutor):
     async def _run_stream(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
         """Run the agent in streaming mode and publish updates to the task updater."""
         response_stream = await self._agent.run(query, session=session, stream=True, **self._run_kwargs)
-        streamed_artifact_ids = set()
+        streamed_artifact_ids: set[str] = set()
         await (
             response_stream.with_transform_hook(
                 partial(self.handle_events, updater=updater, streamed_artifact_ids=streamed_artifact_ids))
