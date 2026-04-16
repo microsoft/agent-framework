@@ -4,9 +4,8 @@
     <BuildType Name="Publish" />
     <BuildType Name="Release" />
   </Configurations>
-  <Folder Name="/aspire-integration/" />
-  <Folder Name="/aspire-integration/Aspire.Hosting.AgentFramework.DevUI/">
-    <Project Path="aspire-integration/Aspire.Hosting.AgentFramework.DevUI/Aspire.Hosting.AgentFramework.DevUI.csproj" />
+  <Folder Name="/src/Aspire.Hosting.AgentFramework.DevUI/">
+    <Project Path="src/Aspire.Hosting.AgentFramework.DevUI/Aspire.Hosting.AgentFramework.DevUI.csproj" />
   </Folder>
   <Folder Name="/Samples/">
     <File Path="samples/AGENTS.md" />
