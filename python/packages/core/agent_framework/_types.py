@@ -2777,7 +2777,7 @@ def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None)
         response_id=update.response_id,
         message_id=update.message_id,
         created_at=update.created_at,
-        finish_reason=update.finish_reason,
+        finish_reason=update.finish_reason,  # type: ignore[arg-type]
         continuation_token=update.continuation_token,
         additional_properties=update.additional_properties,
         raw_representation=update,
