@@ -249,6 +249,9 @@
   <Folder Name="/Samples/03-workflows/HumanInTheLoop/">
     <Project Path="samples/03-workflows/HumanInTheLoop/HumanInTheLoopBasic/HumanInTheLoopBasic.csproj" />
   </Folder>
+  <Folder Name="/Samples/03-workflows/Orchestration/">
+    <Project Path="samples/03-workflows/Orchestration/Handoff/Handoff.csproj" />
+  </Folder>
   <Folder Name="/Samples/03-workflows/Observability/">
     <Project Path="samples/03-workflows/Observability/ApplicationInsights/ApplicationInsights.csproj" />
     <Project Path="samples/03-workflows/Observability/AspireDashboard/AspireDashboard.csproj" />
@@ -297,7 +300,7 @@
     <File Path="samples/04-hosting/A2A/README.md" />
     <Project Path="samples/04-hosting/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
     <Project Path="samples/04-hosting/A2A/A2AAgent_PollingForTaskCompletion/A2AAgent_PollingForTaskCompletion.csproj" />
-  </Folder>  
+  </Folder>
   <Folder Name="/Samples/05-end-to-end/">
     <Project Path="samples/05-end-to-end/AgentWithPurview/AgentWithPurview.csproj" />
     <Project Path="samples/05-end-to-end/M365Agent/M365Agent.csproj" />
