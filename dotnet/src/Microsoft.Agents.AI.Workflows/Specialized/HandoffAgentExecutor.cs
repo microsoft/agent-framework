@@ -44,8 +44,7 @@ internal struct AgentInvocationResult(AgentResponse agentResponse, string? hando
 
 internal record HandoffAgentHostState(
     HandoffState? IncomingState,
-    int ConversationBookmark,
-    AgentSession? AgentSession)
+    int ConversationBookmark)
 {
     [MemberNotNullWhen(true, nameof(IncomingState))]
     [JsonIgnore]
@@ -91,7 +90,10 @@ internal sealed class HandoffAgentExecutor :
     private readonly StateRef<HandoffSharedState> _sharedStateRef = new(HandoffConstants.HandoffSharedStateKey,
                                                                         HandoffConstants.HandoffSharedStateScope);
 
-    private static HandoffAgentHostState InitialStateFactory() => new(null, 0, null);
+    internal const string AgentSessionKey = nameof(AgentSession);
+    private AgentSession? _session;
+
+    private static HandoffAgentHostState InitialStateFactory() => new(null, 0);
 
     public HandoffAgentExecutor(AIAgent agent, HashSet<HandoffTarget> handoffs, HandoffAgentExecutorOptions options)
         : base(IdFor(agent), InitialStateFactory)
@@ -331,18 +333,35 @@ internal sealed class HandoffAgentExecutor :
     {
         Task userInputRequestsTask = this._userInputHandler?.OnCheckpointingAsync(UserInputRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
         Task functionCallRequestsTask = this._functionCallHandler?.OnCheckpointingAsync(FunctionCallRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
+        Task agentSessionTask = CheckpointAgentSessionAsync();
 
         Task baseTask = base.OnCheckpointingAsync(context, cancellationToken).AsTask();
-        await Task.WhenAll(userInputRequestsTask, functionCallRequestsTask, baseTask).ConfigureAwait(false);
+        await Task.WhenAll(userInputRequestsTask, functionCallRequestsTask, agentSessionTask, baseTask).ConfigureAwait(false);
+
+        async Task CheckpointAgentSessionAsync()
+        {
+            JsonElement? sessionState = this._session is not null ? await this._agent.SerializeSessionAsync(this._session, cancellationToken: cancellationToken).ConfigureAwait(false) : null;
+            await context.QueueStateUpdateAsync(AgentSessionKey, sessionState, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
     }
 
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Task userInputRestoreTask = this._userInputHandler?.OnCheckpointRestoredAsync(UserInputRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
         Task functionCallRestoreTask = this._functionCallHandler?.OnCheckpointRestoredAsync(FunctionCallRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
+        Task agentSessionTask = RestoreAgentSessionAsync();
 
-        await Task.WhenAll(userInputRestoreTask, functionCallRestoreTask).ConfigureAwait(false);
+        await Task.WhenAll(userInputRestoreTask, functionCallRestoreTask, agentSessionTask).ConfigureAwait(false);
         await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+
+        async Task RestoreAgentSessionAsync()
+        {
+            JsonElement? sessionState = await context.ReadStateAsync<JsonElement?>(AgentSessionKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (sessionState.HasValue)
+            {
+                this._session = await this._agent.DeserializeSessionAsync(sessionState.Value, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
     private bool HasOutstandingRequests => (this._userInputHandler?.HasPendingRequests == true)
                                         || (this._functionCallHandler?.HasPendingRequests == true);
@@ -360,14 +379,11 @@ internal sealed class HandoffAgentExecutor :
         await this.InvokeWithStateAsync(
             async (state, ctx, ct) =>
             {
-                if (state.AgentSession == null)
-                {
-                    state = state with { AgentSession = await this._agent.CreateSessionAsync(ct).ConfigureAwait(false) };
-                }
+                this._session ??= await this._agent.CreateSessionAsync(ct).ConfigureAwait(false);
 
                 IAsyncEnumerable<AgentResponseUpdate> agentStream =
                     this._agent.RunStreamingAsync(messages,
-                                                  state.AgentSession,
+                                                  this._session,
                                                   options: this._agentOptions,
                                                   cancellationToken: ct);
 
