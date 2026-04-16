@@ -7,7 +7,7 @@
     <UserSecretsId>b2c3d4e5-f6a7-8901-bcde-f12345678901</UserSecretsId>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(TargetFramework)' != 'net472'">
+  <ItemGroup>
     <PackageReference Include="Aspire.Azure.AI.Inference" />
     <PackageReference Include="Azure.Identity" />
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
