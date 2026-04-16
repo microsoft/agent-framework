@@ -66,26 +66,26 @@ internal sealed class DevTemporaryTokenCredential : TokenCredential
 
     public DevTemporaryTokenCredential()
     {
-        _token = Environment.GetEnvironmentVariable(EnvironmentVariable);
+        this._token = Environment.GetEnvironmentVariable(EnvironmentVariable);
     }
 
     public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
     {
-        return GetAccessToken();
+        return this.GetAccessToken();
     }
 
     public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
     {
-        return new ValueTask<AccessToken>(GetAccessToken());
+        return new ValueTask<AccessToken>(this.GetAccessToken());
     }
 
     private AccessToken GetAccessToken()
     {
-        if (string.IsNullOrEmpty(_token))
+        if (string.IsNullOrEmpty(this._token))
         {
             throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
         }
 
-        return new AccessToken(_token, DateTimeOffset.UtcNow.AddHours(1));
+        return new AccessToken(this._token, DateTimeOffset.UtcNow.AddHours(1));
     }
 }
