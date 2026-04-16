@@ -2474,6 +2474,29 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                 raw_representation=event,
                             )
                         )
+                elif ann_type == "url_citation":
+                    ann_url = _get_ann_value("url")
+                    if ann_url:
+                        ann_start = _get_ann_value("start_index")
+                        ann_end = _get_ann_value("end_index")
+                        annotation_obj = Annotation(
+                            type="citation",
+                            title=_get_ann_value("title") or "",
+                            url=str(ann_url),
+                            additional_properties={"annotation_index": event.annotation_index},
+                            raw_representation=annotation,
+                        )
+                        if ann_start is not None and ann_end is not None:
+                            annotation_obj["annotated_regions"] = [
+                                TextSpanRegion(
+                                    type="text_span",
+                                    start_index=ann_start,
+                                    end_index=ann_end,
+                                )
+                            ]
+                        contents.append(
+                            Content.from_text(text="", annotations=[annotation_obj], raw_representation=event)
+                        )
                 else:
                     logger.debug("Unparsed annotation type in streaming: %s", ann_type)
             case "response.output_item.done":
