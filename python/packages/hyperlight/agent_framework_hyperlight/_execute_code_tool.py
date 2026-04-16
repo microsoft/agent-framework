@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import copy
 import mimetypes
 import shutil
@@ -447,8 +448,29 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     sandbox_tool = copy.copy(tool_obj)
     sandbox_tool.result_parser = _passthrough_result_parser
 
-    async def _callback(**kwargs: Any) -> Any:
-        contents = await sandbox_tool.invoke(arguments=kwargs)
+    def _callback(**kwargs: Any) -> Any:
+        async def _invoke() -> list[Content]:
+            return await sandbox_tool.invoke(arguments=kwargs)
+
+        # FunctionTool.invoke() is always async. The real Hyperlight backend invokes
+        # registered callbacks synchronously via FFI, so this must be a sync function.
+        # We run the async call on a dedicated thread to avoid conflicts with any
+        # event loop that may be running on the current thread.
+        result_box: list[Any] = [None]
+        error_box: list[BaseException] = []
+
+        def _run() -> None:
+            try:
+                result_box[0] = asyncio.run(_invoke())
+            except BaseException as exc:
+                error_box.append(exc)
+
+        worker = threading.Thread(target=_run)
+        worker.start()
+        worker.join()
+        if error_box:
+            raise error_box[0]
+        contents: list[Content] = result_box[0]
 
         values: list[Any] = []
         for content in contents:
@@ -468,12 +490,34 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     return _callback
 
 
+def _clear_directory(output_dir: TemporaryDirectory[str] | None) -> None:
+    """Remove all contents of the output directory without deleting the directory itself."""
+    if output_dir is None:
+        return
+    root = Path(output_dir.name)
+    for child in root.iterdir():
+        try:
+            if child.is_symlink() or child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+        except (FileNotFoundError, PermissionError):
+            pass
+
+
 class _SandboxRegistry:
     def __init__(self) -> None:
         self._entries: dict[tuple[Any, ...], _SandboxEntry] = {}
         self._entries_lock = threading.RLock()
 
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]:
+        """Execute code in a cached sandbox matching the given config.
+
+        Entries are keyed by ``config.cache_key()``. Concurrent calls with the same
+        key are serialized by the entry lock so they never race, but they share the
+        same sandbox instance. For true parallel execution, use distinct provider
+        instances or configs that produce different cache keys.
+        """
         cache_key = config.cache_key()
         with self._entries_lock:
             entry = self._entries.get(cache_key)
@@ -483,6 +527,7 @@ class _SandboxRegistry:
 
         with entry.lock:
             entry.sandbox.restore(entry.snapshot)
+            _clear_directory(entry.output_dir)
             result = entry.sandbox.run(code=code)
             return _build_execution_contents(
                 result=result,
@@ -810,6 +855,6 @@ class HyperlightExecuteCodeTool(FunctionTool):
             allowed_domains=allowed_domains,
         )
 
-    def _run_code(self, *, code: str) -> list[Content]:
+    async def _run_code(self, *, code: str) -> list[Content]:
         config = self._build_run_config()
-        return self._registry.execute(config=config, code=code)
+        return await asyncio.to_thread(self._registry.execute, config=config, code=code)

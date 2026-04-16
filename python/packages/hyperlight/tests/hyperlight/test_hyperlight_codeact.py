@@ -23,6 +23,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    FunctionTool,
     Message,
     ResponseStream,
     tool,
@@ -83,6 +84,53 @@ skip_if_hyperlight_integration_tests_disabled = pytest.mark.skipif(
     (reason := _hyperlight_integration_static_skip_reason()) is not None,
     reason=reason or "Hyperlight integration tests are disabled.",
 )
+
+
+@pytest.fixture(scope="module")
+def shared_sandbox():
+    """Long-lived sandbox with snapshot/restore for read-mostly tests.
+
+    Multiple tests run sequentially against this fixture. Each test restores the
+    sandbox to a clean state via the ``restored_sandbox`` fixture.
+    """
+    if (reason := _hyperlight_integration_runtime_skip_reason()) is not None:
+        pytest.skip(reason)
+
+    sandbox_cls = execute_code_module._load_sandbox_class()
+    sandbox = sandbox_cls(
+        backend=execute_code_module.DEFAULT_HYPERLIGHT_BACKEND,
+        module=execute_code_module.DEFAULT_HYPERLIGHT_MODULE,
+    )
+    sandbox.run("None")
+    snapshot = sandbox.snapshot()
+    yield sandbox, snapshot
+
+
+@pytest.fixture
+def restored_sandbox(shared_sandbox):
+    """Restore shared sandbox to clean state before each test."""
+    sandbox, snapshot = shared_sandbox
+    sandbox.restore(snapshot)
+    return sandbox
+
+
+@pytest.fixture
+def fresh_sandbox():
+    """Short-lived sandbox for tests that alter config meaningfully.
+
+    Not pre-warmed: call ``sandbox.run("None")`` after registering tools
+    and domains, then snapshot/restore before executing test code.
+    """
+    if (reason := _hyperlight_integration_runtime_skip_reason()) is not None:
+        pytest.skip(reason)
+
+    sandbox_cls = execute_code_module._load_sandbox_class()
+    sandbox = sandbox_cls(
+        backend=execute_code_module.DEFAULT_HYPERLIGHT_BACKEND,
+        module=execute_code_module.DEFAULT_HYPERLIGHT_MODULE,
+        temp_output=True,
+    )
+    yield sandbox
 
 
 @tool(approval_mode="never_require")
@@ -759,3 +807,175 @@ async def test_provider_run_tool_pings_bing_with_real_sandbox() -> None:
     text_output = next((item for item in outputs if item.type == "text" and item.text is not None), None)
     if text_output is not None:
         assert text_output.text == "pinged bing.com\n"
+
+
+# ---------------------------------------------------------------------------
+# Real-sandbox tests using shared (long-lived) fixture
+# ---------------------------------------------------------------------------
+
+
+@skip_if_hyperlight_integration_tests_disabled
+async def test_sandbox_runs_simple_code(restored_sandbox) -> None:
+    result = restored_sandbox.run('print("hello")')
+    assert result.success
+    assert "hello" in result.stdout
+
+
+@skip_if_hyperlight_integration_tests_disabled
+async def test_sandbox_stdout_and_stderr_captured(restored_sandbox) -> None:
+    result = restored_sandbox.run(
+        'import sys\nprint("out")\nprint("err", file=sys.stderr)'
+    )
+    assert result.success
+    assert "out" in result.stdout
+    assert "err" in result.stderr
+
+
+@skip_if_hyperlight_integration_tests_disabled
+async def test_sandbox_code_failure_returns_nonzero_exit(restored_sandbox) -> None:
+    result = restored_sandbox.run("raise ValueError('boom')")
+    assert not result.success
+    assert "boom" in result.stderr
+
+
+@skip_if_hyperlight_integration_tests_disabled
+async def test_sandbox_snapshot_restore_keeps_sandbox_functional(restored_sandbox) -> None:
+    """Verify snapshot/restore cycle leaves the sandbox in a working state."""
+    # Mutate the sandbox
+    result1 = restored_sandbox.run('print("before snapshot")')
+    assert result1.success
+
+    # Take a snapshot and restore
+    snapshot = restored_sandbox.snapshot()
+    restored_sandbox.restore(snapshot)
+
+    # Sandbox still works after restore
+    result2 = restored_sandbox.run('print("after restore")')
+    assert result2.success
+    assert "after restore" in result2.stdout
+
+
+# ---------------------------------------------------------------------------
+# Real-sandbox tests using fresh (short-lived) fixture
+# ---------------------------------------------------------------------------
+
+
+@skip_if_hyperlight_integration_tests_disabled
+async def test_sandbox_with_tool_registration_and_execution(fresh_sandbox) -> None:
+    """Verify that a sync host tool round-trips via call_tool in the real sandbox."""
+
+    def multiply(a: int, b: int) -> int:
+        return a * b
+
+    fresh_sandbox.register_tool("multiply", multiply)
+    fresh_sandbox.run("None")
+    snapshot = fresh_sandbox.snapshot()
+    fresh_sandbox.restore(snapshot)
+    result = fresh_sandbox.run('result = call_tool("multiply", a=6, b=7)\nprint(result)')
+    assert result.success
+    assert "42" in result.stdout
+
+
+@skip_if_hyperlight_integration_tests_disabled
+async def test_sandbox_async_callback_round_trips_with_real_sandbox(fresh_sandbox) -> None:
+    """Confirm that _make_sandbox_callback (sync wrapper) works with real FFI."""
+    sandbox_tool = FunctionTool(
+        func=compute,
+        name="compute",
+        description="Add two numbers",
+    )
+    callback = execute_code_module._make_sandbox_callback(sandbox_tool)
+
+    fresh_sandbox.register_tool("compute", callback)
+    fresh_sandbox.run("None")
+    snapshot = fresh_sandbox.snapshot()
+    fresh_sandbox.restore(snapshot)
+    result = fresh_sandbox.run('total = call_tool("compute", a=20, b=22)\nprint(total)')
+    assert result.success
+    assert "42" in result.stdout
+
+
+@skip_if_hyperlight_integration_tests_disabled
+async def test_output_dir_cleared_between_invocations() -> None:
+    """Verify stale output files don't leak across invocations (comment 23)."""
+    _skip_if_hyperlight_integration_runtime_disabled()
+
+    provider = HyperlightCodeActProvider(workspace_root=Path(__file__).parent)
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+    await provider.before_run(agent=object(), session=None, context=context, state=state)
+
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+
+    # First invocation: write a file
+    result1 = await run_tool.invoke(
+        arguments={
+            "code": (
+                'with open("/output/stale.txt", "w") as f:\n'
+                '    f.write("first")\n'
+                'print("wrote")\n'
+            )
+        }
+    )
+    assert result1[0].type == "code_interpreter_tool_result"
+    outputs1 = result1[0].outputs or []
+    assert any(
+        item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "")
+        for item in outputs1
+    ), "First invocation should produce stale.txt"
+
+    # Second invocation: no file writes
+    result2 = await run_tool.invoke(arguments={"code": 'print("clean")\n'})
+    outputs2 = result2[0].outputs or []
+    stale_files = [
+        item
+        for item in outputs2
+        if item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "")
+    ]
+    assert not stale_files, "Stale output file leaked into second invocation"
+
+
+@skip_if_hyperlight_integration_tests_disabled
+async def test_run_code_does_not_block_event_loop() -> None:
+    """Verify _run_code uses asyncio.to_thread so the event loop stays responsive (comment 26)."""
+    _skip_if_hyperlight_integration_runtime_disabled()
+
+    provider = HyperlightCodeActProvider()
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+    await provider.before_run(agent=object(), session=None, context=context, state=state)
+
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+
+    # Monkeypatch the registry.execute to block on an event, proving the event loop
+    # stays responsive while the worker thread is blocked.
+    release = threading.Event()
+    async_started = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    original_execute = run_tool._registry.execute
+
+    def _blocking_execute(*, config, code):
+        loop.call_soon_threadsafe(async_started.set)
+        release.wait(timeout=10)
+        return original_execute(config=config, code=code)
+
+    run_tool._registry.execute = _blocking_execute  # type: ignore[assignment]
+
+    concurrent_ran = False
+
+    async def _concurrent_task():
+        nonlocal concurrent_ran
+        await async_started.wait()
+        concurrent_ran = True
+        release.set()
+
+    code_task = asyncio.create_task(
+        run_tool.invoke(arguments={"code": 'print("done")\n'})
+    )
+    await _concurrent_task()
+    result = await code_task
+
+    assert concurrent_ran, "Event loop was blocked during sandbox execution"
+    assert result[0].type == "code_interpreter_tool_result"

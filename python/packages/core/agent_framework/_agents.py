@@ -1191,14 +1191,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             options=opts,
             service_stores_history=bool(store_),
         )
-        provider_options = dict(opts)
-        if tools_ is not None:
-            provider_options["tools"] = tools_
 
         session_context, chat_options = await self._prepare_session_and_messages(
             session=active_session,
             input_messages=input_messages,
-            options=provider_options,
+            options=opts,
         )
         default_additional_args = chat_options.pop("additional_function_arguments", None)
         if isinstance(default_additional_args, Mapping):
@@ -1212,7 +1209,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
 
         # Normalize tools
-        normalized_tools = normalize_tools(session_context.options.get("tools", tools_))
+        normalized_tools = normalize_tools(tools_)
 
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
         final_tools = list(base_tools)
