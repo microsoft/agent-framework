@@ -21,6 +21,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
+    private readonly FoundryToolboxService? _toolboxService;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
@@ -28,15 +29,18 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// </summary>
     /// <param name="serviceProvider">The service provider for resolving agents.</param>
     /// <param name="logger">The logger instance.</param>
+    /// <param name="toolboxService">Optional Foundry Toolbox service providing MCP tools.</param>
     public AgentFrameworkResponseHandler(
         IServiceProvider serviceProvider,
-        ILogger<AgentFrameworkResponseHandler> logger)
+        ILogger<AgentFrameworkResponseHandler> logger,
+        FoundryToolboxService? toolboxService = null)
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
         ArgumentNullException.ThrowIfNull(logger);
 
         this._serviceProvider = serviceProvider;
         this._logger = logger;
+        this._toolboxService = toolboxService;
     }
 
     /// <inheritdoc/>
@@ -92,14 +96,33 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // 5. Build chat options
         var chatOptions = InputConverter.ConvertToChatOptions(request);
         chatOptions.Instructions = request.Instructions;
+
+        // Inject Foundry Toolbox tools when the toolbox service is available
+        if (this._toolboxService is not null)
+        {
+            var toolboxTools = this._toolboxService.Tools;
+            if (toolboxTools.Count > 0)
+            {
+                chatOptions.Tools = [.. chatOptions.Tools ?? [], .. toolboxTools];
+            }
+        }
+
         var options = new ChatClientAgentRunOptions(chatOptions);
 
-        // 6. Run the agent and convert output
+        // 6. Set up consent context for -32006 OAuth consent interception.
+        //    We create a linked CTS so the consent-aware tool wrapper can cancel the agent
+        //    run mid-loop when a -32006 error is returned by the proxy. The RequestConsentState
+        //    is a shared mutable object that flows via AsyncLocal to the tool wrapper.
+        using var consentCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var consentState = new RequestConsentState { CancellationSource = consentCts };
+        McpConsentContext.Current.Value = consentState;
+
+        // 7. Run the agent and convert output
         // NOTE: C# forbids 'yield return' inside a try block that has a catch clause,
         // and inside catch blocks. We use a flag to defer the yield to outside the try/catch.
         bool emittedTerminal = false;
         var enumerator = OutputConverter.ConvertUpdatesToEventsAsync(
-            agent.RunStreamingAsync(messages, session, options: options, cancellationToken: cancellationToken),
+            agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
             cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
@@ -107,6 +130,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             while (true)
             {
                 bool shutdownDetected = false;
+                McpConsentInfo? consentInfo = null;
                 ResponseStreamEvent? failedEvent = null;
                 ResponseStreamEvent? evt = null;
                 try
@@ -117,6 +141,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     }
 
                     evt = enumerator.Current;
+                }
+                catch (OperationCanceledException) when (!emittedTerminal && consentState.Pending is not null)
+                {
+                    // -32006 consent error: the tool wrapper cancelled consentCts and stored consent info.
+                    consentInfo = consentState.Pending;
                 }
                 catch (OperationCanceledException) when (context.IsShutdownRequested && !emittedTerminal)
                 {
@@ -135,6 +164,21 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     failedEvent = stream.EmitFailed(
                         ResponseErrorCode.ServerError,
                         ex.Message);
+                }
+
+                if (consentInfo is not null)
+                {
+                    // Emit mcp_approval_request output item + incomplete for the consent URL.
+                    foreach (var approvalEvent in stream.OutputItemMcpApprovalRequest(
+                        consentInfo.ToolsetName,
+                        consentInfo.ToolName,
+                        consentInfo.ConsentUrl))
+                    {
+                        yield return approvalEvent;
+                    }
+
+                    yield return stream.EmitIncomplete(reason: null);
+                    yield break;
                 }
 
                 if (failedEvent is not null)

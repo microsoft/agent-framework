@@ -4,6 +4,8 @@ using System;
 using System.Reflection;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
+using Azure.Core;
+using Azure.Identity;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -94,6 +96,59 @@ public static class FoundryHostingExtensions
         services.TryAddSingleton(agentSessionStore);
 
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the Foundry Toolbox service, which eagerly connects to the Foundry Toolsets
+    /// MCP proxy at startup and provides MCP tools to <see cref="AgentFrameworkResponseHandler"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each string in <paramref name="toolsetNames"/> is a toolset name registered in the Foundry
+    /// project. The proxy URL per toolset is constructed as:
+    /// <c>{FOUNDRY_AGENT_TOOLSET_ENDPOINT}/{toolsetName}/mcp?api-version=2025-05-01-preview</c>
+    /// </para>
+    /// <para>
+    /// When <c>FOUNDRY_AGENT_TOOLSET_ENDPOINT</c> is absent, startup succeeds without error and
+    /// no tools are loaded (the container remains healthy per spec §2).
+    /// </para>
+    /// <para>
+    /// Example:
+    /// <code>
+    /// builder.Services.AddFoundryToolboxes("my-tools", "another-toolset");
+    /// </code>
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection.</param>
+    /// <param name="toolsetNames">Names of the Foundry toolsets to connect to.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddFoundryToolboxes(
+        this IServiceCollection services,
+        params string[] toolsetNames)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.Configure<FoundryToolboxOptions>(opt =>
+        {
+            foreach (var name in toolsetNames)
+            {
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    opt.ToolsetNames.Add(name);
+                }
+            }
+        });
+
+        // Register DefaultAzureCredential as the default TokenCredential if not already registered
+        services.TryAddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
+
+        // Register FoundryToolboxService as a singleton so it can be injected into the handler
+        services.TryAddSingleton<FoundryToolboxService>();
+
+        // Add it as a hosted service so StartAsync is called before the app starts serving requests
+        services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
+
         return services;
     }
 
