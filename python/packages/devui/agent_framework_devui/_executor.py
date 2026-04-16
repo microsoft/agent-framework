@@ -744,6 +744,12 @@ class AgentFrameworkExecutor:
                                             )
                                             continue
 
+                                        # Extract policy_violation info if present (from security middleware)
+                                        policy_violation_data = content_dict.get("policy_violation")
+                                        additional_props: dict[str, Any] | None = None
+                                        if isinstance(policy_violation_data, dict):
+                                            additional_props = {"policy_violation": True, **policy_violation_data}
+
                                         # Reconstruct function_call from server-stored data
                                         function_call = Content.from_function_call(
                                             call_id=stored_fc["call_id"],
@@ -756,14 +762,16 @@ class AgentFrameworkExecutor:
                                             approved,
                                             id=request_id,
                                             function_call=function_call,
+                                            additional_properties=additional_props,
                                         )
                                         contents.append(approval_response)
                                         logger.info(
                                             "Validated FunctionApprovalResponseContent: id=%s, "
-                                            "approved=%s, function=%s",
+                                            "approved=%s, function=%s, policy_violation=%s",
                                             request_id,
                                             approved,
                                             stored_fc["name"],
+                                            additional_props is not None,
                                         )
                                     except ImportError:
                                         logger.warning(
