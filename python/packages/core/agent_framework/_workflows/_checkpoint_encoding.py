@@ -10,9 +10,9 @@ This hybrid approach provides:
 When ``allowed_types`` is supplied to :func:`decode_checkpoint_value`, a
 ``RestrictedUnpickler`` is used that limits which classes may be instantiated
 during deserialization.  The default built-in safe set covers common Python
-value types (primitives, datetime, uuid, ...) and all ``agent_framework``
-internal types.  Callers can extend the set by passing additional
-``"module:qualname"`` strings.
+value types (primitives, datetime, uuid, ...), all ``agent_framework`` internal
+types, and all ``openai.types`` types.  Callers can extend the set by passing
+additional ``"module:qualname"`` strings.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ _JSON_NATIVE_TYPES = (str, int, float, bool, type(None))
 _FRAMEWORK_MODULE_PREFIX = "agent_framework."
 
 # Module prefix for OpenAI SDK types that are always allowed
-_OPENAI_MODULE_PREFIX = "openai."
+_OPENAI_MODULE_PREFIX = "openai.types."
 
 # Built-in types considered safe for checkpoint deserialization.
 # Each entry is a ``module:qualname`` string matching the format produced by
