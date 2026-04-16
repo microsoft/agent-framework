@@ -483,6 +483,14 @@ public sealed class AnthropicBetaServiceExtensionsTests
 
             public IBetaMessageService Messages => new Mock<IBetaMessageService>().Object;
 
+            public global::Anthropic.Services.Beta.IAgentService Agents => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.IEnvironmentService Environments => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.ISessionService Sessions => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.IVaultService Vaults => throw new NotImplementedException();
+
             public IBetaService WithOptions(Func<ClientOptions, ClientOptions> modifier)
             {
                 throw new NotImplementedException();
