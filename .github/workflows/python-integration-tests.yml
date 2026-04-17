@@ -131,7 +131,7 @@ jobs:
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
 
-  # Misc integration tests (Anthropic, Ollama, MCP)
+  # Misc integration tests (Anthropic, Hyperlight, Ollama, MCP)
   python-tests-misc-integration:
     name: Python Integration Tests - Misc
     runs-on: ubuntu-latest
@@ -162,10 +162,11 @@ jobs:
           fallback_url: ${{ env.LOCAL_MCP_URL }}
       - name: Prefer local MCP URL when available
         run: echo "LOCAL_MCP_URL=${{ steps.local-mcp.outputs.effective_url }}" >> "$GITHUB_ENV"
-      - name: Test with pytest (Anthropic, Ollama, MCP integration)
+      - name: Test with pytest (Anthropic, Hyperlight, Ollama, MCP integration)
         run: >
           uv run pytest --import-mode=importlib
           packages/anthropic/tests
+          packages/hyperlight/tests
           packages/ollama/tests
           packages/core/tests/core/test_mcp.py
           -m integration
