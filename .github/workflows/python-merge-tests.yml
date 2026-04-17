@@ -65,6 +65,7 @@ jobs:
               - 'python/samples/**/providers/azure/**'
             misc:
               - 'python/packages/anthropic/**'
+              - 'python/packages/hyperlight/**'
               - 'python/packages/ollama/**'
               - 'python/packages/core/agent_framework/_mcp.py'
               - 'python/packages/core/tests/core/test_mcp.py'
@@ -278,10 +279,11 @@ jobs:
           fallback_url: ${{ env.LOCAL_MCP_URL }}
       - name: Prefer local MCP URL when available
         run: echo "LOCAL_MCP_URL=${{ steps.local-mcp.outputs.effective_url }}" >> "$GITHUB_ENV"
-      - name: Test with pytest (Anthropic, Ollama, MCP integration)
+      - name: Test with pytest (Anthropic, Hyperlight, Ollama, MCP integration)
         run: >
           uv run pytest --import-mode=importlib
           packages/anthropic/tests
+          packages/hyperlight/tests
           packages/ollama/tests
           packages/core/tests/core/test_mcp.py
           -m integration
