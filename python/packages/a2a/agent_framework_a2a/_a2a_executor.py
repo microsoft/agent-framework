@@ -2,8 +2,9 @@
 
 import logging
 from asyncio import CancelledError
+from collections.abc import Mapping
 from functools import partial
-from typing import Any, Mapping
+from typing import Any
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -63,11 +64,7 @@ class A2AExecutor(AgentExecutor):
             # Set up the A2A server with the A2AExecutor enabled for streaming
             # and passing custom keyword arguments to the agent's run method.
             request_handler = DefaultRequestHandler(
-                agent_executor=A2AExecutor(
-                    agent,
-                    stream=True,
-                    run_kwargs={"client_kwargs": {"max_tokens": 500}}
-                ),
+                agent_executor=A2AExecutor(agent, stream=True, run_kwargs={"client_kwargs": {"max_tokens": 500}}),
                 task_store=InMemoryTaskStore(),
             )
 
@@ -82,12 +79,7 @@ class A2AExecutor(AgentExecutor):
         run_kwargs: Additional keyword arguments to pass to the agent's run method.
     """
 
-    def __init__(
-            self,
-            agent: SupportsAgentRun,
-            stream: bool = False,
-            run_kwargs: Mapping[str, Any] | None = None
-    ):
+    def __init__(self, agent: SupportsAgentRun, stream: bool = False, run_kwargs: Mapping[str, Any] | None = None):
         """Initialize the A2AExecutor with the specified agent.
 
         Args:
@@ -167,7 +159,8 @@ class A2AExecutor(AgentExecutor):
         streamed_artifact_ids: set[str] = set()
         await (
             response_stream.with_transform_hook(
-                partial(self.handle_events, updater=updater, streamed_artifact_ids=streamed_artifact_ids))
+                partial(self.handle_events, updater=updater, streamed_artifact_ids=streamed_artifact_ids)
+            )
         ).get_final_response()
 
     async def _run(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
@@ -182,10 +175,7 @@ class A2AExecutor(AgentExecutor):
             await self.handle_events(message, updater)
 
     async def handle_events(
-            self,
-            item: Message | AgentResponseUpdate,
-            updater: TaskUpdater,
-            streamed_artifact_ids: set[str] | None = None
+        self, item: Message | AgentResponseUpdate, updater: TaskUpdater, streamed_artifact_ids: set[str] | None = None
     ) -> None:
         """Convert agent response items (Messages or Updates) to A2A protocol events.
 
@@ -206,10 +196,10 @@ class A2AExecutor(AgentExecutor):
 
                 class CustomA2AExecutor(A2AExecutor):
                     async def handle_events(
-                            self,
-                            item: Message | AgentResponseUpdate,
-                            updater: TaskUpdater,
-                            streamed_artifact_ids: set[str] | None = None
+                        self,
+                        item: Message | AgentResponseUpdate,
+                        updater: TaskUpdater,
+                        streamed_artifact_ids: set[str] | None = None,
                     ) -> None:
                         # Custom logic to transform item contents
                         if item.role == "assistant" and item.contents:
@@ -260,7 +250,6 @@ class A2AExecutor(AgentExecutor):
                 if item.message_id and streamed_artifact_ids is not None:
                     streamed_artifact_ids.add(item.message_id)
             else:
-
                 # For final messages, we send TaskStatusUpdateEvent with 'working' state
                 await updater.update_status(
                     state=TaskState.working,

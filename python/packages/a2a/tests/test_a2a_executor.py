@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 from asyncio import CancelledError
-from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -471,9 +470,7 @@ class TestA2AExecutorExecute:
             await executor.execute(mock_request_context, mock_event_queue)
 
             # Assert
-            mock_agent.run.assert_called_once_with(
-                query_text, session=mock_agent.create_session(), stream=True
-            )
+            mock_agent.run.assert_called_once_with(query_text, session=mock_agent.create_session(), stream=True)
             mock_response_stream.with_transform_hook.assert_called_once()
             mock_response_stream.get_final_response.assert_called_once()
 
@@ -741,7 +738,9 @@ class TestA2AExecutorHandleEvents:
         call_kwargs = mock_updater.update_status.call_args.kwargs
         assert call_kwargs["state"] == TaskState.working
 
-    async def test_handle_agent_response_update_no_streamed_set(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+    async def test_handle_agent_response_update_no_streamed_set(
+        self, executor: A2AExecutor, mock_updater: MagicMock
+    ) -> None:
         """Test handling AgentResponseUpdate (streaming) without a tracking set."""
         # Arrange
         update = AgentResponseUpdate(
@@ -760,7 +759,9 @@ class TestA2AExecutorHandleEvents:
         assert call_kwargs["artifact_id"] == "msg-1"
         assert call_kwargs["append"] is None
 
-    async def test_handle_agent_response_update_first_time(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+    async def test_handle_agent_response_update_first_time(
+        self, executor: A2AExecutor, mock_updater: MagicMock
+    ) -> None:
         """Test handling AgentResponseUpdate (streaming) for the first time with a tracking set."""
         # Arrange
         update = AgentResponseUpdate(
@@ -780,7 +781,9 @@ class TestA2AExecutorHandleEvents:
         assert call_kwargs["append"] is None
         assert "msg-1" in streamed_artifact_ids
 
-    async def test_handle_agent_response_update_subsequent_time(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+    async def test_handle_agent_response_update_subsequent_time(
+        self, executor: A2AExecutor, mock_updater: MagicMock
+    ) -> None:
         """Test handling AgentResponseUpdate (streaming) for subsequent times with a tracking set."""
         # Arrange
         update = AgentResponseUpdate(
