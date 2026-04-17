@@ -49,6 +49,17 @@ def _derive_provider(directory_name: str) -> str:
     ``test-results-azure-openai`` → ``Azure OpenAI``
     """
     raw = directory_name.replace("test-results-", "")
+    known = {
+        "openai": "OpenAI",
+        "azure-openai": "Azure OpenAI",
+        "misc": "Misc (Anthropic, Ollama, MCP)",
+        "functions": "Functions",
+        "foundry": "Foundry",
+        "cosmos": "Cosmos",
+        "unit": "Unit",
+    }
+    if raw in known:
+        return known[raw]
     parts = raw.split("-")
     return " ".join(p.capitalize() for p in parts)
 

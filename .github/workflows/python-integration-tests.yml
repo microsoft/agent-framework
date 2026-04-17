@@ -392,8 +392,8 @@ jobs:
     name: Flaky Test Report
     if: >
       always() &&
-      contains(join(needs.*.result, ','), 'success') ||
-      contains(join(needs.*.result, ','), 'failure')
+      (contains(join(needs.*.result, ','), 'success') ||
+       contains(join(needs.*.result, ','), 'failure'))
     needs:
       [
         python-tests-openai,
