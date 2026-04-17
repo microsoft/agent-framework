@@ -10,9 +10,9 @@ This hybrid approach provides:
 When ``allowed_types`` is supplied to :func:`decode_checkpoint_value`, a
 ``RestrictedUnpickler`` is used that limits which classes may be instantiated
 during deserialization.  The default built-in safe set covers common Python
-value types (primitives, datetime, uuid, ...) and all ``agent_framework``
-internal types.  Callers can extend the set by passing additional
-``"module:qualname"`` strings.
+value types (primitives, datetime, uuid, ...), all ``agent_framework`` internal
+types, and all ``openai.types`` types.  Callers can extend the set by passing
+additional ``"module:qualname"`` strings.
 """
 
 from __future__ import annotations
@@ -36,6 +36,9 @@ _JSON_NATIVE_TYPES = (str, int, float, bool, type(None))
 
 # Module prefix for framework-internal types that are always allowed
 _FRAMEWORK_MODULE_PREFIX = "agent_framework."
+
+# Module prefix for OpenAI SDK types that are always allowed
+_OPENAI_MODULE_PREFIX = "openai.types."
 
 # Built-in types considered safe for checkpoint deserialization.
 # Each entry is a ``module:qualname`` string matching the format produced by
@@ -84,8 +87,9 @@ class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
     """Unpickler that restricts which classes may be instantiated.
 
     Only classes whose ``module:qualname`` key appears in the combined allow
-    set (built-in safe types + framework types + caller-specified extras) are
-    permitted.  All other classes raise :class:`pickle.UnpicklingError`.
+    set (built-in safe types + framework types + OpenAI SDK types +
+    caller-specified extras) are permitted.  All other classes raise
+    :class:`pickle.UnpicklingError`.
     """
 
     def __init__(self, data: bytes, allowed_types: frozenset[str]) -> None:
@@ -99,6 +103,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
             type_key in _BUILTIN_ALLOWED_TYPE_KEYS
             or type_key in self._allowed_types
             or module.startswith(_FRAMEWORK_MODULE_PREFIX)
+            or module.startswith(_OPENAI_MODULE_PREFIX)
         ):
             return super().find_class(module, name)  # type: ignore[no-any-return]  # nosec
 
