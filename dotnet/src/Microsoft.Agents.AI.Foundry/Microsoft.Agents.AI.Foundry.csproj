@@ -1,13 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsReleased>true</IsReleased>
+    <IsReleased>false</IsReleased>
     <InjectSharedThrow>true</InjectSharedThrow>
     <NoWarn>$(NoWarn);OPENAI001;MEAI001;NU1903</NoWarn>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <!-- Foundry preview release: opt back in to packaging. -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
 
   <!-- Disable package validation baseline until the first release under the new package name -->
   <PropertyGroup>

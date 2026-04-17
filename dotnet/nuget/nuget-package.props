@@ -1,16 +1,18 @@
 <Project>
   <PropertyGroup>
     <!-- Central version prefix - applies to all nuget packages. -->
-    <VersionPrefix>1.1.0</VersionPrefix>
+    <VersionPrefix>0.0.1</VersionPrefix>
     <RCNumber>1</RCNumber>
     <PackageVersion Condition="'$(IsReleaseCandidate)' == 'true'">$(VersionPrefix)-rc$(RCNumber)</PackageVersion>
-    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).260410.1</PackageVersion>
-    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.260410.1</PackageVersion>
+    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).260417.1</PackageVersion>
+    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.260417.1</PackageVersion>
     <PackageVersion Condition="'$(IsReleased)' == 'true'">$(VersionPrefix)</PackageVersion>
-    <GitTag>1.1.0</GitTag>
+    <GitTag>0.0.1</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>
-    <IsPackable>true</IsPackable>
+    <!-- IsPackable intentionally NOT set to true here. Packaging is opt-in per project for this branch. -->
+    <!-- The repo default in dotnet/Directory.Build.props keeps IsPackable=false. -->
+    <!-- Only the Foundry preview set explicitly overrides IsPackable=true in their csproj. -->
 
     <!-- Package validation. Baseline Version should be the latest version available on NuGet. -->
     <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion>
@@ -70,7 +72,7 @@
     <None Include="$(RepoRoot)/dotnet/nuget/NUGET.md" Link="NUGET.md" Pack="true" PackagePath="." />
   </ItemGroup>
 
-  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' AND '$(IsPackable)' == 'true' ">
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
   </PropertyGroup>
 </Project>
