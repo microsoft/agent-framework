@@ -3,12 +3,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -65,6 +67,11 @@ public partial class MagenticGroupChatManager : GroupChatManager
     private static Regex JsonCodeFenceRegex() => s_jsonCodeFenceRegex;
     private static readonly Regex s_jsonCodeFenceRegex = new(@"```(?:json)?\s*(\{[\s\S]*?\})\s*```", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 #endif
+
+    // Sentinel agent returned from SelectNextAgentAsync when the task is complete. GroupChatHost will
+    // fail the _agentMap.TryGetValue lookup (reference equality) and fall through to YieldOutputAsync,
+    // yielding the full history (including the synthesized final answer) as the workflow result.
+    private static readonly AIAgent s_sentinelAgent = new SentinelAIAgent();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MagenticGroupChatManager"/> class.
@@ -179,6 +186,9 @@ public partial class MagenticGroupChatManager : GroupChatManager
         // Check whether the task has been fully satisfied.
         if (progressLedger.IsRequestSatisfied.GetBoolAnswer())
         {
+            // Synthesize the final answer and add it to the history before yielding.
+            ChatMessage finalAnswer = await CreateFinalAnswerAsync(cancellationToken).ConfigureAwait(false);
+            _fullHistory.Add(finalAnswer);
             _taskSatisfied = true;
             return _fullHistory;
         }
@@ -222,7 +232,14 @@ public partial class MagenticGroupChatManager : GroupChatManager
         IReadOnlyList<ChatMessage> history,
         CancellationToken cancellationToken = default)
     {
-        // The agent is selected during UpdateHistoryAsync where we have full context.
+        // When the task is satisfied, return the sentinel so that GroupChatHost falls through
+        // to YieldOutputAsync with the full history (including the synthesized final answer).
+        if (_taskSatisfied)
+        {
+            return new(s_sentinelAgent);
+        }
+
+        // Otherwise return the agent selected during UpdateHistoryAsync.
         return new(_nextAgent ?? _agents[0]);
     }
 
@@ -249,6 +266,18 @@ public partial class MagenticGroupChatManager : GroupChatManager
         _fullHistory.Clear();
         _fullHistory.Add(new ChatMessage(ChatRole.User, _currentTask!));
         _fullHistory.Add(new ChatMessage(ChatRole.Assistant, _taskLedger) { AuthorName = MagenticPrompts.ManagerName });
+    }
+
+    private async Task<ChatMessage> CreateFinalAnswerAsync(CancellationToken cancellationToken)
+    {
+        string finalPrompt = FormatTemplate(FinalAnswerPrompt, ("task", _currentTask!));
+        var messages = new List<ChatMessage>(_fullHistory)
+        {
+            new ChatMessage(ChatRole.User, finalPrompt)
+        };
+        var response = await _chatClient.GetResponseAsync(messages, null, cancellationToken).ConfigureAwait(false);
+        string text = response.Messages.LastOrDefault()?.Text ?? string.Empty;
+        return new ChatMessage(ChatRole.Assistant, text) { AuthorName = MagenticPrompts.ManagerName };
     }
 
     private async Task<string> CreateTaskLedgerAsync(CancellationToken cancellationToken)
@@ -400,6 +429,31 @@ public partial class MagenticGroupChatManager : GroupChatManager
         }
 
         throw new InvalidOperationException("Unbalanced JSON braces in model response.");
+    }
+
+    // Returned from SelectNextAgentAsync when the task is complete.
+    // GroupChatHost performs a reference-equality lookup in _agentMap; this sentinel will never be found,
+    // so execution falls through to YieldOutputAsync with the full history (including the synthesized answer).
+    private sealed class SentinelAIAgent : AIAgent
+    {
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 }
 
