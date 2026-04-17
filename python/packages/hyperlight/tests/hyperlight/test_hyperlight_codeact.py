@@ -289,38 +289,20 @@ class _FakeSessionContext:
         self.tools.append((source_id, tools))
 
 
-def _extract_execute_code_result(function_result: Content) -> Content:
+def _extract_text_output(function_result: Content) -> str:
     assert function_result.type == "function_result"
     assert function_result.exception is None, (
         f"execute_code raised {function_result.exception!r} with items={function_result.items!r}"
     )
-
-    code_result = next(
-        (item for item in function_result.items or [] if item.type == "code_interpreter_tool_result"),
+    text_output = next(
+        (item for item in function_result.items or [] if item.type == "text" and item.text is not None),
         None,
     )
-    if code_result is not None:
-        return code_result
-
-    text_outputs = [item for item in function_result.items or [] if item.type == "text"]
-    if text_outputs:
-        return Content.from_code_interpreter_tool_result(outputs=text_outputs)
-
+    if text_output is not None and text_output.text is not None:
+        return text_output.text
     if function_result.result:
-        return Content.from_code_interpreter_tool_result(outputs=[Content.from_text(function_result.result)])
-
-    raise AssertionError(f"execute_code returned no usable outputs: {function_result.items!r}")
-
-
-def _extract_text_output(result_content: Content) -> str:
-    code_result = _extract_execute_code_result(result_content)
-    text_output = next(
-        (item for item in code_result.outputs or [] if item.type == "text" and item.text is not None), None
-    )
-    assert text_output is not None and text_output.text is not None, (
-        f"Expected text output from execute_code, got {code_result.outputs!r}"
-    )
-    return text_output.text
+        return function_result.result
+    raise AssertionError(f"Expected text output from execute_code, got {function_result.items!r}")
 
 
 class _FakeCodeActChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
@@ -432,7 +414,7 @@ async def test_execute_code_tool_populates_input_dir_with_workspace_and_file_mou
     )
     result = await execute_code.invoke(arguments={"code": "None"})
 
-    assert result[0].type == "code_interpreter_tool_result"
+    assert result[0].type == "text"
     assert _FakeSandbox.instances[0].input_dir is not None
 
     input_root = Path(_FakeSandbox.instances[0].input_dir)
@@ -493,11 +475,9 @@ async def test_execute_code_tool_executes_with_structured_content(monkeypatch: p
 
     result = await execute_code.invoke(arguments={"code": "create-output"})
 
-    assert result[0].type == "code_interpreter_tool_result"
-    assert result[0].outputs is not None
-    assert result[0].outputs[0].type == "text"
-    assert result[0].outputs[0].text == "done\n"
-    assert any(item.type == "data" for item in result[0].outputs)
+    assert result[0].type == "text"
+    assert result[0].text == "done\n"
+    assert any(item.type == "data" for item in result)
     assert _FakeSandbox.instances[0].allowed_domains == [("api.example.com", ["GET"])]
     assert "compute" in _FakeSandbox.instances[0].registered_tools
 
@@ -512,11 +492,8 @@ async def test_execute_code_tool_collects_output_files_without_backend_listing(
     )
     result = await execute_code.invoke(arguments={"code": "create-output"})
 
-    assert result[0].type == "code_interpreter_tool_result"
-    assert result[0].outputs is not None
-    assert any(
-        item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result[0].outputs
-    )
+    assert result[0].type == "text"
+    assert any(item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result)
 
 
 async def test_execute_code_tool_waits_for_unlisted_output_files_to_appear(
@@ -535,11 +512,7 @@ async def test_execute_code_tool_waits_for_unlisted_output_files_to_appear(
     for writer_thread in _FakeSandboxWithDelayedUnlistedOutput.writer_threads:
         writer_thread.join()
 
-    assert result[0].type == "code_interpreter_tool_result"
-    assert result[0].outputs is not None
-    assert any(
-        item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result[0].outputs
-    )
+    assert any(item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result)
 
 
 async def test_execute_code_tool_failure_returns_error_content(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -549,10 +522,8 @@ async def test_execute_code_tool_failure_returns_error_content(monkeypatch: pyte
     execute_code = HyperlightExecuteCodeTool()
     result = await execute_code.invoke(arguments={"code": "fail"})
 
-    assert result[0].type == "code_interpreter_tool_result"
-    assert result[0].outputs is not None
-    assert result[0].outputs[0].type == "error"
-    assert result[0].outputs[0].error_details == "sandbox boom"
+    assert result[0].type == "error"
+    assert result[0].error_details == "sandbox boom"
 
 
 async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_rejects_host_targets(
@@ -596,7 +567,7 @@ async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_
     execute_code = HyperlightExecuteCodeTool(allowed_domains=[("127.0.0.1:8080", "get")])
     result = await execute_code.invoke(arguments={"code": "None"})
 
-    assert result[0].type == "code_interpreter_tool_result"
+    assert result[0].type == "text"
     assert len(_FakeStrictNetworkSandbox.instances) == 2
     assert _FakeStrictNetworkSandbox.instances[0].allowed_domains == [("127.0.0.1:8080", ["GET"])]
     assert _FakeStrictNetworkSandbox.instances[1].allowed_domains == [
@@ -731,8 +702,7 @@ async def test_provider_run_tool_writes_files_with_real_sandbox(tmp_path: Path) 
         }
     )
 
-    assert result[0].type == "code_interpreter_tool_result"
-    outputs = result[0].outputs or []
+    outputs = result
     error_outputs = [
         f"{item.message}: {item.error_details}"
         for item in outputs
@@ -795,8 +765,7 @@ async def test_provider_run_tool_pings_bing_with_real_sandbox() -> None:
         }
     )
 
-    assert result[0].type == "code_interpreter_tool_result"
-    outputs = result[0].outputs or []
+    outputs = result
     error_outputs = [
         f"{item.message}: {item.error_details}"
         for item in outputs
@@ -823,9 +792,7 @@ async def test_sandbox_runs_simple_code(restored_sandbox) -> None:
 
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_stdout_and_stderr_captured(restored_sandbox) -> None:
-    result = restored_sandbox.run(
-        'import sys\nprint("out")\nprint("err", file=sys.stderr)'
-    )
+    result = restored_sandbox.run('import sys\nprint("out")\nprint("err", file=sys.stderr)')
     assert result.success
     assert "out" in result.stdout
     assert "err" in result.stderr
@@ -910,24 +877,17 @@ async def test_output_dir_cleared_between_invocations() -> None:
 
     # First invocation: write a file
     result1 = await run_tool.invoke(
-        arguments={
-            "code": (
-                'with open("/output/stale.txt", "w") as f:\n'
-                '    f.write("first")\n'
-                'print("wrote")\n'
-            )
-        }
+        arguments={"code": ('with open("/output/stale.txt", "w") as f:\n    f.write("first")\nprint("wrote")\n')}
     )
-    assert result1[0].type == "code_interpreter_tool_result"
-    outputs1 = result1[0].outputs or []
+    assert result1[0].type == "text" or result1[0].type == "data"
+    outputs1 = result1
     assert any(
-        item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "")
-        for item in outputs1
+        item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "") for item in outputs1
     ), "First invocation should produce stale.txt"
 
     # Second invocation: no file writes
     result2 = await run_tool.invoke(arguments={"code": 'print("clean")\n'})
-    outputs2 = result2[0].outputs or []
+    outputs2 = result2
     stale_files = [
         item
         for item in outputs2
@@ -971,11 +931,9 @@ async def test_run_code_does_not_block_event_loop() -> None:
         concurrent_ran = True
         release.set()
 
-    code_task = asyncio.create_task(
-        run_tool.invoke(arguments={"code": 'print("done")\n'})
-    )
+    code_task = asyncio.create_task(run_tool.invoke(arguments={"code": 'print("done")\n'}))
     await _concurrent_task()
     result = await code_task
 
     assert concurrent_ran, "Event loop was blocked during sandbox execution"
-    assert result[0].type == "code_interpreter_tool_result"
+    assert result[0].type == "text"
