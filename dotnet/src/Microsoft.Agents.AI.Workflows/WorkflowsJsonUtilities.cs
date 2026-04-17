@@ -104,6 +104,10 @@ internal static partial class WorkflowsJsonUtilities
     //   checkpoints.
     [JsonSerializable(typeof(JsonElement))]
 
+    // Magentic Types
+    [JsonSerializable(typeof(MagenticProgressLedger))]
+    [JsonSerializable(typeof(MagenticProgressLedgerItem))]
+
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;
 }
