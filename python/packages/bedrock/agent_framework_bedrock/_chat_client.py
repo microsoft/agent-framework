@@ -414,11 +414,15 @@ class BedrockChatClient(
                     if tool_config and "tools" in tool_config:
                         tool_config["toolChoice"] = {"auto": {}}
                 case "required":
-                    if tool_config and "tools" in tool_config:
-                        if required_name := tool_mode.get("required_function_name"):
-                            tool_config["toolChoice"] = {"tool": {"name": required_name}}
-                        else:
-                            tool_config["toolChoice"] = {"any": {}}
+                    if not (tool_config and "tools" in tool_config):
+                        raise ValueError(
+                            "tool_choice='required' requires at least one tool to be configured, "
+                            "but no tools were provided."
+                        )
+                    if required_name := tool_mode.get("required_function_name"):
+                        tool_config["toolChoice"] = {"tool": {"name": required_name}}
+                    else:
+                        tool_config["toolChoice"] = {"any": {}}
                 case _:
                     raise ValueError(f"Unsupported tool mode for Bedrock: {tool_mode.get('mode')}")
         if tool_config:
