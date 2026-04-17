@@ -125,6 +125,22 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
                 },
                 message: "OrderStatus workflow completed",
                 timeout: s_orchestrationTimeout);
+
+            // Test the CancelOrder workflow with x-ms-wait-for-response header
+            this._outputHelper.WriteLine("Starting CancelOrder workflow with x-ms-wait-for-response: true...");
+
+            using HttpRequestMessage waitRequest = new(HttpMethod.Post, cancelOrderUri);
+            waitRequest.Content = new StringContent("55555", Encoding.UTF8, "text/plain");
+            waitRequest.Headers.Add("x-ms-wait-for-response", "true");
+            using HttpResponseMessage waitResponse = await s_sharedHttpClient.SendAsync(waitRequest);
+
+            Assert.True(waitResponse.IsSuccessStatusCode, $"CancelOrder wait-for-response request failed with status: {waitResponse.StatusCode}");
+            string waitResponseText = await waitResponse.Content.ReadAsStringAsync();
+            this._outputHelper.WriteLine($"CancelOrder wait-for-response result: {waitResponseText}");
+
+            // The response should contain the workflow result (not just "started for CancelOrder")
+            Assert.DoesNotContain("Workflow orchestration started", waitResponseText);
+            Assert.Contains("55555", waitResponseText);
         });
     }
 

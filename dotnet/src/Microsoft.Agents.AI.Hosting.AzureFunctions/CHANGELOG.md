@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Added `x-ms-wait-for-response` header support for workflow HTTP triggers to optionally wait for completion and return the result
 - Added MCP tool trigger support for durable workflows ([#4768](https://github.com/microsoft/agent-framework/pull/4768))
 - Added Azure Functions hosting support for durable workflows ([#4436](https://github.com/microsoft/agent-framework/pull/4436))
 
