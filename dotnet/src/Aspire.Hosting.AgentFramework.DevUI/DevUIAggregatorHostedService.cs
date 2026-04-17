@@ -484,9 +484,16 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             }
         }
 
-        if (backendUrl is null && context.Request.ContentLength > 0)
+        // Always read the request body when present so it isn't dropped during proxying
+        byte[]? bodyBytes = null;
+        if (context.Request.ContentLength > 0)
         {
-            var bodyBytes = await ReadRequestBodyAsync(context.Request).ConfigureAwait(false);
+            bodyBytes = await ReadRequestBodyAsync(context.Request).ConfigureAwait(false);
+        }
+
+        // Try to resolve backend from request body metadata when not yet determined
+        if (backendUrl is null && bodyBytes is not null)
+        {
             var json = JsonNode.Parse(bodyBytes);
             var entityId = json?["metadata"]?["entity_id"]?.GetValue<string>()
                 ?? json?["metadata"]?["agent_id"]?.GetValue<string>();
@@ -509,7 +516,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
                         json!["metadata"]!["agent_id"] = actualId;
                     }
 
-                    var rewritten = JsonSerializer.SerializeToUtf8Bytes(json);
+                    bodyBytes = JsonSerializer.SerializeToUtf8Bytes(json);
                     var targetPath = string.IsNullOrEmpty(path) ? "/v1/conversations" : $"/v1/conversations/{path}";
 
                     // Also rewrite query string agent_id if present
@@ -518,7 +525,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
                         : context.Request.QueryString.ToString();
 
                     await this.ProxyAndRecordConversationAsync(
-                        context, backendUrl, path, targetPath + bodyQueryString, rewritten).ConfigureAwait(false);
+                        context, backendUrl, path, targetPath + bodyQueryString, bodyBytes).ConfigureAwait(false);
                     return;
                 }
             }
@@ -550,12 +557,12 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         if (backendKnown)
         {
             await this.ProxyAndRecordConversationAsync(
-                context, backendUrl, path, convPath + queryString, bodyBytes: null).ConfigureAwait(false);
+                context, backendUrl, path, convPath + queryString, bodyBytes).ConfigureAwait(false);
         }
         else
         {
             await ProxyRequestAsync(
-                context, backendUrl, convPath + queryString, bodyBytes: null).ConfigureAwait(false);
+                context, backendUrl, convPath + queryString, bodyBytes).ConfigureAwait(false);
         }
     }
 

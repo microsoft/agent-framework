@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Linq;
 using System.Net.Sockets;
 using Aspire.Hosting.ApplicationModel;
@@ -192,24 +191,5 @@ public class DevUIResourceTests
 
     #endregion
 
-    /// <summary>
-    /// Creates a DevUIResource using reflection to access the internal constructor.
-    /// This is necessary because the (name, port) constructor is internal.
-    /// </summary>
-    private static DevUIResource CreateResourceWithPort(int? port)
-    {
-        // Use reflection to call the internal constructor
-        var constructorInfo = typeof(DevUIResource).GetConstructor(
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
-            null,
-            [typeof(string), typeof(int?)],
-            null);
-
-        if (constructorInfo is null)
-        {
-            throw new InvalidOperationException("Could not find internal DevUIResource constructor");
-        }
-
-        return (DevUIResource)constructorInfo.Invoke(["test-devui", port]);
-    }
+    private static DevUIResource CreateResourceWithPort(int? port) => new("test-devui", port);
 }

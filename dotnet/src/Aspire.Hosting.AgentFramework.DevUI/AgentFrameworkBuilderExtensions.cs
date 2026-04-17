@@ -28,7 +28,8 @@ public static class AgentFrameworkBuilderExtensions
     /// </para>
     /// <para>
     /// The aggregator runs as an in-process reverse proxy within the AppHost, requiring no external container image.
-    /// It proxies the DevUI frontend from the first configured backend and aggregates entity listings from all backends.
+    /// It serves the DevUI frontend from embedded resources in Microsoft.Agents.AI.DevUI when available, and
+    /// falls back to proxying from the first configured backend. It aggregates entity listings from all backends.
     /// </para>
     /// <para>
     /// This resource is excluded from the deployment manifest as it is intended for development use only.
@@ -110,6 +111,8 @@ public static class AgentFrameworkBuilderExtensions
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to start DevUI aggregator");
+
+                await aggregator.DisposeAsync().ConfigureAwait(false);
 
                 await e.Notifications.PublishUpdateAsync(resource, snapshot => snapshot with
                 {
