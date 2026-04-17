@@ -173,7 +173,7 @@ from agent_framework import Content, tool
 async def fetch_emails(count: int = 5) -> list[Content]:
     """Fetch emails with per-item security labels."""
     emails = fetch_from_server(count)
-    
+
     return [
         Content.from_text(
             json.dumps({
@@ -322,8 +322,14 @@ def search_web(query: str) -> str:
 #    - LLM sees: "Content stored in variable var_abc123"
 #    - Actual content: NEVER reaches LLM context!
 
+from agent_framework._security import inspect_variable
+
+
 # 4. If LLM needs to inspect (with audit trail):
-result = await inspect_variable(variable_name="var_abc123")
+async def inspect_content() -> None:
+    result = await inspect_variable(variable_id="var_abc123")
+    print(result)
+
 # Returns: {"content": "actual content", "label": {...}, "audit": [...]}
 ```
 
@@ -377,7 +383,7 @@ result = await quarantined_llm(
 ```
 
 **Key Security Features:**
-- Content is processed with `tools=None` and `tool_choice="none"` 
+- Content is processed with `tools=None` and `tool_choice="none"`
 - Prompt injection attempts in the content cannot trigger tool calls
 - Results inherit the most restrictive label from inputs
 - UNTRUSTED results are automatically hidden (stored as variable references)
@@ -388,14 +394,22 @@ result = await quarantined_llm(
 Retrieves content from variable store (with audit logging):
 
 ```python
-from agent_framework import inspect_variable
+from agent_framework._security import inspect_variable
 
-result = await inspect_variable(
-    variable_id="var_abc123",
-    reason="User explicitly requested full content"
-)
+
+async def inspect_content() -> None:
+    result = await inspect_variable(
+        variable_id="var_abc123",
+        reason="User explicitly requested full content",
+    )
+    print(result)
+
 # WARNING: Exposes untrusted content to context
 ```
+
+`inspect_variable` uses the standard tool approval flow via `approval_mode="always_require"`.
+That is separate from secure-policy approvals triggered by `SecureAgentConfig(..., approval_on_violation=True)`,
+which only request approval when a call would otherwise be blocked by the current security context.
 
 ### 7. SecureAgentConfig (Context Provider)
 
@@ -803,7 +817,7 @@ from pydantic import Field
 async def read_repo(repo: str, path: str) -> dict:
     repo_data = get_repo(repo)
     visibility = repo_data["visibility"]  # "public" or "private"
-    
+
     return {
         "content": repo_data["files"][path],
         # Dynamic confidentiality based on repository visibility
@@ -945,16 +959,20 @@ Configure tool security requirements in the `@tool` decorator:
 ```python
 @tool(
     description="...",
+    approval_mode="always_require",  # Standard human approval for this specific tool
     additional_properties={
         "confidentiality": "private",  # Tool's confidentiality level
         "accepts_untrusted": True,  # Explicitly allow untrusted inputs
-        "requires_approval": True,  # Require human approval
         # Optional: source_integrity is ONLY needed for tools returning data without per-item labels
         # Do NOT use for action/sink tools (send_email, delete_file) - they don't produce data
         "source_integrity": "untrusted",  # Fallback for unlabeled results
     }
 )
 ```
+
+**Approval model:**
+- Use `approval_mode="always_require"` for normal human-in-the-loop approval on a specific tool.
+- Use `SecureAgentConfig(..., approval_on_violation=True)` to request approval only when a secure-policy check would otherwise block a call.
 
 **When to use `source_integrity`:**
 - ✅ Tools returning data WITHOUT embedded per-item labels
@@ -1060,28 +1078,28 @@ from agent_framework import (
     IntegrityLabel,
     ConfidentialityLabel,
     combine_labels,
-    
+
     # Variable Store
     ContentVariableStore,
     VariableReferenceContent,
     store_untrusted_content,
-    
+
     # Message-Level Tracking (Phase 1)
     LabeledMessage,
-    
+
     # Middleware
     LabelTrackingFunctionMiddleware,
     PolicyEnforcementFunctionMiddleware,
-    
+
     # Security Tools
     quarantined_llm,
-    inspect_variable,
     get_security_tools,
-    
+
     # Agent Configuration
     SecureAgentConfig,
     SECURITY_TOOL_INSTRUCTIONS,
 )
+from agent_framework._security import inspect_variable
 ```
 
 ### LabeledMessage (Phase 1)
@@ -1169,12 +1187,17 @@ result = await quarantined_llm(
 ### inspect_variable
 
 ```python
-result = await inspect_variable(
-    variable_id: str,                         # ID of variable to inspect
-    reason: str = None,                       # Reason for inspection (audit)
-) -> Dict[str, Any]
+from agent_framework._security import inspect_variable
 
-# Returns:
+
+async def inspect_content() -> None:
+    result = await inspect_variable(
+        variable_id="var_abc123",  # ID of variable to inspect
+        reason="Need to inspect hidden content",  # Reason for inspection (audit)
+    )
+    print(result)
+
+# Example return:
 # {
 #     "variable_id": str,
 #     "content": Any,            # The actual hidden content
@@ -1200,4 +1223,3 @@ Potential improvements:
 
 - [ADR-0007: Agent Filtering Middleware](../../../../docs/decisions/0007-agent-filtering-middleware.md)
 - [Security Module](../../../packages/core/agent_framework/_security.py) — All security primitives, middleware, tools, and configuration
-

@@ -151,13 +151,17 @@ result = await quarantined_llm(
 ### Pattern 4: Inspect Variable (only if necessary)
 
 ```python
-from agent_framework import inspect_variable
+from agent_framework._security import inspect_variable
 
-# Only if absolutely necessary (logs audit trail)
-result = await inspect_variable(
-    variable_id="var_abc123",
-    reason="User explicitly requested full content"
-)
+
+async def inspect_content() -> None:
+    # Only if absolutely necessary (logs audit trail)
+    result = await inspect_variable(
+        variable_id="var_abc123",
+        reason="User explicitly requested full content",
+    )
+    print(result)
+
 # WARNING: This exposes untrusted content to context
 ```
 
@@ -370,7 +374,7 @@ if context_label.confidentiality == ConfidentialityLabel.PRIVATE:
 | **Prompt Injection** | Untrusted content hidden via variable indirection |
 | **Indirect Injection** | `accepts_untrusted=False` blocks tainted tool calls |
 | **Data Exfiltration** | `max_allowed_confidentiality` blocks PRIVATE→PUBLIC flow |
-| **Privilege Escalation** | Policy enforcement blocks unauthorized operations |  
+| **Privilege Escalation** | Policy enforcement blocks unauthorized operations |
 
 ## When to Use What
 
@@ -389,19 +393,19 @@ if context_label.confidentiality == ConfidentialityLabel.PRIVATE:
 
 ## Common Mistakes
 
-❌ **Don't**: Skip `max_allowed_confidentiality` on public-facing tools  
+❌ **Don't**: Skip `max_allowed_confidentiality` on public-facing tools
 ✅ **Do**: Set `max_allowed_confidentiality="public"` to prevent data leaks
 
-❌ **Don't**: Forget `source_integrity` on external data tools  
+❌ **Don't**: Forget `source_integrity` on external data tools
 ✅ **Do**: Set `source_integrity="untrusted"` for external APIs
 
-❌ **Don't**: Allow all tools to accept untrusted inputs  
+❌ **Don't**: Allow all tools to accept untrusted inputs
 ✅ **Do**: Whitelist only safe read-only tools in `allow_untrusted_tools`
 
-❌ **Don't**: Use `inspect_variable()` liberally  
+❌ **Don't**: Use `inspect_variable()` liberally
 ✅ **Do**: Only inspect when user explicitly requests
 
-❌ **Don't**: Hardcode confidentiality for dynamic data  
+❌ **Don't**: Hardcode confidentiality for dynamic data
 ✅ **Do**: Return per-item `security_label` based on actual data source
 
 ## Debugging
@@ -438,14 +442,14 @@ from agent_framework import check_confidentiality_allowed
 async def dynamic_post(destination: str, content: str):
     # Get current context label from middleware
     context_label = get_current_middleware().get_context_label()
-    
+
     # Determine destination's max confidentiality
     max_allowed = ConfidentialityLabel.PUBLIC if is_public(destination) else ConfidentialityLabel.PRIVATE
-    
+
     # Check if allowed
     if not check_confidentiality_allowed(context_label, max_allowed):
         return {"error": "Cannot send private data to public destination"}
-    
+
     # Proceed with operation
     return await do_post(destination, content)
 ```
