@@ -1430,6 +1430,49 @@ def test_tool_choice_required_with_function_name(
     assert prepared_options["tool_choice"]["function"]["name"] == "get_weather"
 
 
+def test_tool_choice_allowed_tools(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice with allowed_tools is correctly prepared."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "auto", "allowed_tools": ["get_weather"]},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert "tool_choice" in prepared_options
+    assert prepared_options["tool_choice"]["type"] == "allowed_tools"
+    assert prepared_options["tool_choice"]["mode"] == "auto"
+    assert prepared_options["tool_choice"]["tools"] == [{"type": "function", "name": "get_weather"}]
+
+
+def test_tool_choice_allowed_tools_multiple(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice with multiple allowed_tools is correctly prepared."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "auto", "allowed_tools": ["get_weather", "search_docs"]},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert "tool_choice" in prepared_options
+    assert prepared_options["tool_choice"]["type"] == "allowed_tools"
+    assert prepared_options["tool_choice"]["mode"] == "auto"
+    assert prepared_options["tool_choice"]["tools"] == [
+        {"type": "function", "name": "get_weather"},
+        {"type": "function", "name": "search_docs"},
+    ]
+
+
 def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) -> None:
     """Test that response_format as dict is passed through directly."""
     client = OpenAIChatCompletionClient()

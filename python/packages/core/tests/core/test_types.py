@@ -1159,6 +1159,25 @@ def test_chat_options_tool_choice_validation():
     with raises(ContentError):
         validate_tool_mode({"mode": "none", "allowed_tools": ["get_weather"]})
 
+    # allowed_tools must be a non-string sequence of strings
+    with raises(ContentError):
+        validate_tool_mode({"mode": "auto", "allowed_tools": "get_weather"})
+    with raises(ContentError):
+        validate_tool_mode({"mode": "auto", "allowed_tools": 123})
+    with raises(ContentError):
+        validate_tool_mode({"mode": "auto", "allowed_tools": ["get_weather", 123]})
+
+    # Empty list is valid (caller explicitly allows no tools)
+    assert validate_tool_mode({"mode": "auto", "allowed_tools": []}) == {
+        "mode": "auto",
+        "allowed_tools": [],
+    }
+
+    # Tuple is normalized to list
+    result = validate_tool_mode({"mode": "auto", "allowed_tools": ("get_weather",)})
+    assert result is not None
+    assert result["allowed_tools"] == ["get_weather"]
+
 
 def test_chat_options_merge(tool_tool, ai_tool) -> None:
     """Test merge_chat_options utility function."""

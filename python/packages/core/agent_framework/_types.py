@@ -3405,6 +3405,15 @@ def validate_tool_mode(
         raise ContentError("tool_choice with mode other than 'required' cannot have 'required_function_name'")
     if tool_choice["mode"] != "auto" and "allowed_tools" in tool_choice:
         raise ContentError("tool_choice with mode other than 'auto' cannot have 'allowed_tools'")
+    if "allowed_tools" in tool_choice:
+        allowed_tools = tool_choice["allowed_tools"]
+        if isinstance(allowed_tools, str) or not isinstance(allowed_tools, Sequence):
+            raise ContentError("tool_choice 'allowed_tools' must be a non-string sequence of strings")
+        if not all(isinstance(tool_name, str) for tool_name in allowed_tools):
+            raise ContentError("tool_choice 'allowed_tools' must contain only strings")
+        normalized_tool_choice = dict(tool_choice)
+        normalized_tool_choice["allowed_tools"] = list(allowed_tools)
+        return cast(ToolMode, normalized_tool_choice)
     return tool_choice
 
 
