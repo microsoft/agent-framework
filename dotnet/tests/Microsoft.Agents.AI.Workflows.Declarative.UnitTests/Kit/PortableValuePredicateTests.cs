@@ -140,7 +140,7 @@ public sealed class PortableValuePredicateTests
     #region InvokeMcpToolExecutor Predicates
 
     [Fact]
-    public void InvokeMcpToolExecutor_McpRequiresInput_WithPortableValueWrappedRequest_ReturnsTrue()
+    public void InvokeMcpToolExecutor_RequiresInput_WithPortableValueWrappedRequest_ReturnsTrue()
     {
         // Arrange
         ExternalInputRequest request = new("test prompt");
