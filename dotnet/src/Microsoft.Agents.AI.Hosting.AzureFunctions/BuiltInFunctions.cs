@@ -468,9 +468,27 @@ internal static class BuiltInFunctions
 
         if (acceptsJson)
         {
-            JsonElement? resultElement = result is not null
-                ? JsonDocument.Parse(result).RootElement.Clone()
-                : null;
+            JsonElement? resultElement = null;
+            if (!string.IsNullOrEmpty(result))
+            {
+                try
+                {
+                    using JsonDocument doc = JsonDocument.Parse(result);
+                    resultElement = doc.RootElement.Clone();
+                }
+                catch (JsonException)
+                {
+                    // Result is a plain string (not valid JSON) — serialize it as a JSON string element.
+                    var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+                    using (var writer = new Utf8JsonWriter(buffer))
+                    {
+                        writer.WriteStringValue(result);
+                    }
+
+                    using JsonDocument fallbackDoc = JsonDocument.Parse(buffer.WrittenMemory);
+                    resultElement = fallbackDoc.RootElement.Clone();
+                }
+            }
 
             await response.WriteAsJsonAsync(new WorkflowRunSuccessResponse(instanceId, metadata.RuntimeStatus.ToString(), resultElement), context.CancellationToken);
         }
@@ -594,12 +612,15 @@ internal static class BuiltInFunctions
     }
 
     /// <summary>
-    /// Returns <see langword="true"/> when the request includes an <c>Accept: application/json</c> header.
+    /// Returns <see langword="true"/> when the request accepts the <c>application/json</c> media type.
     /// </summary>
     private static bool AcceptsJson(HttpRequestData req)
     {
         return req.Headers.TryGetValues("Accept", out IEnumerable<string>? acceptValues) &&
-            acceptValues.Contains("application/json", StringComparer.OrdinalIgnoreCase);
+            acceptValues
+                .SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .Select(v => v.Split(';', 2)[0].Trim())
+                .Contains("application/json", StringComparer.OrdinalIgnoreCase);
     }
 
     private static string GetAgentName(FunctionContext context)
