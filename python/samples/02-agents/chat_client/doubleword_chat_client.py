@@ -16,9 +16,6 @@ Setup:
     export DOUBLEWORD_API_KEY="your-api-key"
 
 Available models: https://docs.doubleword.ai/inference-api/models
-
-For batch pricing (up to 90% savings with the Doubleword Inference API),
-see https://pypi.org/project/autobatcher/
 """
 
 import asyncio
@@ -34,6 +31,29 @@ async def main() -> None:
         model="Qwen/Qwen3.5-397B-A17B-FP8",
         base_url="https://api.doubleword.ai/v1",
         api_key=os.environ["DOUBLEWORD_API_KEY"],
+    )
+
+    message = Message("user", contents=["Explain the benefits of an AI model gateway in one paragraph."])
+    print(f"User: {message.text}")
+
+    response = await client.get_response([message], stream=False)
+    print(f"Assistant: {response}")
+
+
+async def main_batch() -> None:
+    """Run batch requests at reduced cost using autobatcher.
+
+    Install: pip install autobatcher
+    See: https://pypi.org/project/autobatcher/
+    """
+    from autobatcher import BatchOpenAI
+
+    client = OpenAIChatCompletionClient(
+        model="Qwen/Qwen3.5-397B-A17B-FP8",
+        async_client=BatchOpenAI(
+            api_key=os.environ["DOUBLEWORD_API_KEY"],
+            base_url="https://api.doubleword.ai/v1",
+        ),
     )
 
     message = Message("user", contents=["Explain the benefits of an AI model gateway in one paragraph."])
