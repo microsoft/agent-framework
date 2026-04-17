@@ -23,12 +23,10 @@ To run this example:
 """
 
 import asyncio
+import json
 import os
 import sys
-import json
 from typing import Any
-
-from pydantic import Field
 
 from agent_framework import (
     Agent,
@@ -36,10 +34,10 @@ from agent_framework import (
     SecureAgentConfig,
     tool,
 )
+from agent_framework.devui import serve
 from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
-from agent_framework.devui import serve
-
+from pydantic import Field
 
 # =============================================================================
 # Sample Email Data
@@ -131,6 +129,7 @@ HR Department""",
 # Tool Definitions
 # =============================================================================
 
+
 @tool(
     description="Send an email to the specified recipient. This is a privileged operation.",
     additional_properties={
@@ -151,7 +150,7 @@ async def send_email(
     blocked if called when the conversation context has been tainted by untrusted data.
     """
     # In production, this would actually send an email
-    print(f"\n📧 [SEND_EMAIL EXECUTED]")
+    print("\n📧 [SEND_EMAIL EXECUTED]")
     print(f"   To: {to}")
     print(f"   Subject: {subject}")
     print(f"   Body: {body[:100]}...")
@@ -178,7 +177,7 @@ async def fetch_emails(
     will automatically hide untrusted emails using variable indirection.
     """
     emails = SAMPLE_EMAILS[:count]
-    
+
     # Return emails as list[Content] with per-item security labels in additional_properties.
     # This ensures FunctionTool.invoke() preserves per-item labels for tier-1 propagation.
     result: list[Content] = []
@@ -189,16 +188,18 @@ async def fetch_emails(
             "subject": email["subject"],
             "body": email["body"],
         })
-        result.append(Content.from_text(
-            email_text,
-            additional_properties={
-                "security_label": {
-                    "integrity": "trusted" if email["trusted"] else "untrusted",
-                    "confidentiality": "private",
-                }
-            },
-        ))
-    
+        result.append(
+            Content.from_text(
+                email_text,
+                additional_properties={
+                    "security_label": {
+                        "integrity": "trusted" if email["trusted"] else "untrusted",
+                        "confidentiality": "private",
+                    }
+                },
+            )
+        )
+
     return result
 
 
@@ -206,13 +207,13 @@ async def fetch_emails(
 # Main Example
 # =============================================================================
 
+
 def setup_agent():
     """Create and return the secure email agent with all configuration."""
     endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
     if not endpoint:
         raise ValueError(
-            "AZURE_OPENAI_ENDPOINT environment variable is not set. "
-            "Please set it to your Azure OpenAI endpoint URL."
+            "AZURE_OPENAI_ENDPOINT environment variable is not set. Please set it to your Azure OpenAI endpoint URL."
         )
 
     credential = AzureCliCredential()
@@ -283,9 +284,7 @@ async def run_scenarios(agent, config):
     print("- Injection attempts in emails are NOT followed")
     print()
 
-    response = await agent.run(
-        "Please fetch my recent emails and give me a brief summary of each one."
-    )
+    response = await agent.run("Please fetch my recent emails and give me a brief summary of each one.")
     print(f"\n📋 Agent Response:\n{'-' * 40}")
     print(response.text)
 
@@ -302,9 +301,7 @@ async def run_scenarios(agent, config):
     print("- Agent should explain it cannot send email due to security policy")
     print()
 
-    response = await agent.run(
-        "Now please send an email to colleague@company.com summarizing what you found."
-    )
+    response = await agent.run("Now please send an email to colleague@company.com summarizing what you found.")
     print(f"\n📋 Agent Response:\n{'-' * 40}")
     print(response.text)
 
