@@ -16,7 +16,7 @@ public sealed class PortableValuePredicateTests
     #region ActionExecutorResult.ThrowIfNot
 
     [Fact]
-    public void ThrowIfNot_WithDirectActionExecutorResult_ReturnsResult()
+    public void ActionExecutorResult_ThrowIfNot_WithDirectActionExecutorResult_ReturnsResult()
     {
         // Arrange
         ActionExecutorResult result = new("test-executor");
@@ -29,7 +29,7 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void ThrowIfNot_WithPortableValueWrappedActionExecutorResult_Unwraps()
+    public void ActionExecutorResult_ThrowIfNot_WithPortableValueWrappedActionExecutorResult_Unwraps()
     {
         // Arrange
         ActionExecutorResult result = new("test-executor");
@@ -43,7 +43,7 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void ThrowIfNot_WithNonActionExecutorResult_Throws()
+    public void ActionExecutorResult_ThrowIfNot_WithNonActionExecutorResult_Throws()
     {
         // Arrange
         object message = "not an ActionExecutorResult";
@@ -53,14 +53,14 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void ThrowIfNot_WithNull_Throws()
+    public void ActionExecutorResult_ThrowIfNot_WithNull_Throws()
     {
         // Act & Assert
         Assert.Throws<DeclarativeActionException>(() => ActionExecutorResult.ThrowIfNot(null));
     }
 
     [Fact]
-    public void ThrowIfNot_WithPortableValueWrappedNonResult_Throws()
+    public void ActionExecutorResult_ThrowIfNot_WithPortableValueWrappedNonResult_Throws()
     {
         // Arrange
         PortableValue wrapped = new("not an ActionExecutorResult");
@@ -74,7 +74,7 @@ public sealed class PortableValuePredicateTests
     #region InvokeAzureAgentExecutor Predicates
 
     [Fact]
-    public void RequiresInput_WithDirectExternalInputRequest_ReturnsTrue()
+    public void InvokeAzureAgentExecutor_RequiresInput_WithDirectExternalInputRequest_ReturnsTrue()
     {
         // Arrange
         ExternalInputRequest request = new("test prompt");
@@ -84,7 +84,7 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void RequiresInput_WithPortableValueWrappedRequest_ReturnsTrue()
+    public void InvokeAzureAgentExecutor_RequiresInput_WithPortableValueWrappedRequest_ReturnsTrue()
     {
         // Arrange
         ExternalInputRequest request = new("test prompt");
@@ -95,7 +95,7 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void RequiresInput_WithActionExecutorResult_ReturnsFalse()
+    public void InvokeAzureAgentExecutor_RequiresInput_WithActionExecutorResult_ReturnsFalse()
     {
         // Arrange
         ActionExecutorResult result = new("test");
@@ -105,7 +105,7 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void RequiresNothing_WithDirectActionExecutorResult_ReturnsTrue()
+    public void InvokeAzureAgentExecutor_RequiresNothing_WithDirectActionExecutorResult_ReturnsTrue()
     {
         // Arrange
         ActionExecutorResult result = new("test");
@@ -115,7 +115,7 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void RequiresNothing_WithPortableValueWrappedResult_ReturnsTrue()
+    public void InvokeAzureAgentExecutor_RequiresNothing_WithPortableValueWrappedResult_ReturnsTrue()
     {
         // Arrange
         ActionExecutorResult result = new("test");
@@ -126,7 +126,7 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void RequiresNothing_WithExternalInputRequest_ReturnsFalse()
+    public void InvokeAzureAgentExecutor_RequiresNothing_WithExternalInputRequest_ReturnsFalse()
     {
         // Arrange
         ExternalInputRequest request = new("test prompt");
@@ -140,7 +140,7 @@ public sealed class PortableValuePredicateTests
     #region InvokeMcpToolExecutor Predicates
 
     [Fact]
-    public void McpRequiresInput_WithPortableValueWrappedRequest_ReturnsTrue()
+    public void InvokeMcpToolExecutor_McpRequiresInput_WithPortableValueWrappedRequest_ReturnsTrue()
     {
         // Arrange
         ExternalInputRequest request = new("test prompt");
@@ -151,7 +151,7 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void McpRequiresNothing_WithPortableValueWrappedResult_ReturnsTrue()
+    public void InvokeMcpToolExecutor_McpRequiresNothing_WithPortableValueWrappedResult_ReturnsTrue()
     {
         // Arrange
         ActionExecutorResult result = new("test");
@@ -166,7 +166,7 @@ public sealed class PortableValuePredicateTests
     #region QuestionExecutor.IsComplete
 
     [Fact]
-    public void IsComplete_WithPortableValueWrappedResult_NullResult_ReturnsTrue()
+    public void QuestionExecutor_IsComplete_WithPortableValueWrappedResult_NullResult_ReturnsTrue()
     {
         // Arrange - result with null Result property means "complete"
         ActionExecutorResult result = new("test", result: null);
@@ -177,7 +177,7 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void IsComplete_WithPortableValueWrappedResult_NonNullResult_ReturnsFalse()
+    public void QuestionExecutor_IsComplete_WithPortableValueWrappedResult_NonNullResult_ReturnsFalse()
     {
         // Arrange - result with non-null Result property means "not complete"
         ActionExecutorResult result = new("test", result: true);
