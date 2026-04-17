@@ -152,6 +152,7 @@
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step21_WebSearch/Agent_Step21_WebSearch.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step22_MemorySearch/Agent_Step22_MemorySearch.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step23_LocalMCP/Agent_Step23_LocalMCP.csproj" />
+    <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step24_CodeInterpreterFileDownload/Agent_Step24_CodeInterpreterFileDownload.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/Evaluation/">
     <Project Path="samples/02-agents/Evaluation/Evaluation_SimpleEval/Evaluation_SimpleEval.csproj" />
@@ -173,6 +174,7 @@
     <Project Path="samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step03_CreateFromChatClient/Agent_OpenAI_Step03_CreateFromChatClient.csproj" />
     <Project Path="samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient.csproj" />
     <Project Path="samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step05_Conversation/Agent_OpenAI_Step05_Conversation.csproj" />
+    <Project Path="samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step06_CodeInterpreterFileDownload/Agent_OpenAI_Step06_CodeInterpreterFileDownload.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AgentWithRAG/">
     <File Path="samples/02-agents/AgentWithRAG/README.md" />
