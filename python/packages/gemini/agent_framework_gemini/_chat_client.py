@@ -30,6 +30,7 @@ from agent_framework import (
 from agent_framework._settings import SecretString, load_settings
 from agent_framework.observability import ChatTelemetryLayer
 from google import genai
+from google.auth.credentials import Credentials
 from google.genai import types
 from pydantic import BaseModel
 
@@ -54,6 +55,7 @@ __all__ = [
     "GeminiChatClient",
     "GeminiChatOptions",
     "GeminiSettings",
+    "GoogleGeminiSettings",
     "RawGeminiChatClient",
     "ThinkingConfig",
 ]
@@ -161,10 +163,74 @@ class GeminiSettings(TypedDict, total=False):
     model: str | None
 
 
+class GoogleGeminiSettings(TypedDict, total=False):
+    """Google SDK configuration settings loaded from ``GOOGLE_*`` environment variables."""
+
+    api_key: SecretString | None
+    model: str | None
+    genai_use_vertexai: bool | None
+    cloud_project: str | None
+    cloud_location: str | None
+
+
 # endregion
 
 
-_GEMINI_SERVICE_URL = "https://generativelanguage.googleapis.com"
+_GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com"
+_VERTEX_AI_BASE_URL = "https://aiplatform.googleapis.com"
+
+
+def _resolve_vertexai_mode(client: genai.Client, *, fallback: bool | None = None) -> bool:
+    """Resolve whether a client targets Vertex AI, preferring the instantiated SDK client state."""
+    api_client = getattr(client, "_api_client", None)
+    vertexai = getattr(api_client, "vertexai", None)
+    if isinstance(vertexai, bool):
+        return vertexai
+    return bool(fallback)
+
+
+def _resolve_service_url(client: genai.Client, *, vertexai: bool) -> str:
+    """Resolve the base service URL from the instantiated SDK client, with a stable fallback."""
+    api_client = getattr(client, "_api_client", None)
+    http_options = getattr(api_client, "_http_options", None)
+    base_url = getattr(http_options, "base_url", None)
+    if isinstance(base_url, str) and base_url:
+        return base_url.rstrip("/")
+    return _VERTEX_AI_BASE_URL if vertexai else _GEMINI_API_BASE_URL
+
+
+def _validate_client_auth_configuration(
+    *,
+    vertexai: bool | None,
+    api_key: SecretString | None,
+    project: str | None,
+    location: str | None,
+    credentials: Credentials | None,
+) -> None:
+    """Validate supported auth combinations before instantiating the SDK client."""
+    if vertexai is not True:
+        if api_key is None:
+            raise ValueError(
+                "Gemini client requires an API key when Vertex AI is not enabled. "
+                "Set GOOGLE_API_KEY or GEMINI_API_KEY, or pass api_key explicitly."
+            )
+        return
+
+    if api_key is not None or credentials is not None or (project and location):
+        return
+
+    if project or location:
+        raise ValueError(
+            "Gemini client requires both GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION "
+            "when Vertex AI is enabled without an API key."
+        )
+
+    raise ValueError(
+        "Gemini client requires Vertex AI credentials or configuration when Vertex AI is enabled. "
+        "Provide GOOGLE_API_KEY for Vertex AI express mode, pass credentials, or set "
+        "GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION."
+    )
+
 
 # Keys mapping to a different GenerateContentConfig field name
 _OPTION_TRANSLATIONS: dict[str, str] = {
@@ -210,7 +276,7 @@ class RawGeminiChatClient(
     BaseChatClient[GeminiChatOptionsT],
     Generic[GeminiChatOptionsT],
 ):
-    """A raw Gemini chat client for the Google Gemini API without function invocation, middleware or telemetry.
+    """A raw Gemini chat client for Gemini Developer API or Vertex AI.
 
     Use this when you want full control over the request pipeline. For instance, to opt out of
     telemetry, use custom middleware, or compose your own layers. If you want the full-featured
@@ -224,6 +290,10 @@ class RawGeminiChatClient(
         *,
         api_key: str | None = None,
         model: str | None = None,
+        vertexai: bool | None = None,
+        project: str | None = None,
+        location: str | None = None,
+        credentials: Credentials | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         client: genai.Client | None = None,
@@ -232,11 +302,21 @@ class RawGeminiChatClient(
         """Create a raw Gemini chat client.
 
         Args:
-            api_key: Google AI Studio API key. Falls back to ``GEMINI_API_KEY`` environment variable.
-            model: Default model identifier. Falls back to ``GEMINI_MODEL`` environment variable.
+            api_key: Gemini Developer API key. Falls back to environment settings, preferring
+                ``GOOGLE_API_KEY`` over ``GEMINI_API_KEY``.
+            model: Default model identifier. Falls back to environment settings, preferring
+                ``GOOGLE_MODEL`` over ``GEMINI_MODEL``.
+            vertexai: Whether to use Vertex AI endpoints. Falls back to environment settings,
+                using ``GOOGLE_GENAI_USE_VERTEXAI`` when not passed explicitly.
+            project: Google Cloud project ID for Vertex AI. Falls back to environment settings,
+                using ``GOOGLE_CLOUD_PROJECT`` when not passed explicitly.
+            location: Vertex AI location. Falls back to environment settings, preferring
+                using ``GOOGLE_CLOUD_LOCATION`` when not passed explicitly.
+            credentials: Google Cloud credentials for Vertex AI. When omitted, the SDK can use
+                Application Default Credentials.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
-            client: Pre-built ``genai.Client`` instance. When provided, ``api_key`` is not required.
+            client: Pre-built ``genai.Client`` instance. When provided, connector auth settings are not required.
             additional_properties: Extra properties stored on the client instance.
         """
         settings = load_settings(
@@ -247,21 +327,58 @@ class RawGeminiChatClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
+        google_settings = load_settings(
+            GoogleGeminiSettings,
+            env_prefix="GOOGLE_",
+            api_key=api_key,
+            model=model,
+            genai_use_vertexai=vertexai,
+            cloud_project=project,
+            cloud_location=location,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
+        configured_vertexai = google_settings.get("genai_use_vertexai")
         if client:
             self._genai_client = client
         else:
-            resolved_key = settings.get("api_key")
-            if not resolved_key:
-                raise ValueError(
-                    "Gemini API key is required. Set via api_key parameter or GEMINI_API_KEY environment variable."
-                )
-            self._genai_client = genai.Client(
-                api_key=resolved_key.get_secret_value(),
-                http_options={"headers": {"x-goog-api-client": AGENT_FRAMEWORK_USER_AGENT}},
+            resolved_key = google_settings.get("api_key") or settings.get("api_key")
+            resolved_project = google_settings.get("cloud_project")
+            resolved_location = google_settings.get("cloud_location")
+            _validate_client_auth_configuration(
+                vertexai=configured_vertexai,
+                api_key=resolved_key,
+                project=resolved_project,
+                location=resolved_location,
+                credentials=credentials,
             )
 
-        self.model = settings.get("model")
+            client_kwargs: dict[str, Any] = {
+                "http_options": {"headers": {"x-goog-api-client": AGENT_FRAMEWORK_USER_AGENT}},
+            }
+            if configured_vertexai is not None:
+                client_kwargs["vertexai"] = configured_vertexai
+
+            if resolved_key is not None and (
+                configured_vertexai is not True
+                or (credentials is None and not (resolved_project and resolved_location))
+            ):
+                client_kwargs["api_key"] = resolved_key.get_secret_value()
+
+            if configured_vertexai is True and resolved_project:
+                client_kwargs["project"] = resolved_project
+
+            if configured_vertexai is True and resolved_location:
+                client_kwargs["location"] = resolved_location
+            if configured_vertexai is True and credentials is not None:
+                client_kwargs["credentials"] = credentials
+
+            self._genai_client = genai.Client(**client_kwargs)
+
+        self._vertexai = _resolve_vertexai_mode(self._genai_client, fallback=configured_vertexai)
+        self._service_url = _resolve_service_url(self._genai_client, vertexai=self._vertexai)
+        self.model = google_settings.get("model") or settings.get("model")
 
         super().__init__(additional_properties=additional_properties)
 
@@ -414,12 +531,12 @@ class RawGeminiChatClient(
 
     @override
     def service_url(self) -> str:
-        """Return the base URL of the Gemini API service.
+        """Return the base URL of the configured Gemini or Vertex AI service.
 
         Returns:
-            The Gemini API base URL.
+            The resolved service base URL.
         """
-        return _GEMINI_SERVICE_URL
+        return self._service_url
 
     # region Request preparation
 
@@ -528,15 +645,16 @@ class RawGeminiChatClient(
                     call_id = content.call_id or self._generate_tool_call_id()
                     if content.name:
                         call_id_to_name[call_id] = content.name
-                    parts.append(
-                        types.Part(
-                            function_call=types.FunctionCall(
-                                id=call_id,
-                                name=content.name or "",
-                                args=content.parse_arguments() or {},
-                            )
-                        )
+                    function_call = types.FunctionCall(
+                        id=call_id,
+                        name=content.name or "",
+                        args=content.parse_arguments() or {},
                     )
+                    raw_part = content.raw_representation
+                    if isinstance(raw_part, types.Part) and raw_part.function_call is not None:
+                        parts.append(raw_part.model_copy(update={"function_call": function_call}, deep=True))
+                    else:
+                        parts.append(types.Part(function_call=function_call))
                 case _:
                     logger.debug("Skipping unsupported content type for Gemini: %s", content.type)
         return parts
@@ -889,7 +1007,7 @@ class GeminiChatClient(
     RawGeminiChatClient[GeminiChatOptionsT],
     Generic[GeminiChatOptionsT],
 ):
-    """Gemini chat client for the Google Gemini API with function invocation, middleware, and telemetry.
+    """Gemini chat client for Gemini Developer API or Vertex AI with function invocation, middleware, and telemetry.
 
     This is the recommended client for most use cases. It builds on ``RawGeminiChatClient``
     and adds:
@@ -908,6 +1026,10 @@ class GeminiChatClient(
         *,
         api_key: str | None = None,
         model: str | None = None,
+        vertexai: bool | None = None,
+        project: str | None = None,
+        location: str | None = None,
+        credentials: Credentials | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         client: genai.Client | None = None,
@@ -918,11 +1040,18 @@ class GeminiChatClient(
         """Create a Gemini chat client.
 
         Args:
-            api_key: The Google AI Studio API key. Falls back to ``GEMINI_API_KEY`` environment variable.
-            model: Default model identifier. Falls back to ``GEMINI_MODEL`` environment variable.
+            api_key: Gemini Developer API key. Falls back to environment settings, preferring
+                ``GOOGLE_API_KEY`` over ``GEMINI_API_KEY``.
+            model: Default model identifier. Falls back to environment settings, preferring
+                ``GOOGLE_MODEL`` over ``GEMINI_MODEL``.
+            vertexai: Whether to use Vertex AI endpoints. Falls back to ``GOOGLE_GENAI_USE_VERTEXAI``.
+            project: Google Cloud project ID for Vertex AI. Falls back to ``GOOGLE_CLOUD_PROJECT``.
+            location: Vertex AI location. Falls back to ``GOOGLE_CLOUD_LOCATION``.
+            credentials: Google Cloud credentials for Vertex AI. When omitted, the SDK can use
+                Application Default Credentials.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
-            client: Pre-built ``genai.Client`` instance. When provided, ``api_key`` is not required.
+            client: Pre-built ``genai.Client`` instance. When provided, connector auth settings are not required.
             additional_properties: Extra properties stored on the client instance.
             middleware: Optional middleware chain applied to every call.
             function_invocation_configuration: Optional configuration for the function invocation loop.
@@ -930,6 +1059,10 @@ class GeminiChatClient(
         super().__init__(
             api_key=api_key,
             model=model,
+            vertexai=vertexai,
+            project=project,
+            location=location,
+            credentials=credentials,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
             client=client,
