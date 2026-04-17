@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hyperlight\Microsoft.Agents.AI.Hyperlight.csproj" />
+  </ItemGroup>
+
+</Project>
