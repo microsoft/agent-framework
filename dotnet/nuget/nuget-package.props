@@ -1,13 +1,13 @@
 <Project>
   <PropertyGroup>
     <!-- Central version prefix - applies to all nuget packages. -->
-    <VersionPrefix>1.2.0</VersionPrefix>
+    <VersionPrefix>0.0.1</VersionPrefix>
     <RCNumber>1</RCNumber>
     <PackageVersion Condition="'$(IsReleaseCandidate)' == 'true'">$(VersionPrefix)-rc$(RCNumber)</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).260417.1</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.260417.1</PackageVersion>
     <PackageVersion Condition="'$(IsReleased)' == 'true'">$(VersionPrefix)</PackageVersion>
-    <GitTag>1.2.0</GitTag>
+    <GitTag>0.0.1</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>
     <!-- IsPackable intentionally NOT set to true here. Packaging is opt-in per project for this branch. -->
