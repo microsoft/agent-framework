@@ -552,7 +552,10 @@ jobs:
   # Flaky test trend report (aggregates per-job JUnit XML results)
   python-flaky-test-report:
     name: Flaky Test Report
-    if: always()
+    if: >
+      always() &&
+      contains(join(needs.*.result, ','), 'success') ||
+      contains(join(needs.*.result, ','), 'failure')
     needs:
       [
         python-tests-openai,

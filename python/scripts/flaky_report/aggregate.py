@@ -127,11 +127,12 @@ def load_current_run(reports_dir: Path) -> dict[str, Any]:
 
     # actions/download-artifact creates: reports_dir/test-results-openai/pytest.xml
     xml_files: list[tuple[str, Path]] = []
-    for subdir in sorted(reports_dir.iterdir()):
-        if subdir.is_dir():
-            xml_file = subdir / "pytest.xml"
-            if xml_file.exists():
-                xml_files.append((subdir.name, xml_file))
+    if reports_dir.is_dir():
+        for subdir in sorted(reports_dir.iterdir()):
+            if subdir.is_dir():
+                xml_file = subdir / "pytest.xml"
+                if xml_file.exists():
+                    xml_files.append((subdir.name, xml_file))
 
     if not xml_files:
         print(f"Warning: No pytest.xml files found in {reports_dir}")
