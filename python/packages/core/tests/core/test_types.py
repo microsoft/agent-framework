@@ -1072,16 +1072,20 @@ def test_chat_tool_mode():
     required_any: ToolMode = {"mode": "required"}
     required_mode: ToolMode = {"mode": "required", "required_function_name": "example_function"}
     none_mode: ToolMode = {"mode": "none"}
+    allowed_mode: ToolMode = {"mode": "auto", "allowed_tools": ["get_weather", "search_docs"]}
 
     # Check the type and content
     assert auto_mode["mode"] == "auto"
     assert "required_function_name" not in auto_mode
+    assert "allowed_tools" not in auto_mode
     assert required_any["mode"] == "required"
     assert "required_function_name" not in required_any
     assert required_mode["mode"] == "required"
     assert required_mode["required_function_name"] == "example_function"
     assert none_mode["mode"] == "none"
     assert "required_function_name" not in none_mode
+    assert allowed_mode["mode"] == "auto"
+    assert allowed_mode["allowed_tools"] == ["get_weather", "search_docs"]
 
     # equality of dicts
     assert {"mode": "required", "required_function_name": "example_function"} == {
@@ -1138,6 +1142,22 @@ def test_chat_options_tool_choice_validation():
         validate_tool_mode({"mode": "invalid_mode"})
     with raises(ContentError):
         validate_tool_mode({"mode": "auto", "required_function_name": "should_not_be_here"})
+
+    # Valid allowed_tools
+    assert validate_tool_mode({"mode": "auto", "allowed_tools": ["get_weather"]}) == {
+        "mode": "auto",
+        "allowed_tools": ["get_weather"],
+    }
+    assert validate_tool_mode({"mode": "auto", "allowed_tools": ["get_weather", "search_docs"]}) == {
+        "mode": "auto",
+        "allowed_tools": ["get_weather", "search_docs"],
+    }
+
+    # allowed_tools invalid with non-auto modes
+    with raises(ContentError):
+        validate_tool_mode({"mode": "required", "allowed_tools": ["get_weather"]})
+    with raises(ContentError):
+        validate_tool_mode({"mode": "none", "allowed_tools": ["get_weather"]})
 
 
 def test_chat_options_merge(tool_tool, ai_tool) -> None:
