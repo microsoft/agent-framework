@@ -3155,6 +3155,7 @@ class ToolMode(TypedDict, total=False):
     required_function_name: str
     allowed_tools: list[str]
 
+
 # region TypedDict-based Chat Options
 
 

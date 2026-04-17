@@ -823,9 +823,7 @@ async def test_sandbox_runs_simple_code(restored_sandbox) -> None:
 
 @skip_if_hyperlight_integration_tests_disabled
 async def test_sandbox_stdout_and_stderr_captured(restored_sandbox) -> None:
-    result = restored_sandbox.run(
-        'import sys\nprint("out")\nprint("err", file=sys.stderr)'
-    )
+    result = restored_sandbox.run('import sys\nprint("out")\nprint("err", file=sys.stderr)')
     assert result.success
     assert "out" in result.stdout
     assert "err" in result.stderr
@@ -910,19 +908,12 @@ async def test_output_dir_cleared_between_invocations() -> None:
 
     # First invocation: write a file
     result1 = await run_tool.invoke(
-        arguments={
-            "code": (
-                'with open("/output/stale.txt", "w") as f:\n'
-                '    f.write("first")\n'
-                'print("wrote")\n'
-            )
-        }
+        arguments={"code": ('with open("/output/stale.txt", "w") as f:\n    f.write("first")\nprint("wrote")\n')}
     )
     assert result1[0].type == "code_interpreter_tool_result"
     outputs1 = result1[0].outputs or []
     assert any(
-        item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "")
-        for item in outputs1
+        item.type == "data" and "stale.txt" in (item.additional_properties or {}).get("path", "") for item in outputs1
     ), "First invocation should produce stale.txt"
 
     # Second invocation: no file writes
@@ -971,9 +962,7 @@ async def test_run_code_does_not_block_event_loop() -> None:
         concurrent_ran = True
         release.set()
 
-    code_task = asyncio.create_task(
-        run_tool.invoke(arguments={"code": 'print("done")\n'})
-    )
+    code_task = asyncio.create_task(run_tool.invoke(arguments={"code": 'print("done")\n'}))
     await _concurrent_task()
     result = await code_task
 
