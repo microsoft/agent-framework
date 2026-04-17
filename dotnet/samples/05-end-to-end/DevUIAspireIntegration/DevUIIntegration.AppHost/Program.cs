@@ -5,7 +5,6 @@ var builder = DistributedApplication.CreateBuilder(args);
 var foundry = builder.AddAzureAIFoundry("foundry");
 
 // Comment the following lines to create a new Foundry instance instead of connecting to an existing one. If creating a new instance, the DevUI resource will wait for the Foundry to be ready before starting, ensuring the DevUI frontend is available as soon as the app starts.
-_ = builder.AddParameterFromConfiguration("tenant", "Azure:TenantId");
 var existingFoundryName = builder.AddParameter("existingFoundryName")
     .WithDescription("The name of the existing Azure Foundry resource.");
 var existingFoundryResourceGroup = builder.AddParameter("existingFoundryResourceGroup")

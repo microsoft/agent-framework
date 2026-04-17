@@ -16,7 +16,7 @@ builder.AddAzureChatCompletionsClient(connectionName: "foundry",
             settings.TokenCredential = new DefaultAzureCredential();
             settings.EnableSensitiveTelemetryData = builder.Environment.IsDevelopment();
         })
-    .AddChatClient("gpt-5.4");
+    .AddChatClient("gpt41");
 
 builder.AddAIAgent("editor", (sp, key) =>
 {
