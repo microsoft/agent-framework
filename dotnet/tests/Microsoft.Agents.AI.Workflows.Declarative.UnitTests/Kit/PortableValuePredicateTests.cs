@@ -151,7 +151,7 @@ public sealed class PortableValuePredicateTests
     }
 
     [Fact]
-    public void InvokeMcpToolExecutor_McpRequiresNothing_WithPortableValueWrappedResult_ReturnsTrue()
+    public void InvokeMcpToolExecutor_RequiresNothing_WithPortableValueWrappedResult_ReturnsTrue()
     {
         // Arrange
         ActionExecutorResult result = new("test");
