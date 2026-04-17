@@ -126,6 +126,19 @@ public static class FoundryHostingExtensions
     public static IServiceCollection AddFoundryToolboxes(
         this IServiceCollection services,
         params string[] toolboxNames)
+        => services.AddFoundryToolboxes(configureOptions: null, toolboxNames);
+
+    /// <summary>
+    /// Registers the Foundry Toolbox service with additional options configuration.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configureOptions">Callback to further configure <see cref="FoundryToolboxOptions"/> (e.g. set <see cref="FoundryToolboxOptions.StrictMode"/>).</param>
+    /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddFoundryToolboxes(
+        this IServiceCollection services,
+        Action<FoundryToolboxOptions>? configureOptions,
+        params string[] toolboxNames)
     {
         ArgumentNullException.ThrowIfNull(services);
 
@@ -138,6 +151,8 @@ public static class FoundryHostingExtensions
                     opt.ToolboxNames.Add(name);
                 }
             }
+
+            configureOptions?.Invoke(opt);
         });
 
         // Register DefaultAzureCredential as the default TokenCredential if not already registered

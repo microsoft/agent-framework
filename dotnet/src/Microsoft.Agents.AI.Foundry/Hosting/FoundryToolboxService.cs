@@ -18,17 +18,19 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// An <see cref="IHostedService"/> that eagerly connects to the Foundry Toolboxes MCP proxy at
 /// container startup, discovers tools via <c>tools/list</c>, and caches them so they can be
-/// injected into every <see cref="ChatOptions"/> by
-/// <see cref="AgentFrameworkResponseHandler"/>.
+/// injected into every <see cref="ChatOptions"/> by <see cref="AgentFrameworkResponseHandler"/>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// When <c>FOUNDRY_AGENT_TOOLSET_ENDPOINT</c> is absent the service starts without error and returns
-/// an empty tool list, keeping the container healthy per spec §2.
+/// When <c>FOUNDRY_AGENT_TOOLSET_ENDPOINT</c> is absent the service starts without error and
+/// no tools are registered, keeping the container healthy per spec §2.
 /// </para>
 /// <para>
-/// Initialization is performed in <see cref="StartAsync"/> so the readiness probe is only satisfied
-/// after all configured toolboxes are connected and their tools discovered (spec §3.1 SHOULD).
+/// Startup eagerly connects to every name in <see cref="FoundryToolboxOptions.ToolboxNames"/>.
+/// Beyond those, per-request toolbox markers (see <see cref="HostedMcpToolboxAITool"/>) are
+/// resolved at request time through <see cref="GetToolboxToolsAsync"/>. Unknown toolboxes are
+/// rejected when <see cref="FoundryToolboxOptions.StrictMode"/> is <see langword="true"/> and
+/// lazily connected otherwise.
 /// </para>
 /// </remarks>
 public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
@@ -37,12 +39,17 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     private readonly TokenCredential _credential;
     private readonly ILogger<FoundryToolboxService> _logger;
 
-    private readonly List<McpClient> _clients = [];
-    private readonly List<HttpClient> _httpClients = [];
+    private readonly Dictionary<string, CachedToolbox> _toolboxes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _lazyOpenLock = new(1, 1);
+
+    private string? _resolvedEndpoint;
+    private string? _featuresHeader;
+    private string _agentName = "hosted-agent";
+    private string _agentVersion = "1.0.0";
 
     /// <summary>
-    /// Gets the cached list of <see cref="AITool"/> instances discovered from all connected toolboxes.
-    /// Always non-null after startup; returns an empty list when no toolbox endpoint is configured.
+    /// Gets the cached list of <see cref="AITool"/> instances discovered from all
+    /// pre-registered toolboxes. Always non-null after startup.
     /// </summary>
     public IReadOnlyList<AITool> Tools { get; private set; } = [];
 
@@ -65,30 +72,28 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     /// <inheritdoc/>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var endpoint = this._options.EndpointOverride
+        this._resolvedEndpoint = this._options.EndpointOverride
             ?? Environment.GetEnvironmentVariable("FOUNDRY_AGENT_TOOLSET_ENDPOINT");
 
-        if (string.IsNullOrEmpty(endpoint))
+        if (string.IsNullOrEmpty(this._resolvedEndpoint))
         {
             this._logger.LogInformation("FOUNDRY_AGENT_TOOLSET_ENDPOINT is not set; toolbox support is disabled.");
             this.Tools = [];
             return;
         }
 
+        this._featuresHeader = Environment.GetEnvironmentVariable("FOUNDRY_AGENT_TOOLSET_FEATURES");
+        this._agentName = Environment.GetEnvironmentVariable("FOUNDRY_AGENT_NAME") ?? "hosted-agent";
+        this._agentVersion = Environment.GetEnvironmentVariable("FOUNDRY_AGENT_VERSION") ?? "1.0.0";
+
         if (this._options.ToolboxNames.Count == 0)
         {
-            this._logger.LogInformation("No toolbox names configured; toolbox support is disabled.");
+            this._logger.LogInformation("No pre-registered toolbox names configured.");
             this.Tools = [];
             return;
         }
 
-        var featuresHeader = Environment.GetEnvironmentVariable("FOUNDRY_AGENT_TOOLSET_FEATURES");
-        var agentName = Environment.GetEnvironmentVariable("FOUNDRY_AGENT_NAME") ?? "hosted-agent";
-        var agentVersion = Environment.GetEnvironmentVariable("FOUNDRY_AGENT_VERSION") ?? "1.0.0";
-
         var allTools = new List<AITool>();
-
-        // Deduplicate toolbox names to avoid duplicate MCP clients and ambiguous tool exposure
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var toolboxName in this._options.ToolboxNames)
@@ -98,61 +103,11 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 continue;
             }
 
-            var proxyUrl = $"{endpoint.TrimEnd('/')}/{toolboxName}/mcp?api-version={this._options.ApiVersion}";
-
-            if (this._logger.IsEnabled(LogLevel.Information))
-            {
-                this._logger.LogInformation("Connecting to toolbox '{ToolboxName}' at {ProxyUrl}.", toolboxName, proxyUrl);
-            }
-
             try
             {
-                var handler = new FoundryToolboxBearerTokenHandler(this._credential, featuresHeader)
-                {
-                    InnerHandler = new HttpClientHandler()
-                };
-
-                var httpClient = new HttpClient(handler);
-                this._httpClients.Add(httpClient);
-
-                var transportOptions = new HttpClientTransportOptions
-                {
-                    Endpoint = new Uri(proxyUrl),
-                    Name = toolboxName,
-                };
-
-                var transport = new HttpClientTransport(transportOptions, httpClient);
-
-                var clientOptions = new McpClientOptions
-                {
-                    ClientInfo = new()
-                    {
-                        Name = agentName,
-                        Version = agentVersion
-                    }
-                };
-
-                var client = await McpClient.CreateAsync(
-                    transport,
-                    clientOptions,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-
-                this._clients.Add(client);
-
-                var tools = await client.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-
-                if (this._logger.IsEnabled(LogLevel.Information))
-                {
-                    this._logger.LogInformation(
-                        "Toolbox '{ToolboxName}': discovered {ToolCount} tool(s).",
-                        toolboxName,
-                        tools.Count);
-                }
-
-                foreach (var tool in tools)
-                {
-                    allTools.Add(new ConsentAwareMcpClientAIFunction(tool, toolboxName));
-                }
+                var cached = await this.OpenToolboxAsync(toolboxName, version: null, cancellationToken).ConfigureAwait(false);
+                this._toolboxes[toolboxName] = cached;
+                allTools.AddRange(cached.Tools);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -166,24 +121,139 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         this.Tools = allTools;
     }
 
+    /// <summary>
+    /// Resolves the tools for a per-request toolbox marker. Returns cached tools when the
+    /// toolbox has already been opened; otherwise honors
+    /// <see cref="FoundryToolboxOptions.StrictMode"/> to either reject or lazily open it.
+    /// </summary>
+    /// <param name="toolboxName">The Foundry toolbox name from the marker.</param>
+    /// <param name="version">Optional pinned version; ignored when matching a pre-registered entry.</param>
+    /// <param name="cancellationToken">The request cancellation token.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the toolbox is not pre-registered and <see cref="FoundryToolboxOptions.StrictMode"/>
+    /// is <see langword="true"/>, or when the toolbox endpoint is not configured.
+    /// </exception>
+    public async ValueTask<IReadOnlyList<AITool>> GetToolboxToolsAsync(
+        string toolboxName,
+        string? version,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolboxName);
+
+        if (this._toolboxes.TryGetValue(toolboxName, out var cached))
+        {
+            return cached.Tools;
+        }
+
+        if (this._options.StrictMode)
+        {
+            throw new InvalidOperationException(
+                $"Toolbox '{toolboxName}' is not pre-registered via AddFoundryToolboxes(...). " +
+                $"Either register it at startup or set {nameof(FoundryToolboxOptions.StrictMode)}=false to allow lazy resolution.");
+        }
+
+        if (string.IsNullOrEmpty(this._resolvedEndpoint))
+        {
+            throw new InvalidOperationException(
+                $"Cannot resolve toolbox '{toolboxName}': FOUNDRY_AGENT_TOOLSET_ENDPOINT is not set.");
+        }
+
+        await this._lazyOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Double-check after acquiring the lock to avoid duplicate opens under concurrency.
+            if (this._toolboxes.TryGetValue(toolboxName, out cached))
+            {
+                return cached.Tools;
+            }
+
+            cached = await this.OpenToolboxAsync(toolboxName, version, cancellationToken).ConfigureAwait(false);
+            this._toolboxes[toolboxName] = cached;
+            return cached.Tools;
+        }
+        finally
+        {
+            this._lazyOpenLock.Release();
+        }
+    }
+
+    private async Task<CachedToolbox> OpenToolboxAsync(
+        string toolboxName,
+        string? version,
+        CancellationToken cancellationToken)
+    {
+        var proxyUrl = $"{this._resolvedEndpoint!.TrimEnd('/')}/{toolboxName}/mcp?api-version={this._options.ApiVersion}";
+
+        if (this._logger.IsEnabled(LogLevel.Information))
+        {
+            this._logger.LogInformation("Connecting to toolbox '{ToolboxName}' at {ProxyUrl}.", toolboxName, proxyUrl);
+        }
+
+        var handler = new FoundryToolboxBearerTokenHandler(this._credential, this._featuresHeader)
+        {
+            InnerHandler = new HttpClientHandler()
+        };
+
+        var httpClient = new HttpClient(handler);
+
+        var transportOptions = new HttpClientTransportOptions
+        {
+            Endpoint = new Uri(proxyUrl),
+            Name = toolboxName,
+        };
+
+        var transport = new HttpClientTransport(transportOptions, httpClient);
+
+        var clientOptions = new McpClientOptions
+        {
+            ClientInfo = new()
+            {
+                Name = this._agentName,
+                Version = this._agentVersion
+            }
+        };
+
+        var client = await McpClient.CreateAsync(
+            transport,
+            clientOptions,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        var mcpTools = await client.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        if (this._logger.IsEnabled(LogLevel.Information))
+        {
+            this._logger.LogInformation(
+                "Toolbox '{ToolboxName}': discovered {ToolCount} tool(s).",
+                toolboxName,
+                mcpTools.Count);
+        }
+
+        var wrapped = new List<AITool>(mcpTools.Count);
+        foreach (var tool in mcpTools)
+        {
+            wrapped.Add(new ConsentAwareMcpClientAIFunction(tool, toolboxName));
+        }
+
+        _ = version; // reserved for future version-specific routing; currently handled server-side by the proxy.
+
+        return new CachedToolbox(client, httpClient, wrapped);
+    }
+
     /// <inheritdoc/>
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
-        foreach (var client in this._clients)
+        foreach (var cached in this._toolboxes.Values)
         {
-            await client.DisposeAsync().ConfigureAwait(false);
+            await cached.Client.DisposeAsync().ConfigureAwait(false);
+            cached.HttpClient.Dispose();
         }
 
-        this._clients.Clear();
-
-        foreach (var httpClient in this._httpClients)
-        {
-            httpClient.Dispose();
-        }
-
-        this._httpClients.Clear();
+        this._toolboxes.Clear();
+        this._lazyOpenLock.Dispose();
     }
+
+    private sealed record CachedToolbox(McpClient Client, HttpClient HttpClient, IReadOnlyList<AITool> Tools);
 }

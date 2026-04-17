@@ -97,13 +97,77 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var chatOptions = InputConverter.ConvertToChatOptions(request);
         chatOptions.Instructions = request.Instructions;
 
-        // Inject Foundry Toolbox tools when the toolbox service is available
+        // Inject Foundry Toolbox tools when the toolbox service is available.
+        //
+        // Two sources are considered:
+        //   1. Pre-registered toolboxes (via AddFoundryToolboxes) — always appended.
+        //   2. Per-request markers embedded in request.Tools (HostedMcpToolboxAITool)
+        //      whose ServerAddress scheme is "foundry-toolbox://". Strict mode rejects
+        //      unknown names; otherwise a lazy MCP client is opened and cached.
+        //
+        // Each toolbox's tools are only appended once per request, even if it appears
+        // in both the pre-registered list and the per-request markers.
         if (this._toolboxService is not null)
         {
-            var toolboxTools = this._toolboxService.Tools;
-            if (toolboxTools.Count > 0)
+            List<AITool>? toolsToAdd = null;
+
+            if (this._toolboxService.Tools.Count > 0)
             {
-                chatOptions.Tools = [.. chatOptions.Tools ?? [], .. toolboxTools];
+                toolsToAdd = [.. this._toolboxService.Tools];
+            }
+
+            var markers = InputConverter.ReadMcpToolboxMarkers(request);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string? resolutionError = null;
+
+            foreach (var (name, version) in markers)
+            {
+                if (!seen.Add(name))
+                {
+                    continue;
+                }
+
+                IReadOnlyList<AITool>? toolboxTools = null;
+                try
+                {
+                    toolboxTools = await this._toolboxService
+                        .GetToolboxToolsAsync(name, version, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    if (this._logger.IsEnabled(LogLevel.Warning))
+                    {
+                        this._logger.LogWarning(
+                            ex,
+                            "Foundry toolbox '{ToolboxName}' could not be resolved for response {ResponseId}.",
+                            name,
+                            context.ResponseId);
+                    }
+
+                    resolutionError = ex.Message;
+                    break;
+                }
+
+                toolsToAdd ??= [];
+                foreach (var t in toolboxTools)
+                {
+                    if (!toolsToAdd.Contains(t))
+                    {
+                        toolsToAdd.Add(t);
+                    }
+                }
+            }
+
+            if (resolutionError is not null)
+            {
+                yield return stream.EmitFailed(ResponseErrorCode.ServerError, resolutionError);
+                yield break;
+            }
+
+            if (toolsToAdd?.Count > 0)
+            {
+                chatOptions.Tools = [.. chatOptions.Tools ?? [], .. toolsToAdd];
             }
         }
 
