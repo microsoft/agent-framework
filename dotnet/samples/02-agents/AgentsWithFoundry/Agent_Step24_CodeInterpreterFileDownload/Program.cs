@@ -32,15 +32,9 @@ AgentResponse response = await agent.RunAsync(
     "Create a CSV file with the multiplication times tables from 1 to 12. Include headers.");
 
 // Display the text response
-foreach (ChatMessage message in response.Messages)
+foreach (TextContent textContent in response.Messages.SelectMany(x => x.Contents).OfType<TextContent>())
 {
-    foreach (AIContent content in message.Contents)
-    {
-        if (content is TextContent textContent)
-        {
-            Console.WriteLine(textContent.Text);
-        }
-    }
+    Console.WriteLine(textContent.Text);
 }
 
 // Extract container file citations from response annotations and download.
@@ -51,44 +45,41 @@ var containerClient = aiProjectClient.GetProjectOpenAIClient().GetContainerClien
 HashSet<string> downloadedFiles = [];
 bool foundContainerFiles = false;
 
-foreach (ChatMessage message in response.Messages)
+foreach (AIContent content in response.Messages.SelectMany(x => x.Contents))
 {
-    foreach (AIContent content in message.Contents)
+    if (content.Annotations is null)
     {
-        if (content.Annotations is null)
-        {
-            continue;
-        }
+        continue;
+    }
 
-        foreach (AIAnnotation annotation in content.Annotations)
+    foreach (AIAnnotation annotation in content.Annotations)
+    {
+        // Container files from Code Interpreter have ContainerFileCitationMessageAnnotation as raw representation
+        if (annotation is CitationAnnotation citation
+            && citation.RawRepresentation is ContainerFileCitationMessageAnnotation containerCitation)
         {
-            // Container files from Code Interpreter have ContainerFileCitationMessageAnnotation as raw representation
-            if (annotation is CitationAnnotation citation
-                && citation.RawRepresentation is ContainerFileCitationMessageAnnotation containerCitation)
+            foundContainerFiles = true;
+
+            // Deduplicate by container+file ID in case the same file is cited multiple times
+            string key = $"{containerCitation.ContainerId}/{containerCitation.FileId}";
+            if (!downloadedFiles.Add(key))
             {
-                foundContainerFiles = true;
-
-                // Deduplicate by container+file ID in case the same file is cited multiple times
-                string key = $"{containerCitation.ContainerId}/{containerCitation.FileId}";
-                if (!downloadedFiles.Add(key))
-                {
-                    continue;
-                }
-
-                Console.WriteLine($"\nDownloading container file: {containerCitation.Filename}");
-                Console.WriteLine($"  Container ID: {containerCitation.ContainerId}");
-                Console.WriteLine($"  File ID:      {containerCitation.FileId}");
-
-                BinaryData fileData = await containerClient.DownloadContainerFileAsync(
-                    containerCitation.ContainerId,
-                    containerCitation.FileId);
-
-                // Sanitize filename to prevent path traversal
-                string safeFilename = Path.GetFileName(containerCitation.Filename);
-                string outputPath = Path.Combine(Directory.GetCurrentDirectory(), safeFilename);
-                await File.WriteAllBytesAsync(outputPath, fileData.ToArray());
-                Console.WriteLine($"  Saved to:     {outputPath}");
+                continue;
             }
+
+            Console.WriteLine($"\nDownloading container file: {containerCitation.Filename}");
+            Console.WriteLine($"  Container ID: {containerCitation.ContainerId}");
+            Console.WriteLine($"  File ID:      {containerCitation.FileId}");
+
+            BinaryData fileData = await containerClient.DownloadContainerFileAsync(
+                containerCitation.ContainerId,
+                containerCitation.FileId);
+
+            // Sanitize filename to prevent path traversal
+            string safeFilename = Path.GetFileName(containerCitation.Filename);
+            string outputPath = Path.Combine(Directory.GetCurrentDirectory(), safeFilename);
+            await File.WriteAllBytesAsync(outputPath, fileData.ToArray());
+            Console.WriteLine($"  Saved to:     {outputPath}");
         }
     }
 }
