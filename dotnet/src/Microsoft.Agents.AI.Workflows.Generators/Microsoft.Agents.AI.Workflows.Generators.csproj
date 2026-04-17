@@ -29,15 +29,10 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <IsReleased>false</IsReleased>
+    <IsReleased>true</IsReleased>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
-
-  <!-- Foundry preview release: opt back in to packaging. -->
-  <PropertyGroup>
-    <IsPackable>true</IsPackable>
-  </PropertyGroup>
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->

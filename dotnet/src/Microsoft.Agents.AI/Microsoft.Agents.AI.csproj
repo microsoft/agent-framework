@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsReleased>false</IsReleased>
+    <IsReleased>true</IsReleased>
     <NoWarn>$(NoWarn);MEAI001;MAAI001</NoWarn>
   </PropertyGroup>
 
@@ -16,11 +16,6 @@
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
-
-  <!-- Foundry preview release: opt back in to packaging. -->
-  <PropertyGroup>
-    <IsPackable>true</IsPackable>
-  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
