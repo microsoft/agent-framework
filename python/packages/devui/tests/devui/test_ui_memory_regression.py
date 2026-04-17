@@ -655,7 +655,10 @@ async def test_devui_streaming_renderer_memory_is_bounded(
         )
 
         try:
-            websocket_url = await _get_devtools_websocket_url(debug_port)
+            try:
+                websocket_url = await _get_devtools_websocket_url(debug_port)
+            except RuntimeError as exc:
+                pytest.skip(str(exc))
 
             async with websocket_connect(websocket_url, max_size=None) as websocket:
                 client = _CDPClient(websocket)

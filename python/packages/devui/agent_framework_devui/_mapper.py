@@ -1756,17 +1756,16 @@ class MessageMapper:
             "output_index": context["output_index"],
             "sequence_number": self._next_sequence(context),
         }
-        
+
         # Include policy violation details if present (from security middleware)
-        additional_props = getattr(content, "additional_properties", None)
-        if additional_props and isinstance(additional_props, dict):
-            if additional_props.get("policy_violation"):
-                result["policy_violation"] = {
-                    "reason": additional_props.get("reason", "Policy violation detected"),
-                    "violation_type": additional_props.get("violation_type"),
-                    "context_label": additional_props.get("context_label"),
-                }
-        
+        additional_props = cast(dict[str, Any] | None, getattr(content, "additional_properties", None))
+        if additional_props and isinstance(additional_props, dict) and additional_props.get("policy_violation"):
+            result["policy_violation"] = {
+                "reason": additional_props.get("reason", "Policy violation detected"),
+                "violation_type": additional_props.get("violation_type"),
+                "context_label": additional_props.get("context_label"),
+            }
+
         return result
 
     async def _map_approval_response_content(self, content: Any, context: dict[str, Any]) -> dict[str, Any]:
