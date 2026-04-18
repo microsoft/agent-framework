@@ -29,6 +29,7 @@ STATUS_EMOJI = {
     "passed": "✅",
     "failed": "❌",
     "skipped": "⏭️",
+    "xfailed": "⚠️",
     "error": "❌",
 }
 
@@ -92,6 +93,11 @@ def _parse_junit_xml(xml_path: Path) -> list[dict[str, str]]:
         # or "packages.openai.tests.openai.test_chat_client.TestClass".
         nodeid = f"{classname}::{name}" if classname else name
 
+        # Extract module/file name from classname for display context.
+        # e.g. "packages.openai.tests.openai.test_openai_chat_client"
+        #    → "test_openai_chat_client"
+        module = classname.rsplit(".", 1)[-1] if classname else ""
+
         # Determine status from child elements
         failure = tc.find("failure")
         error = tc.find("error")
@@ -104,7 +110,9 @@ def _parse_junit_xml(xml_path: Path) -> list[dict[str, str]]:
             status = "error"
             message = error.get("message", "")
         elif skipped is not None:
-            status = "skipped"
+            # pytest marks xfail as <skipped type="pytest.xfail">
+            skip_type = skipped.get("type", "")
+            status = "xfailed" if "xfail" in skip_type else "skipped"
             message = skipped.get("message", "")
         else:
             status = "passed"
@@ -115,6 +123,7 @@ def _parse_junit_xml(xml_path: Path) -> list[dict[str, str]]:
             "status": status,
             "duration": duration,
             "message": message,
+            "module": module,
         })
 
     return results
@@ -167,6 +176,7 @@ def load_current_run(reports_dir: Path) -> dict[str, Any]:
             combined_results[test["nodeid"]] = {
                 "status": test["status"],
                 "provider": provider,
+                "module": test.get("module", ""),
             }
 
     # Build summary counts
@@ -257,20 +267,23 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     lines.append("## Per-Test Results")
     lines.append("")
 
-    # Collect all test nodeids and their providers across all runs
+    # Collect all test nodeids, providers, and modules across all runs
     all_tests: dict[str, str] = {}  # nodeid → provider (from most recent run)
+    all_modules: dict[str, str] = {}  # nodeid → module (from most recent run)
     for run in runs:
         for nodeid, info in run.get("results", {}).items():
             provider = info.get("provider", "Unknown") if isinstance(info, dict) else "Unknown"
+            module = info.get("module", "") if isinstance(info, dict) else ""
             all_tests[nodeid] = provider
+            all_modules[nodeid] = module
 
     if not all_tests:
         lines.append("*No test results available.*")
         return "\n".join(lines)
 
     # Build header (most recent run first)
-    header = "| Test | Provider |"
-    separator = "|------|----------|"
+    header = "| Test | File | Provider |"
+    separator = "|------|------|----------|"
     for run in reversed(runs):
         label = _format_run_label(run["timestamp"])
         header += f" {label} |"
@@ -285,8 +298,9 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     # Sort by provider then test name
     for nodeid in sorted(all_tests, key=lambda n: (all_tests[n], n)):
         provider = all_tests[nodeid]
+        module = all_modules.get(nodeid, "")
         short = _short_name(nodeid)
-        row = f"| `{short}` | {provider} |"
+        row = f"| `{short}` | `{module}` | {provider} |"
 
         for run in reversed(runs):
             result = run.get("results", {}).get(nodeid)
@@ -303,7 +317,7 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
         lines.append(row)
 
     lines.append("")
-    lines.append("**Legend:** ✅ Passed · ❌ Failed · ⏭️ Skipped · N/A Not available")
+    lines.append("**Legend:** ✅ Passed · ❌ Failed · ⏭️ Skipped · ⚠️ Expected Failure (xfail) · N/A Not available")
     lines.append("")
 
     return "\n".join(lines)
