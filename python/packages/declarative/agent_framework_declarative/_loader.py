@@ -795,7 +795,7 @@ class AgentFactory:
                         bound_tool = self.bindings.get(tool_resource.name)
 
                 if bound_tool is not None:
-                    return bound_tool
+                    return cast("AFFunctionTool | dict[str, Any]", bound_tool)
 
                 result = {
                     "type": "mcp",

@@ -1469,6 +1469,71 @@ tools:
         assert tools[0]["server_label"] == "other-mcp"
         assert tools[0]["server_url"] == "https://api.example.com/mcp"
 
+    def test_parse_mcp_tool_explicit_binding_takes_priority_over_name(self):
+        """Test that explicit bindings list takes priority over name-based lookup."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: product-mcp
+    url: https://product.example.com/mcp
+    bindings:
+      - name: my_binding
+"""
+
+        explicit_binding_tool = {
+            "type": "mcp",
+            "server_label": "explicit_binding",
+            "server_url": "https://explicit.example.com/mcp",
+        }
+        name_binding_tool = {
+            "type": "mcp",
+            "server_label": "name_binding",
+            "server_url": "https://name.example.com/mcp",
+        }
+
+        mock_client = MagicMock()
+        factory = AgentFactory(
+            client=mock_client,
+            bindings={"my_binding": explicit_binding_tool, "product-mcp": name_binding_tool},
+        )
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        tools = agent.default_options.get("tools", [])
+        assert len(tools) == 1
+        assert tools[0] is explicit_binding_tool
+
+    def test_parse_mcp_tool_no_bindings_on_factory_falls_through(self):
+        """Test that MCP tool without factory bindings falls through to dict-building."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: my-mcp-server
+    url: https://api.example.com/mcp
+"""
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client, bindings=None)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        tools = agent.default_options.get("tools", [])
+        assert len(tools) == 1
+        assert tools[0]["server_label"] == "my-mcp-server"
+        assert tools[0]["server_url"] == "https://api.example.com/mcp"
+
     def test_parse_file_search_tool_with_all_options(self):
         """Test parsing FileSearchTool with ranker and filters."""
         from unittest.mock import MagicMock
