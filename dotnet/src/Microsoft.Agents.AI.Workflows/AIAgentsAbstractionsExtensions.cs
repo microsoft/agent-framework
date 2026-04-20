@@ -48,7 +48,7 @@ internal static class AIAgentsAbstractionsExtensions
     /// any that have a different <see cref="ChatMessage.AuthorName"/> from <paramref name="targetAgentName"/> to
     /// <see cref="ChatRole.User"/>.
     /// </summary>
-    public static List<ChatMessage>? ChangeAssistantToUserForOtherParticipants(this List<ChatMessage> messages, string targetAgentName)
+    public static List<ChatMessage>? ChangeAssistantToUserForOtherParticipants(this IEnumerable<ChatMessage> messages, string targetAgentName)
     {
         List<ChatMessage>? roleChanged = null;
         foreach (var m in messages)
