@@ -127,7 +127,11 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     /// <see cref="FoundryToolboxOptions.StrictMode"/> to either reject or lazily open it.
     /// </summary>
     /// <param name="toolboxName">The Foundry toolbox name from the marker.</param>
-    /// <param name="version">Optional pinned version; ignored when matching a pre-registered entry.</param>
+    /// <param name="version">
+    /// Optional pinned version. Currently reserved for future use — version-specific routing is
+    /// handled server-side by the Foundry proxy. This parameter is accepted for forward compatibility
+    /// but does not affect the proxy URL used to connect to the toolbox.
+    /// </param>
     /// <param name="cancellationToken">The request cancellation token.</param>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the toolbox is not pre-registered and <see cref="FoundryToolboxOptions.StrictMode"/>

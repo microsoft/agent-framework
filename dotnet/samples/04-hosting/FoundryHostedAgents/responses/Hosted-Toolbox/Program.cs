@@ -108,6 +108,6 @@ internal sealed class DevTemporaryTokenCredential : TokenCredential
             throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
         }
 
-        return new AccessToken(this._token, DateTimeOffset.UtcNow.AddHours(1));
+        return new AccessToken(this._token, DateTimeOffset.MaxValue);
     }
 }

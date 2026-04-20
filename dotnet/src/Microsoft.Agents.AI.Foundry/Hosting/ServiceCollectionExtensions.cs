@@ -161,7 +161,8 @@ public static class FoundryHostingExtensions
         // Register FoundryToolboxService as a singleton so it can be injected into the handler
         services.TryAddSingleton<FoundryToolboxService>();
 
-        // Add it as a hosted service so StartAsync is called before the app starts serving requests
+        // AddHostedService uses TryAddEnumerable internally, so calling AddFoundryToolboxes
+        // multiple times will not invoke StartAsync twice on the same singleton.
         services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
 
         return services;

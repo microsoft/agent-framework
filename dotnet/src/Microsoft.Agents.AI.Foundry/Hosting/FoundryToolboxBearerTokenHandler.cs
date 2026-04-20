@@ -48,6 +48,7 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
             request.Headers.TryAddWithoutValidation("Foundry-Features", this._featuresHeaderValue);
         }
 
+        // MaxRetries is the total number of attempts (not additional retries after the first).
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
             // Clone the request for retries (the original request cannot be sent twice)
@@ -65,19 +66,20 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
                 return response;
             }
 
+            // Last attempt exhausted — return the error response as-is.
+            if (attempt == MaxRetries - 1)
+            {
+                return response;
+            }
+
             response.Dispose();
 
-            if (attempt < MaxRetries - 1)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), cancellationToken)
-                    .ConfigureAwait(false);
-            }
+            await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        // Final attempt after backoff exhausted — return last response (already disposed above, so resend)
-        return await base.SendAsync(
-            await CloneRequestAsync(request, cancellationToken).ConfigureAwait(false),
-            cancellationToken).ConfigureAwait(false);
+        // Unreachable when MaxRetries > 0, but satisfies the compiler.
+        throw new InvalidOperationException("Retry loop completed without returning a response.");
     }
 
     private static async Task<HttpRequestMessage> CloneRequestAsync(

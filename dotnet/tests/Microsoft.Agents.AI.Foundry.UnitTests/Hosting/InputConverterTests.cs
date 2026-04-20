@@ -668,4 +668,100 @@ public class InputConverterTests
         // Model from the request is intentionally NOT propagated — the hosted agent uses its own model.
         Assert.Null(options.ModelId);
     }
+
+    // ── ReadMcpToolboxMarkers tests ──────────────────────────────────────────────
+
+    [Fact]
+    public void ReadMcpToolboxMarkers_NullTools_ReturnsEmpty()
+    {
+        var request = new CreateResponse();
+        // Tools defaults to null when not set via JSON deserialization.
+
+        var markers = InputConverter.ReadMcpToolboxMarkers(request);
+
+        Assert.Empty(markers);
+    }
+
+    [Fact]
+    public void ReadMcpToolboxMarkers_McpToolWithToolboxAddress_ReturnsMarker()
+    {
+        var request = new CreateResponse();
+        request.Tools.Add(new MCPTool("test-toolbox")
+        {
+            ServerUrl = new Uri("foundry-toolbox://my-toolbox")
+        });
+
+        var markers = InputConverter.ReadMcpToolboxMarkers(request);
+
+        Assert.Single(markers);
+        Assert.Equal("my-toolbox", markers[0].Name);
+        Assert.Null(markers[0].Version);
+    }
+
+    [Fact]
+    public void ReadMcpToolboxMarkers_McpToolWithVersionedAddress_ReturnsNameAndVersion()
+    {
+        var request = new CreateResponse();
+        request.Tools.Add(new MCPTool("test-toolbox")
+        {
+            ServerUrl = new Uri("foundry-toolbox://my-toolbox?version=v3")
+        });
+
+        var markers = InputConverter.ReadMcpToolboxMarkers(request);
+
+        Assert.Single(markers);
+        Assert.Equal("my-toolbox", markers[0].Name);
+        Assert.Equal("v3", markers[0].Version);
+    }
+
+    [Fact]
+    public void ReadMcpToolboxMarkers_McpToolWithNonToolboxUrl_SkipsIt()
+    {
+        var request = new CreateResponse();
+        request.Tools.Add(new MCPTool("external-mcp")
+        {
+            ServerUrl = new Uri("https://example.com/mcp")
+        });
+
+        var markers = InputConverter.ReadMcpToolboxMarkers(request);
+
+        Assert.Empty(markers);
+    }
+
+    [Fact]
+    public void ReadMcpToolboxMarkers_McpToolWithNullServerUrl_SkipsIt()
+    {
+        var request = new CreateResponse();
+        request.Tools.Add(new MCPTool("test") { ServerUrl = null });
+
+        var markers = InputConverter.ReadMcpToolboxMarkers(request);
+
+        Assert.Empty(markers);
+    }
+
+    [Fact]
+    public void ReadMcpToolboxMarkers_MixedTools_ReturnsOnlyToolboxMarkers()
+    {
+        var request = new CreateResponse();
+        request.Tools.Add(new MCPTool("external")
+        {
+            ServerUrl = new Uri("https://example.com/mcp")
+        });
+        request.Tools.Add(new MCPTool("toolbox-1")
+        {
+            ServerUrl = new Uri("foundry-toolbox://box-a")
+        });
+        request.Tools.Add(new MCPTool("toolbox-2")
+        {
+            ServerUrl = new Uri("foundry-toolbox://box-b?version=2025-01")
+        });
+
+        var markers = InputConverter.ReadMcpToolboxMarkers(request);
+
+        Assert.Equal(2, markers.Count);
+        Assert.Equal("box-a", markers[0].Name);
+        Assert.Null(markers[0].Version);
+        Assert.Equal("box-b", markers[1].Name);
+        Assert.Equal("2025-01", markers[1].Version);
+    }
 }

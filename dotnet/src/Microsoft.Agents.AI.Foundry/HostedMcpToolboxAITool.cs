@@ -34,7 +34,11 @@ public sealed class HostedMcpToolboxAITool : HostedMcpServerTool
     /// Initializes a new instance of the <see cref="HostedMcpToolboxAITool"/> class.
     /// </summary>
     /// <param name="toolboxName">The Foundry toolbox name.</param>
-    /// <param name="version">Optional pinned toolbox version. When <see langword="null"/>, the project's default version is used.</param>
+    /// <param name="version">
+    /// Optional pinned toolbox version. When <see langword="null"/>, the project's default version is used.
+    /// Currently reserved for forward compatibility — version-specific routing is handled server-side by
+    /// the Foundry proxy.
+    /// </param>
     public HostedMcpToolboxAITool(string toolboxName, string? version = null)
         : base(
             serverName: NotNullOrWhitespace(toolboxName, nameof(toolboxName)),
@@ -63,7 +67,7 @@ public sealed class HostedMcpToolboxAITool : HostedMcpServerTool
 
         return string.IsNullOrEmpty(version)
             ? $"{UriScheme}://{toolboxName}"
-            : $"{UriScheme}://{toolboxName}?version={version}";
+            : $"{UriScheme}://{toolboxName}?version={Uri.EscapeDataString(version)}";
     }
 
     /// <summary>
