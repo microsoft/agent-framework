@@ -255,7 +255,7 @@ class MCPTool:
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
-        self._lifecycle_queue: asyncio.Queue[tuple[str, bool, asyncio.Future[None]]] | None = None
+        self._lifecycle_queue: asyncio.Queue[tuple[str, bool, bool, asyncio.Future[None]]] | None = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
         self.request_timeout = request_timeout
@@ -264,6 +264,11 @@ class MCPTool:
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
+        self._server_capabilities: types.ServerCapabilities | None = None
+        self._supports_tools: bool | None = None
+        self._supports_prompts: bool | None = None
+        self._supports_logging: bool | None = None
+        self._ping_available: bool = True
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -564,11 +569,11 @@ class MCPTool:
         stop_error: BaseException | None = None
         try:
             while True:
-                action, reset, future = await queue.get()
+                action, reset, load_configured, future = await queue.get()
 
                 try:
                     if action == "connect":
-                        await self._connect_on_owner(reset=reset)
+                        await self._connect_on_owner(reset=reset, load_configured=load_configured)
                     elif action == "close":
                         await self._close_on_owner()
                     else:
@@ -593,7 +598,7 @@ class MCPTool:
         finally:
             while True:
                 try:
-                    _, _, future = queue.get_nowait()
+                    _, _, _, future = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
                 if not future.done():
@@ -606,12 +611,18 @@ class MCPTool:
         owner_task = self._lifecycle_owner_task
         return owner_task is not None and asyncio.current_task() is owner_task
 
-    async def _run_on_lifecycle_owner(self, action: str, *, reset: bool = False) -> None:
+    async def _run_on_lifecycle_owner(
+        self,
+        action: str,
+        *,
+        reset: bool = False,
+        load_configured: bool = True,
+    ) -> None:
         await self._ensure_lifecycle_owner()
 
         if self._is_lifecycle_owner_task():
             if action == "connect":
-                await self._connect_on_owner(reset=reset)
+                await self._connect_on_owner(reset=reset, load_configured=load_configured)
             elif action == "close":
                 await self._close_on_owner()
             else:
@@ -623,7 +634,7 @@ class MCPTool:
             raise RuntimeError("MCP lifecycle owner is not available.")
 
         future = asyncio.get_running_loop().create_future()
-        await queue.put((action, reset, future))
+        await queue.put((action, reset, load_configured, future))
         await future
 
     async def _safe_close_exit_stack(self) -> None:
@@ -654,6 +665,38 @@ class MCPTool:
         await self._safe_close_exit_stack()
         return _should_propagate_cancelled_error(ex)
 
+    def _reset_session_state(self) -> None:
+        self._server_capabilities = None
+        self._supports_tools = None
+        self._supports_prompts = None
+        self._supports_logging = None
+        self._ping_available = True
+
+    def _set_server_capabilities(self, capabilities: types.ServerCapabilities | None) -> None:
+        self._server_capabilities = capabilities
+        if capabilities is None:
+            self._supports_tools = False
+            self._supports_prompts = False
+            self._supports_logging = False
+            return
+
+        self._supports_tools = getattr(capabilities, "tools", None) is not None
+        self._supports_prompts = getattr(capabilities, "prompts", None) is not None
+        self._supports_logging = getattr(capabilities, "logging", None) is not None
+
+    def _can_load_tools(self) -> bool:
+        return self._supports_tools is not False
+
+    def _can_load_prompts(self) -> bool:
+        return self._supports_prompts is not False
+
+    async def _reconnect_without_loading(self) -> None:
+        if self._is_lifecycle_owner_task():
+            await self._connect_on_owner(reset=True, load_configured=False)
+            return
+
+        await self._run_on_lifecycle_owner("connect", reset=True, load_configured=False)
+
     async def connect(self, *, reset: bool = False) -> None:
         if self._is_lifecycle_owner_task():
             await self._connect_on_owner(reset=reset)
@@ -662,7 +705,7 @@ class MCPTool:
         async with self._lifecycle_request_lock:
             await self._run_on_lifecycle_owner("connect", reset=reset)
 
-    async def _connect_on_owner(self, *, reset: bool = False) -> None:
+    async def _connect_on_owner(self, *, reset: bool = False, load_configured: bool = True) -> None:
         """Connect to the MCP server.
 
         Establishes a connection to the MCP server, initializes the session,
@@ -670,6 +713,7 @@ class MCPTool:
 
         Keyword Args:
             reset: If True, forces a reconnection even if already connected.
+            load_configured: If True, loads tools and prompts according to the constructor flags.
 
         Raises:
             ToolException: If connection or session initialization fails.
@@ -678,6 +722,7 @@ class MCPTool:
             await self._safe_close_exit_stack()
             self.session = None
             self.is_connected = False
+            self._reset_session_state()
             self._exit_stack = AsyncExitStack()
         if not self.session:
             try:
@@ -739,7 +784,8 @@ class MCPTool:
                     inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
             try:
-                await session.initialize()
+                initialize_result = await session.initialize()
+                self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
             except (Exception, asyncio.CancelledError) as ex:
                 if await self._close_and_check_cancelled(ex):
                     raise
@@ -757,17 +803,22 @@ class MCPTool:
             self.session = session
         elif self.session._request_id == 0:  # type: ignore[attr-defined]
             # If the session is not initialized, we need to reinitialize it
-            await self.session.initialize()
+            initialize_result = await self.session.initialize()
+            self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+        elif self._server_capabilities is None:
+            self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
         logger.debug("Connected to MCP server: %s", self.session)
         self.is_connected = True
-        if self.load_tools_flag:
-            await self.load_tools()
+        if load_configured and self.load_tools_flag:
+            if self._can_load_tools():
+                await self.load_tools()
             self._tools_loaded = True
-        if self.load_prompts_flag:
-            await self.load_prompts()
+        if load_configured and self.load_prompts_flag:
+            if self._can_load_prompts():
+                await self.load_prompts()
             self._prompts_loaded = True
 
-        if logger.level != logging.NOTSET:
+        if logger.level != logging.NOTSET and self._supports_logging is not False:
             try:
                 level_name = cast(
                     Any, next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
@@ -936,17 +987,45 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        from anyio import ClosedResourceError
         from mcp import types
+
+        if not self._can_load_prompts():
+            logger.debug("Skipping MCP prompt loading because the server did not advertise prompts support.")
+            return
 
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
         params: types.PaginatedRequestParams | None = None
         while True:
-            # Ensure connection is still valid before each page request
-            await self._ensure_connected()
-
-            prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+            for attempt in range(2):
+                try:
+                    # Ensure connection is still valid before each page request
+                    await self._ensure_connected()
+                    if not self._can_load_prompts():
+                        logger.debug(
+                            "Skipping MCP prompt loading because the server did not advertise prompts support."
+                        )
+                        return
+                    prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+                    break
+                except ClosedResourceError as cl_ex:
+                    if attempt == 0:
+                        logger.info("MCP connection closed unexpectedly while loading prompts. Reconnecting...")
+                        try:
+                            await self._reconnect_without_loading()
+                        except Exception as reconn_ex:
+                            raise ToolExecutionException(
+                                "Failed to reconnect to MCP server.",
+                                inner_exception=reconn_ex,
+                            ) from reconn_ex
+                        continue
+                    logger.error("MCP connection closed unexpectedly after reconnection: %s", cl_ex)
+                    raise ToolExecutionException(
+                        "Failed to load prompts - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
 
             for prompt in prompt_list.prompts:
                 normalized_name = _normalize_mcp_name(prompt.name)
@@ -986,17 +1065,43 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        from anyio import ClosedResourceError
         from mcp import types
+
+        if not self._can_load_tools():
+            logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
+            return
 
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
         params: types.PaginatedRequestParams | None = None
         while True:
-            # Ensure connection is still valid before each page request
-            await self._ensure_connected()
-
-            tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+            for attempt in range(2):
+                try:
+                    # Ensure connection is still valid before each page request
+                    await self._ensure_connected()
+                    if not self._can_load_tools():
+                        logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
+                        return
+                    tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+                    break
+                except ClosedResourceError as cl_ex:
+                    if attempt == 0:
+                        logger.info("MCP connection closed unexpectedly while loading tools. Reconnecting...")
+                        try:
+                            await self._reconnect_without_loading()
+                        except Exception as reconn_ex:
+                            raise ToolExecutionException(
+                                "Failed to reconnect to MCP server.",
+                                inner_exception=reconn_ex,
+                            ) from reconn_ex
+                        continue
+                    logger.error("MCP connection closed unexpectedly after reconnection: %s", cl_ex)
+                    raise ToolExecutionException(
+                        "Failed to load tools - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
 
             for tool in tool_list.tools:
                 normalized_name = _normalize_mcp_name(tool.name)
@@ -1051,6 +1156,7 @@ class MCPTool:
         self._exit_stack = AsyncExitStack()
         self.session = None
         self.is_connected = False
+        self._reset_session_state()
 
     async def close(self) -> None:
         """Disconnect from the MCP server.
@@ -1082,12 +1188,30 @@ class MCPTool:
         Raises:
             ToolExecutionException: If reconnection fails.
         """
+        from mcp.shared.exceptions import McpError
+
+        if not self._ping_available:
+            return
+
         try:
             await self.session.send_ping()  # type: ignore[union-attr]
+        except McpError as mcp_exc:
+            if mcp_exc.error.code == -32601:
+                self._ping_available = False
+                logger.debug("Skipping future MCP pings because the server does not support ping.")
+                return
+            logger.info("MCP connection invalid or closed. Reconnecting...")
+            try:
+                await self._reconnect_without_loading()
+            except Exception as ex:
+                raise ToolExecutionException(
+                    "Failed to establish MCP connection.",
+                    inner_exception=ex,
+                ) from ex
         except Exception:
             logger.info("MCP connection invalid or closed. Reconnecting...")
             try:
-                await self.connect(reset=True)
+                await self._reconnect_without_loading()
             except Exception as ex:
                 raise ToolExecutionException(
                     "Failed to establish MCP connection.",
