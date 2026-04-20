@@ -31,21 +31,21 @@ internal static class MessageConverter
         return parts;
     }
     /// <summary>
-    /// Converts A2A MessageSendParams to a collection of Microsoft.Extensions.AI ChatMessage objects.
+    /// Converts A2A SendMessageRequest to a collection of Microsoft.Extensions.AI ChatMessage objects.
     /// </summary>
-    /// <param name="messageSendParams">The A2A message send parameters to convert.</param>
+    /// <param name="sendMessageRequest">The A2A send message request to convert.</param>
     /// <returns>A read-only collection of ChatMessage objects.</returns>
-    public static List<ChatMessage> ToChatMessages(this MessageSendParams messageSendParams)
+    public static List<ChatMessage> ToChatMessages(this SendMessageRequest sendMessageRequest)
     {
-        if (messageSendParams is null)
+        if (sendMessageRequest is null)
         {
             return [];
         }
 
         var result = new List<ChatMessage>();
-        if (messageSendParams.Message?.Parts is not null)
+        if (sendMessageRequest.Message?.Parts is not null)
         {
-            result.Add(messageSendParams.Message.ToChatMessage());
+            result.Add(sendMessageRequest.Message.ToChatMessage());
         }
 
         return result;
