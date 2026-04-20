@@ -21,6 +21,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
+    private readonly FoundryToolboxService? _toolboxService;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
@@ -28,15 +29,18 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// </summary>
     /// <param name="serviceProvider">The service provider for resolving agents.</param>
     /// <param name="logger">The logger instance.</param>
+    /// <param name="toolboxService">Optional Foundry Toolbox service providing MCP tools.</param>
     public AgentFrameworkResponseHandler(
         IServiceProvider serviceProvider,
-        ILogger<AgentFrameworkResponseHandler> logger)
+        ILogger<AgentFrameworkResponseHandler> logger,
+        FoundryToolboxService? toolboxService = null)
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
         ArgumentNullException.ThrowIfNull(logger);
 
         this._serviceProvider = serviceProvider;
         this._logger = logger;
+        this._toolboxService = toolboxService;
     }
 
     /// <inheritdoc/>
@@ -92,14 +96,97 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // 5. Build chat options
         var chatOptions = InputConverter.ConvertToChatOptions(request);
         chatOptions.Instructions = request.Instructions;
+
+        // Inject Foundry Toolbox tools when the toolbox service is available.
+        //
+        // Two sources are considered:
+        //   1. Pre-registered toolboxes (via AddFoundryToolboxes) — always appended.
+        //   2. Per-request markers embedded in request.Tools (HostedMcpToolboxAITool)
+        //      whose ServerAddress scheme is "foundry-toolbox://". Strict mode rejects
+        //      unknown names; otherwise a lazy MCP client is opened and cached.
+        //
+        // Each toolbox's tools are only appended once per request, even if it appears
+        // in both the pre-registered list and the per-request markers.
+        if (this._toolboxService is not null)
+        {
+            List<AITool>? toolsToAdd = null;
+
+            if (this._toolboxService.Tools.Count > 0)
+            {
+                toolsToAdd = [.. this._toolboxService.Tools];
+            }
+
+            var markers = InputConverter.ReadMcpToolboxMarkers(request);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string? resolutionError = null;
+
+            foreach (var (name, version) in markers)
+            {
+                if (!seen.Add(name))
+                {
+                    continue;
+                }
+
+                IReadOnlyList<AITool>? toolboxTools = null;
+                try
+                {
+                    toolboxTools = await this._toolboxService
+                        .GetToolboxToolsAsync(name, version, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    if (this._logger.IsEnabled(LogLevel.Warning))
+                    {
+                        this._logger.LogWarning(
+                            ex,
+                            "Foundry toolbox '{ToolboxName}' could not be resolved for response {ResponseId}.",
+                            name,
+                            context.ResponseId);
+                    }
+
+                    resolutionError = ex.Message;
+                    break;
+                }
+
+                toolsToAdd ??= [];
+                foreach (var t in toolboxTools)
+                {
+                    if (!toolsToAdd.Contains(t))
+                    {
+                        toolsToAdd.Add(t);
+                    }
+                }
+            }
+
+            if (resolutionError is not null)
+            {
+                yield return stream.EmitFailed(ResponseErrorCode.ServerError, resolutionError);
+                yield break;
+            }
+
+            if (toolsToAdd?.Count > 0)
+            {
+                chatOptions.Tools = [.. chatOptions.Tools ?? [], .. toolsToAdd];
+            }
+        }
+
         var options = new ChatClientAgentRunOptions(chatOptions);
 
-        // 6. Run the agent and convert output
+        // 6. Set up consent context for -32006 OAuth consent interception.
+        //    We create a linked CTS so the consent-aware tool wrapper can cancel the agent
+        //    run mid-loop when a -32006 error is returned by the proxy. The RequestConsentState
+        //    is a shared mutable object that flows via AsyncLocal to the tool wrapper.
+        using var consentCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var consentState = new RequestConsentState { CancellationSource = consentCts };
+        McpConsentContext.Current.Value = consentState;
+
+        // 7. Run the agent and convert output
         // NOTE: C# forbids 'yield return' inside a try block that has a catch clause,
         // and inside catch blocks. We use a flag to defer the yield to outside the try/catch.
         bool emittedTerminal = false;
         var enumerator = OutputConverter.ConvertUpdatesToEventsAsync(
-            agent.RunStreamingAsync(messages, session, options: options, cancellationToken: cancellationToken),
+            agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
             cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
@@ -107,6 +194,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             while (true)
             {
                 bool shutdownDetected = false;
+                McpConsentInfo? consentInfo = null;
                 ResponseStreamEvent? failedEvent = null;
                 ResponseStreamEvent? evt = null;
                 try
@@ -117,6 +205,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     }
 
                     evt = enumerator.Current;
+                }
+                catch (OperationCanceledException) when (!emittedTerminal && consentState.Pending is not null)
+                {
+                    // -32006 consent error: the tool wrapper cancelled consentCts and stored consent info.
+                    consentInfo = consentState.Pending;
                 }
                 catch (OperationCanceledException) when (context.IsShutdownRequested && !emittedTerminal)
                 {
@@ -135,6 +228,21 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     failedEvent = stream.EmitFailed(
                         ResponseErrorCode.ServerError,
                         ex.Message);
+                }
+
+                if (consentInfo is not null)
+                {
+                    // Emit mcp_approval_request output item + incomplete for the consent URL.
+                    foreach (var approvalEvent in stream.OutputItemMcpApprovalRequest(
+                        consentInfo.ToolboxName,
+                        consentInfo.ToolName,
+                        consentInfo.ConsentUrl))
+                    {
+                        yield return approvalEvent;
+                    }
+
+                    yield return stream.EmitIncomplete(reason: null);
+                    yield break;
                 }
 
                 if (failedEvent is not null)

@@ -97,6 +97,37 @@ internal static class InputConverter
         };
     }
 
+    /// <summary>
+    /// Extracts any Foundry Toolbox markers (<c>foundry-toolbox://</c>) from the request's
+    /// MCP tool entries so the handler can resolve them server-side.
+    /// </summary>
+    /// <param name="request">The create response request.</param>
+    /// <returns>A list of (name, optional version) pairs, one per detected marker. Never <see langword="null"/>.</returns>
+    public static List<(string Name, string? Version)> ReadMcpToolboxMarkers(CreateResponse request)
+    {
+        var markers = new List<(string Name, string? Version)>();
+
+        if (request.Tools is null)
+        {
+            return markers;
+        }
+
+        foreach (var tool in request.Tools)
+        {
+            if (tool is not MCPTool mcp || mcp.ServerUrl is null)
+            {
+                continue;
+            }
+
+            if (HostedMcpToolboxAITool.TryParseToolboxAddress(mcp.ServerUrl.ToString(), out var name, out var version))
+            {
+                markers.Add((name!, version));
+            }
+        }
+
+        return markers;
+    }
+
     private static ChatMessage? ConvertInputItemToMessage(Item item)
     {
         return item switch
