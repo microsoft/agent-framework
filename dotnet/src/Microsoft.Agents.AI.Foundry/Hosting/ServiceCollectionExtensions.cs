@@ -4,6 +4,8 @@ using System;
 using System.Reflection;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
+using Azure.Core;
+using Azure.Identity;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -94,6 +96,75 @@ public static class FoundryHostingExtensions
         services.TryAddSingleton(agentSessionStore);
 
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the Foundry Toolbox service, which eagerly connects to the Foundry Toolboxes
+    /// MCP proxy at startup and provides MCP tools to <see cref="AgentFrameworkResponseHandler"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each string in <paramref name="toolboxNames"/> is a toolbox name registered in the Foundry
+    /// project. The proxy URL per toolbox is constructed as:
+    /// <c>{FOUNDRY_AGENT_TOOLSET_ENDPOINT}/{toolboxName}/mcp?api-version=2025-05-01-preview</c>
+    /// </para>
+    /// <para>
+    /// When <c>FOUNDRY_AGENT_TOOLSET_ENDPOINT</c> is absent, startup succeeds without error and
+    /// no tools are loaded (the container remains healthy per spec §2).
+    /// </para>
+    /// <para>
+    /// Example:
+    /// <code>
+    /// builder.Services.AddFoundryToolboxes("my-toolbox", "another-toolbox");
+    /// </code>
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection.</param>
+    /// <param name="toolboxNames">Names of the Foundry toolboxes to connect to.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddFoundryToolboxes(
+        this IServiceCollection services,
+        params string[] toolboxNames)
+        => services.AddFoundryToolboxes(configureOptions: null, toolboxNames);
+
+    /// <summary>
+    /// Registers the Foundry Toolbox service with additional options configuration.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configureOptions">Callback to further configure <see cref="FoundryToolboxOptions"/> (e.g. set <see cref="FoundryToolboxOptions.StrictMode"/>).</param>
+    /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddFoundryToolboxes(
+        this IServiceCollection services,
+        Action<FoundryToolboxOptions>? configureOptions,
+        params string[] toolboxNames)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.Configure<FoundryToolboxOptions>(opt =>
+        {
+            foreach (var name in toolboxNames)
+            {
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    opt.ToolboxNames.Add(name);
+                }
+            }
+
+            configureOptions?.Invoke(opt);
+        });
+
+        // Register DefaultAzureCredential as the default TokenCredential if not already registered
+        services.TryAddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
+
+        // Register FoundryToolboxService as a singleton so it can be injected into the handler
+        services.TryAddSingleton<FoundryToolboxService>();
+
+        // AddHostedService uses TryAddEnumerable internally, so calling AddFoundryToolboxes
+        // multiple times will not invoke StartAsync twice on the same singleton.
+        services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
+
         return services;
     }
 

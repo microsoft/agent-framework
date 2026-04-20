@@ -112,6 +112,50 @@ public static class FoundryAITool
     public static AITool CreateA2ATool(Uri baseUri, string? agentCardPath = null)
         => ProjectsAgentTool.CreateA2ATool(baseUri, agentCardPath).AsAITool();
 
+    /// <summary>
+    /// Creates an <see cref="AITool"/> marker that references a Foundry Toolbox by name so
+    /// the hosted server side can resolve and expose its MCP tools for a single request.
+    /// </summary>
+    /// <param name="toolboxName">The Foundry toolbox name.</param>
+    /// <param name="version">Optional pinned toolbox version. When <see langword="null"/>, the project's default version is used.</param>
+    /// <returns>An <see cref="AITool"/> marker backed by <see cref="HostedMcpToolboxAITool"/>.</returns>
+    public static AITool CreateHostedMcpToolbox(string toolboxName, string? version = null)
+        => new HostedMcpToolboxAITool(toolboxName, version);
+
+    /// <summary>
+    /// Creates an <see cref="AITool"/> marker from a <see cref="ToolboxRecord"/> retrieved
+    /// from <c>AIProjectClient</c>. Uses <see cref="ToolboxRecord.Name"/> and
+    /// <see cref="ToolboxRecord.DefaultVersion"/>.
+    /// </summary>
+    /// <param name="toolbox">The toolbox record.</param>
+    /// <returns>An <see cref="AITool"/> marker backed by <see cref="HostedMcpToolboxAITool"/>.</returns>
+    public static AITool CreateHostedMcpToolbox(ToolboxRecord toolbox)
+    {
+        if (toolbox is null)
+        {
+            throw new ArgumentNullException(nameof(toolbox));
+        }
+
+        return new HostedMcpToolboxAITool(toolbox.Name, toolbox.DefaultVersion);
+    }
+
+    /// <summary>
+    /// Creates an <see cref="AITool"/> marker from a specific <see cref="ToolboxVersion"/>
+    /// retrieved from <c>AIProjectClient</c>. Uses <see cref="ToolboxVersion.Name"/> and
+    /// <see cref="ToolboxVersion.Version"/>.
+    /// </summary>
+    /// <param name="toolboxVersion">The toolbox version.</param>
+    /// <returns>An <see cref="AITool"/> marker backed by <see cref="HostedMcpToolboxAITool"/>.</returns>
+    public static AITool CreateHostedMcpToolbox(ToolboxVersion toolboxVersion)
+    {
+        if (toolboxVersion is null)
+        {
+            throw new ArgumentNullException(nameof(toolboxVersion));
+        }
+
+        return new HostedMcpToolboxAITool(toolboxVersion.Name, toolboxVersion.Version);
+    }
+
     // --- OpenAI SDK ResponseTool factories ---
 
     /// <summary>
