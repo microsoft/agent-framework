@@ -2303,14 +2303,17 @@ inspect_variable(variable_id="var_abc123", reason="Need to determine data format
         "Use this when you need to process untrusted data (e.g., from external APIs) "
         "without exposing it to the main conversation. "
         "You can pass variable_ids directly to reference hidden content from VariableReferenceContent objects. "
-        "If auto_hide_result is True (default), UNTRUSTED results are automatically hidden."
+        "UNTRUSTED results are automatically hidden by the middleware."
     ),
     additional_properties={
         "confidentiality": "private",
         "accepts_untrusted": True,
-        # No source_integrity declared: middleware falls back to Tier 3
-        # (join of input argument labels), so output inherits trust from
-        # inputs — matching the tool's internal combine_labels() logic.
+        "source_integrity": "untrusted",
+        # source_integrity is declared as UNTRUSTED because this tool
+        # processes external/untrusted data. The middleware uses this
+        # (Tier 2) to label the output UNTRUSTED and auto-hide it via
+        # the standard _should_hide() → _hide_item() path — no
+        # tool-internal auto-hide logic needed.
     },
 )
 async def quarantined_llm(
@@ -2324,27 +2327,23 @@ async def quarantined_llm(
         Field(description="Dictionary of labeled data items (alternative to variable_ids)"),
     ] = None,
     metadata: Annotated[dict[str, Any] | None, Field(description="Optional metadata")] = None,
-    auto_hide_result: Annotated[
-        bool,
-        Field(description="If True, automatically hide UNTRUSTED results in variable store"),
-    ] = True,
 ) -> dict[str, Any]:
     """Make an isolated LLM call with labeled data.
 
     This tool creates a quarantined LLM context where untrusted content can be processed
-    without exposing it to the main agent conversation. The result is labeled with
-    the combined security labels of all inputs.
+    without exposing it to the main agent conversation. The result is labeled as UNTRUSTED
+    via the tool's ``source_integrity`` declaration, and the middleware automatically hides
+    it behind a variable reference when ``auto_hide_untrusted`` is enabled.
 
     Args:
         prompt: The prompt to send to the quarantined LLM.
         variable_ids: List of variable IDs to retrieve and process from the variable store.
         labelled_data: Dictionary of labeled data items with their security labels.
         metadata: Optional additional metadata for the request.
-        auto_hide_result: Whether to automatically hide UNTRUSTED results in the variable store.
 
     Returns:
         Dictionary containing:
-        - response: The LLM's response (placeholder in this implementation)
+        - response: The LLM's response
         - security_label: The combined security label
         - metadata: Request metadata
         - variables_processed: List of variable IDs that were processed
@@ -2511,46 +2510,21 @@ async def quarantined_llm(
         logger.warning("No quarantine client configured, using placeholder response")
         response_text = f"[Quarantined LLM Response] Processed: {prompt[:100]}"
 
-    # Handle auto_hide_result parameter
-    actual_auto_hide = auto_hide_result
-
-    # If result is UNTRUSTED and auto_hide is enabled, store in variable and return reference
-    if actual_auto_hide and combined_label.integrity == IntegrityLabel.UNTRUSTED:
-        # Store the actual response in variable store
-        var_id = variable_store.store(response_text, combined_label)
-
-        logger.info(
-            f"Quarantined LLM result auto-hidden in variable {var_id} (label: {combined_label.integrity.value})"
-        )
-
-        # Return a VariableReferenceContent-style response
-        response_payload: dict[str, Any] = {
-            "type": "variable_reference",
-            "variable_id": var_id,
-            "description": f"Quarantined LLM result (derived from {len(actual_variable_ids)} sources)",
-            "security_label": combined_label.to_dict(),
-            "metadata": actual_metadata or {},
-            "quarantined": True,
-            "auto_hidden": True,
-            "variables_processed": list(actual_variable_ids),
-            "content_summary": content_summary,
-        }
-    else:
-        # Return the response directly (TRUSTED or auto_hide disabled)
-        response_payload = {
-            "response": response_text,
-            "security_label": combined_label.to_dict(),
-            "metadata": actual_metadata or {},
-            "quarantined": True,
-            "auto_hidden": False,
-            "variables_processed": list(actual_variable_ids),
-            "content_summary": content_summary,
-        }
+    # Return the response — the middleware's _label_result() will handle
+    # auto-hiding via _should_hide() → _hide_item() based on the tool's
+    # source_integrity="untrusted" declaration.
+    response_payload: dict[str, Any] = {
+        "response": response_text,
+        "security_label": combined_label.to_dict(),
+        "metadata": actual_metadata or {},
+        "quarantined": True,
+        "variables_processed": list(actual_variable_ids),
+        "content_summary": content_summary,
+    }
 
     logger.info(
         f"Quarantined LLM response generated with label: "
-        f"{combined_label.integrity.value}, {combined_label.confidentiality.value}, "
-        f"auto_hidden={response_payload.get('auto_hidden', False)}"
+        f"{combined_label.integrity.value}, {combined_label.confidentiality.value}"
     )
 
     return response_payload
@@ -2576,12 +2550,14 @@ class InspectVariableInput(BaseModel):
         "prompt injection attempts. Only use when absolutely necessary and with caution. "
         "The context label will be marked as UNTRUSTED after inspection."
     ),
-    approval_mode="always_require",
+    approval_mode="never_require",
     additional_properties={
         "confidentiality": "private",
         # No source_integrity declared: output inherits the label of the
         # inspected content via Tier 3. The variable store is just a
         # container — the data inside it is untrusted external content.
+        # No approval_mode gate: inspect_variable runs freely but taints the
+        # context to UNTRUSTED, which blocks dangerous tools via policy.
     },
 )
 async def inspect_variable(
