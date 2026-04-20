@@ -530,7 +530,7 @@ def test_prepare_message_for_a2a_forwards_context_id() -> None:
     message = Message(
         role="user",
         contents=[Content.from_text(text="Continue the task")],
-        additional_properties={"context_id": "ctx-123", "trace_id": "trace-456"},
+        additional_properties={"context_id": "ctx-123", "a2a_metadata": {"trace_id": "trace-456"}},
     )
 
     result = agent._prepare_message_for_a2a(message)
@@ -1382,6 +1382,213 @@ async def test_streaming_terminal_task_only_emits_unstreamed_artifacts(
 
     assert [update.text for update in updates] == ["Hello", "Goodbye"]
     assert [message.text for message in response.messages] == ["Hello", "Goodbye"]
+
+
+# endregion
+
+# region Metadata propagation tests
+
+
+async def test_message_metadata_propagated(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """A2AMessage.metadata should appear on response.additional_properties."""
+    msg = A2AMessage(
+        message_id="msg-meta",
+        role=A2ARole.agent,
+        parts=[Part(root=TextPart(text="hi"))],
+        metadata={"source": "server", "trace_id": "abc"},
+    )
+    mock_a2a_client.responses.append(msg)
+
+    response = await a2a_agent.run("hello")
+    assert response.additional_properties["a2a_metadata"]["source"] == "server"
+    assert response.additional_properties["a2a_metadata"]["trace_id"] == "abc"
+
+
+async def test_artifact_metadata_propagated(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Artifact.metadata should appear on response.additional_properties."""
+    task = Task(
+        id="task-art-meta",
+        context_id="ctx",
+        status=TaskStatus(state=TaskState.completed),
+        artifacts=[
+            Artifact(
+                artifact_id="a1",
+                parts=[Part(root=TextPart(text="result"))],
+                metadata={"artifact_key": "artifact_value"},
+            ),
+        ],
+    )
+    mock_a2a_client.responses.append((task, None))
+
+    response = await a2a_agent.run("go")
+    assert response.additional_properties["a2a_metadata"]["artifact_key"] == "artifact_value"
+
+
+async def test_task_metadata_propagated_to_response(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Task.metadata should appear on response.additional_properties for terminal tasks."""
+    task = Task(
+        id="task-meta",
+        context_id="ctx",
+        status=TaskStatus(state=TaskState.completed),
+        artifacts=[
+            Artifact(artifact_id="a1", parts=[Part(root=TextPart(text="done"))]),
+        ],
+        metadata={"task_key": "task_value"},
+    )
+    mock_a2a_client.responses.append((task, None))
+
+    response = await a2a_agent.run("go")
+    assert response.additional_properties["a2a_metadata"]["task_key"] == "task_value"
+
+
+async def test_task_artifact_update_event_metadata_merged(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """TaskArtifactUpdateEvent and Artifact metadata should both appear on the streaming update."""
+    artifact_event = TaskArtifactUpdateEvent(
+        task_id="task-ae",
+        context_id="ctx",
+        artifact=Artifact(
+            artifact_id="a1",
+            parts=[Part(root=TextPart(text="chunk"))],
+            metadata={"from_artifact": True},
+        ),
+        metadata={"from_event": True},
+    )
+    working_task = Task(
+        id="task-ae",
+        context_id="ctx",
+        status=TaskStatus(state=TaskState.working),
+    )
+    terminal_task = Task(
+        id="task-ae",
+        context_id="ctx",
+        status=TaskStatus(state=TaskState.completed),
+        artifacts=[
+            Artifact(artifact_id="a1", parts=[Part(root=TextPart(text="chunk"))]),
+        ],
+    )
+    terminal_event = TaskStatusUpdateEvent(
+        task_id="task-ae",
+        context_id="ctx",
+        status=TaskStatus(state=TaskState.completed),
+        final=True,
+    )
+    mock_a2a_client.responses.extend([
+        (working_task, artifact_event),
+        (terminal_task, terminal_event),
+    ])
+
+    stream = a2a_agent.run("hello", stream=True)
+    updates: list[AgentResponseUpdate] = []
+    async for update in stream:
+        updates.append(update)
+
+    artifact_update = updates[0]
+    assert artifact_update.additional_properties["a2a_metadata"]["from_artifact"] is True
+    assert artifact_update.additional_properties["a2a_metadata"]["from_event"] is True
+
+
+async def test_task_status_update_event_metadata_merged(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """TaskStatusUpdateEvent and its message metadata should both appear on the streaming update."""
+    status_event = TaskStatusUpdateEvent(
+        task_id="task-se",
+        context_id="ctx",
+        status=TaskStatus(
+            state=TaskState.working,
+            message=A2AMessage(
+                message_id="m1",
+                role=A2ARole.agent,
+                parts=[Part(root=TextPart(text="working..."))],
+                metadata={"msg_key": "msg_val"},
+            ),
+        ),
+        final=False,
+        metadata={"event_key": "event_val"},
+    )
+    working_task = Task(
+        id="task-se",
+        context_id="ctx",
+        status=TaskStatus(state=TaskState.working),
+    )
+    terminal_task = Task(
+        id="task-se",
+        context_id="ctx",
+        status=TaskStatus(state=TaskState.completed),
+        artifacts=[
+            Artifact(artifact_id="a1", parts=[Part(root=TextPart(text="done"))]),
+        ],
+    )
+    terminal_event = TaskStatusUpdateEvent(
+        task_id="task-se",
+        context_id="ctx",
+        status=TaskStatus(state=TaskState.completed),
+        final=True,
+    )
+    mock_a2a_client.responses.extend([
+        (working_task, status_event),
+        (terminal_task, terminal_event),
+    ])
+
+    stream = a2a_agent.run("hello", stream=True)
+    updates: list[AgentResponseUpdate] = []
+    async for update in stream:
+        updates.append(update)
+
+    status_update = updates[0]
+    assert status_update.additional_properties["a2a_metadata"]["msg_key"] == "msg_val"
+    assert status_update.additional_properties["a2a_metadata"]["event_key"] == "event_val"
+
+
+async def test_history_message_metadata_propagated(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Metadata on a history Message should appear on response.additional_properties."""
+    task = Task(
+        id="task-hist",
+        context_id="ctx",
+        status=TaskStatus(state=TaskState.completed),
+        history=[
+            A2AMessage(
+                message_id="h1",
+                role=A2ARole.agent,
+                parts=[Part(root=TextPart(text="reply"))],
+                metadata={"history_key": "history_value"},
+            ),
+        ],
+    )
+    mock_a2a_client.responses.append((task, None))
+
+    response = await a2a_agent.run("go")
+    assert response.additional_properties["a2a_metadata"]["history_key"] == "history_value"
+
+
+async def test_continuation_token_update_carries_task_metadata(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """In-progress tasks with background=True should propagate task metadata."""
+    task = Task(
+        id="task-cont",
+        context_id="ctx",
+        status=TaskStatus(state=TaskState.working),
+        metadata={"bg_key": "bg_value"},
+    )
+    mock_a2a_client.responses.append((task, None))
+
+    response = await a2a_agent.run("go", background=True)
+    assert response.continuation_token is not None
+    assert response.additional_properties["a2a_metadata"]["bg_key"] == "bg_value"
+
+
+async def test_none_metadata_leaves_additional_properties_empty(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """When A2A types have no metadata, additional_properties should remain empty/default."""
+    msg = A2AMessage(
+        message_id="msg-none",
+        role=A2ARole.agent,
+        parts=[Part(root=TextPart(text="no meta"))],
+    )
+    mock_a2a_client.responses.append(msg)
+
+    response = await a2a_agent.run("hello")
+    assert not response.additional_properties
 
 
 # endregion
