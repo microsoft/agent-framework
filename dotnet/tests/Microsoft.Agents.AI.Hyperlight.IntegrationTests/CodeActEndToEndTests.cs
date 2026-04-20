@@ -3,7 +3,6 @@
 using System;
 using System.Text.Json;
 using System.Threading.Tasks;
-using HyperlightSandbox.Api;
 using Microsoft.Extensions.AI;
 using Moq;
 
@@ -33,11 +32,8 @@ public sealed class CodeActEndToEndTests
         }
 
         // Arrange
-        using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions
-        {
-            Backend = SandboxBackend.Wasm,
-            ModulePath = GuestPath,
-        });
+        using var provider = new HyperlightCodeActProvider(
+            HyperlightCodeActProviderOptions.CreateForWasm(GuestPath!));
 
         var context = await provider.InvokingAsync(
             new AIContextProvider.InvokingContext(s_mockAgent, session: null, new AIContext())).ConfigureAwait(false);

@@ -68,31 +68,4 @@ public sealed class ToolBridgeTests
         using var doc = JsonDocument.Parse(result);
         Assert.True(doc.RootElement.TryGetProperty("error", out _));
     }
-
-    [Fact]
-    public void Unwrap_ReturnsInnerWhenWrappedInApprovalRequired()
-    {
-        // Arrange
-        var inner = AIFunctionFactory.Create(() => "ok", name: "inner");
-        var wrapped = new ApprovalRequiredAIFunction(inner);
-
-        // Act
-        var actual = ToolBridge.Unwrap(wrapped);
-
-        // Assert
-        Assert.Same(inner, actual);
-    }
-
-    [Fact]
-    public void Unwrap_ReturnsSameInstanceWhenNotWrapped()
-    {
-        // Arrange
-        var tool = AIFunctionFactory.Create(() => "ok", name: "t");
-
-        // Act
-        var actual = ToolBridge.Unwrap(tool);
-
-        // Assert
-        Assert.Same(tool, actual);
-    }
 }

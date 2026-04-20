@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Hyperlight.Internal;
 using Microsoft.Extensions.AI;
@@ -40,17 +39,17 @@ public sealed class HyperlightExecuteCodeFunction : IDisposable
         var effective = options ?? new HyperlightCodeActProviderOptions();
         this._executor = new SandboxExecutor(effective);
 
-        var tools = (effective.Tools?.Where(t => t is not null) ?? []).ToArray();
-        var fileMounts = (effective.FileMounts?.Where(m => m is not null) ?? []).ToArray();
-        var allowedDomains = (effective.AllowedDomains?.Where(d => d is not null) ?? []).ToArray();
+        var tools = (effective.Tools?.Where(t => t is not null) ?? []).ToList();
+        var fileMounts = (effective.FileMounts?.Where(m => m is not null) ?? []).ToList();
+        var allowedDomains = (effective.AllowedDomains?.Where(d => d is not null) ?? []).ToList();
 
-        this._snapshot = new SandboxExecutor.RunSnapshot(tools, fileMounts, allowedDomains, effective.WorkspaceRoot);
+        this._snapshot = new SandboxExecutor.RunSnapshot(tools, fileMounts, allowedDomains, effective.HostInputDirectory);
 
         var description = InstructionBuilder.BuildExecuteCodeDescription(
             this._snapshot.Tools,
             this._snapshot.FileMounts,
             this._snapshot.AllowedDomains,
-            this._snapshot.WorkspaceRoot);
+            hasHostInputDirectory: !string.IsNullOrEmpty(this._snapshot.HostInputDirectory));
 
         AIFunction function = new ExecuteCodeFunction(this._executor, this._snapshot, description);
         if (HyperlightCodeActProvider.ComputeApprovalRequired(effective.ApprovalMode, this._snapshot.Tools))

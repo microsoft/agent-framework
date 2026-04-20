@@ -15,6 +15,18 @@ from memory.
 
 Authentication uses `DefaultAzureCredential`.
 
+## Getting the guest module
+
+The Python guest module is built from the
+[hyperlight-dev/hyperlight-sandbox](https://github.com/hyperlight-dev/hyperlight-sandbox)
+repository — see its README for the exact `cargo`/`just` invocations and
+the location of the resulting `.wasm` / `.aot` file. Set
+`HYPERLIGHT_PYTHON_GUEST_PATH` to the absolute path of that artifact
+before running the sample.
+
+Hyperlight requires a hardware virtualization back end on the host:
+KVM on Linux or WHP (Windows Hypervisor Platform) on Windows.
+
 ## Run
 
 ```shell

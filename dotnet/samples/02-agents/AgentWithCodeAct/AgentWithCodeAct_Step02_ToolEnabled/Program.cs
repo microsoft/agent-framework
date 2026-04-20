@@ -9,7 +9,6 @@
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using HyperlightSandbox.Api;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hyperlight;
 using Microsoft.Extensions.AI;
@@ -34,12 +33,10 @@ AIFunction sendEmail = new ApprovalRequiredAIFunction(
         name: "send_email",
         description: "Send an email on behalf of the user."));
 
-using var codeAct = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions
-{
-    Backend = SandboxBackend.Wasm,
-    ModulePath = guestPath,
-    Tools = [fetchDocs, queryData, sendEmail],
-});
+var options = HyperlightCodeActProviderOptions.CreateForWasm(guestPath);
+options.Tools = [fetchDocs, queryData, sendEmail];
+
+using var codeAct = new HyperlightCodeActProvider(options);
 
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),

@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Globalization;
-using System.Linq;
 using System.Text;
 using Microsoft.Extensions.AI;
 
@@ -24,13 +22,13 @@ internal static class InstructionBuilder
         if (toolsVisibleToModel)
         {
             return
-                "You can execute Python code in a secure sandbox by calling the `execute_code` tool. "
+                "You can execute code in a secure sandbox by calling the `execute_code` tool. "
                 + "Use it for calculations, data analysis, and anything that benefits from running code. "
                 + "State does not persist between calls; pass any required values in the code you execute.";
         }
 
         return
-            "You can execute Python code in a secure sandbox by calling the `execute_code` tool. "
+            "You can execute code in a secure sandbox by calling the `execute_code` tool. "
             + "Any tools listed in the tool's description are only accessible from within the sandbox "
             + "via `call_tool(\"<name>\", ...)` — they cannot be invoked directly. "
             + "State does not persist between calls; pass any required values in the code you execute.";
@@ -41,11 +39,16 @@ internal static class InstructionBuilder
     /// <c>execute_code</c> <see cref="AIFunction"/>. This includes the
     /// available <c>call_tool</c> signatures and a capability summary.
     /// </summary>
+    /// <remarks>
+    /// Host-side filesystem paths are intentionally omitted from the
+    /// description — only sandbox-visible mount paths are exposed to the
+    /// model.
+    /// </remarks>
     public static string BuildExecuteCodeDescription(
         IReadOnlyList<AIFunction> tools,
         IReadOnlyList<FileMount> fileMounts,
         IReadOnlyList<AllowedDomain> allowedDomains,
-        string? workspaceRoot)
+        bool hasHostInputDirectory)
     {
         var sb = new StringBuilder();
         sb.Append("Executes code in a secure Hyperlight sandbox. ");
@@ -72,27 +75,20 @@ internal static class InstructionBuilder
             }
         }
 
-        if (!string.IsNullOrEmpty(workspaceRoot) || fileMounts.Count > 0)
+        if (hasHostInputDirectory || fileMounts.Count > 0)
         {
             sb.AppendLine();
             sb.AppendLine("Filesystem access:");
-            if (!string.IsNullOrEmpty(workspaceRoot))
+            if (hasHostInputDirectory)
             {
-                sb.AppendLine(
-                    string.Format(
-                        CultureInfo.InvariantCulture,
-                        "- Workspace directory mounted read-only at `/input` (host: `{0}`).",
-                        workspaceRoot));
+                sb.AppendLine("- Host input directory mounted read-only at `/input`.");
             }
 
             foreach (var mount in fileMounts)
             {
-                sb.AppendLine(
-                    string.Format(
-                        CultureInfo.InvariantCulture,
-                        "- `{0}` (host: `{1}`)",
-                        mount.MountPath,
-                        mount.HostPath));
+                sb.Append("- `");
+                sb.Append(mount.MountPath);
+                sb.AppendLine("`");
             }
         }
 

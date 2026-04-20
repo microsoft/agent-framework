@@ -24,3 +24,11 @@ is configured.
 cd AgentWithCodeAct_Step02_ToolEnabled
 dotnet run
 ```
+
+## Planned follow-up
+
+A more realistic "upload a file (e.g. an Excel workbook), have the agent
+analyze it with code" sample is planned as a separate step that will use
+`HostInputDirectory` together with a guest tool capable of reading the
+uploaded file. It will be added in a follow-up PR once the corresponding
+guest module support is in place.

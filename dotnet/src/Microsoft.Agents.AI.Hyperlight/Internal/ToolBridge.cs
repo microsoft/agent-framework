@@ -30,12 +30,9 @@ internal static class ToolBridge
     }
 
     private static void RegisterOne(Sandbox sandbox, AIFunction tool)
-    {
-        var unwrapped = Unwrap(tool);
-        sandbox.RegisterToolAsync(
-            unwrapped.Name,
-            async (string argsJson) => await InvokeAsync(unwrapped, argsJson).ConfigureAwait(false));
-    }
+        => sandbox.RegisterToolAsync(
+            tool.Name,
+            async (string argsJson) => await InvokeAsync(tool, argsJson).ConfigureAwait(false));
 
     internal static async Task<string> InvokeAsync(AIFunction tool, string argsJson)
     {
@@ -60,6 +57,9 @@ internal static class ToolBridge
             return new Dictionary<string, object?>(StringComparer.Ordinal);
         }
 
+        // Use JsonNode.Parse instead of JsonSerializer.Deserialize<Dictionary<...>>
+        // so the bridge stays NativeAOT-compatible (the typed Deserialize overload
+        // requires reflection-based metadata for object-typed values).
         var node = JsonNode.Parse(argsJson);
         if (node is not JsonObject obj)
         {
@@ -77,36 +77,6 @@ internal static class ToolBridge
         return result;
     }
 
-    private static string SerializeResult(object? result)
-    {
-        switch (result)
-        {
-            case null:
-                return "null";
-            case string s:
-                return JsonSerializer.Serialize(s);
-            case JsonElement element:
-                return element.GetRawText();
-            case JsonNode node:
-                return node.ToJsonString();
-            default:
-                return JsonSerializer.Serialize(result);
-        }
-    }
-
-    /// <summary>
-    /// Returns the underlying <see cref="AIFunction"/> removing any
-    /// <see cref="ApprovalRequiredAIFunction"/> wrapping. The guest calls
-    /// tools directly and approval is enforced at the <c>execute_code</c>
-    /// layer.
-    /// </summary>
-    internal static AIFunction Unwrap(AIFunction tool)
-    {
-        while (tool is ApprovalRequiredAIFunction wrapper)
-        {
-            tool = wrapper.InnerFunction;
-        }
-
-        return tool;
-    }
+    private static string SerializeResult(object? result) =>
+        result is null ? "null" : JsonSerializer.Serialize(result);
 }

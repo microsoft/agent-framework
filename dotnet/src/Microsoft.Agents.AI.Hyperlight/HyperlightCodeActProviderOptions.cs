@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using HyperlightSandbox.Api;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hyperlight;
 
@@ -10,20 +11,51 @@ namespace Microsoft.Agents.AI.Hyperlight;
 /// Configuration options for <see cref="HyperlightCodeActProvider"/> and
 /// <see cref="HyperlightExecuteCodeFunction"/>.
 /// </summary>
+/// <remarks>
+/// Use the <see cref="CreateForWasm(string)"/> and <see cref="CreateForJavaScript()"/>
+/// factory methods to construct an instance with the desired sandbox backend.
+/// The parameterless constructor is equivalent to <see cref="CreateForJavaScript()"/>.
+/// </remarks>
 public sealed class HyperlightCodeActProviderOptions
 {
     /// <summary>
-    /// Gets or sets the Hyperlight sandbox backend to use.
-    /// Defaults to <see cref="SandboxBackend.Wasm"/>.
+    /// Initializes a new instance configured for the JavaScript backend.
+    /// Equivalent to <see cref="CreateForJavaScript()"/>.
     /// </summary>
-    public SandboxBackend Backend { get; set; } = SandboxBackend.Wasm;
+    public HyperlightCodeActProviderOptions()
+        : this(SandboxBackend.JavaScript, modulePath: null)
+    {
+    }
+
+    private HyperlightCodeActProviderOptions(SandboxBackend backend, string? modulePath)
+    {
+        this.Backend = backend;
+        this.ModulePath = modulePath;
+    }
 
     /// <summary>
-    /// Gets or sets the path to the guest module (<c>.wasm</c> or <c>.aot</c> file).
-    /// Required for the <see cref="SandboxBackend.Wasm"/> backend; not needed for
-    /// <see cref="SandboxBackend.JavaScript"/>.
+    /// Creates options targeting the <see cref="SandboxBackend.Wasm"/> backend.
     /// </summary>
-    public string? ModulePath { get; set; }
+    /// <param name="modulePath">Path to the guest module (<c>.wasm</c> or <c>.aot</c> file).</param>
+    public static HyperlightCodeActProviderOptions CreateForWasm(string modulePath)
+        => new(SandboxBackend.Wasm, Throw.IfNullOrWhitespace(modulePath));
+
+    /// <summary>
+    /// Creates options targeting the <see cref="SandboxBackend.JavaScript"/> backend.
+    /// </summary>
+    public static HyperlightCodeActProviderOptions CreateForJavaScript()
+        => new(SandboxBackend.JavaScript, modulePath: null);
+
+    /// <summary>
+    /// Gets the Hyperlight sandbox backend this options instance is configured for.
+    /// </summary>
+    public SandboxBackend Backend { get; }
+
+    /// <summary>
+    /// Gets the path to the guest module. Set when the options were created via
+    /// <see cref="CreateForWasm(string)"/>; <see langword="null"/> otherwise.
+    /// </summary>
+    public string? ModulePath { get; }
 
     /// <summary>
     /// Gets or sets the guest heap size. Accepts human-readable strings such as
@@ -50,10 +82,10 @@ public sealed class HyperlightCodeActProviderOptions
     public CodeActApprovalMode ApprovalMode { get; set; } = CodeActApprovalMode.NeverRequire;
 
     /// <summary>
-    /// Gets or sets an optional workspace root directory on the host.
-    /// When set, it is exposed as the sandbox's <c>/input</c> directory.
+    /// Gets or sets an optional host directory exposed to the sandbox as its
+    /// <c>/input</c> directory.
     /// </summary>
-    public string? WorkspaceRoot { get; set; }
+    public string? HostInputDirectory { get; set; }
 
     /// <summary>
     /// Gets or sets the initial set of file mount configurations.

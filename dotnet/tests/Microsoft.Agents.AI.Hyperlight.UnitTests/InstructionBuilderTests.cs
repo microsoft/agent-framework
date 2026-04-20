@@ -17,6 +17,8 @@ public sealed class InstructionBuilderTests
         // Assert
         Assert.Contains("execute_code", text);
         Assert.Contains("call_tool", text);
+        // Backend-agnostic: don't mention a specific language.
+        Assert.DoesNotContain("Python", text);
     }
 
     [Fact]
@@ -28,6 +30,7 @@ public sealed class InstructionBuilderTests
         // Assert
         Assert.Contains("execute_code", text);
         Assert.DoesNotContain("call_tool", text);
+        Assert.DoesNotContain("Python", text);
     }
 
     [Fact]
@@ -38,7 +41,7 @@ public sealed class InstructionBuilderTests
             tools: [],
             fileMounts: [],
             allowedDomains: [],
-            workspaceRoot: null);
+            hasHostInputDirectory: false);
 
         // Assert
         Assert.Contains("Executes code", text);
@@ -58,7 +61,7 @@ public sealed class InstructionBuilderTests
             tools: [tool],
             fileMounts: [],
             allowedDomains: [],
-            workspaceRoot: null);
+            hasHostInputDirectory: false);
 
         // Assert
         Assert.Contains("call_tool", text);
@@ -67,21 +70,23 @@ public sealed class InstructionBuilderTests
     }
 
     [Fact]
-    public void BuildExecuteCodeDescription_WithFilesystem_IncludesFilesystemSection()
+    public void BuildExecuteCodeDescription_WithFilesystem_IncludesSandboxPathsOnly()
     {
         // Act
         var text = InstructionBuilder.BuildExecuteCodeDescription(
             tools: [],
             fileMounts: [new FileMount("/host/data.csv", "/input/data.csv")],
             allowedDomains: [],
-            workspaceRoot: "/host/workspace");
+            hasHostInputDirectory: true);
 
         // Assert
         Assert.Contains("Filesystem access", text);
         Assert.Contains("/input", text);
-        Assert.Contains("/host/workspace", text);
         Assert.Contains("/input/data.csv", text);
-        Assert.Contains("/host/data.csv", text);
+
+        // Host paths must not leak to the model.
+        Assert.DoesNotContain("/host/workspace", text);
+        Assert.DoesNotContain("/host/data.csv", text);
     }
 
     [Fact]
@@ -92,7 +97,7 @@ public sealed class InstructionBuilderTests
             tools: [],
             fileMounts: [],
             allowedDomains: [new AllowedDomain("https://api.github.com", new List<string> { "GET", "POST" })],
-            workspaceRoot: null);
+            hasHostInputDirectory: false);
 
         // Assert
         Assert.Contains("Outbound network access", text);

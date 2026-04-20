@@ -6,7 +6,6 @@
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using HyperlightSandbox.Api;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hyperlight;
 
@@ -14,11 +13,7 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 var guestPath = Environment.GetEnvironmentVariable("HYPERLIGHT_PYTHON_GUEST_PATH") ?? throw new InvalidOperationException("HYPERLIGHT_PYTHON_GUEST_PATH is not set.");
 
-using var codeAct = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions
-{
-    Backend = SandboxBackend.Wasm,
-    ModulePath = guestPath,
-});
+using var codeAct = new HyperlightCodeActProvider(HyperlightCodeActProviderOptions.CreateForWasm(guestPath));
 
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),

@@ -7,7 +7,6 @@
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using HyperlightSandbox.Api;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hyperlight;
 using Microsoft.Extensions.AI;
@@ -21,12 +20,10 @@ AIFunction calculate = AIFunctionFactory.Create(
     name: "multiply",
     description: "Multiply two numbers.");
 
-using var executeCode = new HyperlightExecuteCodeFunction(new HyperlightCodeActProviderOptions
-{
-    Backend = SandboxBackend.Wasm,
-    ModulePath = guestPath,
-    Tools = [calculate],
-});
+var options = HyperlightCodeActProviderOptions.CreateForWasm(guestPath);
+options.Tools = [calculate];
+
+using var executeCode = new HyperlightExecuteCodeFunction(options);
 
 var instructions =
     "You are a helpful assistant. When math is involved, solve it by writing Python "

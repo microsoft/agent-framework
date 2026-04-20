@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,13 +25,9 @@ internal sealed class SandboxExecutor : IDisposable
 
     private Sandbox? _sandbox;
     private SandboxSnapshot? _warmSnapshot;
+    private string? _lastConfigFingerprint;
     private bool _disposed;
 
-    /// <summary>
-    /// Snapshot of tools captured at the start of a run. This is exposed
-    /// through <see cref="RunSnapshot"/> so concurrent runs observe a
-    /// stable view of the provider registry.
-    /// </summary>
     public SandboxExecutor(HyperlightCodeActProviderOptions options)
     {
         this._options = options;
@@ -40,17 +38,76 @@ internal sealed class SandboxExecutor : IDisposable
     /// Used to build a run-scoped <c>execute_code</c> function that is
     /// independent of subsequent CRUD mutations.
     /// </summary>
-    internal sealed record RunSnapshot(
-        IReadOnlyList<AIFunction> Tools,
-        IReadOnlyList<FileMount> FileMounts,
-        IReadOnlyList<AllowedDomain> AllowedDomains,
-        string? WorkspaceRoot);
+    internal sealed class RunSnapshot
+    {
+        public RunSnapshot(
+            IReadOnlyList<AIFunction> tools,
+            IReadOnlyList<FileMount> fileMounts,
+            IReadOnlyList<AllowedDomain> allowedDomains,
+            string? hostInputDirectory)
+        {
+            this.Tools = tools;
+            this.FileMounts = fileMounts;
+            this.AllowedDomains = allowedDomains;
+            this.HostInputDirectory = hostInputDirectory;
+            this.ConfigFingerprint = ComputeFingerprint(tools, fileMounts, allowedDomains, hostInputDirectory);
+        }
+
+        public IReadOnlyList<AIFunction> Tools { get; }
+
+        public IReadOnlyList<FileMount> FileMounts { get; }
+
+        public IReadOnlyList<AllowedDomain> AllowedDomains { get; }
+
+        public string? HostInputDirectory { get; }
+
+        /// <summary>
+        /// Stable fingerprint of the configuration that materially affects how
+        /// the sandbox must be built. Used by <see cref="SandboxExecutor"/> to
+        /// decide whether a previously-built sandbox can be reused or must be
+        /// rebuilt because tools / mounts / allow-list entries have changed.
+        /// </summary>
+        public string ConfigFingerprint { get; }
+
+        internal static string ComputeFingerprint(
+            IReadOnlyList<AIFunction> tools,
+            IReadOnlyList<FileMount> fileMounts,
+            IReadOnlyList<AllowedDomain> allowedDomains,
+            string? hostInputDirectory)
+        {
+            var sb = new StringBuilder();
+            sb.Append("tools=");
+            foreach (var name in tools.Select(t => t.Name).OrderBy(n => n, StringComparer.Ordinal))
+            {
+                sb.Append(name).Append('|');
+            }
+
+            sb.Append(";mounts=");
+            foreach (var m in fileMounts
+                .Select(m => m.MountPath + "->" + m.HostPath)
+                .OrderBy(s => s, StringComparer.Ordinal))
+            {
+                sb.Append(m).Append('|');
+            }
+
+            sb.Append(";allow=");
+            foreach (var d in allowedDomains
+                .Select(d => d.Target + "/" + (d.Methods is null ? "*" : string.Join(",", d.Methods)))
+                .OrderBy(s => s, StringComparer.Ordinal))
+            {
+                sb.Append(d).Append('|');
+            }
+
+            sb.Append(";input=").Append(hostInputDirectory ?? string.Empty);
+            return sb.ToString();
+        }
+    }
 
     /// <summary>
     /// Executes <paramref name="code"/> inside the sandbox using the
-    /// captured <paramref name="snapshot"/>. On first invocation the
-    /// sandbox is lazily initialized and a clean "warm" snapshot is
-    /// captured for subsequent restores.
+    /// captured <paramref name="snapshot"/>. Builds (or rebuilds) the
+    /// sandbox lazily when the snapshot's configuration fingerprint
+    /// differs from the previously-used one.
     /// </summary>
     public async Task<string> ExecuteAsync(RunSnapshot snapshot, string code, CancellationToken cancellationToken)
     {
@@ -86,11 +143,23 @@ internal sealed class SandboxExecutor : IDisposable
 
     private void EnsureInitialized(RunSnapshot snapshot)
     {
-        if (this._sandbox is not null)
+        if (this._sandbox is not null && string.Equals(this._lastConfigFingerprint, snapshot.ConfigFingerprint, StringComparison.Ordinal))
         {
             return;
         }
 
+        // Configuration changed (or first run) — dispose the previous sandbox
+        // so the new one picks up the new tool/mount/allow-list set.
+        this._warmSnapshot?.Dispose();
+        this._sandbox?.Dispose();
+        this._warmSnapshot = null;
+        this._sandbox = null;
+
+        this.BuildAndWarmUp(snapshot);
+    }
+
+    private void BuildAndWarmUp(RunSnapshot snapshot)
+    {
         var builder = new SandboxBuilder()
             .WithBackend(this._options.Backend);
 
@@ -109,17 +178,17 @@ internal sealed class SandboxExecutor : IDisposable
             builder = builder.WithStackSize(this._options.StackSize!);
         }
 
-        var workspaceRoot = snapshot.WorkspaceRoot;
-        if (!string.IsNullOrEmpty(workspaceRoot))
+        var hostInput = snapshot.HostInputDirectory;
+        if (!string.IsNullOrEmpty(hostInput))
         {
-            builder = builder.WithInputDir(workspaceRoot!);
+            builder = builder.WithInputDir(hostInput!);
         }
 
         // The Hyperlight .NET SDK currently exposes only a single input + output + temp-output
         // surface; per-mount configuration (`FileMount`) is captured in the execute_code
         // description so the model is aware of the layout, and will be wired to a richer
         // mount API once the SDK exposes one.
-        if (snapshot.FileMounts.Count > 0 || !string.IsNullOrEmpty(workspaceRoot))
+        if (snapshot.FileMounts.Count > 0 || !string.IsNullOrEmpty(hostInput))
         {
             builder = builder.WithTempOutput();
         }
@@ -139,6 +208,7 @@ internal sealed class SandboxExecutor : IDisposable
         _ = sandbox.Run(this._options.Backend == SandboxBackend.JavaScript ? "undefined" : "None");
         this._warmSnapshot = sandbox.Snapshot();
         this._sandbox = sandbox;
+        this._lastConfigFingerprint = snapshot.ConfigFingerprint;
     }
 
     private static string BuildResult(ExecutionResult result)

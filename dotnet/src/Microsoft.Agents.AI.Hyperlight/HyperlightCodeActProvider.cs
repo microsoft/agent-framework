@@ -66,8 +66,10 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
     /// </summary>
     /// <param name="options">
     /// Optional configuration options for the provider. When <see langword="null"/> the provider
-    /// uses the defaults of <see cref="HyperlightCodeActProviderOptions"/> — equivalent to a
-    /// <see cref="SandboxBackend.Wasm"/> backend with no module, tools, mounts, or allow-list entries.
+    /// uses the defaults of <see cref="HyperlightCodeActProviderOptions"/> (the
+    /// <see cref="SandboxBackend.JavaScript"/> backend with no tools, mounts, or allow-list entries).
+    /// Use <see cref="HyperlightCodeActProviderOptions.CreateForWasm(string)"/> to target a Wasm
+    /// guest module instead.
     /// </param>
     public HyperlightCodeActProvider(HyperlightCodeActProviderOptions? options = null)
     {
@@ -76,39 +78,24 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
 
         if (this._options.Tools is not null)
         {
-            foreach (var tool in this._options.Tools)
+            foreach (var tool in this._options.Tools.Where(t => t is not null))
             {
-                if (tool is null)
-                {
-                    continue;
-                }
-
                 this._tools[tool.Name] = tool;
             }
         }
 
         if (this._options.FileMounts is not null)
         {
-            foreach (var mount in this._options.FileMounts)
+            foreach (var mount in this._options.FileMounts.Where(m => m is not null))
             {
-                if (mount is null)
-                {
-                    continue;
-                }
-
                 this._fileMounts[mount.MountPath] = mount;
             }
         }
 
         if (this._options.AllowedDomains is not null)
         {
-            foreach (var domain in this._options.AllowedDomains)
+            foreach (var domain in this._options.AllowedDomains.Where(d => d is not null))
             {
-                if (domain is null)
-                {
-                    continue;
-                }
-
                 this._allowedDomains[domain.Target] = domain;
             }
         }
@@ -129,13 +116,8 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
         lock (this._gate)
         {
             this.ThrowIfDisposed();
-            foreach (var tool in tools)
+            foreach (var tool in tools.Where(t => t is not null))
             {
-                if (tool is null)
-                {
-                    continue;
-                }
-
                 this._tools[tool.Name] = tool;
             }
         }
@@ -146,7 +128,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
     {
         lock (this._gate)
         {
-            return this._tools.Values.ToArray();
+            return this._tools.Values.ToList();
         }
     }
 
@@ -157,13 +139,8 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
         _ = Throw.IfNull(names);
         lock (this._gate)
         {
-            foreach (var name in names)
+            foreach (var name in names.Where(n => n is not null))
             {
-                if (name is null)
-                {
-                    continue;
-                }
-
                 _ = this._tools.Remove(name);
             }
         }
@@ -189,13 +166,8 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
         _ = Throw.IfNull(mounts);
         lock (this._gate)
         {
-            foreach (var mount in mounts)
+            foreach (var mount in mounts.Where(m => m is not null))
             {
-                if (mount is null)
-                {
-                    continue;
-                }
-
                 this._fileMounts[mount.MountPath] = mount;
             }
         }
@@ -206,7 +178,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
     {
         lock (this._gate)
         {
-            return this._fileMounts.Values.ToArray();
+            return this._fileMounts.Values.ToList();
         }
     }
 
@@ -217,13 +189,8 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
         _ = Throw.IfNull(mountPaths);
         lock (this._gate)
         {
-            foreach (var path in mountPaths)
+            foreach (var path in mountPaths.Where(p => p is not null))
             {
-                if (path is null)
-                {
-                    continue;
-                }
-
                 _ = this._fileMounts.Remove(path);
             }
         }
@@ -249,13 +216,8 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
         _ = Throw.IfNull(domains);
         lock (this._gate)
         {
-            foreach (var domain in domains)
+            foreach (var domain in domains.Where(d => d is not null))
             {
-                if (domain is null)
-                {
-                    continue;
-                }
-
                 this._allowedDomains[domain.Target] = domain;
             }
         }
@@ -266,7 +228,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
     {
         lock (this._gate)
         {
-            return this._allowedDomains.Values.ToArray();
+            return this._allowedDomains.Values.ToList();
         }
     }
 
@@ -277,13 +239,8 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
         _ = Throw.IfNull(targets);
         lock (this._gate)
         {
-            foreach (var target in targets)
+            foreach (var target in targets.Where(t => t is not null))
             {
-                if (target is null)
-                {
-                    continue;
-                }
-
                 _ = this._allowedDomains.Remove(target);
             }
         }
@@ -312,10 +269,10 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
         {
             this.ThrowIfDisposed();
             snapshot = new SandboxExecutor.RunSnapshot(
-                this._tools.Values.ToArray(),
-                this._fileMounts.Values.ToArray(),
-                this._allowedDomains.Values.ToArray(),
-                this._options.WorkspaceRoot);
+                this._tools.Values.ToList(),
+                this._fileMounts.Values.ToList(),
+                this._allowedDomains.Values.ToList(),
+                this._options.HostInputDirectory);
         }
 
         var approvalRequired = ComputeApprovalRequired(this._options.ApprovalMode, snapshot.Tools);
@@ -324,7 +281,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
             snapshot.Tools,
             snapshot.FileMounts,
             snapshot.AllowedDomains,
-            snapshot.WorkspaceRoot);
+            hasHostInputDirectory: !string.IsNullOrEmpty(snapshot.HostInputDirectory));
 
         AIFunction executeCode = new ExecuteCodeFunction(this._executor, snapshot, description);
         if (approvalRequired)
@@ -343,23 +300,9 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
         return new ValueTask<AIContext>(result);
     }
 
-    internal static bool ComputeApprovalRequired(CodeActApprovalMode mode, IReadOnlyList<AIFunction> tools)
-    {
-        if (mode == CodeActApprovalMode.AlwaysRequire)
-        {
-            return true;
-        }
-
-        foreach (var tool in tools)
-        {
-            if (tool is ApprovalRequiredAIFunction)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    internal static bool ComputeApprovalRequired(CodeActApprovalMode mode, IReadOnlyList<AIFunction> tools) =>
+        mode == CodeActApprovalMode.AlwaysRequire
+            || tools.Any(t => t is ApprovalRequiredAIFunction);
 
     private void ThrowIfDisposed()
     {
