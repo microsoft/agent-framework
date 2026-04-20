@@ -4,20 +4,12 @@ import os
 
 from agent_framework import Agent, AgentExecutor, WorkflowBuilder
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.orchestrations import GroupChatState
 from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
-
-
-def round_robin_selector(state: GroupChatState) -> str:
-    """A round-robin selector function that picks the next speaker based on the current round index."""
-
-    participant_names = list(state.participants.keys())
-    return participant_names[state.current_round % len(participant_names)]
 
 
 def main():
