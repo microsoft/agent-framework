@@ -1590,12 +1590,20 @@ async def _auto_invoke_function(
     except MiddlewareTermination as term_exc:
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
-            # Store result in exception for caller to extract
-            term_exc.result = Content.from_function_result(
-                call_id=call_id,
-                result=middleware_context.result,
-                additional_properties=function_call_content.additional_properties,
-            )
+            # Pass through function_approval_request directly (e.g., from security policy middleware)
+            # so the approval flow in _handle_function_call_results activates correctly.
+            if (
+                isinstance(middleware_context.result, Content)
+                and middleware_context.result.type == "function_approval_request"
+            ):
+                term_exc.result = middleware_context.result
+            else:
+                # Store result in exception for caller to extract
+                term_exc.result = Content.from_function_result(
+                    call_id=call_id,
+                    result=middleware_context.result,
+                    additional_properties=function_call_content.additional_properties,
+                )
         raise
     except UserInputRequiredException:
         raise

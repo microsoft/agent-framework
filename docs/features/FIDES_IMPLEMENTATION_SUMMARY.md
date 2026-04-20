@@ -67,7 +67,7 @@ The FIDES defense system consists of seven main components:
    - Message-level tracking tests (Phase 1)
    - Data exfiltration prevention tests
 
-4. **`docs/decisions/0011-prompt-injection-defense.md`**
+4. **`docs/decisions/0024-prompt-injection-defense.md`**
    - Architecture Decision Record (ADR)
    - Design rationale and alternatives considered
    - Security properties and guarantees

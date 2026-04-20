@@ -645,6 +645,47 @@ class TestPolicyEnforcementMiddleware:
         assert captured_metadata["approval_response"] is approval_response
         assert captured_metadata["policy_approval_granted"] is None
 
+    async def test_policy_violation_approval_preserves_type_through_auto_invoke(self, mock_function):
+        """Test that _auto_invoke_function preserves function_approval_request type on MiddlewareTermination.
+
+        When PolicyEnforcementFunctionMiddleware raises MiddlewareTermination with a
+        function_approval_request result, the exception handler must pass it through
+        directly rather than wrapping it in a function_result.
+        """
+        label_tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+        # Taint the context label so the policy enforcer sees UNTRUSTED
+        label_tracker._context_label = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        label_tracker._initialized = True
+
+        policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        pipeline = FunctionMiddlewarePipeline(label_tracker, policy)
+
+        function_call = Content.from_function_call(
+            call_id="call-policy-violation",
+            name=mock_function.name,
+            arguments='{"arg": "test"}',
+        )
+
+        with pytest.raises(MiddlewareTermination) as exc_info:
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={mock_function.name: mock_function},
+                middleware_pipeline=pipeline,
+            )
+
+        # The exception's result must be a function_approval_request, NOT a function_result
+        result = exc_info.value.result
+        assert isinstance(result, Content)
+        assert result.type == "function_approval_request", (
+            f"Expected function_approval_request but got {result.type}; "
+            "MiddlewareTermination handler must not wrap approval requests in function_result"
+        )
+        assert result.function_call is not None
+        assert result.function_call.call_id == "call-policy-violation"
+        assert result.additional_properties["policy_violation"] is True
+        assert result.additional_properties["violation_type"] == "untrusted_context"
+
 
 class TestAutomaticHiding:
     """Tests for automatic variable hiding functionality."""
@@ -908,11 +949,11 @@ class TestSecureAgentConfig:
         assert "inspect_variable" in instructions
 
     def test_inspect_variable_uses_generic_approval_mode(self):
-        """Test that inspect_variable uses the standard tool approval flow."""
+        """Test that inspect_variable does not require approval (context tainting handles security)."""
         from agent_framework import get_security_tools
 
         inspect_variable = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
-        assert inspect_variable.approval_mode == "always_require"
+        assert inspect_variable.approval_mode == "never_require"
         assert "requires_approval" not in inspect_variable.additional_properties
 
 
@@ -1480,15 +1521,19 @@ class TestMiddlewareMessageLabeling:
         assert len(middleware.get_all_message_labels()) == 0
 
 
-# ========== Quarantined LLM Auto-Hide Tests ==========
+# ========== Quarantined LLM Tests ==========
 
 
-class TestQuarantinedLLMAutoHide:
-    """Tests for quarantined_llm auto-hiding of UNTRUSTED results."""
+class TestQuarantinedLLM:
+    """Tests for quarantined_llm tool behavior.
+
+    Note: Auto-hiding of UNTRUSTED results is handled by the middleware
+    via source_integrity="untrusted", not by quarantined_llm itself.
+    """
 
     @pytest.mark.asyncio
-    async def test_quarantined_llm_auto_hides_untrusted_result(self):
-        """Test that quarantined_llm auto-hides UNTRUSTED results."""
+    async def test_quarantined_llm_returns_response(self):
+        """Test that quarantined_llm returns a plain response dict."""
         from agent_framework import LabelTrackingFunctionMiddleware, quarantined_llm
         from agent_framework._security import _current_middleware
 
@@ -1503,49 +1548,24 @@ class TestQuarantinedLLMAutoHide:
         _current_middleware.instance = middleware
 
         try:
-            result = await quarantined_llm(prompt="Summarize this data", variable_ids=[var_id], auto_hide_result=True)
+            result = await quarantined_llm(prompt="Summarize this data", variable_ids=[var_id])
 
-            # Result should be auto-hidden since input was UNTRUSTED
-            assert result["auto_hidden"] is True
-            assert result["type"] == "variable_reference"
-            assert "variable_id" in result
-            assert result["variable_id"].startswith("var_")
-        finally:
-            _current_middleware.instance = None
-
-    @pytest.mark.asyncio
-    async def test_quarantined_llm_no_hide_when_disabled(self):
-        """Test that auto_hide_result=False prevents hiding."""
-        from agent_framework import LabelTrackingFunctionMiddleware, quarantined_llm
-        from agent_framework._security import _current_middleware
-
-        middleware = LabelTrackingFunctionMiddleware()
-
-        var_id = middleware.get_variable_store().store(
-            "untrusted data", ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
-        )
-
-        _current_middleware.instance = middleware
-
-        try:
-            result = await quarantined_llm(prompt="Process this", variable_ids=[var_id], auto_hide_result=False)
-
-            # Result should NOT be hidden
-            assert result["auto_hidden"] is False
+            # Result should be a plain response dict (middleware handles hiding)
             assert "response" in result
-            assert "type" not in result or result.get("type") != "variable_reference"
+            assert result["quarantined"] is True
+            assert "auto_hidden" not in result
         finally:
             _current_middleware.instance = None
 
     @pytest.mark.asyncio
-    async def test_quarantined_llm_trusted_result_not_hidden(self):
-        """Test that TRUSTED results are not auto-hidden."""
+    async def test_quarantined_llm_trusted_input(self):
+        """Test quarantined_llm with TRUSTED input returns response directly."""
         from agent_framework import LabelTrackingFunctionMiddleware, quarantined_llm
         from agent_framework._security import _current_middleware
 
         middleware = LabelTrackingFunctionMiddleware()
 
-        # Store TRUSTED content (unusual but possible)
+        # Store TRUSTED content
         var_id = middleware.get_variable_store().store(
             "trusted system data", ContentLabel(integrity=IntegrityLabel.TRUSTED)
         )
@@ -1556,12 +1576,11 @@ class TestQuarantinedLLMAutoHide:
             result = await quarantined_llm(
                 prompt="Process this",
                 variable_ids=[var_id],
-                auto_hide_result=True,  # Still enabled
             )
 
-            # Result should NOT be hidden because input was TRUSTED
-            assert result["auto_hidden"] is False
+            # Result should be a plain response dict
             assert "response" in result
+            assert result["quarantined"] is True
         finally:
             _current_middleware.instance = None
 
@@ -1586,6 +1605,14 @@ class TestQuarantinedLLMAutoHide:
             assert result["variables_processed"] == [var1, var2]
         finally:
             _current_middleware.instance = None
+
+    def test_quarantined_llm_declares_source_integrity(self):
+        """Test that quarantined_llm declares source_integrity='untrusted'."""
+        from agent_framework import get_security_tools
+
+        q_llm = next(tool for tool in get_security_tools() if tool.name == "quarantined_llm")
+        assert q_llm.additional_properties.get("source_integrity") == "untrusted"
+        assert q_llm.additional_properties.get("accepts_untrusted") is True
 
 
 class TestQuarantineClient:
@@ -1709,9 +1736,9 @@ class TestQuarantineClient:
             assert call_args.kwargs.get("tools") is None
             assert call_args.kwargs.get("client_kwargs", {}).get("tool_choice") == "none"
 
-            # Since it's untrusted and auto_hide is True, result should be hidden
-            assert result["auto_hidden"] is True
-            assert "variable_id" in result
+            # Result should be a plain response dict (middleware handles hiding)
+            assert "response" in result
+            assert result["response"] == "This is a safe summary of the content."
 
         finally:
             _current_middleware.instance = None
@@ -1744,7 +1771,6 @@ class TestQuarantineClient:
             result = await quarantined_llm(
                 prompt="Process this content",
                 variable_ids=[var_id],
-                auto_hide_result=False,  # Disable auto-hide to see the response
             )
 
             # Should use placeholder response
@@ -1780,7 +1806,7 @@ class TestQuarantineClient:
         _current_middleware.instance = middleware
 
         try:
-            result = await quarantined_llm(prompt="Process this", variable_ids=[var_id], auto_hide_result=False)
+            result = await quarantined_llm(prompt="Process this", variable_ids=[var_id])
 
             # Should fall back to error message
             assert "response" in result

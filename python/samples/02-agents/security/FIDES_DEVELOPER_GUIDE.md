@@ -372,22 +372,13 @@ result = await quarantined_llm(
         }
     }
 )
-
-# Option 3: Auto-hide results (default behavior for UNTRUSTED inputs)
-result = await quarantined_llm(
-    prompt="Process this",
-    variable_ids=["var_abc123"],
-    auto_hide_result=True  # Default: hides result if inputs are UNTRUSTED
-)
-# Returns variable reference instead of raw response
 ```
 
 **Key Security Features:**
 - Content is processed with `tools=None` and `tool_choice="none"`
 - Prompt injection attempts in the content cannot trigger tool calls
-- Results inherit the most restrictive label from inputs
-- UNTRUSTED results are automatically hidden (stored as variable references)
-```
+- Declares `source_integrity="untrusted"` — the middleware automatically hides results via the standard auto-hide mechanism
+- No tool-internal auto-hide logic — hiding is handled uniformly by `LabelTrackingFunctionMiddleware`
 
 #### inspect_variable
 
@@ -407,9 +398,12 @@ async def inspect_content() -> None:
 # WARNING: Exposes untrusted content to context
 ```
 
-`inspect_variable` uses the standard tool approval flow via `approval_mode="always_require"`.
-That is separate from secure-policy approvals triggered by `SecureAgentConfig(..., approval_on_violation=True)`,
-which only request approval when a call would otherwise be blocked by the current security context.
+`inspect_variable` uses `approval_mode="never_require"` because the tool call is internal to the
+security framework and not visible to the developer. Instead of gating on approval, calling
+`inspect_variable` taints the context to UNTRUSTED, which blocks dangerous tool calls via
+`PolicyEnforcementFunctionMiddleware`. This is separate from secure-policy approvals triggered
+by `SecureAgentConfig(..., approval_on_violation=True)`, which only request approval when a
+call would otherwise be blocked by the current security context.
 
 ### 7. SecureAgentConfig (Context Provider)
 
@@ -551,30 +545,20 @@ msg = LabeledMessage(
 
 **quarantined_llm Auto-Hiding:**
 
-`quarantined_llm` automatically hides UNTRUSTED results:
+`quarantined_llm` declares `source_integrity="untrusted"` in its tool metadata. The
+`LabelTrackingFunctionMiddleware` uses this to label the output as UNTRUSTED and
+automatically hide it behind a variable reference — the same mechanism used for any
+other tool that returns untrusted data. No tool-internal auto-hide logic is needed.
 
 ```python
-# When processing UNTRUSTED content, result is auto-hidden
+# When processing UNTRUSTED content, the middleware auto-hides the result
 result = await quarantined_llm(
     prompt="Summarize this data",
-    variable_ids=["var_abc123"],
-    auto_hide_result=True  # Default: True
+    variable_ids=["var_abc123"]
 )
-
-# If input was UNTRUSTED, result is:
-# {
-#     "type": "variable_reference",
-#     "variable_id": "var_xyz789",  # Auto-hidden result
-#     "auto_hidden": True,
-#     ...
-# }
-
-# Disable auto-hiding if needed
-result = await quarantined_llm(
-    prompt="Process this",
-    variable_ids=["var_abc123"],
-    auto_hide_result=False  # Return response directly
-)
+# The middleware stores the response in the variable store and replaces it
+# with a VariableReferenceContent — just like any other untrusted tool result.
+# The agent can then use inspect_variable() to surface the content.
 ```
 
 ## Usage Examples
@@ -1158,30 +1142,20 @@ result = await quarantined_llm(
     variable_ids: List[str] = [],             # Variable IDs to retrieve from store
     labelled_data: Dict[str, Any] = {},       # Alternative: direct labeled data
     metadata: Dict[str, Any] = None,          # Optional metadata
-    auto_hide_result: bool = True,            # Auto-hide UNTRUSTED results (NEW!)
 ) -> Dict[str, Any]
 
-# Returns (when auto_hidden=False or result is TRUSTED):
+# Returns:
 # {
 #     "response": str,           # LLM response
 #     "security_label": dict,    # Combined label of all inputs
 #     "quarantined": True,
-#     "auto_hidden": False,
 #     "variables_processed": List[str],
 #     "content_summary": List[str],
 # }
-
-# Returns (when auto_hidden=True AND result is UNTRUSTED):
-# {
-#     "type": "variable_reference",
-#     "variable_id": str,        # ID of auto-hidden result
-#     "description": str,
-#     "security_label": dict,
-#     "quarantined": True,
-#     "auto_hidden": True,
-#     "variables_processed": List[str],
-#     "content_summary": List[str],
-# }
+#
+# Note: The middleware automatically hides UNTRUSTED results behind a
+# VariableReferenceContent via the tool's source_integrity="untrusted"
+# declaration. The agent sees a variable reference, not raw content.
 ```
 
 ### inspect_variable

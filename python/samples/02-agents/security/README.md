@@ -461,10 +461,10 @@ Run the security examples:
 cd python
 
 # Email security (prompt injection defense)
-PYTHONPATH=packages/core python samples/getting_started/security/email_security_example.py
+PYTHONPATH=packages/core python samples/02-agents/security/email_security_example.py
 
 # Repository confidentiality (data exfiltration prevention)
-PYTHONPATH=packages/core python samples/getting_started/security/repo_confidentiality_example.py
+PYTHONPATH=packages/core python samples/02-agents/security/repo_confidentiality_example.py
 ```
 
 These show:
@@ -477,10 +477,10 @@ These show:
 
 ## More Information
 
-- Full documentation: `python/packages/core/FIDES_DEVELOPER_GUIDE.md`
+- Full documentation: `python/samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md`
 - Test suite: `python/packages/core/tests/test_security.py`
-- Email example: `python/samples/getting_started/security/email_security_example.py`
-- Repo example: `python/samples/getting_started/security/repo_confidentiality_example.py`
+- Email example: `python/samples/02-agents/security/email_security_example.py`
+- Repo example: `python/samples/02-agents/security/repo_confidentiality_example.py`
 
 ## Support
 
