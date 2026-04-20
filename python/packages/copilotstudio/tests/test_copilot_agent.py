@@ -245,6 +245,47 @@ class TestCopilotStudioAgent:
         assert response_count == 1
         assert session.service_session_id == "test-conversation-id"
 
+    async def test_run_reuses_existing_conversation(
+        self, mock_copilot_client: MagicMock, mock_activity: MagicMock
+    ) -> None:
+        """Test run method reuses an existing conversation ID from the session."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+        session = AgentSession()
+        session.service_session_id = "existing-conversation-id"
+
+        mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
+
+        response = await agent.run("test message", session=session)
+
+        assert isinstance(response, AgentResponse)
+        assert session.service_session_id == "existing-conversation-id"
+        mock_copilot_client.start_conversation.assert_not_called()
+        mock_copilot_client.ask_question.assert_called_once_with("test message", "existing-conversation-id")
+
+    async def test_run_streaming_reuses_existing_conversation(self, mock_copilot_client: MagicMock) -> None:
+        """Test run(stream=True) method reuses an existing conversation ID from the session."""
+        agent = CopilotStudioAgent(client=mock_copilot_client)
+        session = AgentSession()
+        session.service_session_id = "existing-conversation-id"
+
+        typing_activity = MagicMock()
+        typing_activity.text = "Streaming response"
+        typing_activity.type = "typing"
+        typing_activity.id = "test-typing-id"
+        typing_activity.from_property.name = "Test Bot"
+
+        mock_copilot_client.ask_question.return_value = create_async_generator([typing_activity])
+
+        response_count = 0
+        async for response in agent.run("test message", session=session, stream=True):
+            assert isinstance(response, AgentResponseUpdate)
+            response_count += 1
+
+        assert response_count == 1
+        assert session.service_session_id == "existing-conversation-id"
+        mock_copilot_client.start_conversation.assert_not_called()
+        mock_copilot_client.ask_question.assert_called_once_with("test message", "existing-conversation-id")
+
     async def test_run_streaming_no_typing_activity(self, mock_copilot_client: MagicMock) -> None:
         """Test run(stream=True) method with non-typing activity."""
         agent = CopilotStudioAgent(client=mock_copilot_client)

@@ -431,7 +431,7 @@ def _build_execution_contents(
             outputs.append(Content.from_text(stderr, raw_representation=result))
         if not outputs:
             outputs.append(Content.from_text("Code executed successfully without output."))
-        return [Content.from_code_interpreter_tool_result(outputs=outputs, raw_representation=result)]
+        return outputs
 
     error_details = stderr or "Unknown sandbox error"
     outputs.append(
@@ -441,12 +441,16 @@ def _build_execution_contents(
             raw_representation=result,
         )
     )
-    return [Content.from_code_interpreter_tool_result(outputs=outputs, raw_representation=result)]
+    return outputs
 
 
 def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     sandbox_tool = copy.copy(tool_obj)
-    sandbox_tool.result_parser = _passthrough_result_parser
+    # Auto-assign a passthrough parser so the raw return value round-trips through
+    # `ast.literal_eval` in the sandbox callback below. User-supplied parsers are
+    # left in place so callers can customize how results are exposed to the guest.
+    if sandbox_tool.result_parser is None:
+        sandbox_tool.result_parser = _passthrough_result_parser
 
     def _callback(**kwargs: Any) -> Any:
         async def _invoke() -> list[Content]:
@@ -765,6 +769,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         return build_codeact_instructions(
             tools=config.tools,
             tools_visible_to_model=tools_visible_to_model,
+            filesystem_enabled=config.filesystem_enabled,
         )
 
     def create_run_tool(self) -> HyperlightExecuteCodeTool:

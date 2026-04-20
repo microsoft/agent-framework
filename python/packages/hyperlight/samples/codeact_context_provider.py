@@ -72,15 +72,11 @@ async def log_function_calls(
 
     result = context.result
     if function_name == "execute_code" and isinstance(result, list):
-        for item in result:
-            if item.type != "code_interpreter_tool_result":
-                continue
-
-            for output in item.outputs or []:
-                if output.type == "text" and output.text:
-                    print(f"{_GREEN}stdout:\n{output.text}{_RESET}")
-                if output.type == "error" and output.error_details:
-                    print(f"{_YELLOW}stderr:\n{output.error_details}{_RESET}")
+        for output in result:
+            if output.type == "text" and output.text:
+                print(f"{_GREEN}stdout:\n{output.text}{_RESET}")
+            elif output.type == "error" and output.error_details:
+                print(f"{_YELLOW}stderr:\n{output.error_details}{_RESET}")
     else:
         print(f"{_YELLOW}◀ {function_name} → {result!r}{_RESET}")
 

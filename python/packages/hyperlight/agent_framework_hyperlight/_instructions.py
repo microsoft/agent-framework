@@ -68,6 +68,7 @@ def build_codeact_instructions(
     *,
     tools: Sequence[FunctionTool],
     tools_visible_to_model: bool,
+    filesystem_enabled: bool = False,
 ) -> str:
     """Build dynamic CodeAct instructions for the effective sandbox state."""
     usage_note = (
@@ -77,11 +78,23 @@ def build_codeact_instructions(
         else "Provider-owned sandbox tools are not exposed separately; use `execute_code` when you need them."
     )
 
+    output_note = (
+        "To surface results from `execute_code`, end the code with `print(...)`; the sandbox does not "
+        "return the value of the last expression."
+    )
+    if filesystem_enabled:
+        output_note += (
+            " For larger artifacts, write them to `/output/<filename>` instead — returned files will be "
+            "attached to the tool result."
+        )
+
     return f"""You have one primary tool: execute_code.
 
 Prefer one execute_code call per request when possible.
 Its tool description contains the current `call_tool(...)` guidance, sandbox
 tool registry, and capability limits.
+
+{output_note}
 
 {usage_note}
 """
