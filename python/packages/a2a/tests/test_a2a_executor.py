@@ -128,6 +128,9 @@ class TestA2AExecutorCancel:
         Act: Call cancel method
         Assert: Method completes without raising error
         """
+        # Arrange
+        mock_request_context.task_id = "task-123"
+
         # Act & Assert (should not raise)
         await executor.cancel(mock_request_context, mock_event_queue)  # type: ignore
 
@@ -142,11 +145,35 @@ class TestA2AExecutorCancel:
         """
         # Arrange
         context1 = MagicMock()
+        context1.context_id = "ctx-1"
+        context1.task_id = "task-1"
         context2 = MagicMock()
+        context2.context_id = "ctx-2"
+        context2.task_id = "task-2"
 
         # Act & Assert
         await executor.cancel(context1, mock_event_queue)  # type: ignore
         await executor.cancel(context2, mock_event_queue)  # type: ignore
+
+    async def test_cancel_raises_error_when_context_id_missing(
+        self,
+        executor: A2AExecutor,
+        mock_event_queue: MagicMock,
+    ) -> None:
+        """Arrange: Create context without context_id
+        Act: Call cancel method
+        Assert: ValueError is raised
+        """
+        # Arrange
+        mock_context = MagicMock()
+        mock_context.context_id = None
+
+        # Act & Assert
+        with raises(ValueError) as excinfo:
+            await executor.cancel(mock_context, mock_event_queue)  # type: ignore
+
+        # Assert
+        assert "Context ID" in str(excinfo.value)
 
 
 class TestA2AExecutorExecute:
@@ -314,7 +341,9 @@ class TestA2AExecutorExecute:
             # Assert
             mock_updater.update_status.assert_called()
             call_args_list = mock_updater.update_status.call_args_list
-            assert any(call[1].get("state") == TaskState.canceled for call in call_args_list)
+            assert any(
+                call[1].get("state") == TaskState.canceled and call[1].get("final") is True for call in call_args_list
+            )
 
     async def test_execute_handles_generic_exception(
         self,
@@ -349,7 +378,12 @@ class TestA2AExecutorExecute:
 
             # Assert
             call_args_list = mock_updater.update_status.call_args_list
-            assert any(call[1].get("state") == TaskState.failed for call in call_args_list)
+            assert any(
+                call[1].get("state") == TaskState.failed
+                and call[1].get("final") is True
+                and call[1].get("message") == "error_message"
+                for call in call_args_list
+            )
 
     async def test_execute_processes_multiple_response_messages(
         self,

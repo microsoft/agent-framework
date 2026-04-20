@@ -17,6 +17,7 @@ from agent_framework import (
     Message,
     SupportsAgentRun,
 )
+from agent_framework._types import _get_data_bytes_as_str
 from typing_extensions import override
 
 logger = logging.getLogger("agent_framework.a2a")
@@ -103,11 +104,27 @@ class A2AExecutor(AgentExecutor):
 
     @override
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """Cancel agent execution.
+        """Cancel agent execution for the given request context.
 
-        Cancellation is primarily managed by the A2A protocol layer.
+        Uses a TaskUpdater to send a cancellation event through the provided event queue.
+
+        Args:
+            context: The request context identifying the task to cancel.
+            event_queue: The event queue to publish the cancellation event to.
+
+        Raises:
+            ValueError: If context_id is not provided in the RequestContext.
         """
-        pass
+        if context.context_id is None:
+            raise ValueError("Context ID must be provided in the RequestContext")
+
+        updater = TaskUpdater(
+            event_queue=event_queue,
+            task_id=context.task_id or "",
+            context_id=context.context_id,
+        )
+
+        await updater.cancel()
 
     @override
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -226,8 +243,11 @@ class A2AExecutor(AgentExecutor):
             if content.type == "text" and content.text:
                 parts.append(Part(root=TextPart(text=content.text)))
             elif content.type == "data" and content.uri:
-                base64_str = content.uri
-                parts.append(Part(root=FilePart(file=FileWithBytes(bytes=base64_str, mime_type=content.media_type))))
+                base64_str = _get_data_bytes_as_str(content)
+                if base64_str:
+                    parts.append(
+                        Part(root=FilePart(file=FileWithBytes(bytes=base64_str, mime_type=content.media_type)))
+                    )
             elif content.type == "uri" and content.uri:
                 parts.append(Part(root=FilePart(file=FileWithUri(uri=content.uri, mime_type=content.media_type))))
             else:
