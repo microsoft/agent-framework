@@ -1473,6 +1473,67 @@ def test_tool_choice_allowed_tools_multiple(
     ]
 
 
+def test_tool_choice_allowed_tools_empty(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice with empty allowed_tools produces allowed_tools payload."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "auto", "allowed_tools": []},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert "tool_choice" in prepared_options
+    assert prepared_options["tool_choice"] == {
+        "type": "allowed_tools",
+        "mode": "auto",
+        "tools": [],
+    }
+
+
+def test_tool_choice_allowed_tools_required_mode(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice with allowed_tools and mode required is correctly prepared."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "required", "allowed_tools": ["get_weather"]},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert "tool_choice" in prepared_options
+    assert prepared_options["tool_choice"] == {
+        "type": "allowed_tools",
+        "mode": "required",
+        "tools": [{"type": "function", "name": "get_weather"}],
+    }
+
+
+def test_tool_choice_auto_dict_without_allowed_tools(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice dict with mode auto and no allowed_tools falls through to plain 'auto'."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "auto"},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert prepared_options["tool_choice"] == "auto"
+
+
 def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) -> None:
     """Test that response_format as dict is passed through directly."""
     client = OpenAIChatCompletionClient()

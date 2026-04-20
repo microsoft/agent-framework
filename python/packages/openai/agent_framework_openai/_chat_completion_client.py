@@ -662,10 +662,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                         "type": "function",
                         "function": {"name": func_name},
                     }
-                elif mode == "auto" and (allowed := tool_mode.get("allowed_tools")) is not None:
+                elif mode in ("auto", "required") and (allowed := tool_mode.get("allowed_tools")) is not None:
                     run_options["tool_choice"] = {
                         "type": "allowed_tools",
-                        "mode": "auto",
+                        "mode": mode,
                         "tools": [{"type": "function", "name": name} for name in allowed],
                     }
                 else:

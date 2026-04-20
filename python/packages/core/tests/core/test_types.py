@@ -1153,9 +1153,13 @@ def test_chat_options_tool_choice_validation():
         "allowed_tools": ["get_weather", "search_docs"],
     }
 
-    # allowed_tools invalid with non-auto modes
-    with raises(ContentError):
-        validate_tool_mode({"mode": "required", "allowed_tools": ["get_weather"]})
+    # allowed_tools valid with required mode
+    assert validate_tool_mode({"mode": "required", "allowed_tools": ["get_weather"]}) == {
+        "mode": "required",
+        "allowed_tools": ["get_weather"],
+    }
+
+    # allowed_tools invalid with none mode
     with raises(ContentError):
         validate_tool_mode({"mode": "none", "allowed_tools": ["get_weather"]})
 

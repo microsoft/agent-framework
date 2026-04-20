@@ -3148,7 +3148,7 @@ class ToolMode(TypedDict, total=False):
     Fields:
         mode: One of "auto", "required", or "none".
         required_function_name: Optional function name when `mode == "required"`.
-        allowed_tools: Optional list of tool names when `mode == "auto"`.
+        allowed_tools: Optional list of tool names when `mode` is `"auto"` or `"required"`.
     """
 
     mode: Literal["auto", "required", "none"]
@@ -3403,8 +3403,8 @@ def validate_tool_mode(
         raise ContentError(f"Invalid tool choice: {tool_choice['mode']}")
     if tool_choice["mode"] != "required" and "required_function_name" in tool_choice:
         raise ContentError("tool_choice with mode other than 'required' cannot have 'required_function_name'")
-    if tool_choice["mode"] != "auto" and "allowed_tools" in tool_choice:
-        raise ContentError("tool_choice with mode other than 'auto' cannot have 'allowed_tools'")
+    if tool_choice["mode"] not in ("auto", "required") and "allowed_tools" in tool_choice:
+        raise ContentError("tool_choice 'allowed_tools' is only valid when mode is 'auto' or 'required'")
     if "allowed_tools" in tool_choice:
         allowed_tools = tool_choice["allowed_tools"]
         if isinstance(allowed_tools, str) or not isinstance(allowed_tools, Sequence):
