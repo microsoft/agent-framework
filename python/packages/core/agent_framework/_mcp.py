@@ -248,6 +248,7 @@ class MCPTool:
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
+        self._server_capabilities: types.ServerCapabilities | None = None
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -651,6 +652,7 @@ class MCPTool:
             await self._safe_close_exit_stack()
             self.session = None
             self.is_connected = False
+            self._server_capabilities = None
             self._exit_stack = AsyncExitStack()
         if not self.session:
             try:
@@ -699,7 +701,8 @@ class MCPTool:
                     inner_exception=ex,
                 ) from ex
             try:
-                await session.initialize()
+                initialize_result = await session.initialize()
+                self._server_capabilities = getattr(initialize_result, "capabilities", None)
             except Exception as ex:
                 await self._safe_close_exit_stack()
                 # Provide context about initialization failure
@@ -714,7 +717,10 @@ class MCPTool:
             self.session = session
         elif self.session._request_id == 0:  # type: ignore[attr-defined]
             # If the session is not initialized, we need to reinitialize it
-            await self.session.initialize()
+            initialize_result = await self.session.initialize()
+            self._server_capabilities = getattr(initialize_result, "capabilities", None)
+        elif self._server_capabilities is None:
+            self._server_capabilities = getattr(self.session, "_server_capabilities", None)
         logger.debug("Connected to MCP server: %s", self.session)
         self.is_connected = True
         if self.load_tools_flag:
@@ -895,6 +901,10 @@ class MCPTool:
         """
         from mcp import types
 
+        if not self._server_supports_prompts():
+            logger.debug("Skipping MCP prompt loading because the server did not advertise prompts support.")
+            return
+
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
@@ -933,6 +943,12 @@ class MCPTool:
             if not prompt_list or not prompt_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
+
+    def _server_supports_prompts(self) -> bool:
+        capabilities = self._server_capabilities
+        if capabilities is None:
+            capabilities = getattr(self.session, "_server_capabilities", None)
+        return capabilities is None or getattr(capabilities, "prompts", None) is not None
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
