@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
@@ -16,9 +15,8 @@ from agent_framework import (
     AgentRunInputs,
     AgentSession,
     BaseAgent,
-    BaseContextProvider,
     Content,
-    FunctionTool,
+    ContextProvider,
     Message,
     MiddlewareTypes,
     ResponseStream,
@@ -27,19 +25,25 @@ from agent_framework import (
     normalize_messages,
     normalize_tools,
 )
-from agent_framework.observability import AgentTelemetryLayer
 from agent_framework.exceptions import AgentException
+from agent_framework.observability import AgentTelemetryLayer
 from codex_sdk import (
-    AssistantMessage,
-    CodexSDKClient,
-    ResultMessage,
-    SdkMcpTool,
-    create_sdk_mcp_server,
+    Codex,
+    CodexOptions,
+    Thread,
+    ThreadOptions,
 )
-from codex_sdk import (
-    CodexAgentOptions as SDKOptions,
+from codex_sdk.events import (
+    ItemUpdatedEvent,
+    ThreadErrorEvent,
+    TurnCompletedEvent,
+    TurnFailedEvent,
 )
-from codex_sdk.types import StreamEvent, TextBlock
+from codex_sdk.items import (
+    AgentMessageItem,
+    ErrorItem,
+    ReasoningItem,
+)
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -52,23 +56,13 @@ else:
 
 if TYPE_CHECKING:
     from codex_sdk import (
-        AgentDefinition,
-        CanUseTool,
-        HookMatcher,
-        McpServerConfig,
-        PermissionMode,
-        SandboxSettings,
-        SdkBeta,
+        ApprovalMode,
+        ModelReasoningEffort,
+        SandboxMode,
     )
 
 
 logger = logging.getLogger("agent_framework.codex")
-
-
-# Name of the in-process MCP server that hosts Agent Framework tools.
-# FunctionTool instances are converted to SDK MCP tools and served
-# through this server, as Codex CLI only supports tools via MCP.
-TOOLS_MCP_SERVER_NAME = "_agent_framework_tools"
 
 
 class CodexAgentSettings(TypedDict, total=False):
@@ -79,20 +73,16 @@ class CodexAgentSettings(TypedDict, total=False):
     'CODEX_AGENT_'.
 
     Keys:
-        cli_path: The path to Codex CLI executable.
+        codex_path: The path to Codex CLI executable.
         model: The model to use (codex-mini-latest, gpt-5.1-codex).
         cwd: The working directory for Codex CLI.
-        permission_mode: Permission mode (default, acceptEdits, plan, bypassPermissions).
-        max_turns: Maximum number of conversation turns.
-        max_budget_usd: Maximum budget in USD.
+        approval_policy: Approval policy (default, full-auto, plan).
     """
 
-    cli_path: str | None
+    codex_path: str | None
     model: str | None
     cwd: str | None
-    permission_mode: str | None
-    max_turns: int | None
-    max_budget_usd: float | None
+    approval_policy: str | None
 
 
 class CodexAgentOptions(TypedDict, total=False):
@@ -101,7 +91,7 @@ class CodexAgentOptions(TypedDict, total=False):
     system_prompt: str
     """System prompt for the agent."""
 
-    cli_path: str
+    codex_path: str
     """Path to Codex CLI executable. Default: auto-detected."""
 
     cwd: str
@@ -113,53 +103,20 @@ class CodexAgentOptions(TypedDict, total=False):
     model: str
     """Model to use ("codex-mini-latest", "gpt-5.1-codex"). Default: "codex-mini-latest"."""
 
-    fallback_model: str
-    """Fallback model if primary fails."""
+    sandbox_mode: SandboxMode
+    """Sandbox mode for code execution."""
 
-    max_thinking_tokens: int
-    """Maximum tokens for thinking blocks."""
+    model_reasoning_effort: ModelReasoningEffort
+    """Model reasoning effort preset."""
 
-    allowed_tools: list[str]
-    """Allowlist of tools. If set, Codex can ONLY use tools in this list."""
+    approval_policy: ApprovalMode
+    """Approval policy for tool execution."""
 
-    disallowed_tools: list[str]
-    """Blocklist of tools. Codex cannot use these tools."""
-
-    mcp_servers: dict[str, McpServerConfig]
-    """MCP server configurations for external tools."""
-
-    permission_mode: PermissionMode
-    """Permission handling mode ("default", "acceptEdits", "plan", "bypassPermissions")."""
-
-    can_use_tool: CanUseTool
-    """Permission callback for tool use."""
-
-    max_turns: int
-    """Maximum conversation turns."""
-
-    max_budget_usd: float
-    """Budget limit in USD."""
-
-    hooks: dict[str, list[HookMatcher]]
-    """Pre/post tool hooks."""
-
-    add_dirs: list[str]
+    additional_directories: list[str]
     """Additional directories to add to context."""
 
-    sandbox: SandboxSettings
-    """Sandbox configuration for execution isolation."""
-
-    agents: dict[str, AgentDefinition]
-    """Custom agent definitions."""
-
-    output_format: dict[str, Any]
-    """Structured output format (JSON schema)."""
-
-    enable_file_checkpointing: bool
-    """Enable file checkpointing for rewind."""
-
-    betas: list[SdkBeta]
-    """Beta features to enable."""
+    config_overrides: dict[str, Any]
+    """Additional configuration overrides passed to the Codex CLI."""
 
 
 OptionsT = TypeVar(
@@ -215,7 +172,7 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
                 session = agent.create_session()
                 await agent.run("Remember my name is Alice", session=session)
                 response = await agent.run("What's my name?", session=session)
-                # Codex will remember "Alice" from the same session
+                # Codex will remember "Alice" from the same thread
 
         With Agent Framework tools:
 
@@ -238,11 +195,11 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
         self,
         instructions: str | None = None,
         *,
-        client: CodexSDKClient | None = None,
+        client: Codex | None = None,
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None = None,
         default_options: OptionsT | MutableMapping[str, Any] | None = None,
@@ -255,7 +212,7 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
             instructions: System prompt for the agent.
 
         Keyword Args:
-            client: Optional pre-configured CodexSDKClient instance. If not provided,
+            client: Optional pre-configured Codex instance. If not provided,
                 a new client will be created using the other parameters.
             id: Unique identifier for the agent.
             name: Name of the agent.
@@ -287,24 +244,19 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
         if instructions is not None:
             opts["system_prompt"] = instructions
 
-        cli_path = opts.pop("cli_path", None)
+        codex_path = opts.pop("codex_path", None)
         model = opts.pop("model", None)
         cwd = opts.pop("cwd", None)
-        permission_mode = opts.pop("permission_mode", None)
-        max_turns = opts.pop("max_turns", None)
-        max_budget_usd = opts.pop("max_budget_usd", None)
-        self._mcp_servers: dict[str, Any] = opts.pop("mcp_servers", None) or {}
+        approval_policy = opts.pop("approval_policy", None)
 
         # Load settings from environment and options
         self._settings = load_settings(
             CodexAgentSettings,
             env_prefix="CODEX_AGENT_",
-            cli_path=cli_path,
+            codex_path=codex_path,
             model=model,
             cwd=cwd,
-            permission_mode=permission_mode,
-            max_turns=max_turns,
-            max_budget_usd=max_budget_usd,
+            approval_policy=approval_policy,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
@@ -315,8 +267,8 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
         self._normalize_tools(tools)
 
         self._default_options = opts
-        self._started = False
-        self._current_session_id: str | None = None
+        self._current_thread: Thread | None = None
+        self._current_thread_id: str | None = None
 
     def _normalize_tools(
         self,
@@ -358,14 +310,18 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
     async def start(self) -> None:
         """Start the Codex SDK client.
 
-        This method initializes the Codex SDK client and establishes a connection
-        to the Codex CLI. It is called automatically when using the agent
-        as an async context manager.
+        This method initializes the Codex client. It is called automatically
+        when using the agent as an async context manager.
 
         Raises:
             AgentException: If the client fails to start.
         """
-        await self._ensure_session()
+        if self._client is None:
+            try:
+                self._client = self._create_codex_client()
+                self._owns_client = True
+            except Exception as ex:
+                raise AgentException(f"Failed to create Codex client: {ex}") from ex
 
     async def stop(self) -> None:
         """Stop the Codex SDK client and clean up resources.
@@ -373,194 +329,99 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
         Stops the client if owned by this agent. Called automatically when
         using the agent as an async context manager.
         """
-        if self._client and self._owns_client:
-            with contextlib.suppress(Exception):
-                await self._client.disconnect()
+        self._current_thread = None
+        self._current_thread_id = None
+        if self._owns_client:
+            self._client = None
 
-        self._started = False
-        self._current_session_id = None
-
-    async def _ensure_session(self, session_id: str | None = None) -> None:
-        """Ensure the client is connected for the specified session.
-
-        If the requested session differs from the current one, recreates the client.
-        Treats None as a distinct session identity so that switching from a resumed
-        session back to a fresh session correctly creates a new client.
-
-        Args:
-            session_id: The session ID to use, or None for a new session.
-        """
-        needs_new_client = (
-            not self._started
-            or self._client is None
-            or session_id != self._current_session_id
-        )
-
-        if needs_new_client:
-            # Stop existing client if any
-            if self._client and self._owns_client:
-                with contextlib.suppress(Exception):
-                    await self._client.disconnect()
-                self._started = False
-
-            # Create new client with resume option if needed
-            opts = self._prepare_client_options(resume_session_id=session_id)
-            self._client = CodexSDKClient(options=opts)
-            self._owns_client = True
-
-            try:
-                await self._client.connect()
-                self._started = True
-                self._current_session_id = session_id
-            except Exception as ex:
-                self._client = None
-                raise AgentException(f"Failed to start Codex SDK client: {ex}") from ex
-
-    def _prepare_client_options(self, resume_session_id: str | None = None) -> SDKOptions:
-        """Prepare SDK options for client initialization.
-
-        Args:
-            resume_session_id: Optional session ID to resume.
+    def _create_codex_client(self) -> Codex:
+        """Create a Codex client with configured options.
 
         Returns:
-            SDKOptions instance configured for the client.
+            A configured Codex instance.
         """
-        opts: dict[str, Any] = {}
+        codex_path = self._settings.get("codex_path")
+        env = self._default_options.get("env")
 
-        # Set resume option if provided
-        if resume_session_id:
-            opts["resume"] = resume_session_id
+        codex_opts = CodexOptions(
+            codex_path_override=codex_path,
+            env=env,
+        )
+
+        return Codex(options=codex_opts)
+
+    def _prepare_thread_options(self) -> ThreadOptions:
+        """Prepare ThreadOptions from settings and default options.
+
+        Returns:
+            ThreadOptions instance configured for the thread.
+        """
+        thread_opts_kwargs: dict[str, Any] = {}
 
         # Apply settings from environment
-        if cli_path := self._settings.get("cli_path"):
-            opts["cli_path"] = cli_path
         if model := self._settings.get("model"):
-            opts["model"] = model
+            thread_opts_kwargs["model"] = model
         if cwd := self._settings.get("cwd"):
-            opts["cwd"] = cwd
-        if permission_mode := self._settings.get("permission_mode"):
-            opts["permission_mode"] = permission_mode
-        if max_turns := self._settings.get("max_turns"):
-            opts["max_turns"] = max_turns
-        if max_budget_usd := self._settings.get("max_budget_usd"):
-            opts["max_budget_usd"] = max_budget_usd
+            thread_opts_kwargs["working_directory"] = cwd
+        if approval_policy := self._settings.get("approval_policy"):
+            thread_opts_kwargs["approval_policy"] = approval_policy
 
-        # Apply default options
-        for key, value in self._default_options.items():
-            if value is not None:
-                opts[key] = value
+        # Apply default options (those not consumed by settings)
+        for key in ("sandbox_mode", "model_reasoning_effort", "additional_directories", "config_overrides"):
+            if key in self._default_options and self._default_options[key] is not None:
+                thread_opts_kwargs[key] = self._default_options[key]
 
-        # Add built-in tools (strings like "Read", "Write", "Bash")
-        if self._builtin_tools:
-            opts["tools"] = self._builtin_tools
+        # Pass system prompt via config_overrides if set
+        system_prompt = self._default_options.get("system_prompt")
+        if system_prompt:
+            overrides = dict(thread_opts_kwargs.get("config_overrides") or {})
+            overrides["instructions"] = system_prompt
+            thread_opts_kwargs["config_overrides"] = overrides
 
-        # Prepare custom tools (FunctionTool instances)
-        custom_tools_server, custom_tool_names = (
-            self._prepare_tools(self._custom_tools) if self._custom_tools else (None, [])
-        )
+        # Write a temporary instructions file if we have a system prompt
+        if system_prompt and "model_instructions_file" not in thread_opts_kwargs:
+            import os
+            import tempfile
 
-        # MCP servers - merge user-provided servers with custom tools server
-        mcp_servers = dict(self._mcp_servers) if self._mcp_servers else {}
-        if custom_tools_server:
-            mcp_servers[TOOLS_MCP_SERVER_NAME] = custom_tools_server
-        if mcp_servers:
-            opts["mcp_servers"] = mcp_servers
-
-        # Add custom tools to allowed_tools so they can be executed
-        if custom_tool_names:
-            existing_allowed = opts.get("allowed_tools", [])
-            opts["allowed_tools"] = list(existing_allowed) + custom_tool_names
-
-        # Always enable partial messages for streaming support
-        opts["include_partial_messages"] = True
-
-        return SDKOptions(**opts)
-
-    def _prepare_tools(
-        self,
-        tools: Sequence[ToolTypes],
-    ) -> tuple[Any, list[str]]:
-        """Convert Agent Framework tools to SDK MCP server.
-
-        Args:
-            tools: List of Agent Framework tools.
-
-        Returns:
-            Tuple of (MCP server config, list of allowed tool names).
-        """
-        sdk_tools: list[SdkMcpTool[Any]] = []
-        tool_names: list[str] = []
-
-        for tool in tools:
-            if isinstance(tool, FunctionTool):
-                sdk_tools.append(self._function_tool_to_sdk_mcp_tool(tool))
-                # Codex SDK convention: MCP tools use format "mcp__{server}__{tool}"
-                tool_names.append(f"mcp__{TOOLS_MCP_SERVER_NAME}__{tool.name}")
-            else:
-                # Non-FunctionTool items (e.g., dict-based hosted tools) cannot be converted to SDK MCP tools
-                logger.debug(f"Unsupported tool type: {type(tool)}")
-
-        if not sdk_tools:
-            return None, []
-
-        return create_sdk_mcp_server(name=TOOLS_MCP_SERVER_NAME, tools=sdk_tools), tool_names
-
-    def _function_tool_to_sdk_mcp_tool(self, func_tool: FunctionTool) -> SdkMcpTool[Any]:
-        """Convert a FunctionTool to an SDK MCP tool.
-
-        Args:
-            func_tool: The FunctionTool to convert.
-
-        Returns:
-            An SdkMcpTool instance.
-        """
-
-        async def handler(args: dict[str, Any]) -> dict[str, Any]:
-            """Handler that invokes the FunctionTool."""
+            fd, path = tempfile.mkstemp(suffix=".md", prefix="codex_instructions_")
             try:
-                if func_tool.input_model:
-                    args_instance = func_tool.input_model(**args)
-                    result = await func_tool.invoke(arguments=args_instance)
-                else:
-                    result = await func_tool.invoke(arguments=args)
-                return {"content": [{"type": "text", "text": str(result)}]}
-            except Exception as e:
-                return {"content": [{"type": "text", "text": f"Error: {e}"}]}
+                os.write(fd, system_prompt.encode("utf-8"))
+            finally:
+                os.close(fd)
+            thread_opts_kwargs["model_instructions_file"] = path
 
-        # Get JSON schema from pydantic model
-        schema: dict[str, Any] = func_tool.input_model.model_json_schema() if func_tool.input_model else {}
-        input_schema: dict[str, Any] = {
-            "type": "object",
-            "properties": schema.get("properties", {}),
-            "required": schema.get("required", []),
-        }
-        # Preserve $defs for nested type references (Pydantic uses $defs for nested models)
-        if "$defs" in schema:
-            input_schema["$defs"] = schema["$defs"]
+        return ThreadOptions(**thread_opts_kwargs)
 
-        return SdkMcpTool(
-            name=func_tool.name,
-            description=func_tool.description,
-            input_schema=input_schema,
-            handler=handler,
-        )
+    def _get_or_create_thread(self, session_id: str | None = None) -> Thread:
+        """Get or create a thread for the given session.
 
-    async def _apply_runtime_options(self, options: dict[str, Any] | None) -> None:
-        """Apply runtime options that can be changed dynamically.
-
-        The Codex SDK supports changing model and permission_mode after connection.
+        If session_id matches the current thread, reuse it.
+        Otherwise, create a new thread or resume an existing one.
 
         Args:
-            options: Runtime options to apply.
+            session_id: The thread/session ID to resume, or None for a new thread.
+
+        Returns:
+            A Thread instance.
         """
-        if not options or not self._client:
-            return
+        if self._client is None:
+            raise RuntimeError("Codex client not initialized. Call start() first.")
 
-        if "model" in options:
-            await self._client.set_model(options["model"])
+        # Reuse current thread if session matches
+        if self._current_thread is not None and session_id == self._current_thread_id:
+            return self._current_thread
 
-        if "permission_mode" in options:
-            await self._client.set_permission_mode(options["permission_mode"])
+        thread_opts = self._prepare_thread_options()
+
+        if session_id:
+            thread = self._client.resume_thread(session_id, options=thread_opts)
+        else:
+            thread = self._client.start_thread(options=thread_opts)
+
+        self._current_thread = thread
+        self._current_thread_id = session_id
+
+        return thread
 
     def _format_prompt(self, messages: list[Message] | None) -> str:
         """Format messages into a prompt string.
@@ -590,16 +451,15 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
         return opts
 
     def _finalize_response(self, updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
-        """Build AgentResponse and propagate structured_output as value.
+        """Build AgentResponse from collected updates.
 
         Args:
             updates: The collected stream updates.
 
         Returns:
-            An AgentResponse with structured_output set as value if present.
+            An AgentResponse built from the updates.
         """
-        structured_output = getattr(self, "_structured_output", None)
-        return AgentResponse.from_updates(updates, value=structured_output)
+        return AgentResponse.from_updates(updates)
 
     @overload
     def run(  # type: ignore[override]
@@ -641,8 +501,8 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
             stream: If True, returns an async iterable of updates. If False (default),
                 returns an awaitable AgentResponse.
             session: The conversation session. If session has service_session_id set,
-                the agent will resume that session.
-            options: Runtime options (model, permission_mode can be changed per-request).
+                the agent will resume that thread.
+            options: Runtime options (model can be changed per-request via config_overrides).
             kwargs: Additional keyword arguments for compatibility with the shared agent
                 interface (e.g. compaction_strategy, tokenizer). Not used by CodexAgent.
 
@@ -668,80 +528,49 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
         """Internal streaming implementation."""
         session = session or self.create_session()
 
-        # Ensure we're connected to the right session
-        await self._ensure_session(session.service_session_id)
+        # Ensure client is initialized
+        if self._client is None:
+            await self.start()
 
-        if not self._client:
-            raise RuntimeError("Codex SDK client not initialized.")
+        # Get or create thread for this session
+        thread = self._get_or_create_thread(session.service_session_id)
 
         prompt = self._format_prompt(normalize_messages(messages))
 
-        # Apply runtime options (model, permission_mode)
-        await self._apply_runtime_options(dict(options) if options else None)
+        async for event in thread.run_streamed_events(prompt):
+            if isinstance(event, ItemUpdatedEvent):
+                item = event.item
+                if isinstance(item, AgentMessageItem):
+                    # Yield text content from agent messages
+                    if item.text:
+                        yield AgentResponseUpdate(
+                            role="assistant",
+                            contents=[Content.from_text(text=item.text, raw_representation=event)],
+                            raw_representation=event,
+                        )
+                elif isinstance(item, ReasoningItem):
+                    # Yield reasoning/thinking content
+                    if item.text:
+                        yield AgentResponseUpdate(
+                            role="assistant",
+                            contents=[Content.from_text_reasoning(text=item.text, raw_representation=event)],
+                            raw_representation=event,
+                        )
+                elif isinstance(item, ErrorItem):
+                    raise AgentException(f"Codex API error: {item.message}")
 
-        session_id: str | None = None
-        structured_output: Any = None
+            elif isinstance(event, TurnFailedEvent):
+                error = event.error
+                raise AgentException(f"Codex turn failed: {error}")
 
-        await self._client.query(prompt)
-        async for message in self._client.receive_response():
-            if isinstance(message, StreamEvent):
-                # Handle streaming events - extract text/thinking deltas
-                event = message.event
-                if event.get("type") == "content_block_delta":
-                    delta = event.get("delta", {})
-                    delta_type = delta.get("type")
-                    if delta_type == "text_delta":
-                        text = delta.get("text", "")
-                        if text:
-                            yield AgentResponseUpdate(
-                                role="assistant",
-                                contents=[Content.from_text(text=text, raw_representation=message)],
-                                raw_representation=message,
-                            )
-                    elif delta_type == "thinking_delta":
-                        thinking = delta.get("thinking", "")
-                        if thinking:
-                            yield AgentResponseUpdate(
-                                role="assistant",
-                                contents=[Content.from_text_reasoning(text=thinking, raw_representation=message)],
-                                raw_representation=message,
-                            )
-            elif isinstance(message, AssistantMessage):
-                # Handle AssistantMessage - check for API errors
-                # Note: In streaming mode, the content was already yielded via StreamEvent,
-                # so we only check for errors here, not re-emit content.
-                if message.error:
-                    # Map error types to descriptive messages
-                    error_messages = {
-                        "authentication_failed": "Authentication failed with Codex API",
-                        "billing_error": "Billing error with Codex API",
-                        "rate_limit": "Rate limit exceeded for Codex API",
-                        "invalid_request": "Invalid request to Codex API",
-                        "server_error": "Codex API server error",
-                        "unknown": "Unknown error from Codex API",
-                    }
-                    error_msg = error_messages.get(message.error, f"Codex API error: {message.error}")
-                    # Extract any error details from content blocks
-                    if message.content:
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                error_msg = f"{error_msg}: {block.text}"
-                                break
-                    raise AgentException(error_msg)
-            elif isinstance(message, ResultMessage):
-                # Check for errors in result message
-                if message.is_error:
-                    error_msg = message.result or "Unknown error from Codex API"
-                    raise AgentException(f"Codex API error: {error_msg}")
-                session_id = message.session_id
-                structured_output = message.structured_output
+            elif isinstance(event, ThreadErrorEvent):
+                raise AgentException(f"Codex thread error: {event}")
 
-        # Update session with session ID
-        if session_id:
-            session.service_session_id = session_id
-
-        # Store structured output for the finalizer
-        self._structured_output = structured_output
+            elif isinstance(event, TurnCompletedEvent):
+                # Turn completed — update session with thread ID
+                if thread.id:
+                    session.service_session_id = thread.id
+                    self._current_thread_id = thread.id
 
 
 class CodexAgent(AgentMiddlewareLayer, AgentTelemetryLayer, RawCodexAgent[OptionsT], Generic[OptionsT]):
@@ -770,11 +599,11 @@ class CodexAgent(AgentMiddlewareLayer, AgentTelemetryLayer, RawCodexAgent[Option
         self,
         instructions: str | None = None,
         *,
-        client: CodexSDKClient | None = None,
+        client: Codex | None = None,
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None = None,
         default_options: OptionsT | MutableMapping[str, Any] | None = None,
@@ -787,7 +616,7 @@ class CodexAgent(AgentMiddlewareLayer, AgentTelemetryLayer, RawCodexAgent[Option
             instructions: System prompt for the agent.
 
         Keyword Args:
-            client: Optional pre-configured CodexSDKClient instance. If not provided,
+            client: Optional pre-configured Codex instance. If not provided,
                 a new client will be created using the other parameters.
             id: Unique identifier for the agent.
             name: Name of the agent.

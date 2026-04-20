@@ -1,14 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import AgentResponseUpdate, AgentSession, Content, Message, tool
 from agent_framework._settings import load_settings
 
 from agent_framework_codex import CodexAgent, CodexAgentOptions, CodexAgentSettings
-from agent_framework_codex._agent import TOOLS_MCP_SERVER_NAME
 
 # region Test CodexAgentSettings
 
@@ -19,39 +18,31 @@ class TestCodexAgentSettings:
     def test_default_values(self) -> None:
         """Test default values are None."""
         settings = load_settings(CodexAgentSettings, env_prefix="CODEX_AGENT_")
-        assert settings["cli_path"] is None
+        assert settings["codex_path"] is None
         assert settings["model"] is None
         assert settings["cwd"] is None
-        assert settings["permission_mode"] is None
-        assert settings["max_turns"] is None
-        assert settings["max_budget_usd"] is None
+        assert settings["approval_policy"] is None
 
     def test_explicit_values(self) -> None:
         """Test explicit values override defaults."""
         settings = load_settings(
             CodexAgentSettings,
             env_prefix="CODEX_AGENT_",
-            cli_path="/usr/local/bin/codex",
+            codex_path="/usr/local/bin/codex",
             model="codex-mini-latest",
             cwd="/home/user/project",
-            permission_mode="default",
-            max_turns=10,
-            max_budget_usd=5.0,
+            approval_policy="full-auto",
         )
-        assert settings["cli_path"] == "/usr/local/bin/codex"
+        assert settings["codex_path"] == "/usr/local/bin/codex"
         assert settings["model"] == "codex-mini-latest"
         assert settings["cwd"] == "/home/user/project"
-        assert settings["permission_mode"] == "default"
-        assert settings["max_turns"] == 10
-        assert settings["max_budget_usd"] == 5.0
+        assert settings["approval_policy"] == "full-auto"
 
     def test_env_variable_loading(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test loading from environment variables."""
         monkeypatch.setenv("CODEX_AGENT_MODEL", "gpt-5.1-codex")
-        monkeypatch.setenv("CODEX_AGENT_MAX_TURNS", "20")
         settings = load_settings(CodexAgentSettings, env_prefix="CODEX_AGENT_")
         assert settings["model"] == "gpt-5.1-codex"
-        assert settings["max_turns"] == 20
 
 
 # region Test CodexAgent Initialization
@@ -90,13 +81,9 @@ class TestCodexAgentInit:
         """Test agent with default options."""
         options: CodexAgentOptions = {
             "model": "codex-mini-latest",
-            "permission_mode": "default",
-            "max_turns": 10,
         }
         agent = CodexAgent(default_options=options)
         assert agent._settings["model"] == "codex-mini-latest"  # type: ignore[reportPrivateUsage]
-        assert agent._settings["permission_mode"] == "default"  # type: ignore[reportPrivateUsage]
-        assert agent._settings["max_turns"] == 10  # type: ignore[reportPrivateUsage]
 
     def test_with_function_tool(self) -> None:
         """Test agent with function tool."""
@@ -143,7 +130,7 @@ class TestCodexAgentInit:
 
 
 class TestCodexAgentLifecycle:
-    """Tests for CodexAgent tool initialization."""
+    """Tests for CodexAgent lifecycle management."""
 
     def test_custom_tools_stored_from_constructor(self) -> None:
         """Test that custom tools from constructor are stored."""
@@ -182,129 +169,102 @@ class TestCodexAgentLifecycle:
 # region Test CodexAgent Run
 
 
+def _make_mock_thread(events: list[Any]) -> MagicMock:
+    """Create a mock Thread that yields given events via run_streamed_events."""
+
+    async def _stream_events(*args: Any, **kwargs: Any) -> Any:
+        for event in events:
+            yield event
+
+    mock_thread = MagicMock()
+    mock_thread.run_streamed_events = _stream_events
+    mock_thread.id = "thread-123"
+    return mock_thread
+
+
+def _make_mock_codex(mock_thread: MagicMock) -> MagicMock:
+    """Create a mock Codex client that returns the given thread."""
+    mock_codex = MagicMock()
+    mock_codex.start_thread.return_value = mock_thread
+    mock_codex.resume_thread.return_value = mock_thread
+    return mock_codex
+
+
 class TestCodexAgentRun:
     """Tests for CodexAgent run method."""
 
-    @staticmethod
-    async def _create_async_generator(items: list[Any]) -> Any:
-        """Helper to create async generator from list."""
-        for item in items:
-            yield item
-
-    def _create_mock_client(self, messages: list[Any]) -> MagicMock:
-        """Create a mock CodexSDKClient that yields given messages."""
-        mock_client = MagicMock()
-        mock_client.connect = AsyncMock()
-        mock_client.disconnect = AsyncMock()
-        mock_client.query = AsyncMock()
-        mock_client.set_model = AsyncMock()
-        mock_client.set_permission_mode = AsyncMock()
-        mock_client.receive_response = MagicMock(return_value=self._create_async_generator(messages))
-        return mock_client
-
     async def test_run_with_string_message(self) -> None:
-        """Test run with string message."""
-        from codex_sdk import AssistantMessage, ResultMessage, TextBlock
-        from codex_sdk.types import StreamEvent
+        """Test run with string message yields text from ItemUpdatedEvent."""
+        from codex_sdk.events import ItemUpdatedEvent, TurnCompletedEvent, Usage
+        from codex_sdk.items import AgentMessageItem
 
-        messages = [
-            StreamEvent(
-                event={
-                    "type": "content_block_delta",
-                    "delta": {"type": "text_delta", "text": "Hello!"},
-                },
-                uuid="event-1",
-                session_id="session-123",
+        events = [
+            ItemUpdatedEvent(
+                type="item.updated",
+                item=AgentMessageItem(id="msg-1", type="agent_message", text="Hello!"),
             ),
-            AssistantMessage(
-                content=[TextBlock(text="Hello!")],
-                model="codex-mini-latest",
-            ),
-            ResultMessage(
-                subtype="success",
-                duration_ms=100,
-                duration_api_ms=50,
-                is_error=False,
-                num_turns=1,
-                session_id="session-123",
+            TurnCompletedEvent(
+                type="turn.completed",
+                usage=Usage(input_tokens=10, cached_input_tokens=0, output_tokens=5),
             ),
         ]
-        mock_client = self._create_mock_client(messages)
+        mock_thread = _make_mock_thread(events)
+        mock_codex = _make_mock_codex(mock_thread)
 
-        with patch("agent_framework_codex._agent.CodexSDKClient", return_value=mock_client):
+        with patch("agent_framework_codex._agent.Codex", return_value=mock_codex):
             agent = CodexAgent()
             response = await agent.run("Hello")
             assert response.text == "Hello!"
 
-    async def test_run_captures_session_id(self) -> None:
-        """Test that session ID is captured from ResultMessage."""
-        from codex_sdk import AssistantMessage, ResultMessage, TextBlock
-        from codex_sdk.types import StreamEvent
+    async def test_run_captures_thread_id(self) -> None:
+        """Test that thread ID is captured from completed turn."""
+        from codex_sdk.events import ItemUpdatedEvent, TurnCompletedEvent, Usage
+        from codex_sdk.items import AgentMessageItem
 
-        messages = [
-            StreamEvent(
-                event={
-                    "type": "content_block_delta",
-                    "delta": {"type": "text_delta", "text": "Response"},
-                },
-                uuid="event-1",
-                session_id="test-session-id",
+        events = [
+            ItemUpdatedEvent(
+                type="item.updated",
+                item=AgentMessageItem(id="msg-1", type="agent_message", text="Response"),
             ),
-            AssistantMessage(
-                content=[TextBlock(text="Response")],
-                model="codex-mini-latest",
-            ),
-            ResultMessage(
-                subtype="success",
-                duration_ms=100,
-                duration_api_ms=50,
-                is_error=False,
-                num_turns=1,
-                session_id="test-session-id",
+            TurnCompletedEvent(
+                type="turn.completed",
+                usage=Usage(input_tokens=10, cached_input_tokens=0, output_tokens=5),
             ),
         ]
-        mock_client = self._create_mock_client(messages)
+        mock_thread = _make_mock_thread(events)
+        mock_thread.id = "test-thread-id"
+        mock_codex = _make_mock_codex(mock_thread)
 
-        with patch("agent_framework_codex._agent.CodexSDKClient", return_value=mock_client):
+        with patch("agent_framework_codex._agent.Codex", return_value=mock_codex):
             agent = CodexAgent()
             session = agent.create_session()
             await agent.run("Hello", session=session)
-            assert session.service_session_id == "test-session-id"
+            assert session.service_session_id == "test-thread-id"
 
-    async def test_run_with_session(self) -> None:
-        """Test run with existing session."""
-        from codex_sdk import AssistantMessage, ResultMessage, TextBlock
-        from codex_sdk.types import StreamEvent
+    async def test_run_with_existing_session(self) -> None:
+        """Test run with existing session resumes thread."""
+        from codex_sdk.events import ItemUpdatedEvent, TurnCompletedEvent, Usage
+        from codex_sdk.items import AgentMessageItem
 
-        messages = [
-            StreamEvent(
-                event={
-                    "type": "content_block_delta",
-                    "delta": {"type": "text_delta", "text": "Response"},
-                },
-                uuid="event-1",
-                session_id="session-123",
+        events = [
+            ItemUpdatedEvent(
+                type="item.updated",
+                item=AgentMessageItem(id="msg-1", type="agent_message", text="Response"),
             ),
-            AssistantMessage(
-                content=[TextBlock(text="Response")],
-                model="codex-mini-latest",
-            ),
-            ResultMessage(
-                subtype="success",
-                duration_ms=100,
-                duration_api_ms=50,
-                is_error=False,
-                num_turns=1,
-                session_id="session-123",
+            TurnCompletedEvent(
+                type="turn.completed",
+                usage=Usage(input_tokens=10, cached_input_tokens=0, output_tokens=5),
             ),
         ]
-        mock_client = self._create_mock_client(messages)
+        mock_thread = _make_mock_thread(events)
+        mock_codex = _make_mock_codex(mock_thread)
 
-        with patch("agent_framework_codex._agent.CodexSDKClient", return_value=mock_client):
+        with patch("agent_framework_codex._agent.Codex", return_value=mock_codex):
             agent = CodexAgent()
             session = agent.create_session()
-            session.service_session_id = "existing-session"
+            session.service_session_id = "existing-thread"
             await agent.run("Hello", session=session)
+            mock_codex.resume_thread.assert_called_once()
 
 
 # region Test CodexAgent Run Stream
@@ -313,125 +273,109 @@ class TestCodexAgentRun:
 class TestCodexAgentRunStream:
     """Tests for CodexAgent streaming run method."""
 
-    @staticmethod
-    async def _create_async_generator(items: list[Any]) -> Any:
-        """Helper to create async generator from list."""
-        for item in items:
-            yield item
-
-    def _create_mock_client(self, messages: list[Any]) -> MagicMock:
-        """Create a mock CodexSDKClient that yields given messages."""
-        mock_client = MagicMock()
-        mock_client.connect = AsyncMock()
-        mock_client.disconnect = AsyncMock()
-        mock_client.query = AsyncMock()
-        mock_client.set_model = AsyncMock()
-        mock_client.set_permission_mode = AsyncMock()
-        mock_client.receive_response = MagicMock(return_value=self._create_async_generator(messages))
-        return mock_client
-
     async def test_run_stream_yields_updates(self) -> None:
         """Test run(stream=True) yields AgentResponseUpdate objects."""
-        from codex_sdk import AssistantMessage, ResultMessage, TextBlock
-        from codex_sdk.types import StreamEvent
+        from codex_sdk.events import ItemUpdatedEvent, TurnCompletedEvent, Usage
+        from codex_sdk.items import AgentMessageItem
 
-        messages = [
-            StreamEvent(
-                event={
-                    "type": "content_block_delta",
-                    "delta": {"type": "text_delta", "text": "Streaming "},
-                },
-                uuid="event-1",
-                session_id="stream-session",
+        events = [
+            ItemUpdatedEvent(
+                type="item.updated",
+                item=AgentMessageItem(id="msg-1", type="agent_message", text="Streaming "),
             ),
-            StreamEvent(
-                event={
-                    "type": "content_block_delta",
-                    "delta": {"type": "text_delta", "text": "response"},
-                },
-                uuid="event-2",
-                session_id="stream-session",
+            ItemUpdatedEvent(
+                type="item.updated",
+                item=AgentMessageItem(id="msg-2", type="agent_message", text="response"),
             ),
-            AssistantMessage(
-                content=[TextBlock(text="Streaming response")],
-                model="codex-mini-latest",
-            ),
-            ResultMessage(
-                subtype="success",
-                duration_ms=100,
-                duration_api_ms=50,
-                is_error=False,
-                num_turns=1,
-                session_id="stream-session",
+            TurnCompletedEvent(
+                type="turn.completed",
+                usage=Usage(input_tokens=10, cached_input_tokens=0, output_tokens=5),
             ),
         ]
-        mock_client = self._create_mock_client(messages)
+        mock_thread = _make_mock_thread(events)
+        mock_codex = _make_mock_codex(mock_thread)
 
-        with patch("agent_framework_codex._agent.CodexSDKClient", return_value=mock_client):
+        with patch("agent_framework_codex._agent.Codex", return_value=mock_codex):
             agent = CodexAgent()
             updates: list[AgentResponseUpdate] = []
             async for update in agent.run("Hello", stream=True):
                 updates.append(update)
-            # StreamEvent yields text deltas (2 events)
             assert len(updates) == 2
             assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
 
-    async def test_run_stream_raises_on_assistant_message_error(self) -> None:
-        """Test run raises AgentException when AssistantMessage has an error."""
-        from agent_framework.exceptions import AgentException
-        from codex_sdk import AssistantMessage, ResultMessage, TextBlock
+    async def test_run_stream_yields_reasoning(self) -> None:
+        """Test run(stream=True) yields reasoning updates."""
+        from codex_sdk.events import ItemUpdatedEvent, TurnCompletedEvent, Usage
+        from codex_sdk.items import AgentMessageItem, ReasoningItem
 
-        messages = [
-            AssistantMessage(
-                content=[TextBlock(text="Error details from API")],
-                model="codex-mini-latest",
-                error="invalid_request",
+        events = [
+            ItemUpdatedEvent(
+                type="item.updated",
+                item=ReasoningItem(id="reason-1", type="reasoning", text="Let me think..."),
             ),
-            ResultMessage(
-                subtype="success",
-                duration_ms=100,
-                duration_api_ms=50,
-                is_error=False,
-                num_turns=1,
-                session_id="error-session",
+            ItemUpdatedEvent(
+                type="item.updated",
+                item=AgentMessageItem(id="msg-1", type="agent_message", text="Hello!"),
+            ),
+            TurnCompletedEvent(
+                type="turn.completed",
+                usage=Usage(input_tokens=10, cached_input_tokens=0, output_tokens=5),
             ),
         ]
-        mock_client = self._create_mock_client(messages)
+        mock_thread = _make_mock_thread(events)
+        mock_codex = _make_mock_codex(mock_thread)
 
-        with patch("agent_framework_codex._agent.CodexSDKClient", return_value=mock_client):
+        with patch("agent_framework_codex._agent.Codex", return_value=mock_codex):
+            agent = CodexAgent()
+            updates: list[AgentResponseUpdate] = []
+            async for update in agent.run("Hello", stream=True):
+                updates.append(update)
+            assert len(updates) == 2
+
+    async def test_run_stream_raises_on_error_item(self) -> None:
+        """Test run raises AgentException when ErrorItem is received."""
+        from agent_framework.exceptions import AgentException
+        from codex_sdk.events import ItemUpdatedEvent
+        from codex_sdk.items import ErrorItem
+
+        events = [
+            ItemUpdatedEvent(
+                type="item.updated",
+                item=ErrorItem(id="err-1", type="error", message="API rate limit exceeded"),
+            ),
+        ]
+        mock_thread = _make_mock_thread(events)
+        mock_codex = _make_mock_codex(mock_thread)
+
+        with patch("agent_framework_codex._agent.Codex", return_value=mock_codex):
             agent = CodexAgent()
             with pytest.raises(AgentException) as exc_info:
                 async for _ in agent.run("Hello", stream=True):
                     pass
-            assert "Invalid request to Codex API" in str(exc_info.value)
-            assert "Error details from API" in str(exc_info.value)
+            assert "API rate limit exceeded" in str(exc_info.value)
 
-    async def test_run_stream_raises_on_result_message_error(self) -> None:
-        """Test run raises AgentException when ResultMessage.is_error is True."""
+    async def test_run_stream_raises_on_turn_failed(self) -> None:
+        """Test run raises AgentException when TurnFailedEvent is received."""
         from agent_framework.exceptions import AgentException
-        from codex_sdk import ResultMessage
+        from codex_sdk.events import ThreadError, TurnFailedEvent
 
-        messages = [
-            ResultMessage(
-                subtype="error",
-                duration_ms=100,
-                duration_api_ms=50,
-                is_error=True,
-                num_turns=0,
-                session_id="error-session",
-                result="Model 'codex-mini-latest' not found",
+        events = [
+            TurnFailedEvent(
+                type="turn.failed",
+                error=ThreadError(message="Model not found"),
             ),
         ]
-        mock_client = self._create_mock_client(messages)
+        mock_thread = _make_mock_thread(events)
+        mock_codex = _make_mock_codex(mock_thread)
 
-        with patch("agent_framework_codex._agent.CodexSDKClient", return_value=mock_client):
+        with patch("agent_framework_codex._agent.Codex", return_value=mock_codex):
             agent = CodexAgent()
             with pytest.raises(AgentException) as exc_info:
                 async for _ in agent.run("Hello", stream=True):
                     pass
-            assert "Model 'codex-mini-latest' not found" in str(exc_info.value)
+            assert "turn failed" in str(exc_info.value).lower()
 
 
 # region Test CodexAgent Session Management
@@ -453,209 +397,51 @@ class TestCodexAgentSessionManagement:
         session = agent.create_session(session_id="existing-session-123")
         assert isinstance(session, AgentSession)
 
-    async def test_ensure_session_creates_client(self) -> None:
-        """Test _ensure_session creates client when not started."""
-        with patch("agent_framework_codex._agent.CodexSDKClient") as mock_client_class:
-            mock_client = MagicMock()
-            mock_client.connect = AsyncMock()
-            mock_client_class.return_value = mock_client
-
-            agent = CodexAgent()
-            await agent._ensure_session(None)  # type: ignore[reportPrivateUsage]
-
-            assert agent._started  # type: ignore[reportPrivateUsage]
-            mock_client.connect.assert_called_once()
-
-    async def test_ensure_session_recreates_for_different_session(self) -> None:
-        """Test _ensure_session recreates client for different session ID."""
-        with patch("agent_framework_codex._agent.CodexSDKClient") as mock_client_class:
-            mock_client1 = MagicMock()
-            mock_client1.connect = AsyncMock()
-            mock_client1.disconnect = AsyncMock()
-
-            mock_client2 = MagicMock()
-            mock_client2.connect = AsyncMock()
-
-            mock_client_class.side_effect = [mock_client1, mock_client2]
-
-            agent = CodexAgent()
-
-            # First session
-            await agent._ensure_session(None)  # type: ignore[reportPrivateUsage]
-            assert agent._started  # type: ignore[reportPrivateUsage]
-
-            # Different session should recreate client
-            await agent._ensure_session("new-session-id")  # type: ignore[reportPrivateUsage]
-            assert agent._current_session_id == "new-session-id"  # type: ignore[reportPrivateUsage]
-            mock_client1.disconnect.assert_called_once()
-
-    async def test_ensure_session_reuses_for_same_session(self) -> None:
-        """Test _ensure_session reuses client for same session ID."""
-        with patch("agent_framework_codex._agent.CodexSDKClient") as mock_client_class:
-            mock_client = MagicMock()
-            mock_client.connect = AsyncMock()
-            mock_client_class.return_value = mock_client
-
-            agent = CodexAgent()
-
-            # First call
-            await agent._ensure_session("session-123")  # type: ignore[reportPrivateUsage]
-
-            # Same session should not recreate
-            await agent._ensure_session("session-123")  # type: ignore[reportPrivateUsage]
-
-            # Only called once
-            assert mock_client_class.call_count == 1
-
-    async def test_ensure_session_recreates_when_resumed_then_fresh(self) -> None:
-        """Test _ensure_session creates a new client when switching from a resumed session to a fresh one (None).
-
-        Regression test: previously, _ensure_session only recreated the client when
-        (session_id and session_id != self._current_session_id), so a transition from
-        a named session back to None would silently reuse the old client.
-        """
-        with patch("agent_framework_codex._agent.CodexSDKClient") as mock_client_class:
-            mock_client1 = MagicMock()
-            mock_client1.connect = AsyncMock()
-            mock_client1.disconnect = AsyncMock()
-
-            mock_client2 = MagicMock()
-            mock_client2.connect = AsyncMock()
-
-            mock_client_class.side_effect = [mock_client1, mock_client2]
-
-            agent = CodexAgent()
-
-            # Start with a resumed session
-            await agent._ensure_session("resumed-session-id")  # type: ignore[reportPrivateUsage]
-            assert agent._current_session_id == "resumed-session-id"  # type: ignore[reportPrivateUsage]
-            assert mock_client_class.call_count == 1
-
-            # Switch to a fresh session (None) — must create a new client
-            await agent._ensure_session(None)  # type: ignore[reportPrivateUsage]
-            assert agent._current_session_id is None  # type: ignore[reportPrivateUsage]
-            assert mock_client_class.call_count == 2
-            mock_client1.disconnect.assert_called_once()
-
-
-# region Test CodexAgent Tool Conversion
-
-
-class TestCodexAgentToolConversion:
-    """Tests for CodexAgent tool conversion."""
-
-    def test_prepare_tools_creates_mcp_server(self) -> None:
-        """Test _prepare_tools creates MCP server for AF tools."""
-
-        @tool
-        def add(a: int, b: int) -> int:
-            """Add two numbers."""
-            return a + b
-
-        agent = CodexAgent(tools=[add])
-        server, tool_names = agent._prepare_tools(agent._custom_tools)  # type: ignore[reportPrivateUsage]
-
-        assert server is not None
-        assert len(tool_names) == 1
-        assert tool_names[0] == f"mcp__{TOOLS_MCP_SERVER_NAME}__add"
-
-    def test_function_tool_to_sdk_mcp_tool(self) -> None:
-        """Test converting FunctionTool to SDK MCP tool."""
-
-        @tool
-        def greet(name: str) -> str:
-            """Greet someone."""
-            return f"Hello, {name}!"
+    def test_get_or_create_thread_starts_new_thread(self) -> None:
+        """Test _get_or_create_thread starts new thread when no session."""
+        mock_codex = MagicMock()
+        mock_thread = MagicMock()
+        mock_codex.start_thread.return_value = mock_thread
 
         agent = CodexAgent()
-        sdk_tool = agent._function_tool_to_sdk_mcp_tool(greet)  # type: ignore[reportPrivateUsage]
+        agent._client = mock_codex  # type: ignore[reportPrivateUsage]
 
-        assert sdk_tool.name == "greet"
-        assert sdk_tool.description == "Greet someone."
-        assert sdk_tool.input_schema is not None
-        assert "properties" in sdk_tool.input_schema  # type: ignore[operator]
+        thread = agent._get_or_create_thread(None)  # type: ignore[reportPrivateUsage]
+        mock_codex.start_thread.assert_called_once()
+        assert thread is mock_thread
 
-    def test_function_tool_to_sdk_mcp_tool_preserves_defs_for_nested_types(self) -> None:
-        """Test that $defs is preserved for tools with nested Pydantic models."""
-        from pydantic import BaseModel
-
-        class Address(BaseModel):
-            street: str
-            city: str
-
-        class Person(BaseModel):
-            name: str
-            address: Address
-
-        @tool
-        def create_person(person: Person) -> str:
-            """Create a person with address."""
-            return f"{person.name} lives at {person.address.street}, {person.address.city}"
+    def test_get_or_create_thread_resumes_existing(self) -> None:
+        """Test _get_or_create_thread resumes thread when session ID provided."""
+        mock_codex = MagicMock()
+        mock_thread = MagicMock()
+        mock_codex.resume_thread.return_value = mock_thread
 
         agent = CodexAgent()
-        sdk_tool = agent._function_tool_to_sdk_mcp_tool(create_person)  # type: ignore[reportPrivateUsage]
+        agent._client = mock_codex  # type: ignore[reportPrivateUsage]
 
-        # Verify $defs is preserved in the schema
-        assert sdk_tool.input_schema is not None
-        assert "$defs" in sdk_tool.input_schema  # type: ignore[operator]
-        assert "Address" in sdk_tool.input_schema["$defs"]  # type: ignore[index]
-        # Verify the nested reference exists in properties
-        assert "person" in sdk_tool.input_schema["properties"]  # type: ignore[index]
+        thread = agent._get_or_create_thread("existing-thread-123")  # type: ignore[reportPrivateUsage]
+        # Verify resume_thread was called with the correct thread ID
+        args = mock_codex.resume_thread.call_args
+        assert args[0][0] == "existing-thread-123"
+        assert thread is mock_thread
 
-    async def test_tool_handler_success(self) -> None:
-        """Test tool handler executes successfully."""
-
-        @tool
-        def greet(name: str) -> str:
-            """Greet someone."""
-            return f"Hello, {name}!"
+    def test_get_or_create_thread_reuses_for_same_session(self) -> None:
+        """Test _get_or_create_thread reuses thread for same session."""
+        mock_codex = MagicMock()
+        mock_thread = MagicMock()
+        mock_codex.start_thread.return_value = mock_thread
 
         agent = CodexAgent()
-        sdk_tool = agent._function_tool_to_sdk_mcp_tool(greet)  # type: ignore[reportPrivateUsage]
+        agent._client = mock_codex  # type: ignore[reportPrivateUsage]
 
-        result = await sdk_tool.handler({"name": "World"})
-        assert result["content"][0]["text"] == "Hello, World!"
+        # First call
+        thread1 = agent._get_or_create_thread(None)  # type: ignore[reportPrivateUsage]
 
-    async def test_tool_handler_error(self) -> None:
-        """Test tool handler handles errors."""
+        # Same session should reuse
+        thread2 = agent._get_or_create_thread(None)  # type: ignore[reportPrivateUsage]
 
-        @tool
-        def failing_tool() -> str:
-            """A tool that fails."""
-            raise ValueError("Something went wrong")
-
-        agent = CodexAgent()
-        sdk_tool = agent._function_tool_to_sdk_mcp_tool(failing_tool)  # type: ignore[reportPrivateUsage]
-
-        result = await sdk_tool.handler({})
-        assert "Error:" in result["content"][0]["text"]
-        assert "Something went wrong" in result["content"][0]["text"]
-
-
-# region Test CodexAgent Permissions
-
-
-class TestCodexAgentPermissions:
-    """Tests for CodexAgent permission handling."""
-
-    def test_default_permission_mode(self) -> None:
-        """Test default permission mode."""
-        agent = CodexAgent()
-        assert agent._settings["permission_mode"] is None  # type: ignore[reportPrivateUsage]
-
-    def test_permission_mode_from_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test permission mode from environment settings."""
-        monkeypatch.setenv("CODEX_AGENT_PERMISSION_MODE", "acceptEdits")
-        settings = load_settings(CodexAgentSettings, env_prefix="CODEX_AGENT_")
-        assert settings["permission_mode"] == "acceptEdits"
-
-    def test_permission_mode_in_options(self) -> None:
-        """Test permission mode in options."""
-        options: CodexAgentOptions = {
-            "permission_mode": "bypassPermissions",
-        }
-        agent = CodexAgent(default_options=options)
-        assert agent._settings["permission_mode"] == "bypassPermissions"  # type: ignore[reportPrivateUsage]
+        assert thread1 is thread2
+        assert mock_codex.start_thread.call_count == 1
 
 
 # region Test CodexAgent Error Handling
@@ -664,23 +450,12 @@ class TestCodexAgentPermissions:
 class TestCodexAgentErrorHandling:
     """Tests for CodexAgent error handling."""
 
-    @staticmethod
-    async def _empty_gen() -> Any:
-        """Empty async generator."""
-        if False:
-            yield
-
     async def test_handles_empty_response(self) -> None:
-        """Test handling of empty response."""
-        mock_client = MagicMock()
-        mock_client.connect = AsyncMock()
-        mock_client.disconnect = AsyncMock()
-        mock_client.query = AsyncMock()
-        mock_client.set_model = AsyncMock()
-        mock_client.set_permission_mode = AsyncMock()
-        mock_client.receive_response = MagicMock(return_value=self._empty_gen())
+        """Test handling of empty response (no events)."""
+        mock_thread = _make_mock_thread([])
+        mock_codex = _make_mock_codex(mock_thread)
 
-        with patch("agent_framework_codex._agent.CodexSDKClient", return_value=mock_client):
+        with patch("agent_framework_codex._agent.Codex", return_value=mock_codex):
             agent = CodexAgent()
             response = await agent.run("Hello")
             assert response.messages == []
@@ -728,184 +503,41 @@ class TestFormatPrompt:
         assert "How are you?" in result
 
 
-# region Test Build Options
+# region Test Default Options Property
 
 
-class TestPrepareClientOptions:
-    """Tests for _prepare_client_options method."""
+class TestDefaultOptionsProperty:
+    """Tests for the default_options property."""
 
-    def test_prepare_client_options_with_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test preparing options with settings."""
-        monkeypatch.setenv("CODEX_AGENT_MODEL", "gpt-5.1-codex")
-        monkeypatch.setenv("CODEX_AGENT_MAX_TURNS", "15")
-
-        agent = CodexAgent()
-
-        with patch("agent_framework_codex._agent.SDKOptions") as mock_opts:
-            mock_opts.return_value = MagicMock()
-            agent._prepare_client_options()  # type: ignore[reportPrivateUsage]
-            call_kwargs = mock_opts.call_args[1]
-            assert call_kwargs.get("model") == "gpt-5.1-codex"
-            assert call_kwargs.get("max_turns") == 15
-
-    def test_prepare_client_options_with_instructions(self) -> None:
-        """Test building options with instructions parameter."""
+    def test_default_options_maps_system_prompt_to_instructions(self) -> None:
+        """Test that default_options maps system_prompt to instructions."""
         agent = CodexAgent(instructions="Be helpful")
+        opts = agent.default_options
+        assert "instructions" in opts
+        assert opts["instructions"] == "Be helpful"
+        assert "system_prompt" not in opts
 
-        with patch("agent_framework_codex._agent.SDKOptions") as mock_opts:
-            mock_opts.return_value = MagicMock()
-            agent._prepare_client_options()  # type: ignore[reportPrivateUsage]
-            call_kwargs = mock_opts.call_args[1]
-            assert call_kwargs.get("system_prompt") == "Be helpful"
-
-    def test_prepare_client_options_includes_custom_tools(self) -> None:
-        """Test that _prepare_client_options includes custom tools MCP server."""
-
-        @tool
-        def greet(name: str) -> str:
-            """Greet someone."""
-            return f"Hello, {name}!"
-
-        agent = CodexAgent(tools=[greet])
-
-        with patch("agent_framework_codex._agent.SDKOptions") as mock_opts:
-            mock_opts.return_value = MagicMock()
-            agent._prepare_client_options()  # type: ignore[reportPrivateUsage]
-            call_kwargs = mock_opts.call_args[1]
-            assert "mcp_servers" in call_kwargs
-            assert TOOLS_MCP_SERVER_NAME in call_kwargs["mcp_servers"]
-
-
-class TestApplyRuntimeOptions:
-    """Tests for _apply_runtime_options method."""
-
-    async def test_apply_runtime_model(self) -> None:
-        """Test applying runtime model option."""
-        mock_client = MagicMock()
-        mock_client.set_model = AsyncMock()
-        mock_client.set_permission_mode = AsyncMock()
-
+    def test_default_options_without_system_prompt(self) -> None:
+        """Test default_options without system_prompt."""
         agent = CodexAgent()
-        agent._client = mock_client  # type: ignore[reportPrivateUsage]
+        opts = agent.default_options
+        assert "instructions" not in opts
+        assert "system_prompt" not in opts
 
-        await agent._apply_runtime_options({"model": "gpt-5.1-codex"})  # type: ignore[reportPrivateUsage]
-        mock_client.set_model.assert_called_once_with("gpt-5.1-codex")
 
-    async def test_apply_runtime_permission_mode(self) -> None:
-        """Test applying runtime permission_mode option."""
-        mock_client = MagicMock()
-        mock_client.set_model = AsyncMock()
-        mock_client.set_permission_mode = AsyncMock()
+# region Test Approval Policy
 
+
+class TestCodexAgentApprovalPolicy:
+    """Tests for CodexAgent approval policy handling."""
+
+    def test_default_approval_policy(self) -> None:
+        """Test default approval policy is None."""
         agent = CodexAgent()
-        agent._client = mock_client  # type: ignore[reportPrivateUsage]
+        assert agent._settings["approval_policy"] is None  # type: ignore[reportPrivateUsage]
 
-        await agent._apply_runtime_options({"permission_mode": "acceptEdits"})  # type: ignore[reportPrivateUsage]
-        mock_client.set_permission_mode.assert_called_once_with("acceptEdits")
-
-    async def test_apply_runtime_options_none(self) -> None:
-        """Test applying None options does nothing."""
-        mock_client = MagicMock()
-        mock_client.set_model = AsyncMock()
-        mock_client.set_permission_mode = AsyncMock()
-
-        agent = CodexAgent()
-        agent._client = mock_client  # type: ignore[reportPrivateUsage]
-
-        await agent._apply_runtime_options(None)  # type: ignore[reportPrivateUsage]
-        mock_client.set_model.assert_not_called()
-        mock_client.set_permission_mode.assert_not_called()
-
-
-# region Test CodexAgent Structured Output
-
-
-class TestCodexAgentStructuredOutput:
-    """Tests for CodexAgent structured output propagation."""
-
-    @staticmethod
-    async def _create_async_generator(items: list[Any]) -> Any:
-        """Helper to create async generator from list."""
-        for item in items:
-            yield item
-
-    def _create_mock_client(self, messages: list[Any]) -> MagicMock:
-        """Create a mock CodexSDKClient that yields given messages."""
-        mock_client = MagicMock()
-        mock_client.connect = AsyncMock()
-        mock_client.disconnect = AsyncMock()
-        mock_client.query = AsyncMock()
-        mock_client.set_model = AsyncMock()
-        mock_client.set_permission_mode = AsyncMock()
-        mock_client.receive_response = MagicMock(return_value=self._create_async_generator(messages))
-        return mock_client
-
-    async def test_structured_output_propagated_to_response(self) -> None:
-        """Test that structured_output from ResultMessage is propagated to response.value."""
-        from codex_sdk import AssistantMessage, ResultMessage, TextBlock
-        from codex_sdk.types import StreamEvent
-
-        structured_data = {"name": "Alice", "age": 30}
-        messages = [
-            StreamEvent(
-                event={
-                    "type": "content_block_delta",
-                    "delta": {"type": "text_delta", "text": '{"name": "Alice", "age": 30}'},
-                },
-                uuid="event-1",
-                session_id="session-123",
-            ),
-            AssistantMessage(
-                content=[TextBlock(text='{"name": "Alice", "age": 30}')],
-                model="codex-mini-latest",
-            ),
-            ResultMessage(
-                subtype="success",
-                duration_ms=100,
-                duration_api_ms=50,
-                is_error=False,
-                num_turns=1,
-                session_id="session-123",
-                structured_output=structured_data,
-            ),
-        ]
-        mock_client = self._create_mock_client(messages)
-
-        with patch("agent_framework_codex._agent.CodexSDKClient", return_value=mock_client):
-            agent = CodexAgent()
-            response = await agent.run("Return structured data")
-            assert response.value == structured_data
-
-    async def test_structured_output_none_when_not_present(self) -> None:
-        """Test that response.value is None when structured_output is not present."""
-        from codex_sdk import AssistantMessage, ResultMessage, TextBlock
-        from codex_sdk.types import StreamEvent
-
-        messages = [
-            StreamEvent(
-                event={
-                    "type": "content_block_delta",
-                    "delta": {"type": "text_delta", "text": "Hello!"},
-                },
-                uuid="event-1",
-                session_id="session-123",
-            ),
-            AssistantMessage(
-                content=[TextBlock(text="Hello!")],
-                model="codex-mini-latest",
-            ),
-            ResultMessage(
-                subtype="success",
-                duration_ms=100,
-                duration_api_ms=50,
-                is_error=False,
-                num_turns=1,
-                session_id="session-123",
-            ),
-        ]
-        mock_client = self._create_mock_client(messages)
-
-        with patch("agent_framework_codex._agent.CodexSDKClient", return_value=mock_client):
-            agent = CodexAgent()
-            response = await agent.run("Hello")
-            assert response.value is None
+    def test_approval_policy_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test approval policy from environment settings."""
+        monkeypatch.setenv("CODEX_AGENT_APPROVAL_POLICY", "full-auto")
+        settings = load_settings(CodexAgentSettings, env_prefix="CODEX_AGENT_")
+        assert settings["approval_policy"] == "full-auto"
