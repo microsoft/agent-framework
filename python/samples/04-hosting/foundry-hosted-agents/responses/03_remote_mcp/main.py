@@ -32,7 +32,7 @@ def main():
 
     # Foundry Toolbox as a MCP tool
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    toolbox_name = os.environ["FOUNDRY_AGENT_TOOLBOX_NAME"]
+    toolbox_name = os.environ["TOOLBOX_NAME"]
     toolbox_endpoint = f"{project_endpoint.rstrip('/')}/toolboxes/{toolbox_name}/mcp?api-version=v1"
     http_client = httpx.AsyncClient(auth=ToolboxAuth(), headers={"Foundry-Features": "Toolboxes=V1Preview"})
     foundry_mcp_tool = MCPStreamableHTTPTool(
