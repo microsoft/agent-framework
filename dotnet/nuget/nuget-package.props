@@ -4,7 +4,7 @@
     <VersionPrefix>0.0.1</VersionPrefix>
     <RCNumber>1</RCNumber>
     <!-- Preview-only branch: all publishable packages ship as 0.0.1-preview.260417.2 regardless of IsReleaseCandidate/VersionSuffix. -->
-    <PackageVersion>$(VersionPrefix)-preview.260417.2</PackageVersion>
+    <PackageVersion>$(VersionPrefix)-preview.260420.1</PackageVersion>
     <GitTag>0.0.1</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>

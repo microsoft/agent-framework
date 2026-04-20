@@ -118,6 +118,13 @@ public static class FoundryHostingExtensions
     }
 
     /// <summary>
+    /// The ActivitySource name for the Responses hosting pipeline.
+    /// Matches the value previously exposed by <c>AgentHostTelemetry.ResponsesSourceName</c>
+    /// in <c>Azure.AI.AgentServer.Core</c>.
+    /// </summary>
+    private const string ResponsesSourceName = "Azure.AI.AgentServer.Responses";
+
+    /// <summary>
     /// Wraps <paramref name="agent"/> with <see cref="OpenTelemetryAgent"/> instrumentation
     /// so that agent invocations emit spans into the pipeline registered by
     /// <c>Azure.AI.AgentServer.Core</c>'s <c>AddAgentHostTelemetry()</c>.
@@ -131,7 +138,7 @@ public static class FoundryHostingExtensions
         }
 
         return agent.AsBuilder()
-                    .UseOpenTelemetry(sourceName: AgentHostTelemetry.ResponsesSourceName)
+                    .UseOpenTelemetry(sourceName: ResponsesSourceName)
                     .Build();
     }
 
