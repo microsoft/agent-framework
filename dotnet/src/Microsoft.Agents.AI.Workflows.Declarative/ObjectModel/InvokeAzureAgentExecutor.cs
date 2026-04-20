@@ -27,9 +27,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         public static string Resume(string id) => $"{id}_{nameof(Resume)}";
     }
 
-    public static bool RequiresInput(object? message) => message is ExternalInputRequest;
+    public static bool RequiresInput(object? message) =>
+        message is ExternalInputRequest || (message is PortableValue pv && pv.IsType(out ExternalInputRequest? _));
 
-    public static bool RequiresNothing(object? message) => message is ActionExecutorResult;
+    public static bool RequiresNothing(object? message) =>
+        message is ActionExecutorResult || (message is PortableValue pv && pv.IsType(out ActionExecutorResult? _));
 
     private AzureAgentUsage AgentUsage => Throw.IfNull(this.Model.Agent, $"{nameof(this.Model)}.{nameof(this.Model.Agent)}");
     private AzureAgentInput? AgentInput => this.Model.Input;

@@ -268,6 +268,19 @@ def executor(
             forward references. When provided, takes precedence over introspection from the
             ``WorkflowContext`` second generic parameter (W_OutT).
 
+    Warning:
+        When placing a custom ``@executor`` **between** two ``AgentExecutor`` nodes, be
+        careful about the output type.  If the custom executor receives an
+        ``AgentExecutorResponse`` but emits a plain ``str``, the downstream
+        ``AgentExecutor.from_str`` handler is invoked instead of ``from_response``.
+        This resets the conversation context because only the new string is added to
+        the cache and all prior messages from the upstream agent are lost.
+
+        To preserve the full conversation, use
+        ``AgentExecutorResponse.with_text(new_text)`` to create a new response that
+        keeps the prior history, and set ``output=AgentExecutorResponse`` on the
+        decorator.
+
     Returns:
         A FunctionExecutor instance that can be wired into a Workflow.
 

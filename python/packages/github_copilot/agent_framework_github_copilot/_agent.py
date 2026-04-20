@@ -31,7 +31,7 @@ from agent_framework.exceptions import AgentException
 try:
     from copilot import CopilotClient, CopilotSession, SubprocessConfig
     from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
-    from copilot.session import MCPServerConfig, PermissionRequestResult, SystemMessageConfig
+    from copilot.session import MCPServerConfig, PermissionRequestResult, ProviderConfig, SystemMessageConfig
     from copilot.tools import Tool as CopilotTool
     from copilot.tools import ToolInvocation, ToolResult
 except ImportError as _copilot_import_error:
@@ -118,6 +118,12 @@ class GitHubCopilotOptions(TypedDict, total=False):
     """MCP (Model Context Protocol) server configurations.
     A dictionary mapping server names to their configurations.
     Supports both local (stdio) and remote (HTTP/SSE) servers.
+    """
+
+    provider: ProviderConfig
+    """Custom API provider configuration for BYOK (Bring Your Own Key) scenarios.
+    Allows routing requests through your own OpenAI, Azure, or Anthropic endpoint
+    instead of the default GitHub Copilot backend.
     """
 
 
@@ -232,6 +238,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         log_level = opts.pop("log_level", None)
         on_permission_request: PermissionHandlerType | None = opts.pop("on_permission_request", None)
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
+        provider: ProviderConfig | None = opts.pop("provider", None)
 
         self._settings = load_settings(
             GitHubCopilotSettings,
@@ -247,6 +254,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._tools = normalize_tools(tools)
         self._permission_handler = on_permission_request
         self._mcp_servers = mcp_servers
+        self._provider = provider
         self._default_options = opts
         self._started = False
 
@@ -730,6 +738,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
         )
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
+        provider = opts.get("provider") or self._provider or None
         tools = self._prepare_tools(self._tools) if self._tools else None
 
         return await self._client.create_session(
@@ -739,6 +748,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             system_message=system_message or None,
             tools=tools or None,
             mcp_servers=mcp_servers or None,
+            provider=provider or None,
         )
 
     async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:
@@ -755,4 +765,5 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             streaming=streaming,
             tools=tools or None,
             mcp_servers=self._mcp_servers or None,
+            provider=self._provider or None,
         )
