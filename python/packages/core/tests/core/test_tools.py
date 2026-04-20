@@ -16,10 +16,24 @@ from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _parse_annotation,
     _parse_inputs,
+    _tools_to_dict,
 )
 from agent_framework.observability import OtelAttr
 
 # region FunctionTool and tool decorator tests
+
+
+def test_tools_to_dict_supports_pydantic_tool_models() -> None:
+    """Pydantic-based tool specs are serialized without logging parse warnings."""
+
+    class ProviderTool(BaseModel):
+        kind: str
+        enabled: bool = True
+        note: str | None = None
+
+    result = _tools_to_dict([ProviderTool(kind="google_search")])
+
+    assert result == [{"kind": "google_search", "enabled": True}]
 
 
 def test_tool_decorator():

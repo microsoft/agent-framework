@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **agent-framework-azure-cosmos**: [BREAKING] `CosmosCheckpointStorage` now uses restricted pickle deserialization by default, matching `FileCheckpointStorage` behavior. If your checkpoints contain application-defined types, pass them via `allowed_checkpoint_types=["my_app.models:MyState"]`. ([#5200](https://github.com/microsoft/agent-framework/issues/5200))
+
+## [devui-1.0.0b260414] - 2026-04-14
+
+### Fixed
+- **agent-framework-devui**: Fix streaming memory growth in DevUI frontend ([#5221](https://github.com/microsoft/agent-framework/pull/5221))
+
+## [1.0.1] - 2026-04-09
+
+### Added
+- **samples**: Add sample documentation for two separate Neo4j context providers for retrieval and memory ([#4010](https://github.com/microsoft/agent-framework/pull/4010))
+- **agent-framework-azure-cosmos**: Add Cosmos DB NoSQL checkpoint storage for Python workflows ([#4916](https://github.com/microsoft/agent-framework/pull/4916))
+
+### Changed
+- **docs**: Remove pre-release flag from agent-framework installation instructions ([#5082](https://github.com/microsoft/agent-framework/pull/5082))
+- **samples**: Revise agent examples in `README.md` ([#5067](https://github.com/microsoft/agent-framework/pull/5067))
+- **repo**: Update `CHANGELOG` with v1.0.0 release ([#5069](https://github.com/microsoft/agent-framework/pull/5069))
+- **agent-framework-orchestrations**: [BREAKING] Fix handoff workflow context management and improve AG-UI demo ([#5136](https://github.com/microsoft/agent-framework/pull/5136))
+- **agent-framework-core**: Restrict persisted checkpoint deserialization by default ([#4941](https://github.com/microsoft/agent-framework/pull/4941))
+- **samples**: Bump `vite` from 7.3.1 to 7.3.2 in `/python/samples/05-end-to-end/ag_ui_workflow_handoff/frontend` ([#5132](https://github.com/microsoft/agent-framework/pull/5132))
+- **python**: Bump `cryptography` from 46.0.6 to 46.0.7 ([#5176](https://github.com/microsoft/agent-framework/pull/5176))
+- **python**: Bump `mcp` from 1.26.0 to 1.27.0 ([#5117](https://github.com/microsoft/agent-framework/pull/5117))
+- **python**: Bump `mcp[ws]` from 1.26.0 to 1.27.0 ([#5119](https://github.com/microsoft/agent-framework/pull/5119))
+
+### Fixed
+- **agent-framework-core**: Raise clear handler registration error for unresolved `TypeVar` annotations ([#4944](https://github.com/microsoft/agent-framework/pull/4944))
+- **agent-framework-openai**: Fix `response_format` crash on background polling with empty text ([#5146](https://github.com/microsoft/agent-framework/pull/5146))
+- **agent-framework-foundry**: Strip tools from `FoundryAgent` request when `agent_reference` is present ([#5101](https://github.com/microsoft/agent-framework/pull/5101))
+- **agent-framework-core**: Fix test compatibility for entity key validation ([#5179](https://github.com/microsoft/agent-framework/pull/5179))
+- **agent-framework-openai**: Stop emitting duplicate reasoning content from `response.reasoning_text.done` and `response.reasoning_summary_text.done` events ([#5162](https://github.com/microsoft/agent-framework/pull/5162))
+
+
+## [1.0.0] - 2026-04-02
+
+### Added
+
+- **repo**: Add `PACKAGE_STATUS.md` to track lifecycle status of all Python packages ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+
+### Changed
+
+- **agent-framework**, **agent-framework-core**, **agent-framework-openai**, **agent-framework-foundry**: [BREAKING] Promote from `1.0.0rc6` to `1.0.0` (Production/Stable) ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **agent-framework-core**, **agent-framework-openai**, **agent-framework-foundry**: [BREAKING] Dependency floors now require released `>=1.0.0,<2` packages, breaking compatibility with older RC installs ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **agent-framework-a2a**, **agent-framework-ag-ui**, **agent-framework-anthropic**, **agent-framework-azure-ai-search**, **agent-framework-azure-cosmos**, **agent-framework-azurefunctions**, **agent-framework-bedrock**, **agent-framework-chatkit**, **agent-framework-claude**, **agent-framework-copilotstudio**, **agent-framework-declarative**, **agent-framework-devui**, **agent-framework-durabletask**, **agent-framework-foundry-local**, **agent-framework-github-copilot**, **agent-framework-lab**, **agent-framework-mem0**, **agent-framework-ollama**, **agent-framework-orchestrations**, **agent-framework-purview**, **agent-framework-redis**: Bump beta versions from `1.0.0b260330` to `1.0.0b260402` ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **docs**: Update install instructions to drop `--pre` flag for released packages ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+
+### Removed
+
+- **agent-framework-core**: [BREAKING] Remove deprecated `BaseContextProvider` and `BaseHistoryProvider` aliases ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **agent-framework-core**: [BREAKING] Remove deprecated `text` parameter from `Message` constructor ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+
+### Fixed
+
+- **agent-framework-core**, **agent-framework-openai**, **agent-framework-foundry**, **agent-framework-azurefunctions**, **agent-framework-devui**, **agent-framework-orchestrations**, **agent-framework-azure-ai-search**: Migrate message construction from `Message(text=...)` to `Message(contents=[...])` throughout codebase ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **agent-framework-devui**: Accept legacy payload formats (`text`, `message`, `content`, `input`, `data`) and convert to framework-native `Message(contents=...)` ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+- **samples**: Fix Foundry samples to use env vars consistently and update install guidance ([#5062](https://github.com/microsoft/agent-framework/pull/5062))
+
 ## [1.0.0rc6] - 2026-03-30
 
 ### Added
@@ -846,7 +903,9 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc6...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.1...HEAD
+[1.0.1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0...python-1.0.1
+[1.0.0]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc6...python-1.0.0
 [1.0.0rc6]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc5...python-1.0.0rc6
 [1.0.0rc5]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc4...python-1.0.0rc5
 [1.0.0rc4]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc3...python-1.0.0rc4

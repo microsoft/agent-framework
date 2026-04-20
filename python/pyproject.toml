@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0"
+version = "1.0.1"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.0.0",
+    "agent-framework-core[all]==1.0.1",
 ]
 
 [dependency-groups]
@@ -39,7 +39,7 @@ dev = [
     "pytest-retry==1.7.0",
     "mypy==1.20.0",
     "pyright==1.1.408",
-    "mcp[ws]==1.26.0",
+    "mcp[ws]==1.27.0",
     "opentelemetry-sdk==1.40.0",
     #tasks
     "poethepoet==0.42.1",
@@ -73,21 +73,23 @@ agent-framework-anthropic = { workspace = true }
 agent-framework-azurefunctions = { workspace = true }
 agent-framework-bedrock = { workspace = true }
 agent-framework-chatkit = { workspace = true }
+agent-framework-claude = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
 agent-framework-durabletask = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
+agent-framework-gemini = { workspace = true }
+agent-framework-github-copilot = { workspace = true }
+agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-ollama = { workspace = true }
 agent-framework-openai = { workspace = true }
+agent-framework-orchestrations = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
-agent-framework-github-copilot = { workspace = true }
-agent-framework-claude = { workspace = true }
-agent-framework-orchestrations = { workspace = true }
 litellm = { url = "https://files.pythonhosted.org/packages/57/77/0c6eca2cb049793ddf8ce9cdcd5123a35666c4962514788c4fc90edf1d3b/litellm-1.82.1-py3-none-any.whl" }
 
 [tool.ruff]

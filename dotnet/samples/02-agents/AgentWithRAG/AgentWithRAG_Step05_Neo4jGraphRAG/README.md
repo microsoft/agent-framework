@@ -15,7 +15,7 @@ The sample uses a Neo4j fulltext index for retrieval and a Cypher `RetrievalQuer
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 $env:NEO4J_URI="neo4j+s://your-instance.databases.neo4j.io"
 $env:NEO4J_USERNAME="neo4j"
 $env:NEO4J_PASSWORD="your-password"

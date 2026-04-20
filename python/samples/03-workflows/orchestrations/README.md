@@ -85,6 +85,8 @@ from agent_framework.orchestrations import (
 
 **Handoff workflow tip**: Handoff workflows maintain the full conversation history including any `Message.additional_properties` emitted by your agents. This ensures routing metadata remains intact across all agent transitions. For specialist-to-specialist handoffs, use `.add_handoff(source, targets)` to configure which agents can route to which others with a fluent, type-safe API.
 
+**Handoff `require_per_service_call_history_persistence`**: All agents in a handoff workflow **must** set `require_per_service_call_history_persistence=True`. `HandoffBuilder.build()` will raise a `ValueError` if any participant is missing this flag. This is required because handoff middleware short-circuits tool calls via `MiddlewareTermination`, and without per-service-call history persistence, local history would store tool results the service never received, causing mismatches on subsequent turns.
+
 **Sequential orchestration note**: Sequential orchestration uses a few small adapter nodes for plumbing:
 - `input-conversation` normalizes input to `list[Message]`
 - `to-conversation:<participant>` converts agent responses into the shared conversation
