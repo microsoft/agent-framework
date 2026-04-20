@@ -445,15 +445,28 @@ internal static class BuiltInFunctions
 
         if (metadata is null)
         {
-            return await CreateErrorResponseAsync(req, context, HttpStatusCode.InternalServerError,
-                $"Workflow orchestration '{instanceId}' returned no metadata.", acceptsJson);
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.NotFound,
+                $"No workflow orchestration with ID '{instanceId}' was found.", acceptsJson);
         }
 
         if (metadata.RuntimeStatus is OrchestrationRuntimeStatus.Failed)
         {
             string errorMessage = metadata.FailureDetails?.ErrorMessage ?? "Unknown error";
-            return await CreateErrorResponseAsync(req, context, HttpStatusCode.InternalServerError,
-                $"Workflow orchestration '{instanceId}' failed: {errorMessage}", acceptsJson);
+            HttpResponseData failedResponse = req.CreateResponse(HttpStatusCode.OK);
+
+            if (acceptsJson)
+            {
+                await failedResponse.WriteAsJsonAsync(
+                    new WorkflowRunResponse(instanceId, metadata.RuntimeStatus.ToString(), Result: null, Error: errorMessage),
+                    context.CancellationToken);
+            }
+            else
+            {
+                failedResponse.Headers.Add("Content-Type", "text/plain");
+                await failedResponse.WriteStringAsync(errorMessage, context.CancellationToken);
+            }
+
+            return failedResponse;
         }
 
         if (metadata.RuntimeStatus is not OrchestrationRuntimeStatus.Completed)
@@ -490,7 +503,9 @@ internal static class BuiltInFunctions
                 }
             }
 
-            await response.WriteAsJsonAsync(new WorkflowRunSuccessResponse(instanceId, metadata.RuntimeStatus.ToString(), resultElement), context.CancellationToken);
+            await response.WriteAsJsonAsync(
+                new WorkflowRunResponse(instanceId, metadata.RuntimeStatus.ToString(), resultElement),
+                context.CancellationToken);
         }
         else
         {
@@ -687,15 +702,17 @@ internal static class BuiltInFunctions
         [property: JsonPropertyName("response")] JsonElement Response);
 
     /// <summary>
-    /// Represents a successful workflow run response when waiting for completion.
+    /// Represents a workflow run response when waiting for completion.
     /// </summary>
     /// <param name="RunId">The orchestration run ID.</param>
-    /// <param name="Status">The orchestration runtime status.</param>
+    /// <param name="WorkflowStatus">The orchestration runtime status (e.g., "Completed", "Failed").</param>
     /// <param name="Result">The workflow result as a JSON element so POCOs serialize as nested objects rather than escaped strings.</param>
-    private sealed record WorkflowRunSuccessResponse(
+    /// <param name="Error">An optional error message when the workflow has failed.</param>
+    private sealed record WorkflowRunResponse(
         [property: JsonPropertyName("runId")] string RunId,
-        [property: JsonPropertyName("status")] string Status,
-        [property: JsonPropertyName("result")] JsonElement? Result);
+        [property: JsonPropertyName("workflowStatus")] string WorkflowStatus,
+        [property: JsonPropertyName("result")] JsonElement? Result,
+        [property: JsonPropertyName("error"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error = null);
 
     /// <summary>
     /// A service provider that combines the original service provider with an additional DurableTaskClient instance.

@@ -107,7 +107,7 @@ curl -X POST http://localhost:7071/api/workflows/CancelOrder/run \
 ```json
 {
     "runId": "abc123def456",
-    "status": "Completed",
+    "workflowStatus": "Completed",
     "result": "Cancellation email sent for order 12345 to jerry@example.com."
 }
 ```
