@@ -111,10 +111,13 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                this._logger.LogError(
-                    ex,
-                    "Failed to connect to toolbox '{ToolboxName}'. Tools from this toolbox will not be available.",
-                    toolboxName);
+                if (this._logger.IsEnabled(LogLevel.Error))
+                {
+                    this._logger.LogError(
+                        ex,
+                        "Failed to connect to toolbox '{ToolboxName}'. Tools from this toolbox will not be available.",
+                        toolboxName);
+                }
             }
         }
 
