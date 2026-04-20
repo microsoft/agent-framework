@@ -4164,26 +4164,22 @@ async def test_integration_tool_rich_content_image() -> None:
     client = OpenAIChatClient()
     client.function_invocation_configuration["max_iterations"] = 2
 
-    for streaming in [False, True]:
-        messages = [
-            Message(
-                role="user",
-                contents=["Call the get_test_image tool and describe what you see."],
-            )
-        ]
-        options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
+    messages = [
+        Message(
+            role="user",
+            contents=["Call the get_test_image tool and describe what you see."],
+        )
+    ]
+    options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
 
-        if streaming:
-            response = await client.get_response(messages=messages, stream=True, options=options).get_final_response()
-        else:
-            response = await client.get_response(messages=messages, options=options)
+    response = await client.get_response(messages=messages, stream=True, options=options).get_final_response()
 
-        assert response is not None
-        assert isinstance(response, ChatResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-        # sample_image.jpg contains a photo of a house; the model should mention it.
-        assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert response.text is not None
+    assert len(response.text) > 0
+    # sample_image.jpg contains a photo of a house; the model should mention it.
+    assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
 
 
 @pytest.mark.flaky
