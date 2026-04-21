@@ -6,7 +6,8 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from typing import cast
 
 from agent_framework import (
     ChatOptions,
@@ -82,8 +83,6 @@ from azure.ai.agentserver.responses.streaming._builders import (
     TextContentBuilder,
 )
 from typing_extensions import Any
-from typing import cast
-from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
