@@ -3,7 +3,7 @@
     <!-- Central version prefix - applies to all nuget packages. -->
     <VersionPrefix>1.2.0</VersionPrefix>
     <RCNumber>1</RCNumber>
-    <DateSuffix>260420</DateSuffix>
+    <DateSuffix>260421</DateSuffix>
     <PackageVersion Condition="'$(IsReleaseCandidate)' == 'true'">$(VersionPrefix)-rc$(RCNumber)</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).$(DateSuffix).1</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.$(DateSuffix).1</PackageVersion>
