@@ -1024,7 +1024,7 @@ def test_parse_chunk_delegates_non_oauth_events_to_super() -> None:
         return_value=MagicMock(),
     ) as mock_super:
         client._parse_chunk_from_openai(mock_event, {}, {})
-        mock_super.assert_called_once_with(mock_event, {}, {})
+        mock_super.assert_called_once_with(mock_event, {}, {}, None)
 
 
 def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:

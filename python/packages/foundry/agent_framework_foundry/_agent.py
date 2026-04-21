@@ -318,12 +318,13 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         event: Any,
         options: dict[str, Any],
         function_call_ids: dict[int, tuple[str, str]],
+        seen_reasoning_delta_item_ids: set[str] | None = None,
     ) -> ChatResponseUpdate:
         """Parse streaming event, intercepting oauth_consent_request items."""
         update = try_parse_oauth_consent_event(event, self.model)
         if update is not None:
             return update
-        return super()._parse_chunk_from_openai(event, options, function_call_ids)
+        return super()._parse_chunk_from_openai(event, options, function_call_ids, seen_reasoning_delta_item_ids)
 
     @override
     def _prepare_tools_for_openai(
