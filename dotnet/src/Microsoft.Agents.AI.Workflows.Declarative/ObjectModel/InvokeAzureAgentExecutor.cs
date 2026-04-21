@@ -94,11 +94,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         {
             try
             {
-                JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
+                using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
                 Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
                 await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
             }
-            catch
+            catch (JsonException)
             {
                 // Not valid json, skip assignment.
             }
