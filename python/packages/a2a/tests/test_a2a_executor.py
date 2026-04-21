@@ -3,7 +3,7 @@ from asyncio import CancelledError
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from a2a.types import Task, TaskState
+from a2a.types import Task, TaskState, TextPart
 from agent_framework import (
     AgentResponseUpdate,
     Content,
@@ -362,7 +362,8 @@ class TestA2AExecutorExecute:
         mock_request_context.context_id = "ctx-123"
         mock_request_context.message = MagicMock()
 
-        executor._agent.run = AsyncMock(side_effect=ValueError("Test error"))
+        error_message = "Test error"
+        executor._agent.run = AsyncMock(side_effect=ValueError(error_message))
         executor._agent.create_session = MagicMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
@@ -370,18 +371,25 @@ class TestA2AExecutorExecute:
             mock_updater.submit = AsyncMock()
             mock_updater.start_work = AsyncMock()
             mock_updater.update_status = AsyncMock()
-            mock_updater.new_agent_message = MagicMock(return_value="error_message")
+            mock_updater.new_agent_message = MagicMock(return_value="error_message_obj")
             mock_updater_class.return_value = mock_updater
 
             # Act
             await executor.execute(mock_request_context, mock_event_queue)
 
             # Assert
+            mock_updater.new_agent_message.assert_called_once()
+            args, _ = mock_updater.new_agent_message.call_args
+            parts = args[0]
+            assert len(parts) == 1
+            assert isinstance(parts[0].root, TextPart)
+            assert parts[0].root.text == error_message
+
             call_args_list = mock_updater.update_status.call_args_list
             assert any(
                 call[1].get("state") == TaskState.failed
                 and call[1].get("final") is True
-                and call[1].get("message") == "error_message"
+                and call[1].get("message") == "error_message_obj"
                 for call in call_args_list
             )
 

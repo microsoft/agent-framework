@@ -168,7 +168,7 @@ class A2AExecutor(AgentExecutor):
             await updater.update_status(
                 state=TaskState.failed,
                 final=True,
-                message=updater.new_agent_message([Part(root=TextPart(text=str(e.args)))]),
+                message=updater.new_agent_message([Part(root=TextPart(text=str(e)))]),
             )
 
     async def _run_stream(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
