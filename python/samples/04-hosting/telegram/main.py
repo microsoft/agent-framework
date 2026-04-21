@@ -11,8 +11,8 @@ import orjson
 import tiktoken
 from agent_framework import (
     Agent,
-    SavedItemsContextProvider,
-    SavedItemsFileStore,
+    MemoryContextProvider,
+    MemoryFileStore,
     SelectiveToolCallCompactionStrategy,
     SummarizationStrategy,
     TodoFileStore,
@@ -29,7 +29,7 @@ from handlers import (
     handle_cancel,
     handle_direct_message,
     handle_error,
-    handle_list_notes,
+    handle_list_memories,
     handle_list_reminders,
     handle_list_sessions,
     handle_list_todos,
@@ -47,7 +47,7 @@ from helpers import (
     STORAGE_KIND_TODOS,
     configure_logging,
 )
-from providers import TelegramFileHistoryProvider, TelegramReminderContextProvider
+from providers import TelegramReminderContextProvider, _sanitize_file_history_message
 
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
@@ -58,10 +58,9 @@ direct 1:1 conversations.
 This sample uses the following main components:
 - `python-telegram-bot` to poll Telegram for private chat messages.
 - `FoundryChatClient` to back the Agent Framework agent with an Microsoft Foundry model.
-- `FileHistoryProvider` to persist each local session as JSON Lines under `sessions/`.
+- `MemoryContextProvider` to maintain `MEMORY.md`, topic files, and transcript history together under `sessions/`.
 - Foundry's built-in web search tool for current information.
-- Agent Framework's built-in `TodoListContextProvider` and `SavedItemsContextProvider`
-  with file-backed stores rooted under `sessions/`.
+- Agent Framework's built-in `TodoListContextProvider` plus the new memory harness.
 - Local reminder tools backed by `python-telegram-bot`'s `JobQueue`.
 - Agent Framework streaming (`agent.run(..., stream=True)`) to progressively update a
   Telegram reply while the model is still generating text.
@@ -110,7 +109,7 @@ todo_store = TodoFileStore(
     owner_prefix="user_",
     owner_state_key="telegram_user_id",
 )
-saved_items_store = SavedItemsFileStore(
+memory_store = MemoryFileStore(
     SESSION_STORAGE_DIRECTORY,
     kind=STORAGE_KIND_MEMORIES,
     owner_prefix="user_",
@@ -124,7 +123,6 @@ async def main() -> None:
     """Run the Telegram bot sample."""
     SESSION_STORAGE_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
-    # Enable azure monitor client for the FoundryChatClient
     client = FoundryChatClient(credential=AzureCliCredential())
     await client.configure_azure_monitor()
     compaction_strategy = TokenBudgetComposedStrategy(
@@ -151,21 +149,23 @@ async def main() -> None:
         ),
         tokenizer=tokenizer,
         compaction_strategy=compaction_strategy,
-        require_per_service_call_history_persistence=True,
         tools=[
             FoundryChatClient.get_web_search_tool(search_context_size="medium"),
             FoundryChatClient.get_code_interpreter_tool(),
             get_utc_time,
         ],
         context_providers=[
-            TelegramFileHistoryProvider(
-                SESSION_STORAGE_DIRECTORY,
-                dumps=orjson.dumps,
-                loads=orjson.loads,
+            MemoryContextProvider(
+                recent_turns=4,
+                load_tool_turns=False,
+                store=memory_store,
+                history_message_filter=_sanitize_file_history_message,
+                history_dumps=orjson.dumps,
+                history_loads=orjson.loads,
+                consolidation_client=FoundryChatClient(credential=AzureCliCredential(), model="gpt-4-mini"),
             ),
             TelegramReminderContextProvider(),
             TodoListContextProvider(store=todo_store),
-            SavedItemsContextProvider(store=saved_items_store, dumps=orjson.dumps),
         ],
     )
 
@@ -175,14 +175,14 @@ async def main() -> None:
     application.bot_data["chat_states"] = {}
     application.bot_data["storage_directory"] = SESSION_STORAGE_DIRECTORY
     application.bot_data["todo_store"] = todo_store
-    application.bot_data["saved_items_store"] = saved_items_store
+    application.bot_data["memory_store"] = memory_store
 
     # 3. Register Telegram commands, callbacks, and direct-message handling.
     application.add_handler(CommandHandler("start", handle_start))
     application.add_handler(CommandHandler("new", handle_new_session))
     application.add_handler(CommandHandler("sessions", handle_list_sessions))
     application.add_handler(CommandHandler("todo", handle_list_todos))
-    application.add_handler(CommandHandler("notes", handle_list_notes))
+    application.add_handler(CommandHandler("memories", handle_list_memories))
     application.add_handler(CommandHandler("reminders", handle_list_reminders))
     application.add_handler(CommandHandler("resume", handle_resume_session))
     application.add_handler(CommandHandler("cancel", handle_cancel))

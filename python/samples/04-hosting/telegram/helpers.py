@@ -36,7 +36,7 @@ BOT_COMMANDS = [
     BotCommand("new", "Start a new local session"),
     BotCommand("sessions", "List local sessions"),
     BotCommand("todo", "List todos for the active session"),
-    BotCommand("notes", "List notes for the active session"),
+    BotCommand("memories", "List memory topics for the active session"),
     BotCommand("reminders", "List reminders for the active session"),
     BotCommand("resume", "Resume the latest pending or previous session"),
     BotCommand("cancel", "Cancel the active response"),
@@ -120,6 +120,7 @@ STORAGE_KIND_HISTORY = "history"
 STORAGE_KIND_MEMORIES = "memories"
 STORAGE_KIND_SESSION = "session"
 STORAGE_KIND_TODOS = "todos"
+STORAGE_MEMORY_TRANSCRIPTS_DIRECTORY = "transcripts"
 
 
 def configure_logging() -> None:
@@ -351,22 +352,18 @@ def _load_persisted_sessions(
             session,
         ))
 
-    user_history_directory = _get_user_kind_directory(
+    user_memory_directory = _get_user_kind_directory(
         storage_directory=storage_directory,
         telegram_user_id=telegram_user_id,
-        kind=STORAGE_KIND_HISTORY,
+        kind=STORAGE_KIND_MEMORIES,
     )
-    for session_directory in user_history_directory.iterdir():
-        if not session_directory.is_dir():
+    transcript_directory = user_memory_directory / STORAGE_MEMORY_TRANSCRIPTS_DIRECTORY
+    transcript_directory.mkdir(parents=True, exist_ok=True)
+    for history_file_path in sorted(transcript_directory.glob(f"*{FILE_HISTORY_EXTENSION}")):
+        if not history_file_path.is_file():
             continue
-        session_id = session_directory.name
+        session_id = history_file_path.stem
         if any(existing_session.session_id == session_id for _, existing_session in persisted_sessions):
-            continue
-        history_file_path = next(
-            (path for path in sorted(session_directory.glob(f"*{FILE_HISTORY_EXTENSION}")) if path.is_file()),
-            None,
-        )
-        if history_file_path is None:
             continue
         session = AgentSession(session_id=session_id)
         session.state["telegram_chat_id"] = chat_id

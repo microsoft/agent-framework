@@ -9,11 +9,11 @@ from contextvars import Token
 from pathlib import Path
 
 from agent_framework import (
-    DEFAULT_SAVED_ITEMS_SOURCE_ID,
+    DEFAULT_MEMORY_SOURCE_ID,
     DEFAULT_TODO_SOURCE_ID,
     Agent,
     AgentResponse,
-    SavedItemsFileStore,
+    MemoryFileStore,
     TodoFileStore,
 )
 from agent_framework import Message as AgentMessage
@@ -431,12 +431,12 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     await update.effective_message.reply_text(
         "Hi! I am your personal bot, powered by the Agent Framework.\n\n"
-        "Commands: /new, /sessions, /todo, /notes, /reminders, /resume, /cancel, /reasoning, /tokens.\n"
+        "Commands: /new, /sessions, /todo, /memories, /reminders, /resume, /cancel, /reasoning, /tokens.\n"
         "Ask me normal questions, current-events questions that may need web search, "
         "time questions that may need my UTC time tool, reminder create/read/update/delete requests for either the user or the agent, "
-        "or ask me to save, update, list, or delete notes and memories with user or session scope. "
+        "or ask me to save, inspect, or clean up durable memory topics. "
         "For longer tasks, I can also manage a session todo list while I work. "
-        "Cross-session note access uses approval buttons.",
+        "Raw transcript searches use approval buttons.",
         parse_mode=TELEGRAM_PARSE_MODE,
     )
 
@@ -481,14 +481,14 @@ async def handle_list_sessions(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.effective_message.reply_text(_format_sessions_list(chat_state))
 
 
-async def handle_list_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """List saved notes for the active local session."""
+async def handle_list_memories(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List durable memory topics for the active local session owner."""
     if update.effective_chat is None or update.effective_message is None:
         return
 
     chat_state = _get_chat_state(context.application, update.effective_chat.id)
     if update.effective_user is None:
-        await update.effective_message.reply_text("I could not determine which Telegram user owns these saved notes.")
+        await update.effective_message.reply_text("I could not determine which Telegram user owns these memories.")
         return
 
     chat_state.last_known_user = _build_user_profile(update.effective_user)
@@ -504,23 +504,17 @@ async def handle_list_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     chat_state.active_session_label = entry.label
-    saved_items_store: SavedItemsFileStore = context.application.bot_data["saved_items_store"]
-    saved_items_store.prune_expired_items(entry.session, source_id=DEFAULT_SAVED_ITEMS_SOURCE_ID)
-    note_records = saved_items_store.list_items(
-        entry.session,
-        source_id=DEFAULT_SAVED_ITEMS_SOURCE_ID,
-        scope="session",
-        session_id=entry.session.session_id,
-        item_type="note",
-    )
-    if not note_records:
-        await update.effective_message.reply_text(f"No saved notes for {entry.label}.")
+    memory_store: MemoryFileStore = context.application.bot_data["memory_store"]
+    topic_records = memory_store.list_topics(entry.session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    if not topic_records:
+        await update.effective_message.reply_text(f"No memory topics yet for {entry.label}.")
         return
 
-    lines = [f"*Notes for {entry.label}*"]
-    for note_record in note_records:
+    lines = [f"*Memory topics for {entry.label}*"]
+    for topic_record in topic_records:
         lines.append(
-            f"- `{_escape_telegram_markdown(note_record.topic)}` - {_escape_telegram_markdown(note_record.date)}"
+            f"- `{_escape_telegram_markdown(topic_record.topic)}` - "
+            f"{_escape_telegram_markdown(topic_record.updated_at)}"
         )
     await update.effective_message.reply_text(_format_telegram_text("\n".join(lines)), parse_mode=TELEGRAM_PARSE_MODE)
 

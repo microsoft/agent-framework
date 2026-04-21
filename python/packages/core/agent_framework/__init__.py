@@ -79,22 +79,19 @@ from ._evaluation import (
     tool_calls_present,
 )
 from ._feature_stage import ExperimentalFeature, ReleaseCandidateFeature
+from ._harness._memory import (
+    DEFAULT_MEMORY_SOURCE_ID,
+    MemoryContextProvider,
+    MemoryFileStore,
+    MemoryIndexEntry,
+    MemoryStore,
+    MemoryTopicRecord,
+)
 from ._harness._mode import (
     DEFAULT_MODE_SOURCE_ID,
     SessionModeContextProvider,
     get_session_mode,
     set_session_mode,
-)
-from ._harness._saved_items import (
-    DEFAULT_SAVED_ITEMS_SOURCE_ID,
-    SavedItemRecord,
-    SavedItemsContextProvider,
-    SavedItemScope,
-    SavedItemsFileStore,
-    SavedItemsSessionStore,
-    SavedItemsStore,
-    SavedItemType,
-    SavedTopicLogEntry,
 )
 from ._harness._todo import (
     DEFAULT_TODO_SOURCE_ID,
@@ -276,8 +273,8 @@ __all__ = [
     "APP_INFO",
     "COMPACTION_STATE_KEY",
     "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_MEMORY_SOURCE_ID",
     "DEFAULT_MODE_SOURCE_ID",
-    "DEFAULT_SAVED_ITEMS_SOURCE_ID",
     "DEFAULT_TODO_SOURCE_ID",
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
@@ -369,6 +366,11 @@ __all__ = [
     "MCPStdioTool",
     "MCPStreamableHTTPTool",
     "MCPWebsocketTool",
+    "MemoryContextProvider",
+    "MemoryFileStore",
+    "MemoryIndexEntry",
+    "MemoryStore",
+    "MemoryTopicRecord",
     "Message",
     "MiddlewareException",
     "MiddlewareTermination",
@@ -383,14 +385,6 @@ __all__ = [
     "RoleLiteral",
     "Runner",
     "RunnerContext",
-    "SavedItemRecord",
-    "SavedItemScope",
-    "SavedItemType",
-    "SavedItemsContextProvider",
-    "SavedItemsFileStore",
-    "SavedItemsSessionStore",
-    "SavedItemsStore",
-    "SavedTopicLogEntry",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
     "SessionContext",

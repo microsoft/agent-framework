@@ -4,13 +4,13 @@ This folder contains Telegram integration samples for Microsoft Agent Framework.
 
 ## Sample Catalog
 
-- **[`main.py`](./main.py)**: Connect a Telegram bot to a single Agent Framework agent for direct 1:1 conversations using `python-telegram-bot`, `FoundryChatClient`, and long polling. The sample adds Foundry web search, code execution, a UTC time tool, the built-in `TodoListContextProvider`, a reminder context provider, the built-in `SavedItemsContextProvider` for notes and memories, JobQueue-backed reminder CRUD, command registration, and local per-user storage under `sessions/user_<telegram_user_id>/...`, plus token-aware composed compaction via `tiktoken`, older tool-call compaction, summary generation, and inline-button approvals for cross-session session-note access.
+- **[`main.py`](./main.py)**: Connect a Telegram bot to a single Agent Framework agent for direct 1:1 conversations using `python-telegram-bot`, `FoundryChatClient`, and long polling. The sample adds Foundry web search, code execution, a UTC time tool, the built-in `TodoListContextProvider`, a reminder context provider, the built-in `MemoryContextProvider` with literal `MEMORY.md` plus topic files and transcript history, JobQueue-backed reminder CRUD, command registration, and local per-user storage under `sessions/user_<telegram_user_id>/...`, plus token-aware composed compaction via `tiktoken`, older tool-call compaction, summary generation, and a 4-turn short-term transcript window that skips tool-call groups.
 
 ## Sample layout
 
 - **[`main.py`](./main.py)** - sample entrypoint, agent wiring, tokenizer setup, and Telegram application startup
-- **[`providers.py`](./providers.py)** - sample-specific `TelegramFileHistoryProvider` and `TelegramReminderContextProvider`
-- **[`handlers.py`](./handlers.py)** - Telegram commands, approval callbacks, streaming reply flow, and `/todo` / `/notes` / `/reminders` command handlers
+- **[`providers.py`](./providers.py)** - sample-specific reminder provider plus Telegram history sanitization helpers
+- **[`handlers.py`](./handlers.py)** - Telegram commands, approval callbacks, streaming reply flow, and `/todo` / `/memories` / `/reminders` command handlers
 - **[`helpers.py`](./helpers.py)** - shared Telegram state, formatting, session persistence, and storage-path helpers
 
 ## Why this sample starts with long polling
@@ -40,7 +40,7 @@ For production deployments, Telegram webhooks are usually the better fit. This s
     export FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
     export FOUNDRY_MODEL="gpt-5"
     export TELEGRAM_SAMPLE_LOG_LEVEL="INFO"
-    ```
+   ```
 
    `TELEGRAM_SAMPLE_LOG_LEVEL` is optional. The sample defaults to `INFO` and keeps noisy HTTP and Telegram library logs at `WARNING`.
 
@@ -75,19 +75,18 @@ The sample uses Agent Framework's built-in `TodoListContextProvider` with the fi
 - the tools are `add_todos`, `complete_todos`, `remove_todos`, `get_remaining_todos`, and `get_all_todos`
 - the todo list is session-scoped, so each Telegram session can track its own work plan independently
 
-## Built-in saved items for notes and memories
+## Built-in memory provider
 
-The sample uses Agent Framework's built-in `SavedItemsContextProvider` with the file-backed `SavedItemsFileStore`, stored under the shared `sessions/` folder next to `main.py`.
+The sample uses Agent Framework's built-in `MemoryContextProvider` with the file-backed `MemoryFileStore`, stored under the shared `sessions/` folder next to `main.py`.
 
-- notes and memories share one data model with fields such as `item_id`, `item_type`, `scope`, `topic`, `text`, `date`, `session_id`, `owner_id`, and `ttl_seconds`
-- `item_type="note"` is for note-like information, while `item_type="memory"` is for durable remembered facts or preferences
-- `scope="session"` keeps an item local to the current session, while `scope="user"` keeps it available across sessions for that Telegram user
-- the shared tools are `add_saved_item`, `list_saved_items`, `read_saved_item`, `update_saved_item`, `set_saved_item_ttl`, `delete_saved_item`, and `list_saved_item_topics`
-- `list_saved_items_in_session` and `read_saved_item_in_session` are approval-gated for cross-session access to session-scoped items
-- the provider prunes expired saved items before each run based on the creation timestamp and TTL
-- omitting `ttl_seconds` makes an item effectively infinite, which is useful for long-lived facts such as a user's name
-- per-session topic logs are kept in the same user/session tree so the agent can still see which topics have existed before, even after finite saved items expire
-- saved items are stored under `sessions/user_<telegram_user_id>/memories/<session_id>/`
+- the provider keeps a literal `MEMORY.md` index that is always injected into context
+- durable topic files live under `sessions/user_<telegram_user_id>/memories/topics/*.md`
+- raw transcript history lives under `sessions/user_<telegram_user_id>/memories/transcripts/*.jsonl`
+- the sample also injects the last 4 transcript turns for short-term continuity alongside the durable memory layer, while skipping grouped tool-call turns
+- the provider owns transcript persistence directly and strips replay-only assistant `hosted_file` annotations before writing JSONL
+- the shared tools are `list_memory_topics`, `read_memory_topic`, `write_memory`, `delete_memory_topic`, `search_memory_transcripts`, and `consolidate_memories`
+- after each completed turn, the provider extracts durable memory candidates from the latest transcript delta and writes them into topic files
+- the provider also consolidates topic files and rewrites `MEMORY.md` when its configured thresholds are met
 
 ## Telegram commands
 
@@ -99,7 +98,7 @@ The sample registers these commands with Telegram on startup so they show up in 
 | `/new` | Start a fresh local Agent Framework session for the current Telegram chat |
 | `/sessions` | List the local sessions currently tracked for this Telegram chat |
 | `/todo` | List todo items for the active session |
-| `/notes` | List saved notes for the active session |
+| `/memories` | List memory topics for the active session owner |
 | `/reminders` | List pending reminders for the active session |
 | `/resume` | Switch back to the latest pending or previous local session |
 | `/cancel` | Cancel the active in-progress response and clear its placeholder message |
@@ -111,12 +110,12 @@ The sample registers these commands with Telegram on startup so they show up in 
 1. Long-polling Telegram updates with `python-telegram-bot`
 2. Registering Telegram commands and surfacing them in the bot command menu
 3. Tracking multiple local Agent Framework sessions per Telegram chat
-4. Listing current-session todos, notes, and reminders directly from Telegram commands
-5. Persisting Telegram sandboxes locally with `FileHistoryProvider`, sortable UUIDv7 session ids, on-disk `session.json` snapshots, and `store=False`
+4. Listing current-session todos, memory topics, and reminders directly from Telegram commands
+5. Persisting Telegram sandboxes locally with sortable UUIDv7 session ids, on-disk `session.json` snapshots, transcript JSONL, and `store=False`
 6. Backing the bot with `FoundryChatClient`
-7. Adding tools to the agent, including Foundry web search, session todo management, reminder CRUD, and unified saved-item CRUD for notes and memories
-8. Injecting built-in todo, reminder, and saved-item behavior through `ContextProvider` implementations
-9. Pausing on approval-required cross-session session-note access and resuming it with Telegram inline buttons
+7. Adding tools to the agent, including Foundry web search, session todo management, reminder CRUD, and topic-memory CRUD plus transcript search
+8. Injecting built-in todo, reminder, and memory behavior through `ContextProvider` implementations
+9. Combining durable memory topics with the last 4 transcript turns for short-term continuity while skipping grouped tool-call turns
 10. Using a `tiktoken` tokenizer with a token-budget `TokenBudgetComposedStrategy` that compacts older tool-call groups and summarizes older chat history
 11. Streaming agent output into Telegram by editing a placeholder reply message
 12. Cancelling an in-progress `agent.run(...)` from Telegram and clearing the in-flight placeholder message
@@ -126,8 +125,8 @@ The sample registers these commands with Telegram on startup so they show up in 
 ## Notes and limitations
 
 - This sample is intentionally limited to **direct 1:1 chat**. It does not target Telegram groups or Telegram Channels.
-- The sample rebuilds its Telegram chat-to-session registry from local `AgentSession` snapshots in `sessions/user_<telegram_user_id>/session/` plus file history in `sessions/user_<telegram_user_id>/history/`. After restart, the newest persisted sandbox for that chat becomes active automatically.
-- The agent is configured with `store=False`, so conversation history is replayed from the local `FileHistoryProvider` instead of the chat service.
+- The sample rebuilds its Telegram chat-to-session registry from local `AgentSession` snapshots in `sessions/user_<telegram_user_id>/session/` plus transcript history in `sessions/user_<telegram_user_id>/memories/transcripts/`. After restart, the newest persisted sandbox for that chat becomes active automatically.
+- The agent is configured with `store=False`, so conversation history is replayed from the local memory-owned transcript archive instead of the chat service.
 - The agent uses a `tiktoken`-backed `TokenBudgetComposedStrategy` for compaction, with `SelectiveToolCallCompactionStrategy` plus `SummarizationStrategy`, instead of a `CompactionProvider`. The current sample uses a high budget so compaction only kicks in after the chat grows substantially.
 - The sample strips replay-only assistant `hosted_file` annotations before saving local file history so later turns do not resend them as invalid assistant `input_file` items to the Foundry/OpenAI Responses API.
 - Telegram message edits are buffered to avoid editing on every tiny streamed chunk.
@@ -139,9 +138,9 @@ The sample registers these commands with Telegram on startup so they show up in 
 - Reminder jobs are not durable in this sample. Restarting the process clears scheduled reminders.
 - Session todo state is stored in `samples/04-hosting/telegram/sessions/user_<telegram_user_id>/todos/<session_id>/todos.json`.
 - Agent-targeted reminders depend on the original local session still being available when the reminder fires.
-- Current-session notes are available without approval; cross-session session-note access uses approval-gated tools and inline buttons.
-- Saved notes and memories are local `.json` files under `samples/04-hosting/telegram/sessions/user_<telegram_user_id>/memories/<session_id>/`.
-- File-backed session history is stored under `samples/04-hosting/telegram/sessions/user_<telegram_user_id>/history/<session_id>/`.
+- Memory topics are stored as markdown files under `samples/04-hosting/telegram/sessions/user_<telegram_user_id>/memories/topics/`.
+- File-backed transcript history is stored under `samples/04-hosting/telegram/sessions/user_<telegram_user_id>/memories/transcripts/`.
+- Raw transcript search remains available when the agent needs exact historical detail from the archive.
 - The generated `samples/04-hosting/telegram/sessions/` tree is runtime data and is ignored by the sample-local `.gitignore`.
 - Telegram-sourced profile metadata is limited to what Telegram includes on the update; it does not provide sensitive facts such as date of birth.
 - `/resume` first prefers a session that is waiting on approval, and otherwise walks backward through older persisted sandboxes so you can switch away from the newest active one after restart.
@@ -153,7 +152,7 @@ The sample registers these commands with Telegram on startup so they show up in 
 2. Send `/start` to the bot.
 3. Send `/new` to start a fresh session, or send a normal text message and let the sample create one automatically.
 4. Send `/sessions` to inspect the local sessions tracked for your chat.
-5. Send `/todo`, `/notes`, or `/reminders` to inspect the active session quickly.
+5. Send `/todo`, `/memories`, or `/reminders` to inspect the active session quickly.
 6. Send `/reasoning` whenever you want to turn the transient reasoning preview on or off for your chat.
 7. Send `/tokens` whenever you want to turn the final input/output token footer on or back off.
 8. Ask a question and watch the bot's placeholder reply update as the agent stream advances.
@@ -161,8 +160,8 @@ The sample registers these commands with Telegram on startup so they show up in 
 10. Ask the bot to set a reminder such as `remind me in 10 minutes to check the oven`.
 11. Ask the bot to set an agent reminder such as `in 10 minutes, remind yourself to summarize my travel notes`.
 12. Ask the bot to list or update pending reminders in the current session.
-13. Ask the bot to save a session note such as `save a session note about trip ideas: visit Oslo in June`.
-14. Ask the bot what saved notes are available in the current session.
-15. Ask the bot to save a user memory such as `remember that I prefer aisle seats`.
-16. Ask the bot to read or update one of those saved items.
-17. Ask the bot to inspect notes from another session, then tap the approval button when the cross-session note prompt appears.
+13. Ask the bot to save a durable memory such as `remember that I prefer aisle seats`.
+14. Send `/memories` to inspect the currently known topic files.
+15. Ask the bot to read or update a specific topic memory file.
+16. Ask the bot to search older raw transcripts for something specific.
+17. Use transcript search when you need an exact quote or detail from older history that is not already in the topic files.

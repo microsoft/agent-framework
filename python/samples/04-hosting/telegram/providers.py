@@ -4,21 +4,18 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import orjson
-from agent_framework import AgentSession, ContextProvider, FileHistoryProvider, Message, SessionContext, tool
+from agent_framework import AgentSession, ContextProvider, Message, SessionContext, tool
 from helpers import (
     CURRENT_TURN_CONTEXT,
-    STORAGE_KIND_HISTORY,
     ReminderEntry,
     _cancel_reminder_job,
     _format_reminder_entry,
     _get_chat_state,
     _get_current_chat_state,
     _get_current_session_reminder,
-    _get_user_session_directory,
     _normalize_reminder_target,
     _require_job_queue,
 )
@@ -26,8 +23,6 @@ from helpers import (
 from telegram.ext import Application
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from agent_framework import SupportsAgentRun
 
 
@@ -84,72 +79,6 @@ def _schedule_reminder_job(
         name=job_name,
         chat_id=chat_id,
     )
-
-
-class TelegramFileHistoryProvider(FileHistoryProvider):
-    """Persist Telegram sample history to local JSONL files."""
-
-    def __init__(self, storage_path: Path, **kwargs: Any) -> None:
-        super().__init__(storage_path, **kwargs)
-        self._provider_kwargs = kwargs
-        self._providers_by_user_and_session: dict[tuple[int, str | None], FileHistoryProvider] = {}
-
-    def _get_session_provider(self, *, session_id: str | None, telegram_user_id: int) -> FileHistoryProvider:
-        provider_key = (telegram_user_id, session_id)
-        provider = self._providers_by_user_and_session.get(provider_key)
-        if provider is not None:
-            return provider
-
-        session_directory = _get_user_session_directory(
-            storage_directory=self.storage_path,
-            telegram_user_id=telegram_user_id,
-            kind=STORAGE_KIND_HISTORY,
-            session_id=session_id or "default",
-        )
-        provider = FileHistoryProvider(session_directory, **self._provider_kwargs)
-        self._providers_by_user_and_session[provider_key] = provider
-        return provider
-
-    @staticmethod
-    def _require_telegram_user_id(state: dict[str, Any] | None) -> int:
-        telegram_user_id = state.get("telegram_user_id") if state is not None else None
-        if not isinstance(telegram_user_id, int):
-            turn_context = CURRENT_TURN_CONTEXT.get()
-            user_profile = turn_context.user_profile if turn_context is not None else None
-            telegram_user_id = user_profile.telegram_user_id if user_profile is not None else None
-            if isinstance(telegram_user_id, int) and state is not None:
-                state["telegram_user_id"] = telegram_user_id
-        if not isinstance(telegram_user_id, int):
-            raise RuntimeError("Telegram file history requires session.state['telegram_user_id'] to be set.")
-        return telegram_user_id
-
-    async def get_messages(
-        self,
-        session_id: str | None,
-        *,
-        state: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> list[Message]:
-        telegram_user_id = self._require_telegram_user_id(state)
-        provider = self._get_session_provider(session_id=session_id, telegram_user_id=telegram_user_id)
-        return await provider.get_messages(None, state=state, **kwargs)
-
-    async def save_messages(
-        self,
-        session_id: str | None,
-        messages: Sequence[Message],
-        *,
-        state: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        telegram_user_id = self._require_telegram_user_id(state)
-        sanitized_messages = [
-            sanitized_message
-            for message in messages
-            if (sanitized_message := _sanitize_file_history_message(message)) is not None
-        ]
-        provider = self._get_session_provider(session_id=session_id, telegram_user_id=telegram_user_id)
-        await provider.save_messages(None, sanitized_messages, state=state, **kwargs)
 
 
 @tool(approval_mode="never_require")

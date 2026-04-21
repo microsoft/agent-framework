@@ -8,7 +8,7 @@ resolution-markers = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.0.1"
+version = "1.1.0"
 source = { editable = "../../../packages/core" }
 dependencies = [
     { name = "opentelemetry-api" },
@@ -52,7 +52,7 @@ provides-extras = ["all"]
 
 [[package]]
 name = "agent-framework-foundry"
-version = "1.0.1"
+version = "1.1.0"
 source = { editable = "../../../packages/foundry" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -66,12 +66,12 @@ requires-dist = [
     { name = "agent-framework-core", editable = "../../../packages/core" },
     { name = "agent-framework-openai", editable = "../../../packages/openai" },
     { name = "azure-ai-inference", specifier = ">=1.0.0b9,<1.0.0b10" },
-    { name = "azure-ai-projects", specifier = ">=2.0.0,<3.0" },
+    { name = "azure-ai-projects", specifier = ">=2.1.0,<3.0" },
 ]
 
 [[package]]
 name = "agent-framework-openai"
-version = "1.0.1"
+version = "1.1.0"
 source = { editable = "../../../packages/openai" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -330,7 +330,7 @@ wheels = [
 
 [[package]]
 name = "azure-ai-projects"
-version = "2.0.1"
+version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core" },
@@ -340,9 +340,9 @@ dependencies = [
     { name = "openai" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/f9/a15c8a16e35e6d620faebabc6cc4f9e2f4b7f1d962cc6f58931c46947e24/azure_ai_projects-2.0.1.tar.gz", hash = "sha256:c8c64870aa6b89903af69a4ff28b4eff3df9744f14615ea572cae87394946a0c", size = 491774, upload-time = "2026-03-12T19:59:02.712Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/76/3fdede8eddfe5927a571898a15f0288ba30fee78e5ba099f88df3ded70af/azure_ai_projects-2.1.0.tar.gz", hash = "sha256:f0749fa9a174255aa1a5550fb6078208521518472907a4c6dd552767d9b39caa", size = 543343, upload-time = "2026-04-20T17:06:48.751Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/f7/290ca39501c06c6e23b46ba9f7f3dfb05ecc928cde105fed85d6845060dd/azure_ai_projects-2.0.1-py3-none-any.whl", hash = "sha256:dfda540d256e67a52bf81c75418b6bf92b811b96693fe45787e154a888ad2396", size = 236560, upload-time = "2026-03-12T19:59:04.249Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/f6/4984e7772a97c7a9e6505a3de8e55a5070fa2b02cd7e980da91e0d9b9b97/azure_ai_projects-2.1.0-py3-none-any.whl", hash = "sha256:6f259d8eb9167d2dfd372006d0221a8118faeaeb05829fa898b595bc6f19c699", size = 274309, upload-time = "2026-04-20T17:06:50.542Z" },
 ]
 
 [[package]]
