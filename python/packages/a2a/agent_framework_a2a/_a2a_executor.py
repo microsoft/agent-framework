@@ -19,7 +19,7 @@ from agent_framework import (
 )
 from typing_extensions import override
 
-from ._utils import get_uri_data
+from agent_framework_a2a._utils import get_uri_data
 
 logger = logging.getLogger("agent_framework.a2a")
 

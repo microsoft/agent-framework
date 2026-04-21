@@ -48,7 +48,7 @@ from agent_framework.observability import AgentTelemetryLayer
 
 __all__ = ["A2AAgent", "A2AContinuationToken"]
 
-from ._utils import get_uri_data
+from agent_framework_a2a._utils import get_uri_data
 
 
 class A2AContinuationToken(ContinuationToken):
