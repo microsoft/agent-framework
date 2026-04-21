@@ -19,7 +19,7 @@ from agent_framework import (
     SupportsAgentRun,
     WorkflowAgent,
 )
-from agent_framework._telemetry import append_to_user_agent
+from agent_framework._telemetry import user_agent_prefix
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseEventStream,
@@ -151,9 +151,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._agent = agent
         self.response_handler(self._handler)  # pyright: ignore[reportUnknownMemberType]
 
-        # Append the user agent prefix for telemetry purposes
-        append_to_user_agent(self.USER_AGENT_PREFIX)
-
     @staticmethod
     def _is_streaming_request(request: CreateResponse) -> bool:
         """Check if the request is a streaming request."""
@@ -166,6 +163,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
+        with user_agent_prefix(self.USER_AGENT_PREFIX):
+            async for event in self._handle_inner(request, context, cancellation_signal):
+                yield event
+
+    async def _handle_inner(
+        self,
+        request: CreateResponse,
+        context: ResponseContext,
+        cancellation_signal: asyncio.Event,
+    ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
+        """Core handler logic."""
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration
             async for event in self._handle_workflow_agent(request, context, cancellation_signal):

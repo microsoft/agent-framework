@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework import AgentSession, BaseAgent, SupportsAgentRun
-from agent_framework._telemetry import append_to_user_agent
+from agent_framework._telemetry import user_agent_prefix
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
-from typing_extensions import Any, AsyncGenerator, Optional
+from typing_extensions import Any, AsyncGenerator
 
 
 class InvocationsHostServer(InvocationAgentServerHost):
@@ -17,7 +17,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
         self,
         agent: BaseAgent,
         *,
-        openapi_spec: Optional[dict[str, Any]] = None,
+        openapi_spec: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an InvocationsHostServer.
@@ -36,13 +36,17 @@ class InvocationsHostServer(InvocationAgentServerHost):
         if not isinstance(agent, SupportsAgentRun):
             raise TypeError("Agent must support the SupportsAgentRun interface")
 
-        append_to_user_agent(self.USER_AGENT_PREFIX)
         self._agent = agent
         self._sessions: dict[str, AgentSession] = {}
         self.invoke_handler(self._handle_invoke)  # pyright: ignore[reportUnknownMemberType]
 
     async def _handle_invoke(self, request: Request) -> Response:
         """Invoke the agent with the given request."""
+        with user_agent_prefix(self.USER_AGENT_PREFIX):
+            return await self._handle_invoke_inner(request)
+
+    async def _handle_invoke_inner(self, request: Request) -> Response:
+        """Core invoke handler logic."""
         data = await request.json()
         session_id: str = request.state.session_id
 

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Final
 
 from . import __version__ as version_info
@@ -26,27 +29,34 @@ USER_AGENT_KEY: Final[str] = "User-Agent"
 HTTP_USER_AGENT: Final[str] = "agent-framework-python"
 AGENT_FRAMEWORK_USER_AGENT = f"{HTTP_USER_AGENT}/{version_info}"  # type: ignore[has-type]
 
-_user_agent_prefixes: list[str] = []
+_user_agent_prefixes: ContextVar[tuple[str, ...]] = ContextVar("_user_agent_prefixes", default=())
 
 
-def append_to_user_agent(prefix: str) -> None:
-    """Prepend a prefix to the agent framework user agent string.
+@contextmanager
+def user_agent_prefix(prefix: str) -> Generator[None, None, None]:
+    """Context manager that adds a prefix to the user agent string for the current scope.
 
-    This is useful for hosting layers that want to identify themselves in telemetry.
-    Duplicate prefixes are ignored.
+    This is useful for upstream layers that want to identify themselves in telemetry
+    for the duration of a request without permanently mutating global state.
 
     Args:
-        prefix: The prefix to prepend (e.g. "foundry-hosting").
+        prefix: The prefix to add (e.g. "foundry-hosting").
     """
-    if prefix and prefix not in _user_agent_prefixes:
-        _user_agent_prefixes.append(prefix)
+    current = _user_agent_prefixes.get()
+    token = _user_agent_prefixes.set((*current, prefix)) if prefix and prefix not in current else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            _user_agent_prefixes.reset(token)
 
 
 def _get_user_agent() -> str:
-    """Return the full user agent string including any prepended prefixes."""
-    if not _user_agent_prefixes:
+    """Return the full user agent string including any context-scoped prefixes."""
+    prefixes = _user_agent_prefixes.get()
+    if not prefixes:
         return AGENT_FRAMEWORK_USER_AGENT
-    return f"{'/'.join(_user_agent_prefixes)}/{AGENT_FRAMEWORK_USER_AGENT}"
+    return f"{'/'.join(prefixes)}/{AGENT_FRAMEWORK_USER_AGENT}"
 
 
 def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None) -> dict[str, Any]:
