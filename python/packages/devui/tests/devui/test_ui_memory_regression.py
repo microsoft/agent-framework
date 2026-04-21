@@ -79,6 +79,11 @@ _POST_SEND_DELAY_S = 1.0
 _SAMPLE_INTERVAL_S = 0.5
 _SAMPLE_WINDOW_S = 12.0
 _MAX_RENDERER_GROWTH_MB = 500.0
+_TAIL_FIRST_CHUNK = "TailFlushStart"
+_TAIL_SECOND_CHUNK = " TailFlushEnd"
+_TAIL_SECOND_CHUNK_DELAY_S = 0.01
+_TAIL_STREAM_HOLD_S = 0.5
+_TAIL_VISIBILITY_TIMEOUT_S = 0.2
 
 
 @dataclass(frozen=True)
@@ -132,6 +137,42 @@ class MemoryStressAgent(BaseAgent):
         payload_size = max(self._chunk_size - len(prefix), 1)
         payload = ("x" * (payload_size - 1)) + ("\n" if index % 8 == 7 else " ")
         return prefix + payload
+
+
+class TailFlushAgent(BaseAgent):
+    """Agent that exposes missing trailing-delta flushes in the DevUI renderer."""
+
+    def run(
+        self,
+        messages: str | Message | list[str] | list[Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        del messages, session, kwargs
+        if stream:
+            return self._run_stream()
+        return self._run()
+
+    async def _run(self) -> AgentResponse:
+        text = _TAIL_FIRST_CHUNK + _TAIL_SECOND_CHUNK
+        return AgentResponse(messages=[Message("assistant", [Content.from_text(text=text)])])
+
+    def _run_stream(self) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        async def _iter() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text=_TAIL_FIRST_CHUNK)],
+                role="assistant",
+            )
+            await asyncio.sleep(_TAIL_SECOND_CHUNK_DELAY_S)
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text=_TAIL_SECOND_CHUNK)],
+                role="assistant",
+            )
+            await asyncio.sleep(_TAIL_STREAM_HOLD_S)
+
+        return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
 
 class _CDPClient:
@@ -618,6 +659,43 @@ def memory_regression_server() -> Generator[tuple[str, str]]:
     server_thread.join(timeout=5)
 
 
+@pytest.fixture
+def tail_flush_server() -> Generator[tuple[str, str]]:
+    """Start DevUI with a synthetic agent that keeps a throttled tail hidden."""
+
+    server = DevServer(host="127.0.0.1", port=0)
+    server.register_entities([
+        TailFlushAgent(
+            id="tail-flush-agent",
+            name="TailFlushAgent",
+            description="Streams a short trailing delta and keeps the stream open briefly.",
+        )
+    ])
+
+    app = server.get_app()
+    server_config = uvicorn.Config(
+        app=app,
+        host="127.0.0.1",
+        port=0,
+        log_level="error",
+        ws="none",
+    )
+    server_instance = uvicorn.Server(server_config)
+
+    def run_server() -> None:
+        asyncio.run(server_instance.serve())
+
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+
+    actual_port, entity_id = _wait_for_server_details(server_instance)
+    yield f"http://127.0.0.1:{actual_port}", entity_id
+
+    with contextlib.suppress(Exception):
+        server_instance.should_exit = True
+    server_thread.join(timeout=5)
+
+
 async def _wait_for_expression(
     client: _CDPClient,
     *,
@@ -679,12 +757,10 @@ async def test_devui_streaming_renderer_memory_is_bounded(
                 await _wait_for_expression(
                     client,
                     session_id=session_id,
-                    expression=(
-                        "Boolean("
-                        "document.querySelector('textarea') && "
-                        "document.querySelector('button[aria-label=\"Send message\"]')"
-                        ")"
-                    ),
+                    expression="""Boolean(
+                        document.querySelector('textarea') &&
+                        document.querySelector('button[aria-label=\"Send message\"]')
+                    )""",
                     timeout_s=30.0,
                 )
 
@@ -713,7 +789,9 @@ async def test_devui_streaming_renderer_memory_is_bounded(
                 await _wait_for_expression(
                     client,
                     session_id=session_id,
-                    expression="Boolean(document.querySelector('button[aria-label=\"Stop generating response\"]'))",
+                    expression=(
+                        """Boolean(document.querySelector('button[aria-label=\"Stop generating response\"]'))"""
+                    ),
                     timeout_s=10.0,
                 )
 
@@ -745,6 +823,109 @@ async def test_devui_streaming_renderer_memory_is_bounded(
                     f"growth={renderer_growth_mb:.2f}MB "
                     f"budget={_MAX_RENDERER_GROWTH_MB:.2f}MB "
                     f"samples={samples}"
+                )
+        finally:
+            _shutdown_browser_process(browser_process, profile_dir=profile_dir)
+
+
+async def test_devui_flushes_trailing_text_delta_before_stream_end(
+    tail_flush_server: tuple[str, str],
+) -> None:
+    """Fail when DevUI keeps the final text delta hidden until the stream ends."""
+
+    browser_path = _find_browser_executable()
+    if browser_path is None:
+        pytest.skip("No Chromium-based browser found for DevUI tail flush test")
+
+    base_url, entity_id = tail_flush_server
+    debug_port = _find_available_port()
+    expected_text = _TAIL_FIRST_CHUNK + _TAIL_SECOND_CHUNK
+
+    with tempfile.TemporaryDirectory(prefix="devui-tail-flush-browser-") as profile_dir:
+        browser_process = _launch_browser_process(
+            browser_path=browser_path,
+            debug_port=debug_port,
+            profile_dir=profile_dir,
+        )
+
+        try:
+            websocket_url = await _get_devtools_websocket_url(debug_port)
+
+            async with websocket_connect(websocket_url, max_size=None) as websocket:
+                client = _CDPClient(websocket)
+
+                target = await client.send("Target.createTarget", {"url": "about:blank"})
+                target_id = target["targetId"]
+                attached = await client.send(
+                    "Target.attachToTarget",
+                    {"targetId": target_id, "flatten": True},
+                )
+                session_id = attached["sessionId"]
+
+                await client.send("Page.enable", session_id=session_id)
+                await client.send("Runtime.enable", session_id=session_id)
+                await client.send(
+                    "Page.navigate",
+                    {"url": f"{base_url}/?entity_id={entity_id}"},
+                    session_id=session_id,
+                )
+
+                await _wait_for_expression(
+                    client,
+                    session_id=session_id,
+                    expression="""Boolean(
+                        document.querySelector('textarea') &&
+                        document.querySelector('button[aria-label=\"Send message\"]')
+                    )""",
+                    timeout_s=30.0,
+                )
+
+                await client.evaluate(
+                    """
+                    (() => {
+                      const textarea = document.querySelector("textarea");
+                      const valueSetter = Object.getOwnPropertyDescriptor(
+                        HTMLTextAreaElement.prototype,
+                        "value"
+                      ).set;
+                      valueSetter.call(textarea, "Stream a short answer.");
+                      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+                      document.querySelector('button[aria-label="Send message"]').click();
+                      return true;
+                    })()
+                    """,
+                    session_id=session_id,
+                )
+
+                await _wait_for_expression(
+                    client,
+                    session_id=session_id,
+                    expression=(
+                        """Boolean(document.querySelector('button[aria-label=\"Stop generating response\"]'))"""
+                    ),
+                    timeout_s=10.0,
+                )
+
+                await _wait_for_expression(
+                    client,
+                    session_id=session_id,
+                    expression=f"""(() => {{
+                        const messageNodes = Array.from(
+                          document.querySelectorAll('.markdown-content.break-words')
+                        );
+                        return messageNodes.some((node) =>
+                          node.textContent?.includes({json.dumps(expected_text)})
+                        );
+                    }})()""",
+                    timeout_s=_TAIL_VISIBILITY_TIMEOUT_S,
+                )
+
+                stop_button_still_visible = await client.evaluate(
+                    """Boolean(document.querySelector('button[aria-label=\"Stop generating response\"]'))""",
+                    session_id=session_id,
+                )
+                assert stop_button_still_visible, (
+                    "DevUI only revealed the final text after streaming had already ended"
                 )
         finally:
             _shutdown_browser_process(browser_process, profile_dir=profile_dir)

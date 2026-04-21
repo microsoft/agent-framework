@@ -312,21 +312,27 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const userJustSentMessage = useRef<boolean>(false);
   const accumulatedTextRef = useRef<string>("");
   const lastAssistantTextRenderAt = useRef(0);
+  const pendingAssistantTextRenderRef = useRef<{
+    assistantMessageId: string;
+    status: "in_progress" | "completed" | "incomplete";
+  } | null>(null);
+  const pendingAssistantTextRenderTimeoutRef = useRef<number | null>(null);
 
-  const renderAssistantStreamingText = useCallback(
+  const clearPendingAssistantTextRender = useCallback(() => {
+    if (pendingAssistantTextRenderTimeoutRef.current !== null) {
+      window.clearTimeout(pendingAssistantTextRenderTimeoutRef.current);
+      pendingAssistantTextRenderTimeoutRef.current = null;
+    }
+
+    pendingAssistantTextRenderRef.current = null;
+  }, []);
+
+  const flushAssistantStreamingText = useCallback(
     (
       assistantMessageId: string,
-      status: "in_progress" | "completed" | "incomplete" = "in_progress",
-      force: boolean = false
+      status: "in_progress" | "completed" | "incomplete" = "in_progress"
     ) => {
       const now = performance.now();
-      if (
-        !force &&
-        now - lastAssistantTextRenderAt.current < ASSISTANT_TEXT_RENDER_INTERVAL_MS
-      ) {
-        return;
-      }
-
       const currentItems = useDevUIStore.getState().chatItems;
       let changed = false;
       const nextItems = currentItems.map((item) => {
@@ -370,12 +376,51 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       if (changed) {
         lastAssistantTextRenderAt.current = now;
         setChatItems(nextItems);
-      } else if (force) {
+      } else {
         lastAssistantTextRenderAt.current = now;
       }
     },
     [setChatItems]
   );
+
+  const renderAssistantStreamingText = useCallback(
+    (
+      assistantMessageId: string,
+      status: "in_progress" | "completed" | "incomplete" = "in_progress",
+      force: boolean = false
+    ) => {
+      const now = performance.now();
+      const elapsedSinceLastRender = now - lastAssistantTextRenderAt.current;
+
+      if (!force && elapsedSinceLastRender < ASSISTANT_TEXT_RENDER_INTERVAL_MS) {
+        pendingAssistantTextRenderRef.current = { assistantMessageId, status };
+
+        if (pendingAssistantTextRenderTimeoutRef.current === null) {
+          const remainingDelayMs = ASSISTANT_TEXT_RENDER_INTERVAL_MS - elapsedSinceLastRender;
+          pendingAssistantTextRenderTimeoutRef.current = window.setTimeout(() => {
+            const pendingRender = pendingAssistantTextRenderRef.current;
+            pendingAssistantTextRenderTimeoutRef.current = null;
+            pendingAssistantTextRenderRef.current = null;
+
+            if (pendingRender) {
+              flushAssistantStreamingText(
+                pendingRender.assistantMessageId,
+                pendingRender.status
+              );
+            }
+          }, remainingDelayMs);
+        }
+
+        return;
+      }
+
+      clearPendingAssistantTextRender();
+      flushAssistantStreamingText(assistantMessageId, status);
+    },
+    [clearPendingAssistantTextRender, flushAssistantStreamingText]
+  );
+
+  useEffect(() => () => clearPendingAssistantTextRender(), [clearPendingAssistantTextRender]);
 
   // Auto-scroll to bottom when new items arrive
   useEffect(() => {
