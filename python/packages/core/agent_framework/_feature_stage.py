@@ -48,6 +48,7 @@ class ExperimentalFeature(str, Enum):
 
     EVALS = "EVALS"
     FILE_HISTORY = "FILE_HISTORY"
+    HARNESS = "HARNESS"
     SKILLS = "SKILLS"
     TOOLBOXES = "TOOLBOXES"
 

@@ -38,6 +38,18 @@ from agent_framework.exceptions import (
 )
 from openai import BadRequestError
 from openai.types.responses.response_reasoning_item import Summary
+from openai.types.responses.response_reasoning_summary_part_added_event import (
+    Part as ResponseReasoningSummaryPartAddedPart,
+)
+from openai.types.responses.response_reasoning_summary_part_added_event import (
+    ResponseReasoningSummaryPartAddedEvent,
+)
+from openai.types.responses.response_reasoning_summary_part_done_event import (
+    Part as ResponseReasoningSummaryPartDonePart,
+)
+from openai.types.responses.response_reasoning_summary_part_done_event import (
+    ResponseReasoningSummaryPartDoneEvent,
+)
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
 )
@@ -3339,6 +3351,52 @@ def test_streaming_reasoning_summary_text_done_event_fallback_without_deltas() -
         assert response.additional_properties == {"custom": "meta"}
 
 
+def test_streaming_reasoning_summary_part_added_event_ignored() -> None:
+    """Test reasoning summary part added events are ignored without debug fallthrough."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    event = ResponseReasoningSummaryPartAddedEvent(
+        type="response.reasoning_summary_part.added",
+        item_id="summary_345",
+        output_index=0,
+        part=ResponseReasoningSummaryPartAddedPart(text="", type="summary_text"),
+        sequence_number=3,
+        summary_index=0,
+    )
+
+    with patch.object(client, "_get_metadata_from_response", return_value={"source": "meta"}) as mock_metadata:
+        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
+
+        assert len(response.contents) == 0
+        mock_metadata.assert_called_once_with(event)
+        assert response.additional_properties == {"source": "meta"}
+
+
+def test_streaming_reasoning_summary_part_done_event_ignored() -> None:
+    """Test reasoning summary part done events are ignored without duplicating reasoning text."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    event = ResponseReasoningSummaryPartDoneEvent(
+        type="response.reasoning_summary_part.done",
+        item_id="summary_345",
+        output_index=0,
+        part=ResponseReasoningSummaryPartDonePart(text="complete summary", type="summary_text"),
+        sequence_number=4,
+        summary_index=0,
+    )
+
+    with patch.object(client, "_get_metadata_from_response", return_value={"source": "meta"}) as mock_metadata:
+        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
+
+        assert len(response.contents) == 0
+        mock_metadata.assert_called_once_with(event)
+        assert response.additional_properties == {"source": "meta"}
+
+
 def test_streaming_reasoning_deltas_then_done_no_duplication() -> None:
     """Sending delta events followed by a done event produces content only from deltas."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -3463,6 +3521,44 @@ def test_streaming_reasoning_events_preserve_metadata() -> None:
         # Content types should be different
         assert text_response.contents[0].type == "text"
         assert reasoning_response.contents[0].type == "text_reasoning"
+
+
+async def test_inner_get_response_streaming_create_tracks_reasoning_delta_ids() -> None:
+    """The responses.create(stream=True) path should suppress reasoning done events after deltas."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [Message(role="user", contents=["Test streaming"])]
+    item_id = "reasoning_create"
+    events = [
+        ResponseReasoningTextDeltaEvent(
+            type="response.reasoning_text.delta",
+            content_index=0,
+            item_id=item_id,
+            output_index=0,
+            sequence_number=1,
+            delta="Hello ",
+        ),
+        ResponseReasoningTextDoneEvent(
+            type="response.reasoning_text.done",
+            content_index=0,
+            item_id=item_id,
+            output_index=0,
+            sequence_number=2,
+            text="Hello ",
+        ),
+    ]
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses, "create", new=AsyncMock(return_value=_FakeAsyncEventStream(events))),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client._inner_get_response(messages=messages, options={}, stream=True)
+        updates = [update async for update in stream]
+
+    reasoning_chunks = [
+        content.text for update in updates for content in update.contents if content.type == "text_reasoning"
+    ]
+    assert reasoning_chunks == ["Hello "]
 
 
 def test_parse_response_from_openai_image_generation_raw_base64():

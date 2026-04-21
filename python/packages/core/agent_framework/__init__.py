@@ -79,6 +79,29 @@ from ._evaluation import (
     tool_calls_present,
 )
 from ._feature_stage import ExperimentalFeature, ReleaseCandidateFeature
+from ._harness._memory import (
+    DEFAULT_MEMORY_SOURCE_ID,
+    MemoryContextProvider,
+    MemoryFileStore,
+    MemoryIndexEntry,
+    MemoryStore,
+    MemoryTopicRecord,
+)
+from ._harness._mode import (
+    DEFAULT_MODE_SOURCE_ID,
+    SessionModeContextProvider,
+    get_session_mode,
+    set_session_mode,
+)
+from ._harness._todo import (
+    DEFAULT_TODO_SOURCE_ID,
+    TodoFileStore,
+    TodoInput,
+    TodoItem,
+    TodoListContextProvider,
+    TodoSessionStore,
+    TodoStore,
+)
 from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
 from ._middleware import (
     AgentContext,
@@ -250,6 +273,9 @@ __all__ = [
     "APP_INFO",
     "COMPACTION_STATE_KEY",
     "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_MEMORY_SOURCE_ID",
+    "DEFAULT_MODE_SOURCE_ID",
+    "DEFAULT_TODO_SOURCE_ID",
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
     "GROUP_ANNOTATION_KEY",
@@ -340,6 +366,11 @@ __all__ = [
     "MCPStdioTool",
     "MCPStreamableHTTPTool",
     "MCPWebsocketTool",
+    "MemoryContextProvider",
+    "MemoryFileStore",
+    "MemoryIndexEntry",
+    "MemoryStore",
+    "MemoryTopicRecord",
     "Message",
     "MiddlewareException",
     "MiddlewareTermination",
@@ -357,6 +388,7 @@ __all__ = [
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
     "SessionContext",
+    "SessionModeContextProvider",
     "SingleEdgeGroup",
     "Skill",
     "SkillResource",
@@ -379,6 +411,12 @@ __all__ = [
     "SwitchCaseEdgeGroupCase",
     "SwitchCaseEdgeGroupDefault",
     "TextSpanRegion",
+    "TodoFileStore",
+    "TodoInput",
+    "TodoItem",
+    "TodoListContextProvider",
+    "TodoSessionStore",
+    "TodoStore",
     "TokenBudgetComposedStrategy",
     "TokenizerProtocol",
     "ToolMode",
@@ -422,6 +460,7 @@ __all__ = [
     "evaluator",
     "executor",
     "function_middleware",
+    "get_session_mode",
     "handler",
     "included_messages",
     "included_token_count",
@@ -437,6 +476,7 @@ __all__ = [
     "register_state_type",
     "resolve_agent_id",
     "response_handler",
+    "set_session_mode",
     "tool",
     "tool_call_args_match",
     "tool_called_check",

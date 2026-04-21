@@ -2146,6 +2146,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         )
                     )
                 metadata.update(self._get_metadata_from_response(event))
+            case "response.reasoning_summary_part.added" | "response.reasoning_summary_part.done":
+                # Summary-part lifecycle events are structural markers around the
+                # existing summary text delta/done stream. Ignore them explicitly
+                # so they do not show up as unparsed debug noise or duplicate
+                # text_reasoning content.
+                metadata.update(self._get_metadata_from_response(event))
             case "response.code_interpreter_call_code.delta":
                 call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
                 ci_additional_properties = {
