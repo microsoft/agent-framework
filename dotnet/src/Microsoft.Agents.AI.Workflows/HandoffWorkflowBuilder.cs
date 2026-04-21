@@ -219,13 +219,17 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
 
         if (string.IsNullOrWhiteSpace(handoffReason))
         {
-            handoffReason = to.Description ?? to.Name ?? (to as ChatClientAgent)?.Instructions;
+            handoffReason = (string.IsNullOrWhiteSpace(to.Description) ? null : to.Description)
+                         ?? (string.IsNullOrWhiteSpace(to.Name) ? null : $"handoff to {to.Name}")
+                         ?? to.GetService<ChatClientAgent>()?.Instructions;
+
             if (string.IsNullOrWhiteSpace(handoffReason))
             {
                 Throw.ArgumentException(
                     nameof(to),
-                    $"The provided target agent '{to.Name ?? to.Id}' has no description, name, or instructions, and no handoff description has been provided. " +
-                    "At least one of these is required to register a handoff so that the appropriate target agent can be chosen.");
+                    $"The provided target agent '{(string.IsNullOrWhiteSpace(to.Name) ? to.Id : to.Name)}' has no description, name, or instructions, and no " +
+                    "handoff description has been provided. At least one of these is required to register a handoff so that the appropriate target agent can " +
+                    "be chosen.");
             }
         }
 

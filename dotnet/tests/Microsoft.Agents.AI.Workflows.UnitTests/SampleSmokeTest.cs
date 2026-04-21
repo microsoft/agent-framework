@@ -314,6 +314,38 @@ public class SampleSmokeTest
         Action<string> CreateValidator(string expected) => actual => actual.Should().Be(expected);
     }
 
+    public class Step12ExpectedOutputCalculator(int agentCount)
+    {
+        private readonly int[] _bookmarks = new int[agentCount];
+        private readonly List<string> _history = new();
+        private readonly HashSet<int> _skipIndices = new();
+
+        public IEnumerable<string> ExpectedOutputs =>
+            this._history.Where((element, index) => !this._skipIndices.Contains(index));
+
+        public void ProcessInput(string newInput)
+        {
+            this._skipIndices.Add(this._history.Count);
+            this._history.Add(newInput);
+
+            for (int i = 0; i < agentCount; i++)
+            {
+                int agentId = i + 1;
+                int agentBookmark = this._bookmarks[i];
+                int count = this._history.Count - agentBookmark;
+
+                count.Should().BeGreaterThanOrEqualTo(0);
+
+                foreach (string input in this._history.Skip(agentBookmark).ToList())
+                {
+                    this._history.Add($"{agentId}:{input}");
+                }
+
+                this._bookmarks[i] = this._history.Count;
+            }
+        }
+    }
+
     [Theory]
     [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
     [InlineData(ExecutionEnvironment.InProcess_OffThread)]
@@ -322,14 +354,10 @@ public class SampleSmokeTest
     {
         List<string> inputs = ["1", "2", "3"];
 
-        using StringWriter writer = new();
-        await Step12EntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment(), inputs);
-
-        string[] lines = writer.ToString().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-
         // The expectation is that each agent will echo each input along with every echo from previous agents
         // E.g.:
         // (user): 1
+        // ----- outputs below
         // (a1): 1:1
         // (a2): 2:1
         // (a2): 2:1:1
@@ -340,7 +368,35 @@ public class SampleSmokeTest
         // (a3): 3:2:1
         // (a3): 3:2:1:1
 
-        string[] expected = inputs.SelectMany(input => EchoesForInput(input)).ToArray();
+        // If there are multiple inputs (there are), then each successive input adds to the depth of the previous
+        // ones, so, for example, once we do input = "1", "2":
+
+        // (user): 1
+        // (a1): 1:1     <- a1 "last seen"
+        // (a2): 2:1
+        // (a2): 2:1:1   <- a2 "last seen"
+        // (user): 2
+        // ----- outputs below
+        // (a1): 1:2:1
+        // (a1): 1:2:1:1
+        // (a1): 1:2     <- from user input, a1 "last seen"
+        // (a2): 2:2     <- from user input (note that a2 seems like it is seeing these in a different "order" than a1 - but it is not)
+        // (a2): 2:1:2:1
+        // (a2): 2:1:2:1:1
+        // (a2): 2:1:2   <- from a1's first echo, a2 "last seen"
+
+        Step12ExpectedOutputCalculator outputGenerator = new(Step12EntryPoint.AgentCount);
+        foreach (string input in inputs)
+        {
+            outputGenerator.ProcessInput(input);
+        }
+
+        string[] expected = outputGenerator.ExpectedOutputs.ToArray();
+
+        using StringWriter writer = new();
+        await Step12EntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment(), inputs);
+
+        string[] lines = writer.ToString().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
 
         Console.Error.WriteLine("Expected lines: ");
         foreach (string expectedLine in expected)
@@ -356,19 +412,6 @@ public class SampleSmokeTest
 
         Assert.Collection(lines,
                           expected.Select(CreateValidator).ToArray());
-
-        IEnumerable<string> EchoesForInput(string input)
-        {
-            List<string> echoes = [$"{Step12EntryPoint.EchoPrefixForAgent(1)}{input}"];
-            for (int i = 2; i <= Step12EntryPoint.AgentCount; i++)
-            {
-                string agentPrefix = Step12EntryPoint.EchoPrefixForAgent(i);
-                List<string> newEchoes = [$"{agentPrefix}{input}", .. echoes.Select(echo => $"{agentPrefix}{echo}")];
-                echoes.AddRange(newEchoes);
-            }
-
-            return echoes;
-        }
 
         Action<string> CreateValidator(string expected) => actual => actual.Should().Be(expected);
     }

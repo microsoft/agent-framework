@@ -351,6 +351,8 @@ ContentType = Literal[
     "image_generation_tool_result",
     "mcp_server_tool_call",
     "mcp_server_tool_result",
+    "search_tool_call",
+    "search_tool_result",
     "shell_tool_call",
     "shell_tool_result",
     "shell_command_output",
@@ -859,6 +861,56 @@ class Content:
             result=text_result,
             items=items_list,
             exception=exception,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_search_tool_call(
+        cls: type[ContentT],
+        call_id: str,
+        *,
+        tool_name: str,
+        arguments: str | Mapping[str, Any] | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create search tool call content."""
+        return cls(
+            "search_tool_call",
+            call_id=call_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            status=status,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_search_tool_result(
+        cls: type[ContentT],
+        call_id: str,
+        *,
+        tool_name: str,
+        result: Any = None,
+        items: Sequence[Content] | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create search tool result content."""
+        return cls(
+            "search_tool_result",
+            call_id=call_id,
+            tool_name=tool_name,
+            result=result,
+            items=list(items) if items is not None else None,
+            status=status,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1478,7 +1530,7 @@ class Content:
         return span.lower() == top_level_media_type.lower()
 
     def parse_arguments(self) -> dict[str, Any | None] | None:
-        """Parse arguments from function_call or mcp_server_tool_call content.
+        """Parse arguments from function_call, mcp_server_tool_call, or search_tool_call content.
 
         If arguments cannot be parsed as JSON or the result is not a dict,
         they are returned as a dictionary with a single key "raw".
