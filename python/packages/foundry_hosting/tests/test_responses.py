@@ -29,6 +29,7 @@ from azure.ai.agentserver.responses import InMemoryResponseProvider
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting._responses import _to_message  # pyright: ignore[reportPrivateUsage]
 
 # region Helpers
 
@@ -519,6 +520,398 @@ class TestStreaming:
         assert types[-1] == "response.completed"
         assert "response.output_item.added" in types
         assert "response.output_item.done" in types
+
+
+# endregion
+
+
+# region _to_message conversion
+
+
+class TestToMessage:
+    """Tests for _to_message covering all supported OutputItem types."""
+
+    def test_output_message(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemOutputMessage, OutputMessageContentOutputTextContent
+
+        item = OutputItemOutputMessage({
+            "type": "output_message",
+            "role": "assistant",
+            "content": [OutputMessageContentOutputTextContent({"type": "output_text", "text": "hello"})],
+            "status": "completed",
+            "id": "msg-1",
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert len(msg.contents) == 1
+        assert msg.contents[0].type == "text"
+        assert msg.contents[0].text == "hello"
+
+    def test_message(self) -> None:
+        from azure.ai.agentserver.responses.models import MessageContentInputTextContent, OutputItemMessage
+
+        item = OutputItemMessage({
+            "type": "message",
+            "role": "user",
+            "content": [MessageContentInputTextContent({"type": "input_text", "text": "hi"})],
+        })
+        msg = _to_message(item)
+        assert msg.role == "user"
+        assert len(msg.contents) == 1
+        assert msg.contents[0].text == "hi"
+
+    def test_function_call(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemFunctionToolCall
+
+        item = OutputItemFunctionToolCall({
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "get_weather",
+            "arguments": '{"city": "NYC"}',
+            "status": "completed",
+            "id": "fc-1",
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].call_id == "call_1"
+        assert msg.contents[0].name == "get_weather"
+
+    def test_function_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
+
+        item = FunctionCallOutputItemParam({"type": "function_call_output", "call_id": "call_1", "output": "sunny"})
+        msg = _to_message(item)  # type: ignore[arg-type]
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].call_id == "call_1"
+        assert msg.contents[0].result == "sunny"
+
+    def test_reasoning(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemReasoningItem, SummaryTextContent
+
+        item = OutputItemReasoningItem({
+            "type": "reasoning",
+            "id": "r-1",
+            "summary": [SummaryTextContent({"type": "summary_text", "text": "thinking hard"})],
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert len(msg.contents) == 1
+        assert msg.contents[0].text == "thinking hard"
+
+    def test_reasoning_no_summary(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemReasoningItem
+
+        item = OutputItemReasoningItem({"type": "reasoning", "id": "r-2"})
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents == []
+
+    def test_mcp_call(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemMcpToolCall
+
+        item = OutputItemMcpToolCall({
+            "type": "mcp_call",
+            "id": "mcp-1",
+            "server_label": "my_server",
+            "name": "search",
+            "arguments": '{"q": "test"}',
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "mcp_server_tool_call"
+        assert msg.contents[0].server_name == "my_server"
+        assert msg.contents[0].tool_name == "search"
+
+    def test_mcp_approval_request(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
+
+        item = OutputItemMcpApprovalRequest({
+            "type": "mcp_approval_request",
+            "id": "apr-1",
+            "server_label": "srv",
+            "name": "dangerous_tool",
+            "arguments": "{}",
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_approval_request"
+
+    def test_mcp_approval_response(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
+
+        item = OutputItemMcpApprovalResponseResource({
+            "type": "mcp_approval_response",
+            "id": "resp-1",
+            "approval_request_id": "apr-1",
+            "approve": True,
+        })
+        msg = _to_message(item)
+        assert msg.role == "user"
+        assert msg.contents[0].type == "function_approval_response"
+        assert msg.contents[0].approved is True
+
+    def test_code_interpreter_call(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemCodeInterpreterToolCall
+
+        item = OutputItemCodeInterpreterToolCall({
+            "type": "code_interpreter_call",
+            "id": "ci-1",
+            "status": "completed",
+            "container_id": "c-1",
+            "code": "print('hi')",
+            "outputs": [],
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "code_interpreter_tool_call"
+
+    def test_image_generation_call(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemImageGenToolCall
+
+        item = OutputItemImageGenToolCall({"type": "image_generation_call", "id": "ig-1", "status": "completed"})
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "image_generation_tool_call"
+
+    def test_shell_call(self) -> None:
+        from azure.ai.agentserver.responses.models import (
+            FunctionShellAction,
+            FunctionShellCallEnvironment,
+            OutputItemFunctionShellCall,
+        )
+
+        item = OutputItemFunctionShellCall({
+            "type": "shell_call",
+            "id": "sc-1",
+            "call_id": "call_sc",
+            "action": FunctionShellAction({"commands": ["ls", "-la"], "timeout_ms": 5000, "max_output_length": 1024}),
+            "status": "completed",
+            "environment": FunctionShellCallEnvironment({"type": "local"}),
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "shell_tool_call"
+        assert msg.contents[0].commands == ["ls", "-la"]
+        assert msg.contents[0].call_id == "call_sc"
+
+    def test_shell_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import (
+            FunctionShellCallOutputContent,
+            FunctionShellCallOutputExitOutcome,
+            OutputItemFunctionShellCallOutput,
+        )
+
+        item = OutputItemFunctionShellCallOutput({
+            "type": "shell_call_output",
+            "id": "sco-1",
+            "call_id": "call_sc",
+            "status": "completed",
+            "output": [
+                FunctionShellCallOutputContent({
+                    "stdout": "file.txt",
+                    "stderr": "",
+                    "outcome": FunctionShellCallOutputExitOutcome({"exit_code": 0}),
+                })
+            ],
+            "max_output_length": 1024,
+        })
+        msg = _to_message(item)
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "shell_tool_result"
+        assert msg.contents[0].call_id == "call_sc"
+
+    def test_local_shell_call(self) -> None:
+        from azure.ai.agentserver.responses.models import LocalShellExecAction, OutputItemLocalShellToolCall
+
+        item = OutputItemLocalShellToolCall({
+            "type": "local_shell_call",
+            "id": "lsc-1",
+            "call_id": "call_lsc",
+            "action": LocalShellExecAction({"type": "exec", "command": ["echo", "hello"], "env": {}}),
+            "status": "completed",
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "shell_tool_call"
+        assert msg.contents[0].commands == ["echo", "hello"]
+
+    def test_local_shell_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemLocalShellToolCallOutput
+
+        item = OutputItemLocalShellToolCallOutput({
+            "type": "local_shell_call_output",
+            "id": "lsco-1",
+            "output": "hello\n",
+        })
+        msg = _to_message(item)
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "shell_tool_result"
+
+    def test_file_search_call(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemFileSearchToolCall
+
+        item = OutputItemFileSearchToolCall({
+            "type": "file_search_call",
+            "id": "fs-1",
+            "status": "completed",
+            "queries": ["what is AI"],
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].name == "file_search"
+        assert '"what is AI"' in (msg.contents[0].arguments or "")
+
+    def test_web_search_call(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemWebSearchToolCall, WebSearchActionSearch
+
+        item = OutputItemWebSearchToolCall({
+            "type": "web_search_call",
+            "id": "ws-1",
+            "status": "completed",
+            "action": WebSearchActionSearch({"type": "search", "query": "test"}),
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].name == "web_search"
+
+    def test_computer_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ComputerAction, OutputItemComputerToolCall
+
+        item = OutputItemComputerToolCall({
+            "type": "computer_call",
+            "id": "cc-1",
+            "call_id": "call_cc",
+            "action": ComputerAction({"type": "click"}),
+            "pending_safety_checks": [],
+            "status": "completed",
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].name == "computer_use"
+
+    def test_computer_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import (
+            ComputerScreenshotImage,
+            OutputItemComputerToolCallOutputResource,
+        )
+
+        item = OutputItemComputerToolCallOutputResource({
+            "type": "computer_call_output",
+            "call_id": "call_cc",
+            "output": ComputerScreenshotImage({
+                "type": "computer_screenshot",
+                "image_url": "data:image/png;base64,abc",
+            }),
+        })
+        msg = _to_message(item)
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].call_id == "call_cc"
+
+    def test_custom_tool_call(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemCustomToolCall
+
+        item = OutputItemCustomToolCall({
+            "type": "custom_tool_call",
+            "call_id": "call_ct",
+            "name": "my_tool",
+            "input": '{"key": "value"}',
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].name == "my_tool"
+        assert msg.contents[0].arguments == '{"key": "value"}'
+
+    def test_custom_tool_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemCustomToolCallOutput
+
+        item = OutputItemCustomToolCallOutput({
+            "type": "custom_tool_call_output",
+            "call_id": "call_ct",
+            "output": "result text",
+        })
+        msg = _to_message(item)
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].result == "result text"
+
+    def test_apply_patch_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ApplyPatchUpdateFileOperation, OutputItemApplyPatchToolCall
+
+        item = OutputItemApplyPatchToolCall({
+            "type": "apply_patch_call",
+            "id": "ap-1",
+            "call_id": "call_ap",
+            "status": "completed",
+            "operation": ApplyPatchUpdateFileOperation({
+                "type": "update_file",
+                "path": "file.py",
+                "diff": "+ new line",
+            }),
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].name == "apply_patch"
+
+    def test_apply_patch_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItemApplyPatchToolCallOutput
+
+        item = OutputItemApplyPatchToolCallOutput({
+            "type": "apply_patch_call_output",
+            "id": "apo-1",
+            "call_id": "call_ap",
+            "status": "completed",
+            "output": "patch applied",
+        })
+        msg = _to_message(item)
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].result == "patch applied"
+
+    def test_oauth_consent_request(self) -> None:
+        from azure.ai.agentserver.responses.models import OAuthConsentRequestOutputItem
+
+        item = OAuthConsentRequestOutputItem({
+            "type": "oauth_consent_request",
+            "id": "oauth-1",
+            "consent_link": "https://example.com/consent",
+            "server_label": "my_server",
+        })
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "oauth_consent_request"
+        assert msg.contents[0].consent_link == "https://example.com/consent"
+
+    def test_structured_outputs_dict(self) -> None:
+        from azure.ai.agentserver.responses.models import StructuredOutputsOutputItem
+
+        item = StructuredOutputsOutputItem({"type": "structured_outputs", "id": "so-1", "output": {"answer": 42}})
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "text"
+        assert json.loads(msg.contents[0].text or "") == {"answer": 42}
+
+    def test_structured_outputs_string(self) -> None:
+        from azure.ai.agentserver.responses.models import StructuredOutputsOutputItem
+
+        item = StructuredOutputsOutputItem({"type": "structured_outputs", "id": "so-2", "output": "plain text"})
+        msg = _to_message(item)
+        assert msg.role == "assistant"
+        assert msg.contents[0].text == "plain text"
+
+    def test_unsupported_type_raises(self) -> None:
+        from azure.ai.agentserver.responses.models import OutputItem
+
+        item = OutputItem({"type": "some_unknown_type"})
+        with pytest.raises(ValueError, match="Unsupported OutputItem type: some_unknown_type"):
+            _to_message(item)
 
 
 # endregion
