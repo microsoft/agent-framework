@@ -215,6 +215,7 @@ executionEnvironments = [
     { root = "packages/orchestrations/tests", reportPrivateUsage = "none" },
     { root = "packages/purview/tests", reportPrivateUsage = "none" },
     { root = "packages/redis/tests", reportPrivateUsage = "none" },
+    { root = "packages/valkey/tests", reportPrivateUsage = "none" },
     { root = "tests", reportPrivateUsage = "none" },
 ]
 
