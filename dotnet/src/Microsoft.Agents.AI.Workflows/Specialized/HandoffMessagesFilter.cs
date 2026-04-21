@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized;
@@ -31,113 +30,78 @@ internal sealed class HandoffMessagesFilter
             return messages;
         }
 
-        Dictionary<string, FilterCandidateState> filteringCandidates = new();
-        List<ChatMessage> filteredMessages = [];
-        HashSet<int> messagesToRemove = [];
+        HashSet<string> filteredCallsWithoutResponses = new();
+        List<ChatMessage> retainedMessages = [];
 
-        bool filterHandoffOnly = this._filteringBehavior == HandoffToolCallFilteringBehavior.HandoffOnly;
+        bool filterAllToolCalls = this._filteringBehavior == HandoffToolCallFilteringBehavior.All;
+
+        // The logic of filtering is fairly straightforward: We are only interested in FunctionCallContent and FunctionResponseContent.
+        // We are going to assume that Handoff operates as follows:
+        //  * Each agent is only taking one turn at a time
+        //  * Each agent is taking a turn alone
+        //
+        // In the case of certain providers, like Gemini (see microsoft/agent-framework #5244), we will see the function call name as the
+        // call id as well, so we may see multiple calls with the same call id, and assume that the call is terminated before another
+        // "CallId-less" FCC is issued. We also need to rely on the idea that FRC follows their corresponding FCC in the message stream.
+        // (This changes the previous behaviour where FRC could arrive earlier, and relies on strict ordering).
+        //
+        // The benefit of expecting all the AIContent to be strictly ordered is that we never need to reach back into a post-filtered
+        // content to retroactively remove it, or to try to inject it back into the middle of a Message that has already been processed.
+
         foreach (ChatMessage unfilteredMessage in messages)
         {
-            ChatMessage filteredMessage = unfilteredMessage.Clone();
-
-            // .Clone() is shallow, so we cannot modify the contents of the cloned message in place.
-            List<AIContent> contents = [];
-            contents.Capacity = unfilteredMessage.Contents?.Count ?? 0;
-            filteredMessage.Contents = contents;
-
-            // Because this runs after the role changes from assistant to user for the target agent, we cannot rely on tool calls
-            // originating only from messages with the Assistant role. Instead, we need to inspect the contents of all non-Tool (result)
-            // FunctionCallContent.
-            if (unfilteredMessage.Role != ChatRole.Tool)
+            if (unfilteredMessage.Contents is null || unfilteredMessage.Contents.Count == 0)
             {
-                for (int i = 0; i < unfilteredMessage.Contents!.Count; i++)
-                {
-                    AIContent content = unfilteredMessage.Contents[i];
-                    if (content is not FunctionCallContent fcc || (filterHandoffOnly && !IsHandoffFunctionName(fcc.Name)))
-                    {
-                        filteredMessage.Contents.Add(content);
-
-                        // Track non-handoff function calls so their tool results are preserved in HandoffOnly mode
-                        if (filterHandoffOnly && content is FunctionCallContent nonHandoffFcc)
-                        {
-                            filteringCandidates[nonHandoffFcc.CallId] = new FilterCandidateState(nonHandoffFcc.CallId)
-                            {
-                                IsHandoffFunction = false,
-                            };
-                        }
-                    }
-                    else if (filterHandoffOnly)
-                    {
-                        if (!filteringCandidates.TryGetValue(fcc.CallId, out FilterCandidateState? candidateState))
-                        {
-                            filteringCandidates[fcc.CallId] = new FilterCandidateState(fcc.CallId)
-                            {
-                                IsHandoffFunction = true,
-                            };
-                        }
-                        else
-                        {
-                            candidateState.IsHandoffFunction = true;
-                            (int messageIndex, int contentIndex) = candidateState.FunctionCallResultLocation!.Value;
-                            ChatMessage messageToFilter = filteredMessages[messageIndex];
-                            messageToFilter.Contents.RemoveAt(contentIndex);
-                            if (messageToFilter.Contents.Count == 0)
-                            {
-                                messagesToRemove.Add(messageIndex);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // All mode: strip all FunctionCallContent
-                    }
-                }
+                retainedMessages.Add(unfilteredMessage);
+                continue;
             }
-            else
+
+            // We may need to filter out a subset of the message's content, but we won't know until we iterate through it. Create a new list
+            // of AIContent which we will stuff into a clone of the message if we need to filter out any content.
+            List<AIContent> retainedContents = new(capacity: unfilteredMessage.Contents.Count);
+
+            foreach (AIContent content in unfilteredMessage.Contents)
             {
-                if (!filterHandoffOnly)
+                if (content is FunctionCallContent fcc
+                    && (filterAllToolCalls || IsHandoffFunctionName(fcc.Name)))
                 {
+                    // If we already have an unmatched candidate with the same CallId, that means we have two FCCs in a row without an FRC,
+                    // which violates our assumption of strict ordering.
+                    if (!filteredCallsWithoutResponses.Add(fcc.CallId))
+                    {
+                        throw new InvalidOperationException($"Duplicate FunctionCallContent with CallId '{fcc.CallId}' without corresponding FunctionResultContent.");
+                    }
+
+                    // If we are filtering all tool calls, or this is a handoff call (and we are not filtering None, already checked), then
+                    // filter this FCC
                     continue;
                 }
-
-                for (int i = 0; i < unfilteredMessage.Contents!.Count; i++)
+                else if (content is FunctionResultContent frc)
                 {
-                    AIContent content = unfilteredMessage.Contents[i];
-                    if (content is not FunctionResultContent frc
-                        || (filteringCandidates.TryGetValue(frc.CallId, out FilterCandidateState? candidateState)
-                            && candidateState.IsHandoffFunction is false))
+                    // We rely on the corresponding FCC to have already been processed, so check if it is in the candidate dictionary.
+                    // If it is, we can filter out the FRC, but we need to remove the candidate from the dictionary, since a future FCC can
+                    // come in with the same CallId, and should be considered a new call that may need to be filtered.
+                    if (filteredCallsWithoutResponses.Remove(frc.CallId))
                     {
-                        // Either this is not a function result content, so we should let it through, or it is a FRC that
-                        // we know is not related to a handoff call. In either case, we should include it.
-                        filteredMessage.Contents.Add(content);
+                        continue;
                     }
-                    else if (candidateState is null)
-                    {
-                        // We haven't seen the corresponding function call yet, so add it as a candidate to be filtered later
-                        filteringCandidates[frc.CallId] = new FilterCandidateState(frc.CallId)
-                        {
-                            FunctionCallResultLocation = (filteredMessages.Count, filteredMessage.Contents.Count),
-                        };
-                    }
-                    // else we have seen the corresponding function call and it is a handoff, so we should filter it out.
                 }
+
+                // FCC/FRC, but not filtered, or neither FCC nor FRC: this should not be filtered out
+                retainedContents.Add(content);
             }
 
-            if (filteredMessage.Contents.Count > 0)
+            if (retainedContents.Count == 0)
             {
-                filteredMessages.Add(filteredMessage);
+                // message was fully filtered, skip it
+                continue;
             }
+
+            ChatMessage filteredMessage = unfilteredMessage.Clone();
+            filteredMessage.Contents = retainedContents;
+            retainedMessages.Add(filteredMessage);
         }
 
-        return filteredMessages.Where((_, index) => !messagesToRemove.Contains(index));
-    }
-
-    private class FilterCandidateState(string callId)
-    {
-        public (int MessageIndex, int ContentIndex)? FunctionCallResultLocation { get; set; }
-
-        public string CallId => callId;
-
-        public bool? IsHandoffFunction { get; set; }
+        return retainedMessages;
     }
 }

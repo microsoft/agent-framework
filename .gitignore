@@ -203,6 +203,8 @@ temp*/
 
 # AI
 .claude/
+.omc/
+.omx/
 WARP.md
 **/memory-bank/
 **/projectBrief.md
