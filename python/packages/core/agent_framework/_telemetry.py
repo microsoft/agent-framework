@@ -33,7 +33,7 @@ _user_agent_prefixes: ContextVar[tuple[str, ...]] = ContextVar("_user_agent_pref
 
 
 @contextmanager
-def user_agent_prefix(prefix: str) -> Generator[None, None, None]:
+def user_agent_prefix(prefix: str) -> Generator[None]:
     """Context manager that adds a prefix to the user agent string for the current scope.
 
     This is useful for upstream layers that want to identify themselves in telemetry

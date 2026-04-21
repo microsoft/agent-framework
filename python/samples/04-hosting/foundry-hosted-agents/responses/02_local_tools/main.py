@@ -10,7 +10,7 @@ from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
-from typing_extensions import Annotated
+from typing import Annotated
 
 # Load environment variables from .env file
 load_dotenv()

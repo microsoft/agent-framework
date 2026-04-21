@@ -81,7 +81,8 @@ from azure.ai.agentserver.responses.streaming._builders import (
     ReasoningSummaryPartBuilder,
     TextContentBuilder,
 )
-from typing_extensions import Any, Sequence, cast
+from typing_extensions import Any
+from typing import Sequence, cast
 
 logger = logging.getLogger(__name__)
 
@@ -379,7 +380,7 @@ class _OutputItemTracker:
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self.needs_async = False
 
-    def handle(self, content: Content) -> Generator[ResponseStreamEvent, None, None]:
+    def handle(self, content: Content) -> Generator[ResponseStreamEvent]:
         """Process a content item, yielding sync events.
 
         Sets ``needs_async = True`` if the caller must also drain an
@@ -424,13 +425,13 @@ class _OutputItemTracker:
             yield from self._close()
             self.needs_async = True
 
-    def close(self) -> Generator[ResponseStreamEvent, None, None]:
+    def close(self) -> Generator[ResponseStreamEvent]:
         """Close any remaining active builder."""
         yield from self._close()
 
     # -- Private open/close helpers --
 
-    def _open_message(self) -> Generator[ResponseStreamEvent, None, None]:
+    def _open_message(self) -> Generator[ResponseStreamEvent]:
         self._message_item = self._stream.add_output_item_message()
         self._text_content = self._message_item.add_text_content()
         self._active_type = "text"
@@ -438,7 +439,7 @@ class _OutputItemTracker:
         yield self._message_item.emit_added()
         yield self._text_content.emit_added()
 
-    def _open_reasoning(self) -> Generator[ResponseStreamEvent, None, None]:
+    def _open_reasoning(self) -> Generator[ResponseStreamEvent]:
         self._reasoning_item = self._stream.add_output_item_reasoning_item()
         self._summary_part = self._reasoning_item.add_summary_part()
         self._active_type = "text_reasoning"
@@ -446,7 +447,7 @@ class _OutputItemTracker:
         yield self._reasoning_item.emit_added()
         yield self._summary_part.emit_added()
 
-    def _open_function_call(self, content: Content) -> Generator[ResponseStreamEvent, None, None]:
+    def _open_function_call(self, content: Content) -> Generator[ResponseStreamEvent]:
         self._fc_builder = self._stream.add_output_item_function_call(
             name=content.name or "",
             call_id=content.call_id or "",
@@ -455,7 +456,7 @@ class _OutputItemTracker:
         self._active_id = content.call_id
         yield self._fc_builder.emit_added()
 
-    def _open_mcp_call(self, content: Content) -> Generator[ResponseStreamEvent, None, None]:
+    def _open_mcp_call(self, content: Content) -> Generator[ResponseStreamEvent]:
         self._mcp_builder = self._stream.add_output_item_mcp_call(
             server_label=content.server_name or "default",
             name=content.tool_name or "",
@@ -464,7 +465,7 @@ class _OutputItemTracker:
         self._active_id = f"{content.server_name or 'default'}::{content.tool_name}"
         yield self._mcp_builder.emit_added()
 
-    def _close(self) -> Generator[ResponseStreamEvent, None, None]:
+    def _close(self) -> Generator[ResponseStreamEvent]:
         accumulated = "".join(self._accumulated)
 
         if self._active_type == "text" and self._text_content and self._message_item:
