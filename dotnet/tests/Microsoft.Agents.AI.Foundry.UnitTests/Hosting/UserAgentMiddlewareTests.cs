@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 /// </summary>
 public sealed partial class UserAgentMiddlewareTests : IAsyncDisposable
 {
-    private const string VersionedUserAgentPattern = @"agent-framework-dotnet/\d+\.\d+\.\d+";
+    private const string VersionedUserAgentPattern = @"agent-framework-dotnet/\d+\.\d+\.\d+(-[\w.]+)?";
 
     private WebApplication? _app;
     private HttpClient? _httpClient;

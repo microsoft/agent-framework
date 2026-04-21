@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using Azure.AI.AgentServer.Responses;
@@ -9,6 +10,7 @@ using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -17,6 +19,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// with agent-framework <see cref="AIAgent"/> instances, enabling agent-framework agents and workflows
 /// to be hosted as Azure Foundry Hosted Agents.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public class AgentFrameworkResponseHandler : ResponseHandler
 {
     private readonly IServiceProvider _serviceProvider;
@@ -275,7 +278,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             // Persist session after streaming completes (successful or not)
             if (session is not null && !string.IsNullOrWhiteSpace(sessionConversationId))
             {
-                await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, CancellationToken.None).ConfigureAwait(false);
+                await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, cancellationToken).ConfigureAwait(false);
             }
         }
     }

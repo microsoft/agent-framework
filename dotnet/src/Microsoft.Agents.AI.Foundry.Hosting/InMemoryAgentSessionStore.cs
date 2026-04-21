@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -25,6 +27,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// such as Redis, SQL Server, or Azure Cosmos DB.
 /// </para>
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class InMemoryAgentSessionStore : AgentSessionStore
 {
     private readonly ConcurrentDictionary<string, JsonElement> _sessions = new();

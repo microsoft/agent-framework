@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,6 +12,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Shared.DiagnosticIds;
 using ModelContextProtocol.Client;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -33,6 +35,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// lazily connected otherwise.
 /// </para>
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 {
     private readonly FoundryToolboxOptions _options;

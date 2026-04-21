@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -10,6 +12,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Extension methods for <see cref="FoundryAITool"/> that require Azure.AI.Projects 2.1.0-beta.1+
 /// types (e.g. <see cref="ToolboxRecord"/>, <see cref="ToolboxVersion"/>).
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class FoundryAIToolExtensions
 {
     /// <summary>

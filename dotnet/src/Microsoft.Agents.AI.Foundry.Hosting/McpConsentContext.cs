@@ -31,9 +31,9 @@ internal sealed class RequestConsentState
 }
 
 /// <summary>
-/// Thread-static (AsyncLocal) context that enables <see cref="ConsentAwareMcpClientAIFunction"/>
+/// Async-local context that enables <see cref="ConsentAwareMcpClientAIFunction"/>
 /// to signal a consent error back to <see cref="AgentFrameworkResponseHandler"/> through the
-/// <see cref="FunctionInvokingChatClient"/> tool loop.
+/// <see cref="FunctionInvokingChatClient"/> tool loop. Flows with the async ExecutionContext.
 /// </summary>
 internal static class McpConsentContext
 {

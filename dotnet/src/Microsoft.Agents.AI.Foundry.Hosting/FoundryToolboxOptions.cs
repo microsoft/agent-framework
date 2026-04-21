@@ -1,12 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
 /// Options for Foundry Toolbox MCP integration.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class FoundryToolboxOptions
 {
     /// <summary>

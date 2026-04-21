@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -13,6 +15,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// allowing conversations to be resumed across HTTP requests, application restarts,
 /// or different service instances in hosted scenarios.
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public abstract class AgentSessionStore
 {
     /// <summary>
