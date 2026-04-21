@@ -9,15 +9,15 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 
 /// <summary>
-/// Tests for A2AEndpointRouteBuilderExtensions.MapA2A method.
+/// Tests for A2AEndpointRouteBuilderExtensions and A2AServerServiceCollectionExtensions methods.
 /// </summary>
 public sealed class A2AEndpointRouteBuilderExtensionsTests
 {
     /// <summary>
-    /// Verifies that MapA2A throws ArgumentNullException for null endpoints.
+    /// Verifies that MapA2AHttpJson throws ArgumentNullException for null endpoints.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentBuilder_NullEndpoints_ThrowsArgumentNullException()
+    public void MapA2AHttpJson_WithAgentBuilder_NullEndpoints_ThrowsArgumentNullException()
     {
         // Arrange
         AspNetCore.Routing.IEndpointRouteBuilder endpoints = null!;
@@ -28,16 +28,16 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
 
         // Act & Assert
         ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
-            endpoints.MapA2A(agentBuilder, "/a2a"));
+            endpoints.MapA2AHttpJson(agentBuilder, "/a2a"));
 
         Assert.Equal("endpoints", exception.ParamName);
     }
 
     /// <summary>
-    /// Verifies that MapA2A throws ArgumentNullException for null agentBuilder.
+    /// Verifies that MapA2AHttpJson throws ArgumentNullException for null agentBuilder.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentBuilder_NullAgentBuilder_ThrowsArgumentNullException()
+    public void MapA2AHttpJson_WithAgentBuilder_NullAgentBuilder_ThrowsArgumentNullException()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -50,202 +50,118 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
 
         // Act & Assert
         ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
-            app.MapA2A(agentBuilder, "/a2a"));
+            app.MapA2AHttpJson(agentBuilder, "/a2a"));
 
         Assert.Equal("agentBuilder", exception.ParamName);
     }
 
     /// <summary>
-    /// Verifies that MapA2A with IHostedAgentBuilder correctly maps the agent with default configuration.
+    /// Verifies that MapA2AHttpJson with IHostedAgentBuilder correctly maps the agent with default configuration.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentBuilder_DefaultConfiguration_Succeeds()
+    public void MapA2AHttpJson_WithAgentBuilder_DefaultConfiguration_Succeeds()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        agentBuilder.AddA2AServer();
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
         // Act & Assert - Should not throw
-        var result = app.MapA2A(agentBuilder, "/a2a");
+        var result = app.MapA2AHttpJson(agentBuilder, "/a2a");
         Assert.NotNull(result);
     }
 
     /// <summary>
-    /// Verifies that MapA2A with IHostedAgentBuilder and custom A2AHostingOptions succeeds.
+    /// Verifies that MapA2AHttpJson with string agent name correctly maps the agent.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentBuilder_CustomA2AHostingOptionsConfiguration_Succeeds()
+    public void MapA2AHttpJson_WithAgentName_DefaultConfiguration_Succeeds()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        IChatClient mockChatClient = new DummyChatClient();
+        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
+        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddA2AServer("agent");
+        builder.Services.AddLogging();
+        using WebApplication app = builder.Build();
+
+        // Act & Assert - Should not throw
+        var result = app.MapA2AHttpJson("agent", "/a2a");
+        Assert.NotNull(result);
+    }
+
+    /// <summary>
+    /// Verifies that MapA2AJsonRpc with IHostedAgentBuilder correctly maps the agent.
+    /// </summary>
+    [Fact]
+    public void MapA2AJsonRpc_WithAgentBuilder_DefaultConfiguration_Succeeds()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        agentBuilder.AddA2AServer();
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
         // Act & Assert - Should not throw
-        var result = app.MapA2A(agentBuilder, "/a2a", options => { });
+        var result = app.MapA2AJsonRpc(agentBuilder, "/a2a");
         Assert.NotNull(result);
     }
 
     /// <summary>
-    /// Verifies that MapA2A throws ArgumentNullException for null endpoints when using string agent name.
+    /// Verifies that MapA2AJsonRpc with string agent name correctly maps the agent.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentName_NullEndpoints_ThrowsArgumentNullException()
-    {
-        // Arrange
-        AspNetCore.Routing.IEndpointRouteBuilder endpoints = null!;
-
-        // Act & Assert
-        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
-            endpoints.MapA2A("agent", "/a2a"));
-
-        Assert.Equal("endpoints", exception.ParamName);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with string agent name correctly maps the agent.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentName_DefaultConfiguration_Succeeds()
+    public void MapA2AJsonRpc_WithAgentName_DefaultConfiguration_Succeeds()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddA2AServer("agent");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
         // Act & Assert - Should not throw
-        var result = app.MapA2A("agent", "/a2a");
+        var result = app.MapA2AJsonRpc("agent", "/a2a");
         Assert.NotNull(result);
     }
 
     /// <summary>
-    /// Verifies that MapA2A with string agent name and custom A2AHostingOptions succeeds.
+    /// Verifies that both MapA2AHttpJson and MapA2AJsonRpc can be called for the same agent.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentName_CustomA2AHostingOptionsConfiguration_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A("agent", "/a2a", options => { });
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A throws ArgumentNullException for null endpoints when using AIAgent.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAIAgent_NullEndpoints_ThrowsArgumentNullException()
-    {
-        // Arrange
-        AspNetCore.Routing.IEndpointRouteBuilder endpoints = null!;
-
-        // Act & Assert
-        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
-            endpoints.MapA2A((AIAgent)null!, "/a2a"));
-
-        Assert.Equal("endpoints", exception.ParamName);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with AIAgent correctly maps the agent.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAIAgent_DefaultConfiguration_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-        AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agent, "/a2a");
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with AIAgent and custom A2AHostingOptions succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAIAgent_CustomA2AHostingOptionsConfiguration_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-        AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agent, "/a2a", options => { });
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with IHostedAgentBuilder and A2AHostingOptions with AgentRunMode succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentBuilder_CustomOptionsAndRunMode_Succeeds()
+    public void MapA2AHttpJson_And_MapA2AJsonRpc_SameAgent_Succeeds()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        agentBuilder.AddA2AServer();
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
         // Act & Assert - Should not throw
-        var result = app.MapA2A(agentBuilder, "/a2a", options => options.AgentRunMode = AgentRunMode.DisallowBackground);
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with string agentName and A2AHostingOptions with AgentRunMode succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentName_CustomOptionsAndRunMode_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A("agent", "/a2a", options => options.AgentRunMode = AgentRunMode.DisallowBackground);
-        Assert.NotNull(result);
+        var httpResult = app.MapA2AHttpJson(agentBuilder, "/a2a");
+        var rpcResult = app.MapA2AJsonRpc(agentBuilder, "/a2a");
+        Assert.NotNull(httpResult);
+        Assert.NotNull(rpcResult);
     }
 
     /// <summary>
     /// Verifies that multiple agents can be mapped to different paths.
     /// </summary>
     [Fact]
-    public void MapA2A_MultipleAgents_Succeeds()
+    public void MapA2AHttpJson_MultipleAgents_Succeeds()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -253,12 +169,14 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         IHostedAgentBuilder agent1Builder = builder.AddAIAgent("agent1", "Instructions1", chatClientServiceKey: "chat-client");
         IHostedAgentBuilder agent2Builder = builder.AddAIAgent("agent2", "Instructions2", chatClientServiceKey: "chat-client");
+        agent1Builder.AddA2AServer();
+        agent2Builder.AddA2AServer();
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
         // Act & Assert - Should not throw
-        app.MapA2A(agent1Builder, "/a2a/agent1");
-        app.MapA2A(agent2Builder, "/a2a/agent2");
+        app.MapA2AHttpJson(agent1Builder, "/a2a/agent1");
+        app.MapA2AHttpJson(agent2Builder, "/a2a/agent2");
         Assert.NotNull(app);
     }
 
@@ -266,246 +184,79 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
     /// Verifies that custom paths can be specified for A2A endpoints.
     /// </summary>
     [Fact]
-    public void MapA2A_WithCustomPath_AcceptsValidPath()
+    public void MapA2AHttpJson_WithCustomPath_AcceptsValidPath()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        agentBuilder.AddA2AServer();
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
         // Act & Assert - Should not throw
-        app.MapA2A(agentBuilder, "/custom/a2a/path");
+        app.MapA2AHttpJson(agentBuilder, "/custom/a2a/path");
         Assert.NotNull(app);
     }
 
     /// <summary>
-    /// Verifies that A2AHostingOptions configuration callback is invoked correctly.
+    /// Verifies that AddA2AServer with custom A2AServerRegistrationOptions succeeds.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentBuilder_A2AHostingOptionsConfigurationCallbackInvoked()
+    public void AddA2AServer_WithCustomOptions_Succeeds()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        bool configureCallbackInvoked = false;
-
-        // Act
-        app.MapA2A(agentBuilder, "/a2a", options =>
-        {
-            configureCallbackInvoked = true;
-            Assert.NotNull(options);
-        });
-
-        // Assert
-        Assert.True(configureCallbackInvoked);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with JsonRpc protocolBindings succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithJsonRpcProtocol_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        agentBuilder.AddA2AServer(options => options.AgentRunMode = AgentRunMode.AllowBackgroundIfSupported);
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
         // Act & Assert - Should not throw
-        var result = app.MapA2A(agentBuilder, "/a2a", options => options.ProtocolBindings = A2AProtocolBinding.JsonRpc);
+        var result = app.MapA2AHttpJson(agentBuilder, "/a2a");
         Assert.NotNull(result);
     }
 
     /// <summary>
-    /// Verifies that MapA2A with both protocols succeeds.
+    /// Verifies that MapA2AHttpJson throws ArgumentNullException for null endpoints when using string agent name.
     /// </summary>
     [Fact]
-    public void MapA2A_WithBothProtocols_Succeeds()
+    public void MapA2AHttpJson_WithAgentName_NullEndpoints_ThrowsArgumentNullException()
     {
         // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
+        AspNetCore.Routing.IEndpointRouteBuilder endpoints = null!;
 
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agentBuilder, "/a2a", options => options.ProtocolBindings = A2AProtocolBinding.HttpJson | A2AProtocolBinding.JsonRpc);
-        Assert.NotNull(result);
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            endpoints.MapA2AHttpJson("agent", "/a2a"));
+
+        Assert.Equal("endpoints", exception.ParamName);
     }
 
     /// <summary>
-    /// Verifies that MapA2A with IHostedAgentBuilder and direct protocolBindings parameter succeeds.
+    /// Verifies that MapA2AJsonRpc throws ArgumentNullException for null endpoints when using string agent name.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentBuilder_DirectProtocol_Succeeds()
+    public void MapA2AJsonRpc_WithAgentName_NullEndpoints_ThrowsArgumentNullException()
     {
         // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
+        AspNetCore.Routing.IEndpointRouteBuilder endpoints = null!;
 
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agentBuilder, "/a2a", A2AProtocolBinding.HttpJson);
-        Assert.NotNull(result);
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            endpoints.MapA2AJsonRpc("agent", "/a2a"));
+
+        Assert.Equal("endpoints", exception.ParamName);
     }
 
     /// <summary>
-    /// Verifies that MapA2A with IHostedAgentBuilder and direct protocolBindings and run mode parameters succeeds.
+    /// Verifies that MapA2AHttpJson throws ArgumentNullException for null agentName.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentBuilder_DirectProtocolAndRunMode_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agentBuilder, "/a2a", A2AProtocolBinding.HttpJson, AgentRunMode.AllowBackgroundIfSupported);
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with IHostedAgentBuilder, null protocolBindings, and direct run mode parameter succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentBuilder_NullProtocolAndDirectRunMode_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agentBuilder, "/a2a", protocolBindings: null, agentRunMode: AgentRunMode.DisallowBackground);
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with string agent name and direct protocolBindings parameter succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentName_DirectProtocol_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A("agent", "/a2a", A2AProtocolBinding.JsonRpc);
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with string agent name and direct protocolBindings and run mode parameters succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentName_DirectProtocolAndRunMode_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A("agent", "/a2a", A2AProtocolBinding.HttpJson, AgentRunMode.AllowBackgroundIfSupported);
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with AIAgent and direct protocolBindings parameter succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAIAgent_DirectProtocol_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-        AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agent, "/a2a", A2AProtocolBinding.HttpJson);
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with AIAgent and direct protocolBindings and run mode parameters succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAIAgent_DirectProtocolAndRunMode_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-        AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agent, "/a2a", A2AProtocolBinding.HttpJson, AgentRunMode.AllowBackgroundIfSupported);
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with AIAgent, null protocolBindings, and direct run mode defaults correctly.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAIAgent_NullProtocolAndDirectRunMode_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-        AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agent, "/a2a", protocolBindings: null, agentRunMode: AgentRunMode.DisallowBackground);
-        Assert.NotNull(result);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A throws ArgumentNullException for null agentName (string overload with configureOptions).
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentName_NullAgentName_ThrowsArgumentNullException()
+    public void MapA2AHttpJson_WithAgentName_NullAgentName_ThrowsArgumentNullException()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -514,34 +265,16 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
 
         // Act & Assert
         ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
-            app.MapA2A((string)null!, "/a2a"));
+            app.MapA2AHttpJson((string)null!, "/a2a"));
 
         Assert.Equal("agentName", exception.ParamName);
     }
 
     /// <summary>
-    /// Verifies that MapA2A throws ArgumentNullException for null agentName (string overload with protocolBindings).
+    /// Verifies that MapA2AHttpJson throws ArgumentException for empty agentName.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentName_NullAgentName_ProtocolOverload_ThrowsArgumentNullException()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        // Act & Assert
-        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
-            app.MapA2A((string)null!, "/a2a", A2AProtocolBinding.HttpJson));
-
-        Assert.Equal("agentName", exception.ParamName);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A throws ArgumentException for empty agentName (string overload with configureOptions).
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentName_EmptyAgentName_ThrowsArgumentException()
+    public void MapA2AHttpJson_WithAgentName_EmptyAgentName_ThrowsArgumentException()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -550,66 +283,112 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
 
         // Act & Assert
         ArgumentException exception = Assert.Throws<ArgumentException>(() =>
-            app.MapA2A(string.Empty, "/a2a"));
+            app.MapA2AHttpJson(string.Empty, "/a2a"));
 
         Assert.Equal("agentName", exception.ParamName);
     }
 
     /// <summary>
-    /// Verifies that MapA2A throws ArgumentException for empty agentName (string overload with protocolBindings).
+    /// Verifies that MapA2AHttpJson throws ArgumentNullException for null path.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentName_EmptyAgentName_ProtocolOverload_ThrowsArgumentException()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        // Act & Assert
-        ArgumentException exception = Assert.Throws<ArgumentException>(() =>
-            app.MapA2A(string.Empty, "/a2a", A2AProtocolBinding.HttpJson));
-
-        Assert.Equal("agentName", exception.ParamName);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A throws ArgumentException for null path.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAIAgent_NullPath_ThrowsArgumentException()
+    public void MapA2AHttpJson_NullPath_ThrowsArgumentNullException()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        agentBuilder.AddA2AServer();
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
-        AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
-            app.MapA2A(agent, null!));
+            app.MapA2AHttpJson(agentBuilder, null!));
     }
 
     /// <summary>
-    /// Verifies that MapA2A throws ArgumentException for whitespace-only path.
+    /// Verifies that MapA2AHttpJson throws ArgumentException for whitespace-only path.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAIAgent_WhitespacePath_ThrowsArgumentException()
+    public void MapA2AHttpJson_WhitespacePath_ThrowsArgumentException()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        agentBuilder.AddA2AServer();
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
-        AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
 
         // Act & Assert
         Assert.Throws<ArgumentException>(() =>
-            app.MapA2A(agent, "   "));
+            app.MapA2AHttpJson(agentBuilder, "   "));
+    }
+
+    /// <summary>
+    /// Verifies that AddA2AServer throws ArgumentNullException for null services.
+    /// </summary>
+    [Fact]
+    public void AddA2AServer_NullServices_ThrowsArgumentNullException()
+    {
+        // Arrange
+        IServiceCollection services = null!;
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            services.AddA2AServer("agent"));
+
+        Assert.Equal("services", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verifies that AddA2AServer throws ArgumentNullException for null agentName.
+    /// </summary>
+    [Fact]
+    public void AddA2AServer_NullAgentName_ThrowsArgumentNullException()
+    {
+        // Arrange
+        IServiceCollection services = new ServiceCollection();
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            services.AddA2AServer((string)null!));
+
+        Assert.Equal("agentName", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verifies that AddA2AServer throws ArgumentException for empty agentName.
+    /// </summary>
+    [Fact]
+    public void AddA2AServer_EmptyAgentName_ThrowsArgumentException()
+    {
+        // Arrange
+        IServiceCollection services = new ServiceCollection();
+
+        // Act & Assert
+        ArgumentException exception = Assert.Throws<ArgumentException>(() =>
+            services.AddA2AServer(string.Empty));
+
+        Assert.Equal("agentName", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verifies that AddA2AServer on IHostedAgentBuilder throws ArgumentNullException for null builder.
+    /// </summary>
+    [Fact]
+    public void AddA2AServer_NullAgentBuilder_ThrowsArgumentNullException()
+    {
+        // Arrange
+        IHostedAgentBuilder agentBuilder = null!;
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            agentBuilder.AddA2AServer());
+
+        Assert.Equal("agentBuilder", exception.ParamName);
     }
 }

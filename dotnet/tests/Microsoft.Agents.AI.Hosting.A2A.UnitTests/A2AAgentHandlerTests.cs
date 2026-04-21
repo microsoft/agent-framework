@@ -13,36 +13,10 @@ using Moq.Protected;
 namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="AIAgentExtensions"/> class.
+/// Unit tests for the <see cref="A2AAgentHandler"/> class.
 /// </summary>
-public sealed class AIAgentExtensionsTests
+public sealed class A2AAgentHandlerTests
 {
-    /// <summary>
-    /// Verifies that MapA2A throws ArgumentNullException for null agent.
-    /// </summary>
-    [Fact]
-    public void MapA2A_NullAgent_ThrowsArgumentNullException()
-    {
-        // Arrange
-        AIAgent agent = null!;
-
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => agent.MapA2A());
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A returns a non-null IAgentHandler.
-    /// </summary>
-    [Fact]
-    public void MapA2A_ValidAgent_ReturnsNonNullHandler()
-    {
-        // Arrange & Act
-        IAgentHandler handler = CreateAgentMock(_ => { }).Object.MapA2A();
-
-        // Assert
-        Assert.NotNull(handler);
-    }
-
     /// <summary>
     /// Verifies that when metadata is null, the options passed to RunAsync have
     /// AllowBackgroundResponses disabled and no AdditionalProperties.
@@ -52,7 +26,7 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
-        IAgentHandler handler = CreateAgentMock(options => capturedOptions = options).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMock(options => capturedOptions = options));
 
         // Act
         await InvokeExecuteAsync(handler, new RequestContext
@@ -82,7 +56,7 @@ public sealed class AIAgentExtensionsTests
         {
             AdditionalProperties = additionalProps
         };
-        IAgentHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response));
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -109,7 +83,7 @@ public sealed class AIAgentExtensionsTests
         {
             AdditionalProperties = null
         };
-        IAgentHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response));
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -133,7 +107,7 @@ public sealed class AIAgentExtensionsTests
         {
             AdditionalProperties = []
         };
-        IAgentHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response));
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -154,8 +128,9 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
-        IAgentHandler handler = CreateAgentMock(options => capturedOptions = options)
-            .Object.MapA2A(runMode: AgentRunMode.DisallowBackground);
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(options => capturedOptions = options),
+            runMode: AgentRunMode.DisallowBackground);
 
         // Act
         await InvokeExecuteAsync(handler, new RequestContext
@@ -176,8 +151,9 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
-        IAgentHandler handler = CreateAgentMock(options => capturedOptions = options)
-            .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundIfSupported);
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(options => capturedOptions = options),
+            runMode: AgentRunMode.AllowBackgroundIfSupported);
 
         // Act
         await InvokeExecuteAsync(handler, new RequestContext
@@ -198,8 +174,9 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
-        IAgentHandler handler = CreateAgentMock(options => capturedOptions = options)
-            .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(false)));
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(options => capturedOptions = options),
+            runMode: AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(false)));
 
         // Act
         await InvokeExecuteAsync(handler, new RequestContext
@@ -220,8 +197,9 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
-        IAgentHandler handler = CreateAgentMock(options => capturedOptions = options)
-            .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(true)));
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(options => capturedOptions = options),
+            runMode: AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(true)));
 
         // Act
         await InvokeExecuteAsync(handler, new RequestContext
@@ -247,7 +225,7 @@ public sealed class AIAgentExtensionsTests
         {
             ContinuationToken = CreateTestContinuationToken()
         };
-        IAgentHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response));
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -272,7 +250,7 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
-        IAgentHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response));
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -302,7 +280,7 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Done!")]);
-        IAgentHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response));
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -332,7 +310,7 @@ public sealed class AIAgentExtensionsTests
         int callCount = 0;
         Mock<AIAgent> agentMock = CreateAgentMockWithCallCount(ref callCount, _ =>
             throw new InvalidOperationException("Agent failed"));
-        IAgentHandler handler = agentMock.Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(agentMock);
 
         // Act & Assert
         var events = new EventCollector();
@@ -369,7 +347,7 @@ public sealed class AIAgentExtensionsTests
         int callCount = 0;
         Mock<AIAgent> agentMock = CreateAgentMockWithCallCount(ref callCount, _ =>
             throw new OperationCanceledException("Cancelled"));
-        IAgentHandler handler = agentMock.Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(agentMock);
 
         // Act & Assert
         var events = new EventCollector();
@@ -402,7 +380,7 @@ public sealed class AIAgentExtensionsTests
     public async Task ExecuteAsync_WithReferenceTaskIds_ThrowsNotSupportedExceptionAsync()
     {
         // Arrange
-        IAgentHandler handler = CreateAgentMock(_ => { }).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMock(_ => { }));
 
         // Act & Assert
         await Assert.ThrowsAsync<NotSupportedException>(() =>
@@ -426,7 +404,7 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
-        IAgentHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response));
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -456,7 +434,7 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
-        IAgentHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response));
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -480,8 +458,9 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         A2ARunDecisionContext? capturedContext = null;
-        IAgentHandler handler = CreateAgentMock(_ => { })
-            .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundWhen((ctx, _) =>
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(_ => { }),
+            runMode: AgentRunMode.AllowBackgroundWhen((ctx, _) =>
             {
                 capturedContext = ctx;
                 return ValueTask.FromResult(false);
@@ -508,7 +487,7 @@ public sealed class AIAgentExtensionsTests
     public async Task CancelAsync_EmitsCanceledStatusAsync()
     {
         // Arrange
-        IAgentHandler handler = CreateAgentMock(_ => { }).Object.MapA2A();
+        A2AAgentHandler handler = CreateHandler(CreateAgentMock(_ => { }));
         var events = new EventCollector();
         var eventQueue = new AgentEventQueue();
         var readerTask = ReadEventsAsync(eventQueue, events);
@@ -533,6 +512,255 @@ public sealed class AIAgentExtensionsTests
     }
 
 #pragma warning restore MEAI001
+
+    /// <summary>
+    /// Verifies that when no session store is provided, the handler uses InMemoryAgentSessionStore
+    /// and can execute successfully.
+    /// </summary>
+    [Fact]
+    public async Task Handler_WithNullSessionStore_UsesInMemorySessionStoreAndExecutesSuccessfullyAsync()
+    {
+        // Arrange
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response), agentSessionStore: null);
+
+        // Act
+        var events = await CollectEventsAsync(handler, new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "",
+            ContextId = "ctx-1",
+            Message = new Message
+            {
+                MessageId = "test-id",
+                Role = Role.User,
+                Parts = [new Part { Text = "Hello" }]
+            }
+        });
+
+        // Assert
+        Message message = Assert.Single(events.Messages);
+        Assert.Equal("Reply", message.Parts![0].Text);
+    }
+
+    /// <summary>
+    /// Verifies that when a custom session store is provided, it is used instead of the
+    /// default InMemoryAgentSessionStore.
+    /// </summary>
+    [Fact]
+    public async Task Handler_WithCustomSessionStore_UsesProvidedSessionStoreAsync()
+    {
+        // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore>();
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<string>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response), agentSessionStore: mockSessionStore.Object);
+
+        // Act
+        await InvokeExecuteAsync(handler, new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "",
+            ContextId = "ctx-1",
+            Message = new Message
+            {
+                MessageId = "test-id",
+                Role = Role.User,
+                Parts = [new Part { Text = "Hello" }]
+            }
+        });
+
+        // Assert - verify the custom session store was called
+        mockSessionStore.Verify(
+            x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<string>(s => s == "ctx-1"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<string>(s => s == "ctx-1"),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that when no session store is provided, the default InMemoryAgentSessionStore
+    /// persists sessions across multiple calls with the same context ID.
+    /// </summary>
+    [Fact]
+    public async Task Handler_WithNullSessionStore_SessionIsPersistedAcrossCallsAsync()
+    {
+        // Arrange - track how many times CreateSessionCoreAsync is called
+        int createSessionCallCount = 0;
+        var sessionInstance = new TestAgentSession();
+
+        Mock<AIAgent> agentMock = new() { CallBase = true };
+        agentMock.SetupGet(x => x.Name).Returns("TestAgent");
+        agentMock
+            .Protected()
+            .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
+            .Callback(() => Interlocked.Increment(ref createSessionCallCount))
+            .ReturnsAsync(() => new TestAgentSession());
+        agentMock
+            .Protected()
+            .Setup<ValueTask<System.Text.Json.JsonElement>>("SerializeSessionCoreAsync",
+                ItExpr.IsAny<AgentSession>(),
+                ItExpr.IsAny<System.Text.Json.JsonSerializerOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(System.Text.Json.JsonDocument.Parse("{}").RootElement);
+        agentMock
+            .Protected()
+            .Setup<ValueTask<AgentSession>>("DeserializeSessionCoreAsync",
+                ItExpr.IsAny<System.Text.Json.JsonElement>(),
+                ItExpr.IsAny<System.Text.Json.JsonSerializerOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(sessionInstance);
+        agentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "Reply")]));
+
+        A2AAgentHandler handler = CreateHandler(agentMock, agentSessionStore: null);
+
+        var context = new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "",
+            ContextId = "ctx-persistent",
+            Message = new Message
+            {
+                MessageId = "test-id",
+                Role = Role.User,
+                Parts = [new Part { Text = "Hello" }]
+            }
+        };
+
+        // Act - call twice with the same context ID
+        await InvokeExecuteAsync(handler, context);
+        await InvokeExecuteAsync(handler, context);
+
+        // Assert - CreateSessionCoreAsync should be called once (first call creates, second retrieves from store)
+        Assert.Equal(1, createSessionCallCount);
+    }
+
+    /// <summary>
+    /// Verifies that when the AllowBackgroundWhen delegate throws, the exception propagates
+    /// and the agent is not invoked.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DynamicMode_WhenCallbackThrows_PropagatesExceptionAsync()
+    {
+        // Arrange
+        bool agentInvoked = false;
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(_ => agentInvoked = true),
+            runMode: AgentRunMode.AllowBackgroundWhen((_, _) =>
+                throw new InvalidOperationException("Callback failed")));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            InvokeExecuteAsync(handler, new RequestContext
+            {
+                TaskId = "", ContextId = "ctx", StreamingResponse = false, Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+            }));
+
+        Assert.False(agentInvoked);
+    }
+
+    /// <summary>
+    /// Verifies that the CancellationToken is propagated to the AllowBackgroundWhen delegate.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_DynamicMode_CancellationTokenIsPropagatedToCallbackAsync()
+    {
+        // Arrange
+        CancellationToken capturedToken = default;
+        using var cts = new CancellationTokenSource();
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(_ => { }),
+            runMode: AgentRunMode.AllowBackgroundWhen((_, ct) =>
+            {
+                capturedToken = ct;
+                return ValueTask.FromResult(false);
+            }));
+
+        // Act
+        var eventQueue = new AgentEventQueue();
+        await handler.ExecuteAsync(
+            new RequestContext
+            {
+                TaskId = "", ContextId = "ctx", StreamingResponse = false, Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+            },
+            eventQueue,
+            cts.Token);
+        eventQueue.Complete(null);
+
+        // Assert
+        Assert.Equal(cts.Token, capturedToken);
+    }
+
+    /// <summary>
+    /// Verifies that the agent run mode is applied on the continuation/task-update path,
+    /// not just the new message path.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_OnContinuation_RunModeIsAppliedAsync()
+    {
+        // Arrange
+        AgentRunOptions? capturedOptions = null;
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(options => capturedOptions = options),
+            runMode: AgentRunMode.AllowBackgroundIfSupported);
+
+        // Act
+        await InvokeExecuteAsync(handler, new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "task-1",
+            ContextId = "ctx-1",
+            Message = new Message { MessageId = "empty", Role = Role.User, Parts = [] },
+
+            Task = new AgentTask { Id = "task-1", ContextId = "ctx-1", History = [new Message { Role = Role.User, Parts = [new Part { Text = "Hello" }] }] }
+        });
+
+        // Assert
+        Assert.NotNull(capturedOptions);
+        Assert.True(capturedOptions.AllowBackgroundResponses);
+    }
+
+    private static A2AAgentHandler CreateHandler(
+        Mock<AIAgent> agentMock,
+        AgentRunMode? runMode = null,
+        AgentSessionStore? agentSessionStore = null)
+    {
+        runMode ??= AgentRunMode.DisallowBackground;
+
+        var hostAgent = new AIHostAgent(
+            innerAgent: agentMock.Object,
+            sessionStore: agentSessionStore ?? new InMemoryAgentSessionStore());
+
+        return new A2AAgentHandler(hostAgent, runMode);
+    }
 
     private static Mock<AIAgent> CreateAgentMock(Action<AgentRunOptions?> optionsCallback)
     {
@@ -604,14 +832,14 @@ public sealed class AIAgentExtensionsTests
         return agentMock;
     }
 
-    private static async Task InvokeExecuteAsync(IAgentHandler handler, RequestContext context)
+    private static async Task InvokeExecuteAsync(A2AAgentHandler handler, RequestContext context)
     {
         var eventQueue = new AgentEventQueue();
         await handler.ExecuteAsync(context, eventQueue, CancellationToken.None);
         eventQueue.Complete(null);
     }
 
-    private static async Task<EventCollector> CollectEventsAsync(IAgentHandler handler, RequestContext context)
+    private static async Task<EventCollector> CollectEventsAsync(A2AAgentHandler handler, RequestContext context)
     {
         var events = new EventCollector();
         var eventQueue = new AgentEventQueue();
@@ -662,236 +890,4 @@ public sealed class AIAgentExtensionsTests
     }
 
     private sealed class TestAgentSession : AgentSession;
-
-    /// <summary>
-    /// Verifies that when no session store is provided, MapA2A uses InMemoryAgentSessionStore
-    /// and the handler can execute successfully.
-    /// </summary>
-    [Fact]
-    public async Task MapA2A_WithNullSessionStore_UsesInMemorySessionStoreAndExecutesSuccessfullyAsync()
-    {
-        // Arrange
-        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
-        IAgentHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A(agentSessionStore: null);
-
-        // Act
-        var events = await CollectEventsAsync(handler, new RequestContext
-        {
-            StreamingResponse = false,
-            TaskId = "",
-            ContextId = "ctx-1",
-            Message = new Message
-            {
-                MessageId = "test-id",
-                Role = Role.User,
-                Parts = [new Part { Text = "Hello" }]
-            }
-        });
-
-        // Assert
-        Message message = Assert.Single(events.Messages);
-        Assert.Equal("Reply", message.Parts![0].Text);
-    }
-
-    /// <summary>
-    /// Verifies that when a custom session store is provided, it is used instead of the
-    /// default InMemoryAgentSessionStore.
-    /// </summary>
-    [Fact]
-    public async Task MapA2A_WithCustomSessionStore_UsesProvidedSessionStoreAsync()
-    {
-        // Arrange
-        var mockSessionStore = new Mock<AgentSessionStore>();
-        mockSessionStore
-            .Setup(x => x.GetSessionAsync(
-                It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new TestAgentSession());
-        mockSessionStore
-            .Setup(x => x.SaveSessionAsync(
-                It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
-                It.IsAny<AgentSession>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.CompletedTask);
-
-        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
-        IAgentHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A(agentSessionStore: mockSessionStore.Object);
-
-        // Act
-        await InvokeExecuteAsync(handler, new RequestContext
-        {
-            StreamingResponse = false,
-            TaskId = "",
-            ContextId = "ctx-1",
-            Message = new Message
-            {
-                MessageId = "test-id",
-                Role = Role.User,
-                Parts = [new Part { Text = "Hello" }]
-            }
-        });
-
-        // Assert - verify the custom session store was called
-        mockSessionStore.Verify(
-            x => x.GetSessionAsync(
-                It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx-1"),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-        mockSessionStore.Verify(
-            x => x.SaveSessionAsync(
-                It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx-1"),
-                It.IsAny<AgentSession>(),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    /// <summary>
-    /// Verifies that when no session store is provided, the default InMemoryAgentSessionStore
-    /// persists sessions across multiple calls with the same context ID.
-    /// </summary>
-    [Fact]
-    public async Task MapA2A_WithNullSessionStore_SessionIsPersistedAcrossCallsAsync()
-    {
-        // Arrange - track how many times CreateSessionCoreAsync is called
-        int createSessionCallCount = 0;
-        var sessionInstance = new TestAgentSession();
-
-        Mock<AIAgent> agentMock = new() { CallBase = true };
-        agentMock.SetupGet(x => x.Name).Returns("TestAgent");
-        agentMock
-            .Protected()
-            .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
-            .Callback(() => Interlocked.Increment(ref createSessionCallCount))
-            .ReturnsAsync(() => new TestAgentSession());
-        agentMock
-            .Protected()
-            .Setup<ValueTask<System.Text.Json.JsonElement>>("SerializeSessionCoreAsync",
-                ItExpr.IsAny<AgentSession>(),
-                ItExpr.IsAny<System.Text.Json.JsonSerializerOptions?>(),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(System.Text.Json.JsonDocument.Parse("{}").RootElement);
-        agentMock
-            .Protected()
-            .Setup<ValueTask<AgentSession>>("DeserializeSessionCoreAsync",
-                ItExpr.IsAny<System.Text.Json.JsonElement>(),
-                ItExpr.IsAny<System.Text.Json.JsonSerializerOptions?>(),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(sessionInstance);
-        agentMock
-            .Protected()
-            .Setup<Task<AgentResponse>>("RunCoreAsync",
-                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
-                ItExpr.IsAny<AgentSession?>(),
-                ItExpr.IsAny<AgentRunOptions?>(),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "Reply")]));
-
-        IAgentHandler handler = agentMock.Object.MapA2A(agentSessionStore: null);
-
-        var context = new RequestContext
-        {
-            StreamingResponse = false,
-            TaskId = "",
-            ContextId = "ctx-persistent",
-            Message = new Message
-            {
-                MessageId = "test-id",
-                Role = Role.User,
-                Parts = [new Part { Text = "Hello" }]
-            }
-        };
-
-        // Act - call twice with the same context ID
-        await InvokeExecuteAsync(handler, context);
-        await InvokeExecuteAsync(handler, context);
-
-        // Assert - CreateSessionCoreAsync should be called once (first call creates, second retrieves from store)
-        Assert.Equal(1, createSessionCallCount);
-    }
-
-    /// <summary>
-    /// Verifies that when the AllowBackgroundWhen delegate throws, the exception propagates
-    /// and the agent is not invoked.
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_DynamicMode_WhenCallbackThrows_PropagatesExceptionAsync()
-    {
-        // Arrange
-        bool agentInvoked = false;
-        IAgentHandler handler = CreateAgentMock(_ => agentInvoked = true)
-            .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundWhen((_, _) =>
-                throw new InvalidOperationException("Callback failed")));
-
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            InvokeExecuteAsync(handler, new RequestContext
-            {
-                TaskId = "", ContextId = "ctx", StreamingResponse = false, Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
-            }));
-
-        Assert.False(agentInvoked);
-    }
-
-    /// <summary>
-    /// Verifies that the CancellationToken is propagated to the AllowBackgroundWhen delegate.
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_DynamicMode_CancellationTokenIsPropagatedToCallbackAsync()
-    {
-        // Arrange
-        CancellationToken capturedToken = default;
-        using var cts = new CancellationTokenSource();
-        IAgentHandler handler = CreateAgentMock(_ => { })
-            .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundWhen((_, ct) =>
-            {
-                capturedToken = ct;
-                return ValueTask.FromResult(false);
-            }));
-
-        // Act
-        var eventQueue = new AgentEventQueue();
-        await handler.ExecuteAsync(
-            new RequestContext
-            {
-                TaskId = "", ContextId = "ctx", StreamingResponse = false, Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
-            },
-            eventQueue,
-            cts.Token);
-        eventQueue.Complete(null);
-
-        // Assert
-        Assert.Equal(cts.Token, capturedToken);
-    }
-
-    /// <summary>
-    /// Verifies that the agent run mode is applied on the continuation/task-update path,
-    /// not just the new message path.
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_OnContinuation_RunModeIsAppliedAsync()
-    {
-        // Arrange
-        AgentRunOptions? capturedOptions = null;
-        IAgentHandler handler = CreateAgentMock(options => capturedOptions = options)
-            .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundIfSupported);
-
-        // Act
-        await InvokeExecuteAsync(handler, new RequestContext
-        {
-            StreamingResponse = false,
-            TaskId = "task-1",
-            ContextId = "ctx-1",
-            Message = new Message { MessageId = "empty", Role = Role.User, Parts = [] },
-
-            Task = new AgentTask { Id = "task-1", ContextId = "ctx-1", History = [new Message { Role = Role.User, Parts = [new Part { Text = "Hello" }] }] }
-        });
-
-        // Assert
-        Assert.NotNull(capturedOptions);
-        Assert.True(capturedOptions.AllowBackgroundResponses);
-    }
 }

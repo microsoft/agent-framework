@@ -147,6 +147,9 @@ builder.Services.AddKeyedSingleton<AIAgent>("my-di-matchingname-agent", (sp, nam
         instructions: "you are a dependency inject agent. Tell me all about dependency injection.");
 });
 
+pirateAgentBuilder.AddA2AServer();
+knightsKnavesAgentBuilder.AddA2AServer();
+
 var app = builder.Build();
 
 app.MapOpenApi();
@@ -155,9 +158,9 @@ app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents 
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();
 
-// attach a2a with simple message communication
-app.MapA2A(pirateAgentBuilder, path: "/a2a/pirate");
-app.MapA2A(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves");
+// Expose A2A servers over HTTP with JSON payloads
+app.MapA2AHttpJson(pirateAgentBuilder, path: "/a2a/pirate");
+app.MapA2AHttpJson(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves");
 
 app.MapDevUI();
 
