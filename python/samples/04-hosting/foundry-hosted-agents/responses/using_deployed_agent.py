@@ -32,7 +32,7 @@ async def main() -> None:
     await print_streaming_response(streaming_response)
 
     # Second turn
-    query = "You name is Javis. What can you do?"
+    query = "Your name is Javis. What can you do?"
     print(f"\nUser: {query}")
     print("Agent: ", end="", flush=True)
     streaming_response = agent.run(query, session=session, stream=True)

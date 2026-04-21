@@ -19,8 +19,8 @@ template:
       value: "{{MODEL_DEPLOYMENT_NAME}}"
     - name: GITHUB_PAT
       value: ${GITHUB_PAT}
-    - name: FOUNDRY_AGENT_TOOLBOX_NAME
-      value: ${FOUNDRY_AGENT_TOOLBOX_NAME}
+    - name: TOOLBOX_NAME
+      value: ${TOOLBOX_NAME}
 resources:
   - kind: model
     id: gpt-4.1-mini

@@ -1,5 +1,7 @@
 # Basic example of hosting an agent with the `invocations` API
 
+This is the same as the [01_basic](../01_basic/README.md) example, but demonstrates the "break glass" scenario where you can create your own `invoke_handler` to handle specific types of invocations. This is useful when you want to override the default behavior for certain requests or add custom processing logic.
+
 ## Running the server locally
 
 ### Environment setup

@@ -2,7 +2,7 @@ kind: hosted
 name: agent-framework-agent-with-remote-mcp-tools
 protocols:
   - protocol: responses
-    version: v0.1.0
+    version: 1.0.0
 resources:
   cpu: "0.25"
   memory: 0.5Gi

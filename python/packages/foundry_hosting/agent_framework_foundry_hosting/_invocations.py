@@ -60,7 +60,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
             async def stream_response() -> AsyncGenerator[str]:
                 async for update in self._agent.run(user_message, session=session, stream=True):
-                    yield update.text
+                    if update.text:
+                        yield update.text
 
             return StreamingResponse(
                 stream_response(),

@@ -174,7 +174,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         input_text = await context.get_input_text()
         history = await context.get_history()
-        messages = [*_to_messages(history), input_text]
+        messages: list[str | Content | Message] = [*_to_messages(history), input_text]
 
         chat_options, are_options_set = _to_chat_options(request)
 
@@ -187,7 +187,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if not is_streaming_request:
             # Run the agent in non-streaming mode
             if isinstance(self._agent, RawAgent):
-                raw_agent = cast("RawAgent[Any]", self._agent)  # pyright: ignore[reportUnknownMemberType]
+                raw_agent = cast("RawAgent[Any]", self._agent)  # type: ignore[redundant-cast]  # pyright: ignore[reportUnknownMemberType]
                 response = await raw_agent.run(messages, stream=False, options=chat_options)
             else:
                 if are_options_set:
@@ -204,7 +204,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         # Run the agent in streaming mode
         if isinstance(self._agent, RawAgent):
-            raw_agent = cast("RawAgent[Any]", self._agent)  # pyright: ignore[reportUnknownMemberType]
+            raw_agent = cast("RawAgent[Any]", self._agent)  # type: ignore[redundant-cast]  # pyright: ignore[reportUnknownMemberType]
             response_stream = raw_agent.run(messages, stream=True, options=chat_options)
         else:
             if are_options_set:
@@ -331,7 +331,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         return
 
     @staticmethod
-    async def _delete_not_latest_checkpoints(checkpoint_storage: FileCheckpointStorage, workflow_name: str):
+    async def _delete_not_latest_checkpoints(checkpoint_storage: FileCheckpointStorage, workflow_name: str) -> None:
         """Delete all checkpoints except the latest one.
 
         We only need the last checkpoint for each invocation.
@@ -559,14 +559,14 @@ def _to_message(item: OutputItem) -> Message:
         ValueError: If the OutputItem type is not supported.
     """
     if item.type == "output_message":
-        msg = cast(OutputItemOutputMessage, item)
-        contents = [_convert_output_message_content(part) for part in msg.content]
-        return Message(role=msg.role, contents=contents)
+        output_msg = cast(OutputItemOutputMessage, item)
+        return Message(
+            role=output_msg.role, contents=[_convert_output_message_content(part) for part in output_msg.content]
+        )
 
     if item.type == "message":
         msg = cast(OutputItemMessage, item)
-        contents = [_convert_message_content(part) for part in msg.content]
-        return Message(role=msg.role, contents=contents)
+        return Message(role=msg.role, contents=[_convert_message_content(part) for part in msg.content])
 
     if item.type == "function_call":
         fc = cast(OutputItemFunctionToolCall, item)
@@ -607,7 +607,7 @@ def _to_message(item: OutputItem) -> Message:
 
     if item.type == "mcp_approval_request":
         mcp_req = cast(OutputItemMcpApprovalRequest, item)
-        fc = Content.from_mcp_server_tool_call(
+        mcp_call_content = Content.from_mcp_server_tool_call(
             mcp_req.id,
             mcp_req.name,
             server_name=mcp_req.server_label,
@@ -615,16 +615,16 @@ def _to_message(item: OutputItem) -> Message:
         )
         return Message(
             role="assistant",
-            contents=[Content.from_function_approval_request(mcp_req.id, fc)],
+            contents=[Content.from_function_approval_request(mcp_req.id, mcp_call_content)],
         )
 
     if item.type == "mcp_approval_response":
         mcp_resp = cast(OutputItemMcpApprovalResponseResource, item)
         # Build a placeholder function_call Content since the original call details are not available
-        fc = Content.from_function_call(mcp_resp.approval_request_id, "mcp_approval")
+        placeholder_content = Content.from_function_call(mcp_resp.approval_request_id, "mcp_approval")
         return Message(
             role="user",
-            contents=[Content.from_function_approval_response(mcp_resp.approve, mcp_resp.id, fc)],
+            contents=[Content.from_function_approval_response(mcp_resp.approve, mcp_resp.id, placeholder_content)],
         )
 
     if item.type == "code_interpreter_call":

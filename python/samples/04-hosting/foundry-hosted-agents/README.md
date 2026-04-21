@@ -45,7 +45,7 @@ Run the container, passing in the required environment variables:
 ```bash
 docker run -p 8088:8088 \
   -e FOUNDRY_PROJECT_ENDPOINT=<your-endpoint> \
-  -e FOUNDRY_MODEL=<your-model> \
+  -e MODEL_DEPLOYMENT_NAME=<your-model> \
   hosted-agent-sample
 ```
 
