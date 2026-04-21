@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import sys
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +71,11 @@ def _parse_junit_xml(xml_path: Path) -> list[dict[str, str]]:
     Each dict has keys: ``nodeid``, ``status``, ``duration``, ``message``.
     """
     results: list[dict[str, str]] = []
-    tree = ET.parse(xml_path)  # noqa: S314
+    try:
+        tree = ET.parse(xml_path)  # noqa: S314
+    except ET.ParseError as exc:
+        print(f"Warning: failed to parse JUnit XML report '{xml_path}': {exc}", file=sys.stderr)
+        return results
     root = tree.getroot()
 
     # Handle both <testsuites><testsuite>... and <testsuite>... layouts
@@ -167,13 +171,12 @@ def load_current_run(reports_dir: Path) -> dict[str, Any]:
     if not xml_files:
         print(f"Warning: No pytest.xml files found in {reports_dir}")
         return {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "summary": {
                 "total": 0,
                 "passed": 0,
                 "failed": 0,
                 "skipped": 0,
-                "error": 0,
             },
             "results": {},
         }
@@ -189,18 +192,18 @@ def load_current_run(reports_dir: Path) -> dict[str, Any]:
                 "module": test.get("module", ""),
             }
 
-    # Build summary counts
+    # Build summary counts using mutually exclusive status buckets.
+    # Errors are folded into the failed count for display purposes.
     statuses = [r["status"] for r in combined_results.values()]
     summary = {
         "total": len(statuses),
         "passed": statuses.count("passed"),
         "failed": statuses.count("failed") + statuses.count("error"),
         "skipped": statuses.count("skipped"),
-        "error": statuses.count("error"),
     }
 
     return {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "summary": summary,
         "results": combined_results,
     }
@@ -235,7 +238,7 @@ def save_history(history_path: Path, runs: list[dict[str, Any]]) -> None:
 def _short_name(nodeid: str) -> str:
     """Extract a short test name from a full nodeid.
 
-    ``packages/openai/tests/openai/test_openai_chat_client/py::test_integration_options``
+    ``packages.openai.tests.openai.test_openai_chat_client::test_integration_options``
     → ``test_integration_options``
     """
     return nodeid.split("::")[-1] if "::" in nodeid else nodeid
@@ -246,7 +249,7 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     lines = [
         "# 🔬 Flaky Test Report",
         "",
-        f"*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}*",
+        f"*Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*",
         "",
     ]
 
