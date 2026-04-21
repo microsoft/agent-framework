@@ -247,7 +247,7 @@ internal sealed class WorkflowSession : AgentSession
                         hasMatchedResponseForStartExecutor |= string.Equals(responseExecutorId, this._workflow.StartExecutorId, StringComparison.Ordinal);
                     }
 
-                    AIContent normalizedResponseContent = NormalizeResponseContentForDelivery(content, pendingRequest);
+                    object normalizedResponseContent = NormalizeResponseContentForDelivery(content, pendingRequest);
                     externalResponses.Add((pendingRequest.CreateResponse(normalizedResponseContent), pendingRequest.RequestId));
                     (matchedContentIds ??= new(StringComparer.Ordinal)).Add(contentId);
                 }
@@ -303,14 +303,35 @@ internal sealed class WorkflowSession : AgentSession
     /// <summary>
     /// Rewrites workflow-facing response content back to the original agent-owned content ID.
     /// </summary>
-    private static AIContent NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request) => content switch
+    private static object NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request)
     {
-        FunctionResultContent functionResultContent when request.TryGetDataAs(out FunctionCallContent? functionCallContent)
-            => CloneFunctionResultContent(functionResultContent, functionCallContent.CallId),
-        ToolApprovalResponseContent toolApprovalResponseContent when request.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
-            => CloneToolApprovalResponseContent(toolApprovalResponseContent, toolApprovalRequestContent.RequestId),
-        _ => content,
-    };
+        switch (content)
+        {
+            // If we got a FRC, and were expecting a FRC (because the request started out as a FCC, rather than getting converted to
+            // on at the WorkflowSession boundary), clone it and send it in.
+            case FunctionResultContent functionResultContent when request.TryGetDataAs(out FunctionCallContent? functionCallContent):
+                return CloneFunctionResultContent(functionResultContent, functionCallContent.CallId);
+            case FunctionResultContent functionResultContent when !request.PortInfo.ResponseType.IsMatchPolymorphic(typeof(FunctionResultContent)):
+            {
+                object? result = functionResultContent.Result;
+                if (result != null)
+                {
+                    if (request.PortInfo.ResponseType.IsMatchPolymorphic(result.GetType()) || result is PortableValue)
+                    {
+                        return result;
+                    }
+
+                    throw new InvalidOperationException($"Unexpected result type in FunctionResultContent {result.GetType()}; expecting {request.PortInfo.ResponseType}");
+                }
+
+                throw new NotSupportedException($"Null result is not supported when using RequestPort with non-AIContent-typed requests. {functionResultContent}");
+            }
+            case ToolApprovalResponseContent toolApprovalResponseContent when request.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent):
+                return CloneToolApprovalResponseContent(toolApprovalResponseContent, toolApprovalRequestContent.RequestId);
+            default:
+                return content;
+        }
+    }
 
     /// <summary>
     /// Gets the workflow-facing request ID from response content types.

@@ -16,7 +16,7 @@ import asyncio
 
 from agent_framework.github import GitHubCopilotAgent
 from copilot.generated.session_events import PermissionRequest
-from copilot.types import MCPServerConfig, PermissionRequestResult
+from copilot.session import MCPServerConfig, PermissionRequestResult
 from dotenv import load_dotenv
 
 # Load environment variables from .env file

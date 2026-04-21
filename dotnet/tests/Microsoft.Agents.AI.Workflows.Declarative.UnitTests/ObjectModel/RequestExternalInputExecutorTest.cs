@@ -85,6 +85,29 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
             expectMessagesCreated: true);
     }
 
+    [Fact]
+    public async Task CaptureResponseWithEmptyMessagesAsync()
+    {
+        await this.CaptureResponseTestAsync(
+            displayName: nameof(CaptureResponseWithEmptyMessagesAsync),
+            variableName: "TestVariable",
+            messageCount: 0);
+    }
+
+    [Fact]
+    public async Task CaptureResponseWithEmptyMessagesAndWorkflowConversationAsync()
+    {
+        // Arrange
+        this.State.Set(SystemScope.Names.ConversationId, FormulaValue.New("WorkflowConversationId"), VariableScopeNames.System);
+
+        // Act & Assert
+        await this.CaptureResponseTestAsync(
+            displayName: nameof(CaptureResponseWithEmptyMessagesAndWorkflowConversationAsync),
+            variableName: "TestVariable",
+            messageCount: 0,
+            expectMessagesCreated: false);
+    }
+
     private async Task ExecuteTestAsync(
         string displayName,
         string variableName)

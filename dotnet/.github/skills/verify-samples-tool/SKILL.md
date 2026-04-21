@@ -9,9 +9,16 @@ The `verify-samples` project (`dotnet/eng/verify-samples/`) is an automated tool
 
 ## Running verify-samples
 
+**Important:** By default, samples must be pre-built before running verify-samples. Build the solution first, or pass `--build` to build samples during the run:
+
 ```bash
 cd dotnet
+dotnet build agent-framework-dotnet.slnx -f net10.0
+```
 
+Then run verify-samples:
+
+```bash
 # Run all samples across all categories
 dotnet run --project eng/verify-samples -- --log results.log --csv results.csv
 
@@ -23,6 +30,10 @@ dotnet run --project eng/verify-samples -- Agent_Step02_StructuredOutput Agent_S
 
 # Control parallelism (default 8)
 dotnet run --project eng/verify-samples -- --parallel 8 --log results.log
+
+# Build samples during run (skips the need for a prior build step)
+# This may cause build conflicts as multiple samples are built in parallel, so use with caution
+dotnet run --project eng/verify-samples -- --build --log results.log
 
 # Combine options
 dotnet run --project eng/verify-samples -- --category 03-workflows --parallel 4 --log results.log --csv results.csv --md results.md

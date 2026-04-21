@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
@@ -69,6 +69,35 @@ class OutputStruct(BaseModel):
 
     location: str
     weather: str | None = None
+
+
+class _FakeAsyncEventStream:
+    def __init__(self, events: list[object]) -> None:
+        self._events = events
+        self._iterator = iter(())
+
+    def __aiter__(self) -> "_FakeAsyncEventStream":
+        self._iterator = iter(self._events)
+        return self
+
+    async def __anext__(self) -> object:
+        try:
+            return next(self._iterator)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
+class _FakeAsyncEventStreamContext(_FakeAsyncEventStream):
+    async def __aenter__(self) -> "_FakeAsyncEventStreamContext":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> None:
+        return None
 
 
 async def create_vector_store(
@@ -1015,6 +1044,84 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
         assert len(local_shell_outputs) == 0
 
 
+async def test_tool_loop_store_false_omits_reasoning_items_from_second_request() -> None:
+    """Stateless tool-loop replay must omit response-scoped reasoning items."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response1 = MagicMock()
+    mock_response1.output_parsed = None
+    mock_response1.metadata = {}
+    mock_response1.usage = None
+    mock_response1.id = "resp-1"
+    mock_response1.model = "test-model"
+    mock_response1.created_at = 1000000000
+    mock_response1.status = "completed"
+    mock_response1.finish_reason = "tool_calls"
+    mock_response1.incomplete = None
+    mock_response1.conversation = None
+
+    mock_reasoning_item = MagicMock()
+    mock_reasoning_item.type = "reasoning"
+    mock_reasoning_item.id = "rs_local_only"
+    mock_reasoning_item.content = []
+    mock_reasoning_item.summary = []
+    mock_reasoning_item.encrypted_content = None
+
+    mock_function_call_item = MagicMock()
+    mock_function_call_item.type = "function_call"
+    mock_function_call_item.id = "fc_tool123"
+    mock_function_call_item.call_id = "call_123"
+    mock_function_call_item.name = "get_weather"
+    mock_function_call_item.arguments = '{"location":"Amsterdam"}'
+    mock_function_call_item.status = "completed"
+
+    mock_response1.output = [mock_reasoning_item, mock_function_call_item]
+
+    mock_response2 = MagicMock()
+    mock_response2.output_parsed = None
+    mock_response2.metadata = {}
+    mock_response2.usage = None
+    mock_response2.id = "resp-2"
+    mock_response2.model = "test-model"
+    mock_response2.created_at = 1000000001
+    mock_response2.status = "completed"
+    mock_response2.finish_reason = "stop"
+    mock_response2.incomplete = None
+    mock_response2.conversation = None
+
+    mock_text_item = MagicMock()
+    mock_text_item.type = "message"
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "The weather in Amsterdam is sunny."
+    mock_text_item.content = [mock_text_content]
+    mock_response2.output = [mock_text_item]
+
+    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["What's the weather in Amsterdam?"])],
+            options={
+                "store": False,
+                "tools": [get_weather],
+                "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
+            },
+        )
+
+    assert response.text == "The weather in Amsterdam is sunny."
+    assert mock_create.call_count == 2
+
+    second_call_input = mock_create.call_args_list[1].kwargs["input"]
+    assert not any(item.get("type") == "reasoning" for item in second_call_input)
+
+    function_calls = [item for item in second_call_input if item.get("type") == "function_call"]
+    assert len(function_calls) == 1
+    assert function_calls[0]["id"] == "fc_tool123"
+
+    function_outputs = [item for item in second_call_input if item.get("type") == "function_call_output"]
+    assert len(function_outputs) == 1
+    assert function_outputs[0]["call_id"] == "call_123"
+
+
 def test_response_content_creation_with_shell_call() -> None:
     """Test _parse_response_from_openai with shell_call output."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -1172,6 +1279,91 @@ def test_response_content_creation_with_function_call() -> None:
     assert function_call.arguments == '{"location": "Seattle"}'
 
 
+def test_parse_response_from_openai_with_web_search_call() -> None:
+    """Test _parse_response_from_openai with web search output."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "resp-web"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_search_item = MagicMock()
+    mock_search_item.type = "web_search_call"
+    mock_search_item.id = "ws_123"
+    mock_search_item.status = "completed"
+    mock_search_item.action = {
+        "type": "search",
+        "query": "current weather in Seattle",
+        "queries": ["current weather in Seattle"],
+        "sources": [{"title": "Weather", "url": "https://weather.example"}],
+    }
+
+    mock_response.output = [mock_search_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 2
+    call_content, result_content = response.messages[0].contents
+    assert call_content.type == "search_tool_call"
+    assert call_content.call_id == "ws_123"
+    assert call_content.tool_name == "web_search"
+    assert call_content.status == "completed"
+    assert call_content.arguments == mock_search_item.action
+    assert result_content.type == "search_tool_result"
+    assert result_content.call_id == "ws_123"
+    assert result_content.tool_name == "web_search"
+    assert result_content.status == "completed"
+    assert result_content.result == {"action": mock_search_item.action}
+
+
+def test_parse_response_from_openai_with_file_search_call() -> None:
+    """Test _parse_response_from_openai with file search output."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "resp-file"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_search_item = MagicMock()
+    mock_search_item.type = "file_search_call"
+    mock_search_item.id = "fs_123"
+    mock_search_item.status = "completed"
+    mock_search_item.queries = ["weather history"]
+    mock_search_item.results = [
+        {
+            "file_id": "file_1",
+            "filename": "weather.txt",
+            "score": 0.9,
+            "text": "Seattle was cloudy.",
+        }
+    ]
+
+    mock_response.output = [mock_search_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 2
+    call_content, result_content = response.messages[0].contents
+    assert call_content.type == "search_tool_call"
+    assert call_content.call_id == "fs_123"
+    assert call_content.tool_name == "file_search"
+    assert call_content.status == "completed"
+    assert call_content.arguments == {"queries": ["weather history"]}
+    assert result_content.type == "search_tool_result"
+    assert result_content.call_id == "fs_123"
+    assert result_content.tool_name == "file_search"
+    assert result_content.status == "completed"
+    assert result_content.result == {"results": mock_search_item.results}
+
+
 def test_prepare_content_for_opentool_approval_response() -> None:
     """Test _prepare_content_for_openai with function approval response content."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -1314,6 +1506,86 @@ def test_parse_response_from_openai_with_mcp_server_tool_result() -> None:
     assert result_content.type == "mcp_server_tool_result"
     assert result_content.call_id == "mcp_call_123"
     assert result_content.output is not None
+
+
+def test_parse_chunk_from_openai_with_web_search_call_added() -> None:
+    """Test that response.output_item.added for web_search_call emits search tool call content."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.output_index = 0
+
+    mock_item = MagicMock()
+    mock_item.type = "web_search_call"
+    mock_item.id = "ws_call_123"
+    mock_item.status = "in_progress"
+    mock_item.action = {"type": "search", "query": "weather in Seattle"}
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options=chat_options, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 1
+    content = update.contents[0]
+    assert content.type == "search_tool_call"
+    assert content.call_id == "ws_call_123"
+    assert content.tool_name == "web_search"
+    assert content.status == "in_progress"
+    assert content.arguments == {"type": "search", "query": "weather in Seattle"}
+
+
+def test_parse_chunk_from_openai_with_file_search_call_done() -> None:
+    """Test that response.output_item.done for file_search_call emits search tool result content."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock()
+    mock_item.type = "file_search_call"
+    mock_item.id = "fs_call_123"
+    mock_item.status = "completed"
+    mock_item.results = [{"file_id": "file_1", "text": "Seattle was cloudy."}]
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options=chat_options, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 1
+    content = update.contents[0]
+    assert content.type == "search_tool_result"
+    assert content.call_id == "fs_call_123"
+    assert content.tool_name == "file_search"
+    assert content.status == "completed"
+    assert content.result == {"results": [{"file_id": "file_1", "text": "Seattle was cloudy."}]}
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "response.web_search_call.in_progress",
+        "response.web_search_call.searching",
+        "response.web_search_call.completed",
+        "response.file_search_call.in_progress",
+        "response.file_search_call.searching",
+        "response.file_search_call.completed",
+    ],
+)
+def test_parse_chunk_from_openai_ignores_search_progress_events(event_type: str) -> None:
+    """Search progress events should be explicitly ignored instead of logged as unparsed."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = event_type
+
+    update = client._parse_chunk_from_openai(mock_event, options=chat_options, function_call_ids=function_call_ids)
+
+    assert update.contents == []
 
 
 def test_parse_chunk_from_openai_with_mcp_call_added_defers_result() -> None:
@@ -2492,8 +2764,65 @@ def test_streaming_annotation_added_with_container_file_citation() -> None:
     assert content.additional_properties.get("end_index") == 50
 
 
-def test_streaming_annotation_added_with_unknown_type() -> None:
-    """Test streaming annotation added event with unknown type is ignored."""
+def test_streaming_annotation_added_with_url_citation() -> None:
+    """Test streaming annotation added event with url_citation type produces citation annotation."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 0
+    mock_event.annotation = {
+        "type": "url_citation",
+        "url": "https://example.sharepoint.com/sites/my-site/doc.pdf",
+        "title": "doc.pdf",
+        "start_index": 100,
+        "end_index": 112,
+    }
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    content = response.contents[0]
+    assert content.type == "text"
+    assert content.annotations is not None
+    assert len(content.annotations) == 1
+    annotation = content.annotations[0]
+    assert annotation["type"] == "citation"
+    assert annotation["title"] == "doc.pdf"
+    assert annotation["url"] == "https://example.sharepoint.com/sites/my-site/doc.pdf"
+    assert annotation["additional_properties"]["annotation_index"] == 0
+    assert annotation["raw_representation"] == mock_event.annotation
+    assert annotation["annotated_regions"] is not None
+    assert len(annotation["annotated_regions"]) == 1
+    region = annotation["annotated_regions"][0]
+    assert region["type"] == "text_span"
+    assert region["start_index"] == 100
+    assert region["end_index"] == 112
+
+
+def test_streaming_annotation_added_with_url_citation_no_url() -> None:
+    """Test streaming annotation added event with url_citation but missing url is ignored."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 0
+    mock_event.annotation = {
+        "type": "url_citation",
+        "title": "doc.pdf",
+    }
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 0
+
+
+def test_streaming_annotation_added_with_url_citation_no_indices() -> None:
+    """Test streaming annotation with url_citation that has url but no start_index/end_index."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -2504,11 +2833,36 @@ def test_streaming_annotation_added_with_unknown_type() -> None:
     mock_event.annotation = {
         "type": "url_citation",
         "url": "https://example.com",
+        "title": "Example",
     }
 
     response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
 
-    # url_citation should not produce HostedFileContent
+    assert len(response.contents) == 1
+    annotation = response.contents[0].annotations[0]
+    assert annotation["type"] == "citation"
+    assert annotation["title"] == "Example"
+    assert annotation["url"] == "https://example.com"
+    assert annotation["additional_properties"]["annotation_index"] == 0
+    assert "annotated_regions" not in annotation
+
+
+def test_streaming_annotation_added_with_unknown_type() -> None:
+    """Test streaming annotation added event with unknown type is ignored."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 0
+    mock_event.annotation = {
+        "type": "some_future_annotation_type",
+        "data": "test",
+    }
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
     assert len(response.contents) == 0
 
 
@@ -2554,6 +2908,48 @@ async def test_get_response_streaming_with_response_format() -> None:
                 pass
 
         await run_streaming()
+
+
+async def test_inner_get_response_streaming_with_response_format_tracks_reasoning_delta_ids() -> None:
+    """The responses.stream path should suppress reasoning done events after deltas."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [Message(role="user", contents=["Test streaming with format"])]
+    item_id = "reasoning_stream"
+    events = [
+        ResponseReasoningTextDeltaEvent(
+            type="response.reasoning_text.delta",
+            content_index=0,
+            item_id=item_id,
+            output_index=0,
+            sequence_number=1,
+            delta="Hello ",
+        ),
+        ResponseReasoningTextDoneEvent(
+            type="response.reasoning_text.done",
+            content_index=0,
+            item_id=item_id,
+            output_index=0,
+            sequence_number=2,
+            text="Hello ",
+        ),
+    ]
+
+    with (
+        patch.object(
+            client,
+            "_prepare_request",
+            new=AsyncMock(return_value=(client.client, {"text_format": OutputStruct}, {})),
+        ),
+        patch.object(client.client.responses, "stream", return_value=_FakeAsyncEventStreamContext(events)),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client._inner_get_response(messages=messages, options={}, stream=True)
+        updates = [update async for update in stream]
+
+    reasoning_chunks = [
+        content.text for update in updates for content in update.contents if content.type == "text_reasoning"
+    ]
+    assert reasoning_chunks == ["Hello "]
 
 
 def test_prepare_content_for_openai_image_content() -> None:
@@ -2819,11 +3215,12 @@ def test_streaming_reasoning_text_delta_event() -> None:
         mock_metadata.assert_called_once_with(event)
 
 
-def test_streaming_reasoning_text_done_event() -> None:
-    """Test reasoning text done event creates TextReasoningContent with complete text."""
+def test_streaming_reasoning_text_done_event_skipped_after_deltas() -> None:
+    """Test reasoning text done event does not emit content when deltas were already received."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
+    seen_reasoning_delta_item_ids: set[str] = {"reasoning_456"}
 
     event = ResponseReasoningTextDoneEvent(
         type="response.reasoning_text.done",
@@ -2835,12 +3232,40 @@ def test_streaming_reasoning_text_done_event() -> None:
     )
 
     with patch.object(client, "_get_metadata_from_response", return_value={"test": "data"}) as mock_metadata:
-        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
+        response = client._parse_chunk_from_openai(
+            event, chat_options, function_call_ids, seen_reasoning_delta_item_ids
+        )  # type: ignore
+
+        assert len(response.contents) == 0
+        mock_metadata.assert_called_once_with(event)
+        assert response.additional_properties == {"test": "data"}
+
+
+def test_streaming_reasoning_text_done_event_fallback_without_deltas() -> None:
+    """Test reasoning text done event emits content when no deltas were received for this item_id."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+    seen_reasoning_delta_item_ids: set[str] = set()
+
+    event = ResponseReasoningTextDoneEvent(
+        type="response.reasoning_text.done",
+        content_index=0,
+        item_id="reasoning_456",
+        output_index=0,
+        sequence_number=2,
+        text="complete reasoning",
+    )
+
+    with patch.object(client, "_get_metadata_from_response", return_value={"test": "data"}) as mock_metadata:
+        response = client._parse_chunk_from_openai(
+            event, chat_options, function_call_ids, seen_reasoning_delta_item_ids
+        )  # type: ignore
 
         assert len(response.contents) == 1
         assert response.contents[0].type == "text_reasoning"
+        assert response.contents[0].id == "reasoning_456"
         assert response.contents[0].text == "complete reasoning"
-        assert response.contents[0].raw_representation == event
         mock_metadata.assert_called_once_with(event)
         assert response.additional_properties == {"test": "data"}
 
@@ -2870,11 +3295,12 @@ def test_streaming_reasoning_summary_text_delta_event() -> None:
         mock_metadata.assert_called_once_with(event)
 
 
-def test_streaming_reasoning_summary_text_done_event() -> None:
-    """Test reasoning summary text done event creates TextReasoningContent with complete text."""
+def test_streaming_reasoning_summary_text_done_event_skipped_after_deltas() -> None:
+    """Test reasoning summary text done event does not emit content when deltas were already received."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
+    seen_reasoning_delta_item_ids: set[str] = {"summary_012"}
 
     event = ResponseReasoningSummaryTextDoneEvent(
         type="response.reasoning_summary_text.done",
@@ -2886,14 +3312,130 @@ def test_streaming_reasoning_summary_text_done_event() -> None:
     )
 
     with patch.object(client, "_get_metadata_from_response", return_value={"custom": "meta"}) as mock_metadata:
-        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
+        response = client._parse_chunk_from_openai(
+            event, chat_options, function_call_ids, seen_reasoning_delta_item_ids
+        )  # type: ignore
+
+        assert len(response.contents) == 0
+        mock_metadata.assert_called_once_with(event)
+        assert response.additional_properties == {"custom": "meta"}
+
+
+def test_streaming_reasoning_summary_text_done_event_fallback_without_deltas() -> None:
+    """Test reasoning summary text done event emits content when no deltas were received for this item_id."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+    seen_reasoning_delta_item_ids: set[str] = set()
+
+    event = ResponseReasoningSummaryTextDoneEvent(
+        type="response.reasoning_summary_text.done",
+        item_id="summary_012",
+        output_index=0,
+        sequence_number=4,
+        summary_index=0,
+        text="complete summary",
+    )
+
+    with patch.object(client, "_get_metadata_from_response", return_value={"custom": "meta"}) as mock_metadata:
+        response = client._parse_chunk_from_openai(
+            event, chat_options, function_call_ids, seen_reasoning_delta_item_ids
+        )  # type: ignore
 
         assert len(response.contents) == 1
         assert response.contents[0].type == "text_reasoning"
+        assert response.contents[0].id == "summary_012"
         assert response.contents[0].text == "complete summary"
-        assert response.contents[0].raw_representation == event
         mock_metadata.assert_called_once_with(event)
         assert response.additional_properties == {"custom": "meta"}
+
+
+def test_streaming_reasoning_deltas_then_done_no_duplication() -> None:
+    """Sending delta events followed by a done event produces content only from deltas."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+    seen_reasoning_delta_item_ids: set[str] = set()
+    item_id = "reasoning_seq"
+
+    delta1 = ResponseReasoningTextDeltaEvent(
+        type="response.reasoning_text.delta",
+        content_index=0,
+        item_id=item_id,
+        output_index=0,
+        sequence_number=1,
+        delta="Hello ",
+    )
+    delta2 = ResponseReasoningTextDeltaEvent(
+        type="response.reasoning_text.delta",
+        content_index=0,
+        item_id=item_id,
+        output_index=0,
+        sequence_number=2,
+        delta="world",
+    )
+    done = ResponseReasoningTextDoneEvent(
+        type="response.reasoning_text.done",
+        content_index=0,
+        item_id=item_id,
+        output_index=0,
+        sequence_number=3,
+        text="Hello world",
+    )
+
+    all_contents = []
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        for event in [delta1, delta2, done]:
+            response = client._parse_chunk_from_openai(
+                event,
+                chat_options,
+                function_call_ids,
+                seen_reasoning_delta_item_ids,  # type: ignore
+            )
+            all_contents.extend(response.contents)
+
+    assert len(all_contents) == 2
+    assert all_contents[0].text == "Hello "
+    assert all_contents[1].text == "world"
+    assert "".join(c.text for c in all_contents) == "Hello world"
+
+
+async def test_inner_get_response_streaming_create_tracks_reasoning_delta_ids() -> None:
+    """The responses.create(stream=True) path should suppress reasoning done events after deltas."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [Message(role="user", contents=["Test streaming"])]
+    item_id = "reasoning_create"
+    events = [
+        ResponseReasoningTextDeltaEvent(
+            type="response.reasoning_text.delta",
+            content_index=0,
+            item_id=item_id,
+            output_index=0,
+            sequence_number=1,
+            delta="Hello ",
+        ),
+        ResponseReasoningTextDoneEvent(
+            type="response.reasoning_text.done",
+            content_index=0,
+            item_id=item_id,
+            output_index=0,
+            sequence_number=2,
+            text="Hello ",
+        ),
+    ]
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses, "create", new=AsyncMock(return_value=_FakeAsyncEventStream(events))),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client._inner_get_response(messages=messages, options={}, stream=True)
+        updates = [update async for update in stream]
+
+    reasoning_chunks = [
+        content.text for update in updates for content in update.contents if content.type == "text_reasoning"
+    ]
+    assert reasoning_chunks == ["Hello "]
 
 
 def test_streaming_reasoning_events_preserve_metadata() -> None:
@@ -3122,6 +3664,164 @@ async def test_prepare_options_store_parameter_handling() -> None:
     options = await client._prepare_options(messages, chat_options)  # type: ignore
     assert "store" not in options
     assert "previous_response_id" not in options
+
+
+async def test_prepare_options_store_false_omits_reasoning_items_for_stateless_replay() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="search for hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_test123",
+                    text="I need to search for hotels",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_test456"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_1",
+                    result="Found 3 hotels in Paris",
+                ),
+            ],
+        ),
+    ]
+
+    options = await client._prepare_options(messages, ChatOptions(store=False))  # type: ignore[arg-type]
+
+    assert not any(item.get("type") == "reasoning" for item in options["input"])
+    assert any(item.get("type") == "function_call" for item in options["input"])
+    assert any(item.get("type") == "function_call_output" for item in options["input"])
+
+
+async def test_prepare_options_with_conversation_id_keeps_reasoning_items() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="search for hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_test123",
+                    text="I need to search for hotels",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_test456"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_1",
+                    result="Found 3 hotels in Paris",
+                ),
+            ],
+        ),
+    ]
+
+    options = await client._prepare_options(
+        messages,
+        ChatOptions(store=False, conversation_id="resp_prev123"),  # type: ignore[arg-type]
+    )
+
+    reasoning_items = [item for item in options["input"] if item.get("type") == "reasoning"]
+    assert len(reasoning_items) == 1
+    assert reasoning_items[0]["id"] == "rs_test123"
+    assert options["previous_response_id"] == "resp_prev123"
+
+
+async def test_prepare_options_with_conversation_id_omits_reasoning_items_for_attributed_replay() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="search for hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_history123",
+                    text="I need to search history for hotels",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_history",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_history456"},
+                ),
+            ],
+            additional_properties={"_attribution": {"source_id": "history", "source_type": "InMemoryHistoryProvider"}},
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_history",
+                    result="Found 3 hotels in Paris",
+                ),
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_live123",
+                    text="I should refine the search for a live follow-up",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_live",
+                    name="search_hotels",
+                    arguments='{"city": "London"}',
+                    additional_properties={"fc_id": "fc_live456"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_live",
+                    result="Found 4 hotels in London",
+                ),
+            ],
+        ),
+    ]
+
+    options = await client._prepare_options(
+        messages,
+        ChatOptions(store=False, conversation_id="resp_prev123"),  # type: ignore[arg-type]
+    )
+
+    reasoning_items = [item for item in options["input"] if item.get("type") == "reasoning"]
+    assert [item["id"] for item in reasoning_items] == ["rs_live123"]
+    assert any(
+        item.get("type") == "function_call" and item.get("call_id") == "call_history" for item in options["input"]
+    )
+    assert any(item.get("type") == "function_call" and item.get("call_id") == "call_live" for item in options["input"])
+    assert any(
+        item.get("type") == "function_call_output" and item.get("call_id") == "call_history"
+        for item in options["input"]
+    )
+    assert any(
+        item.get("type") == "function_call_output" and item.get("call_id") == "call_live" for item in options["input"]
+    )
+    assert options["previous_response_id"] == "resp_prev123"
 
 
 def _create_mock_responses_text_response(*, response_id: str) -> MagicMock:
@@ -3475,26 +4175,22 @@ async def test_integration_tool_rich_content_image() -> None:
     client = OpenAIChatClient()
     client.function_invocation_configuration["max_iterations"] = 2
 
-    for streaming in [False, True]:
-        messages = [
-            Message(
-                role="user",
-                contents=["Call the get_test_image tool and describe what you see."],
-            )
-        ]
-        options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
+    messages = [
+        Message(
+            role="user",
+            contents=["Call the get_test_image tool and describe what you see."],
+        )
+    ]
+    options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
 
-        if streaming:
-            response = await client.get_response(messages=messages, stream=True, options=options).get_final_response()
-        else:
-            response = await client.get_response(messages=messages, options=options)
+    response = await client.get_response(messages=messages, stream=True, options=options).get_final_response()
 
-        assert response is not None
-        assert isinstance(response, ChatResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-        # sample_image.jpg contains a photo of a house; the model should mention it.
-        assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert response.text is not None
+    assert len(response.text) > 0
+    # sample_image.jpg contains a photo of a house; the model should mention it.
+    assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
 
 
 @pytest.mark.flaky
