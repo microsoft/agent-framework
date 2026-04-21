@@ -390,36 +390,36 @@ class _OutputItemTracker:
             if self._active_type != "text":
                 yield from self._close()
                 yield from self._open_message()
-            assert self._text_content is not None  # noqa: S101
             self._accumulated.append(content.text)
-            yield self._text_content.emit_delta(content.text)
+            if self._text_content is not None:
+                yield self._text_content.emit_delta(content.text)
 
         elif content.type == "text_reasoning" and content.text is not None:
             if self._active_type != "text_reasoning":
                 yield from self._close()
                 yield from self._open_reasoning()
-            assert self._summary_part is not None  # noqa: S101
             self._accumulated.append(content.text)
-            yield self._summary_part.emit_text_delta(content.text)
+            if self._summary_part is not None:
+                yield self._summary_part.emit_text_delta(content.text)
 
         elif content.type == "function_call" and content.call_id is not None:
             if self._active_type != "function_call" or self._active_id != content.call_id:
                 yield from self._close()
                 yield from self._open_function_call(content)
-            assert self._fc_builder is not None  # noqa: S101
             args_str = _arguments_to_str(content.arguments)
             self._accumulated.append(args_str)
-            yield self._fc_builder.emit_arguments_delta(args_str)
+            if self._fc_builder is not None:
+                yield self._fc_builder.emit_arguments_delta(args_str)
 
         elif content.type == "mcp_server_tool_call" and content.tool_name:
             key = f"{content.server_name or 'default'}::{content.tool_name}"
             if self._active_type != "mcp_server_tool_call" or self._active_id != key:
                 yield from self._close()
                 yield from self._open_mcp_call(content)
-            assert self._mcp_builder is not None  # noqa: S101
             args_str = _arguments_to_str(content.arguments)
             self._accumulated.append(args_str)
-            yield self._mcp_builder.emit_arguments_delta(args_str)
+            if self._mcp_builder is not None:
+                yield self._mcp_builder.emit_arguments_delta(args_str)
 
         else:
             yield from self._close()
