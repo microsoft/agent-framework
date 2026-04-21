@@ -205,9 +205,6 @@ class ContentUnderstandingContextProvider(ContextProvider):
         self.max_wait = max_wait
         self.output_sections: list[AnalysisSection] = output_sections or ["markdown", "fields"]
         self.file_search = file_search
-        self._client = ContentUnderstandingClient(
-            self._endpoint, self._credential, user_agent=AGENT_FRAMEWORK_USER_AGENT
-        )
         # Global list of uploaded file IDs — used only by close() for
         # best-effort cleanup.  The authoritative per-session copy lives in
         # state["_uploaded_file_ids"] (populated in before_run).  This global
