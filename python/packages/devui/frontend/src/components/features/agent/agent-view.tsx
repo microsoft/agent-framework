@@ -422,6 +422,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
   useEffect(() => () => clearPendingAssistantTextRender(), [clearPendingAssistantTextRender]);
 
+  useEffect(() => {
+    if (!isStreaming) {
+      clearPendingAssistantTextRender();
+    }
+  }, [isStreaming, clearPendingAssistantTextRender]);
+
   // Auto-scroll to bottom when new items arrive
   useEffect(() => {
     if (!messagesEndRef.current) return;
