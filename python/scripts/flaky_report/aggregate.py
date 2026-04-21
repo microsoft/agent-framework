@@ -94,9 +94,19 @@ def _parse_junit_xml(xml_path: Path) -> list[dict[str, str]]:
         nodeid = f"{classname}::{name}" if classname else name
 
         # Extract module/file name from classname for display context.
-        # e.g. "packages.openai.tests.openai.test_openai_chat_client"
-        #    → "test_openai_chat_client"
-        module = classname.rsplit(".", 1)[-1] if classname else ""
+        # pytest writes classname as a dotted path. For tests inside a class
+        # it appends the class name, e.g.:
+        #   "packages.foundry.tests.foundry.test_foundry_embedding_client.TestFoundryEmbeddingIntegration"
+        # We want the file-level module: "test_foundry_embedding_client"
+        if classname:
+            parts = classname.rsplit(".", 2)
+            # If the last segment starts with uppercase it's a class name — take the one before it
+            if len(parts) >= 2 and parts[-1][0:1].isupper():
+                module = parts[-2]
+            else:
+                module = parts[-1]
+        else:
+            module = ""
 
         # Determine status from child elements
         failure = tc.find("failure")
