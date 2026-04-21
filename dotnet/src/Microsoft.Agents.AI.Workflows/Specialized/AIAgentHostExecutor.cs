@@ -283,7 +283,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         {
             // Extract only the content items that are portable across agents.
             List<AIContent> forwardableContents = message.Contents
-                .Where(c => s_forwardableContentTypes.Contains(c.GetType()))
+                .Where(c => s_forwardableContentTypes.Any(t => t.IsAssignableFrom(c.GetType())))
                 .ToList();
 
             if (forwardableContents.Count == 0)
