@@ -82,7 +82,8 @@ from azure.ai.agentserver.responses.streaming._builders import (
     TextContentBuilder,
 )
 from typing_extensions import Any
-from typing import Sequence, cast
+from typing import cast
+from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
