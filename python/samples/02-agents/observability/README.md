@@ -359,11 +359,11 @@ async def main():
         credential=AzureCliCredential(),
     )
     await client.configure_azure_monitor(enable_live_metrics=True)
-    
+
     # For non-Azure AI projects
     from azure.monitor.opentelemetry import configure_azure_monitor
     from agent_framework.observability import create_resource, enable_instrumentation
-    
+
     configure_azure_monitor(
         connection_string="InstrumentationKey=...",
         resource=create_resource(),
