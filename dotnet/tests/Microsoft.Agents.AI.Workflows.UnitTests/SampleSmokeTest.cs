@@ -273,8 +273,8 @@ public class SampleSmokeTest
     /// Stress regression for the off-thread run-status race: after
     /// <c>Run.ResumeAsync</c> returns at a halt boundary,
     /// callers must observe a stable terminal status and never a transient
-    /// <see cref="RunStatus.Running"/>. Step9 is the canonical multi-response resume
-    /// sample; prior to the fix in <see cref="Execution.StreamingRunEventStream"/>,
+    /// <see cref="Microsoft.Agents.AI.Workflows.RunStatus.Running"/>. Step9 is the canonical multi-response resume
+    /// sample; prior to the fix in <see cref="Microsoft.Agents.AI.Workflows.Execution.StreamingRunEventStream"/>,
     /// its `runStatus.Should().Be(RunStatus.Idle)` assertion failed intermittently
     /// on roughly 1-in-10 iterations under InProcess_OffThread.
     /// </summary>
