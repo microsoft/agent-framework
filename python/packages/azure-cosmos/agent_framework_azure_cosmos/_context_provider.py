@@ -164,16 +164,14 @@ class CosmosContextProvider(ContextProvider):
             for msg in context.input_messages
             if msg and msg.text and msg.text.strip() and msg.role in {"user", "assistant"}
         ]
+        # If filtered list is empty we return early to avoid unnecessary
+        # Cosmos DB calls and potential issues with empty input, no need for additional redundant checks
         if not filtered:
             return
 
         query_text = "\n".join(msg.text.strip() for msg in filtered).strip()
-        if not query_text:
-            return
 
         query_terms = tuple(dict.fromkeys(m.casefold() for m in re.findall(r"\w+", query_text, flags=re.UNICODE)))
-        if self.search_mode in {CosmosContextSearchMode.FULL_TEXT, CosmosContextSearchMode.HYBRID} and not query_terms:
-            return
 
         state["query_text"] = query_text
 
@@ -181,13 +179,20 @@ class CosmosContextProvider(ContextProvider):
 
         result_messages: list[Message] = []
         for item in items:
+            # Turn/Serialize Cosmos Items into Framework Messages
             msg = self._shape_context_message(item)
             if msg is not None:
                 result_messages.append(msg)
+            # Redundant check
             if len(result_messages) >= self.top_k:
                 break
 
         if result_messages:
+            # Inject retrieved context into the session so the model can reference it.
+            # The first message is a prompt instruction (e.g., "Use the following context
+            # to answer the question:") followed by the retrieved knowledge documents.
+            # This is a standard RAG pattern: the instruction tells the model to treat
+            # the subsequent messages as reference material, not conversation history.
             context.extend_messages(
                 self.source_id,
                 [Message(role="user", contents=[self.context_prompt]), *result_messages],
@@ -286,6 +291,7 @@ class CosmosContextProvider(ContextProvider):
 
     async def _execute_retrieval_query(self, query_text: str, query_terms: tuple[str, ...]) -> list[dict[str, Any]]:
         """Build and execute the Cosmos retrieval query for the configured search mode."""
+        # add a way to have user add a where clause in constructor
         fields = list(self.content_field_names)
         if self.message_field_name and self.message_field_name not in fields:
             fields.append(self.message_field_name)
@@ -296,18 +302,24 @@ class CosmosContextProvider(ContextProvider):
 
         if self.search_mode is CosmosContextSearchMode.FULL_TEXT:
             search_field = self.content_field_names[0]
-            query = f"{base} ORDER BY RANK FullTextScore(c.{search_field}, @query_text)"
-            parameters.append({"name": "@query_text", "value": " ".join(query_terms)})
+            # FullTextScore requires each keyword as a separate argument.
+            term_params = [f"@term{i}" for i in range(len(query_terms))]
+            term_args = ", ".join(term_params)
+            query = f"{base} ORDER BY RANK FullTextScore(c.{search_field}, {term_args})"
+            parameters.extend({"name": name, "value": term} for name, term in zip(term_params, query_terms))
 
         elif self.search_mode is CosmosContextSearchMode.VECTOR:
             query_vector = await self._get_query_vector(query_text)
-            query = f"{base} ORDER BY VectorDistance(c.{self.vector_field_name}, @query_vector) ASC"
+            query = f"{base} ORDER BY VectorDistance(c.{self.vector_field_name}, @query_vector)"
             parameters.append({"name": "@query_vector", "value": query_vector})
 
         elif self.search_mode is CosmosContextSearchMode.HYBRID:
             query_vector = await self._get_query_vector(query_text)
             search_field = self.content_field_names[0]
-            ft = f"FullTextScore(c.{search_field}, @query_text)"
+            # FullTextScore requires each keyword as a separate argument.
+            term_params = [f"@term{i}" for i in range(len(query_terms))]
+            term_args = ", ".join(term_params)
+            ft = f"FullTextScore(c.{search_field}, {term_args})"
             vd = f"VectorDistance(c.{self.vector_field_name}, @query_vector)"
             if self.weights is not None:
                 wl = "[" + ", ".join(f"{w:g}" for w in self.weights) + "]"
@@ -315,7 +327,7 @@ class CosmosContextProvider(ContextProvider):
             else:
                 rrf = f"RRF({ft}, {vd})"
             query = f"{base} ORDER BY RANK {rrf}"
-            parameters.append({"name": "@query_text", "value": " ".join(query_terms)})
+            parameters.extend({"name": name, "value": term} for name, term in zip(term_params, query_terms))
             parameters.append({"name": "@query_vector", "value": query_vector})
 
         else:
