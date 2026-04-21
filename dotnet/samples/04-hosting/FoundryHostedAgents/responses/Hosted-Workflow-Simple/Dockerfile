@@ -14,4 +14,4 @@ WORKDIR /app
 COPY --from=build /app/publish .
 EXPOSE 8088
 ENV ASPNETCORE_URLS=http://+:8088
-ENTRYPOINT ["dotnet", "HostedWorkflows.dll"]
+ENTRYPOINT ["dotnet", "HostedWorkflowSimple.dll"]

@@ -8,7 +8,7 @@
     <RootNamespace>HostedWorkflowHandoff</RootNamespace>
     <AssemblyName>HostedWorkflowHandoff</AssemblyName>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
-    <NoWarn>$(NoWarn);NU1903;NU1605;MAAIW001</NoWarn>
+    <NoWarn>$(NoWarn);NU1605;MAAIW001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

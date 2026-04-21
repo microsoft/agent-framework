@@ -2,7 +2,7 @@
 
 A hosted agent demonstrating **two layers of MCP (Model Context Protocol) tool integration**:
 
-1. **Client-side MCP (GitHub)** — The agent connects directly to the GitHub MCP server via `McpClient`, discovers tools, and handles tool invocations locally within the agent process.
+1. **Client-side MCP (Microsoft Learn)** — The agent connects directly to the Microsoft Learn MCP server via `McpClient`, discovers tools, and handles tool invocations locally within the agent process.
 
 2. **Server-side MCP (Microsoft Learn)** — The agent declares a `HostedMcpServerTool` which delegates tool discovery and invocation to the LLM provider (Azure OpenAI Responses API). The provider calls the MCP server on behalf of the agent with no local connection needed.
 
@@ -12,16 +12,15 @@ A hosted agent demonstrating **two layers of MCP (Model Context Protocol) tool i
 |---|---|---|
 | **Connection** | Agent connects to MCP server directly | LLM provider connects to MCP server |
 | **Tool invocation** | Handled by the agent process | Handled by the Responses API |
-| **Auth** | Agent manages credentials (e.g., GitHub PAT) | Provider manages credentials |
+| **Auth** | Agent manages credentials | Provider manages credentials |
 | **Use case** | Custom/private MCP servers, fine-grained control | Public MCP servers, simpler setup |
-| **Example** | GitHub (`McpClient` + `HttpClientTransport`) | Microsoft Learn (`HostedMcpServerTool`) |
+| **Example** | Microsoft Learn (`McpClient` + `HttpClientTransport`) | Microsoft Learn (`HostedMcpServerTool`) |
 
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 - An Azure AI Foundry project with a deployed model (e.g., `gpt-4o`)
 - Azure CLI logged in (`az login`)
-- A **GitHub Personal Access Token** (create at https://github.com/settings/tokens)
 
 ## Configuration
 
@@ -36,7 +35,6 @@ Edit `.env`:
 ```env
 AZURE_AI_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
-GITHUB_PAT=ghp_your_token_here
 ```
 
 ## Running directly (contributors)
@@ -75,7 +73,6 @@ export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.az
 
 docker run --rm -p 8088:8088 \
   -e AGENT_NAME=mcp-tools \
-  -e GITHUB_PAT=$GITHUB_PAT \
   -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN \
   --env-file .env \
   hosted-mcp-tools

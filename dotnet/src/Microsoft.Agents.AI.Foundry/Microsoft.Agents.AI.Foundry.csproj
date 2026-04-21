@@ -3,7 +3,7 @@
   <PropertyGroup>
     <IsReleased>true</IsReleased>
     <InjectSharedThrow>true</InjectSharedThrow>
-    <NoWarn>$(NoWarn);OPENAI001;MEAI001;NU1903</NoWarn>
+    <NoWarn>$(NoWarn);OPENAI001;MEAI001;NU1903</NoWarn> <!-- NU1903: Microsoft.Bcl.Memory 9.0.4 transitive vulnerability via Azure SDK; awaiting upstream fix -->
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 

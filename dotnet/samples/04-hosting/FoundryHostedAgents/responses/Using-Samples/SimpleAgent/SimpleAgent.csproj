@@ -8,7 +8,7 @@
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
     <RootNamespace>SimpleAgentClient</RootNamespace>
     <AssemblyName>simple-agent-client</AssemblyName>
-    <NoWarn>$(NoWarn);NU1903;NU1605;OPENAI001</NoWarn>
+    <NoWarn>$(NoWarn);NU1605;OPENAI001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
