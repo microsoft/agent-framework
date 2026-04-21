@@ -4,6 +4,9 @@
     <BuildType Name="Publish" />
     <BuildType Name="Release" />
   </Configurations>
+  <Folder Name="/src/Aspire.Hosting.AgentFramework.DevUI/">
+    <Project Path="src/Aspire.Hosting.AgentFramework.DevUI/Aspire.Hosting.AgentFramework.DevUI.csproj" />
+  </Folder>
   <Folder Name="/Samples/">
     <File Path="samples/AGENTS.md" />
     <File Path="samples/README.md" />
@@ -36,6 +39,12 @@
     <Project Path="samples/02-agents/AgentProviders/Agent_With_ONNX/Agent_With_ONNX.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
+  </Folder>
+  <Folder Name="/Samples/05-end-to-end/DevUIAspireIntegration/">
+    <Project Path="samples/05-end-to-end/DevUIAspireIntegration/DevUIIntegration.AppHost/DevUIIntegration.AppHost.csproj" />
+    <Project Path="samples/05-end-to-end/DevUIAspireIntegration/DevUIIntegration.ServiceDefaults/DevUIIntegration.ServiceDefaults.csproj" />
+    <Project Path="samples/05-end-to-end/DevUIAspireIntegration/EditorAgent/EditorAgent.csproj" />
+    <Project Path="samples/05-end-to-end/DevUIAspireIntegration/WriterAgent/WriterAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/Agents/">
     <File Path="samples/02-agents/Agents/README.md" />
@@ -542,6 +551,7 @@
     <Project Path="tests/OpenAIResponse.IntegrationTests/OpenAIResponse.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/Tests/UnitTests/">
+    <Project Path="tests/Aspire.Hosting.AgentFramework.DevUI.UnitTests/Aspire.Hosting.AgentFramework.DevUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.A2A.UnitTests/Microsoft.Agents.AI.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AGUI.UnitTests/Microsoft.Agents.AI.AGUI.UnitTests.csproj" />

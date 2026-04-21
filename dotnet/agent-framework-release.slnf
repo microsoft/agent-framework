@@ -28,7 +28,8 @@
       "src\\Microsoft.Agents.AI.Workflows.Declarative\\Microsoft.Agents.AI.Workflows.Declarative.csproj",
       "src\\Microsoft.Agents.AI.Workflows.Generators\\Microsoft.Agents.AI.Workflows.Generators.csproj",
       "src\\Microsoft.Agents.AI.Workflows\\Microsoft.Agents.AI.Workflows.csproj",
-      "src\\Microsoft.Agents.AI\\Microsoft.Agents.AI.csproj"
+      "src\\Microsoft.Agents.AI\\Microsoft.Agents.AI.csproj",
+      "src\\Aspire.Hosting.AgentFramework.DevUI\\Aspire.Hosting.AgentFramework.DevUI.csproj"
     ]
   }
 }

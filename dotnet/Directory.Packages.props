@@ -7,13 +7,16 @@
   </PropertyGroup>
   <PropertyGroup>
     <!-- Aspire -->
-    <AspireAppHostSdkVersion>13.0.2</AspireAppHostSdkVersion>
+    <AspireAppHostSdkVersion>13.1.0</AspireAppHostSdkVersion>
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
     <PackageVersion Include="Anthropic" Version="12.13.0" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.5.0" />
+    <PackageVersion Include="Aspire.Hosting" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
+    <PackageVersion Include="Aspire.Azure.AI.Inference" Version="13.1.0-preview.1.25616.3" />
+    <PackageVersion Include="Aspire.Hosting.Azure.AIFoundry" Version="13.1.0-preview.1.25616.3" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
@@ -48,12 +51,12 @@
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     <PackageVersion Include="System.Net.Security" Version="4.3.2" />
     <!-- OpenTelemetry -->
-    <PackageVersion Include="OpenTelemetry" Version="1.13.1" />
-    <PackageVersion Include="OpenTelemetry.Api" Version="1.13.1" />
-    <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.13.1" />
-    <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.13.1" />
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.13.1" />
-    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.13.1" />
+    <PackageVersion Include="OpenTelemetry" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.13.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.13.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.13.0" />
@@ -71,18 +74,18 @@
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.0" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Compliance.Abstractions" Version="10.5.0" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.UserSecrets" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.6" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.6" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="9.7.0" />
     <!-- Vector Stores -->
