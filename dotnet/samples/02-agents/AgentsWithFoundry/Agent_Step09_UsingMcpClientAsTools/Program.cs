@@ -10,7 +10,7 @@ using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Connect to the Microsoft Learn MCP server via HTTP (Streamable HTTP transport).
 Console.WriteLine("Connecting to MCP server at https://learn.microsoft.com/api/mcp ...");

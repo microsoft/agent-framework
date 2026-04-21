@@ -351,6 +351,8 @@ ContentType = Literal[
     "image_generation_tool_result",
     "mcp_server_tool_call",
     "mcp_server_tool_result",
+    "search_tool_call",
+    "search_tool_result",
     "shell_tool_call",
     "shell_tool_result",
     "shell_command_output",
@@ -859,6 +861,56 @@ class Content:
             result=text_result,
             items=items_list,
             exception=exception,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_search_tool_call(
+        cls: type[ContentT],
+        call_id: str,
+        *,
+        tool_name: str,
+        arguments: str | Mapping[str, Any] | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create search tool call content."""
+        return cls(
+            "search_tool_call",
+            call_id=call_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            status=status,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_search_tool_result(
+        cls: type[ContentT],
+        call_id: str,
+        *,
+        tool_name: str,
+        result: Any = None,
+        items: Sequence[Content] | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create search tool result content."""
+        return cls(
+            "search_tool_result",
+            call_id=call_id,
+            tool_name=tool_name,
+            result=result,
+            items=list(items) if items is not None else None,
+            status=status,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1478,7 +1530,7 @@ class Content:
         return span.lower() == top_level_media_type.lower()
 
     def parse_arguments(self) -> dict[str, Any | None] | None:
-        """Parse arguments from function_call or mcp_server_tool_call content.
+        """Parse arguments from function_call, mcp_server_tool_call, or search_tool_call content.
 
         If arguments cannot be parsed as JSON or the result is not a dict,
         they are returned as a dictionary with a single key "raw".
@@ -1879,6 +1931,12 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             response.finish_reason = update.finish_reason
         if update.model is not None:
             response.model = update.model
+    if (
+        isinstance(response, AgentResponse)
+        and isinstance(update, AgentResponseUpdate)
+        and update.finish_reason is not None
+    ):
+        response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
 
 
@@ -1956,6 +2014,8 @@ class ContinuationToken(TypedDict):
 
 def _parse_structured_response_value(text: str, response_format: Any | None) -> Any | None:
     if response_format is None:
+        return None
+    if not text:
         return None
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
         return response_format.model_validate_json(text)
@@ -2433,6 +2493,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         response_id: str | None = None,
         agent_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: ResponseModelT | None = None,
         response_format: StructuredResponseFormat = None,
@@ -2448,6 +2509,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             agent_id: The identifier of the agent that produced this response. Useful in multi-agent
                 scenarios to track which agent generated the response.
             created_at: A timestamp for the chat response.
+            finish_reason: The reason the model stopped generating. Common values include
+                ``"stop"`` (natural completion), ``"length"`` (token limit), and
+                ``"tool_calls"`` (the model invoked a tool).
             usage_details: The usage details for the chat response.
             value: The structured output of the agent run response, if applicable.
             response_format: Optional response format for the agent response.
@@ -2474,6 +2538,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         self.response_id = response_id
         self.agent_id = agent_id
         self.created_at = created_at
+        self.finish_reason = finish_reason
         self.usage_details = usage_details
         self._value: ResponseModelT | None = value
         self._response_format: type[BaseModel] | Mapping[str, Any] | None = response_format
@@ -2686,6 +2751,7 @@ class AgentResponseUpdate(SerializationMixin):
         response_id: str | None = None,
         message_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2701,6 +2767,9 @@ class AgentResponseUpdate(SerializationMixin):
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             created_at: Optional timestamp for the chat response update.
+            finish_reason: The reason the model stopped generating. Common values include
+                ``"stop"`` (natural completion), ``"length"`` (token limit), and
+                ``"tool_calls"`` (the model invoked a tool).
             continuation_token: Optional token for resuming a long-running background operation.
                 When present, indicates the operation is still in progress.
             additional_properties: Optional additional properties associated with the chat response update.
@@ -2727,6 +2796,7 @@ class AgentResponseUpdate(SerializationMixin):
         self.response_id = response_id
         self.message_id = message_id
         self.created_at = created_at
+        self.finish_reason = finish_reason
         self.continuation_token = continuation_token
         self.additional_properties = _restore_compaction_annotation_in_additional_properties(
             additional_properties,
@@ -2759,6 +2829,7 @@ def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None)
         response_id=update.response_id,
         message_id=update.message_id,
         created_at=update.created_at,
+        finish_reason=update.finish_reason,  # type: ignore[arg-type]
         continuation_token=update.continuation_token,
         additional_properties=update.additional_properties,
         raw_representation=update,
@@ -2814,6 +2885,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             cleanup_hooks if cleanup_hooks is not None else []
         )
         self._cleanup_run: bool = False
+        self._stream_error: Exception | None = None
         self._inner_stream: ResponseStream[Any, Any] | None = None
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
@@ -2946,8 +3018,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             await self._run_cleanup_hooks()
             await self.get_final_response()
             raise
-        except Exception:
-            await self._run_cleanup_hooks()
+        except Exception as exc:
+            self._stream_error = exc
+            try:
+                await self._run_cleanup_hooks()
+            finally:
+                self._stream_error = None
             raise
         if self._map_update is not None:
             update = self._map_update(update)  # type: ignore[assignment]

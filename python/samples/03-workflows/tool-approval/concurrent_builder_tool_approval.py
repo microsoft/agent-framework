@@ -29,19 +29,19 @@ approval will pause the workflow until the human responds.
 
 This sample works as follows:
 1. A ConcurrentBuilder workflow is created with two agents running in parallel.
-2. Both agents have the same tools, including one requiring approval (execute_trade).
+2. Both agents have the same tools, including two requiring approval (execute_trade, set_stop_loss).
 3. Both agents receive the same task and work concurrently on their respective stocks.
-4. When either agent tries to execute a trade, it triggers an approval request.
+4. When either agent tries to execute a trade or set a stop-loss, it triggers an approval request.
 5. The sample simulates human approval and the workflow completes.
 6. Results from both agents are aggregated and output.
 
 Purpose:
 Show how tool call approvals work in parallel execution scenarios where multiple
-agents may independently trigger approval requests.
+agents may independently trigger approval requests for different tools.
 
 Demonstrate:
 - Handling multiple approval requests from different agents in concurrent workflows.
-- Handling  during concurrent agent execution.
+- Handling approval requests for different tools during concurrent agent execution.
 - Understanding that approval pauses only the agent that triggered it, not all agents.
 
 Prerequisites:
@@ -89,6 +89,15 @@ def execute_trade(
     return f"Trade executed: {action.upper()} {quantity} shares of {symbol.upper()}"
 
 
+@tool(approval_mode="always_require")
+def set_stop_loss(
+    symbol: Annotated[str, "The stock ticker symbol"],
+    stop_price: Annotated[float, "The stop-loss price"],
+) -> str:
+    """Set a stop-loss order for a stock. Requires human approval due to financial impact."""
+    return f"Stop-loss set for {symbol.upper()} at ${stop_price:.2f}"
+
+
 @tool(approval_mode="never_require")
 def get_portfolio_balance() -> str:
     """Get current portfolio balance and available funds."""
@@ -118,14 +127,17 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
         if event.type == "request_info" and isinstance(event.data, Content):
             # We are only expecting tool approval requests in this sample
             requests[event.request_id] = event.data
+            if event.data.type == "function_approval_request" and event.data.function_call is not None:
+                print(f"\nApproval requested for tool: {event.data.function_call.name}")
+                print(f"Arguments: {event.data.function_call.arguments}")
         elif event.type == "output":
             _print_output(event)
 
     responses: dict[str, Content] = {}
     if requests:
         for request_id, request in requests.items():
-            if request.type == "function_approval_request":
-                print(f"\nSimulating human approval for: {request.function_call.name}")  # type: ignore
+            if request.type == "function_approval_request" and request.function_call is not None:
+                print(f"\nSimulating human approval for: {request.function_call.name}")
                 # Create approval response
                 responses[request_id] = request.to_function_approval_response(approved=True)
 
@@ -145,9 +157,10 @@ async def main() -> None:
         name="MicrosoftAgent",
         instructions=(
             "You are a personal trading assistant focused on Microsoft (MSFT). "
-            "You manage my portfolio and take actions based on market data."
+            "You manage my portfolio and take actions based on market data. "
+            "Use stop-loss orders to manage risk."
         ),
-        tools=[get_stock_price, get_market_sentiment, get_portfolio_balance, execute_trade],
+        tools=[get_stock_price, get_market_sentiment, get_portfolio_balance, execute_trade, set_stop_loss],
     )
 
     google_agent = Agent(
@@ -155,9 +168,10 @@ async def main() -> None:
         name="GoogleAgent",
         instructions=(
             "You are a personal trading assistant focused on Google (GOOGL). "
-            "You manage my trades and portfolio based on market conditions."
+            "You manage my trades and portfolio based on market conditions. "
+            "Use stop-loss orders to manage risk."
         ),
-        tools=[get_stock_price, get_market_sentiment, get_portfolio_balance, execute_trade],
+        tools=[get_stock_price, get_market_sentiment, get_portfolio_balance, execute_trade, set_stop_loss],
     )
 
     # 4. Build a concurrent workflow with both agents
@@ -172,7 +186,8 @@ async def main() -> None:
     # Runs are not isolated; state is preserved across multiple calls to run.
     stream = workflow.run(
         "Manage my portfolio. Use a max of 5000 dollars to adjust my position using "
-        "your best judgment based on market sentiment. No need to confirm trades with me.",
+        "your best judgment based on market sentiment. Set stop-loss orders to manage risk. "
+        "No need to confirm trades with me.",
         stream=True,
     )
 
@@ -191,22 +206,32 @@ async def main() -> None:
     Approval requested for tool: execute_trade
     Arguments: {"symbol":"MSFT","action":"buy","quantity":13}
 
+    Approval requested for tool: set_stop_loss
+    Arguments: {"symbol":"MSFT","stop_price":340.0}
+
     Approval requested for tool: execute_trade
     Arguments: {"symbol":"GOOGL","action":"buy","quantity":35}
 
-    Simulating human approval for: execute_trade
+    Approval requested for tool: set_stop_loss
+    Arguments: {"symbol":"GOOGL","stop_price":126.0}
 
     Simulating human approval for: execute_trade
+
+    Simulating human approval for: set_stop_loss
+
+    Simulating human approval for: execute_trade
+
+    Simulating human approval for: set_stop_loss
 
     ------------------------------------------------------------
     Workflow completed. Aggregated results from both agents:
     - user: Manage my portfolio. Use a max of 5000 dollars to adjust my position using your best judgment based on
-            market sentiment. No need to confirm trades with me.
-    - MicrosoftAgent: I have successfully executed the trade, purchasing 13 shares of Microsoft (MSFT). This action
-                      was based on the positive market sentiment and available funds within the specified limit.
-                      Your portfolio has been adjusted accordingly.
-    - GoogleAgent: I have successfully executed the trade, purchasing 35 shares of GOOGL. If you need further
-                   assistance or any adjustments, feel free to ask!
+            market sentiment. Set stop-loss orders to manage risk. No need to confirm trades with me.
+    - MicrosoftAgent: I have successfully purchased 13 shares of Microsoft (MSFT) and set a stop-loss at $340.00.
+                      This action was based on the positive market sentiment and available funds within the
+                      specified limit. Your portfolio has been adjusted accordingly.
+    - GoogleAgent: I have successfully purchased 35 shares of GOOGL and set a stop-loss at $126.00. If you need
+                   further assistance or any adjustments, feel free to ask!
     """
 
 

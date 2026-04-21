@@ -1,0 +1,137 @@
+#
+# Runs the .NET sample verification tool, which builds and executes sample projects
+# and verifies their output using deterministic checks and AI-powered verification.
+#
+# Results are displayed as a GitHub Job Summary and the CSV report is uploaded as an artifact.
+#
+
+name: dotnet-verify-samples
+
+on:
+  workflow_dispatch:
+    inputs:
+      category:
+        description: "Sample category to run (blank for all)"
+        required: false
+        type: choice
+        options:
+          - ""
+          - "01-get-started"
+          - "02-agents"
+          - "03-workflows"
+      parallelism:
+        description: "Max parallel sample runs"
+        required: false
+        default: "8"
+        type: string
+  schedule:
+    - cron: "0 6 * * 1-5" # Weekdays at 6:00 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify-samples:
+    runs-on: ubuntu-latest
+    environment: 'integration'
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .
+            .github
+            dotnet
+            python
+            declarative-agents
+
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v5.2.0
+        with:
+          global-json-file: ${{ github.workspace }}/dotnet/global.json
+
+      - name: Azure CLI Login
+        if: github.event_name != 'pull_request'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Generate filtered solution
+        shell: pwsh
+        run: |
+          ./dotnet/eng/scripts/New-FilteredSolution.ps1 `
+            -Solution dotnet/agent-framework-dotnet.slnx `
+            -TargetFramework net10.0 `
+            -Configuration Debug `
+            -OutputPath dotnet/filtered.slnx `
+            -Verbose
+
+      - name: Build solution
+        shell: bash
+        run: dotnet build dotnet/filtered.slnx -f net10.0 --warnaserror
+
+      - name: Run verify-samples
+        id: verify
+        working-directory: dotnet
+        shell: bash
+        run: |
+          CATEGORY_ARG=""
+          if [ -n "$CATEGORY_INPUT" ]; then
+            CATEGORY_ARG="--category $CATEGORY_INPUT"
+          fi
+
+          dotnet run --project eng/verify-samples -- \
+            $CATEGORY_ARG \
+            --parallel "$PARALLELISM" \
+            --md results.md \
+            --csv results.csv \
+            --log results.log
+        env:
+          CATEGORY_INPUT: ${{ github.event.inputs.category || '' }}
+          PARALLELISM: ${{ github.event.inputs.parallelism || '8' }}
+          # OpenAI Models
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_CHAT_MODEL_NAME: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+          OPENAI_REASONING_MODEL_NAME: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
+          # Azure OpenAI Models
+          AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          # Azure AI Foundry
+          AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
+          AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+          AZURE_AI_BING_CONNECTION_ID: ${{ vars.AZURE_AI_BING_CONNECTION_ID }}
+
+      - name: Write Job Summary
+        if: always()
+        working-directory: dotnet
+        shell: bash
+        run: |
+          if [ -f results.md ]; then
+            cat results.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⚠️ No results.md generated — verify-samples may have failed to start." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: verify-samples-results
+          path: |
+            dotnet/results.csv
+            dotnet/results.log
+          if-no-files-found: warn
+
+      - name: Fail if samples failed
+        if: always() && steps.verify.outcome == 'failure'
+        shell: bash
+        run: exit 1

@@ -122,10 +122,13 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
                 string? workflowConversationId = context.GetWorkflowConversation();
                 if (workflowConversationId is not null)
                 {
-                    // Input message always defined if values has been extracted.
-                    ChatMessage input = response.Messages.Last();
-                    await agentProvider.CreateMessageAsync(workflowConversationId, input, cancellationToken).ConfigureAwait(false);
-                    await context.SetLastMessageAsync(input).ConfigureAwait(false);
+                    // Input message expected to be defined when values have been extracted, but guard defensively.
+                    ChatMessage? input = response.Messages.LastOrDefault();
+                    if (input is not null)
+                    {
+                        await agentProvider.CreateMessageAsync(workflowConversationId, input, cancellationToken).ConfigureAwait(false);
+                        await context.SetLastMessageAsync(input).ConfigureAwait(false);
+                    }
                 }
             }
 

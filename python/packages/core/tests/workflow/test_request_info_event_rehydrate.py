@@ -130,7 +130,17 @@ async def test_checkpoint_with_pending_request_info_events():
 
     with tempfile.TemporaryDirectory() as temp_dir:
         # Use file-based storage to test full serialization
-        storage = FileCheckpointStorage(temp_dir)
+        storage = FileCheckpointStorage(
+            temp_dir,
+            allowed_checkpoint_types=[
+                "tests.workflow.test_request_info_and_response:UserApprovalRequest",
+                "tests.workflow.test_request_info_and_response:CalculationRequest",
+                "tests.workflow.test_request_info_event_rehydrate:MockRequest",
+                "tests.workflow.test_request_info_event_rehydrate:SimpleApproval",
+                "tests.workflow.test_request_info_event_rehydrate:SlottedApproval",
+                "tests.workflow.test_request_info_event_rehydrate:TimedApproval",
+            ],
+        )
 
         # Create workflow with checkpointing enabled
         executor = ApprovalRequiredExecutor(id="approval_executor")
@@ -225,7 +235,17 @@ async def test_checkpoint_restore_with_responses_does_not_reemit_handled_request
 
     with tempfile.TemporaryDirectory() as temp_dir:
         # Use file-based storage to test full serialization
-        storage = FileCheckpointStorage(temp_dir)
+        storage = FileCheckpointStorage(
+            temp_dir,
+            allowed_checkpoint_types=[
+                "tests.workflow.test_request_info_and_response:UserApprovalRequest",
+                "tests.workflow.test_request_info_and_response:CalculationRequest",
+                "tests.workflow.test_request_info_event_rehydrate:MockRequest",
+                "tests.workflow.test_request_info_event_rehydrate:SimpleApproval",
+                "tests.workflow.test_request_info_event_rehydrate:SlottedApproval",
+                "tests.workflow.test_request_info_event_rehydrate:TimedApproval",
+            ],
+        )
 
         # Create workflow with checkpointing enabled
         executor = ApprovalRequiredExecutor(id="approval_executor")
@@ -288,7 +308,17 @@ async def test_checkpoint_restore_with_partial_responses_reemits_unhandled_reque
     import tempfile
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        storage = FileCheckpointStorage(temp_dir)
+        storage = FileCheckpointStorage(
+            temp_dir,
+            allowed_checkpoint_types=[
+                "tests.workflow.test_request_info_and_response:UserApprovalRequest",
+                "tests.workflow.test_request_info_and_response:CalculationRequest",
+                "tests.workflow.test_request_info_event_rehydrate:MockRequest",
+                "tests.workflow.test_request_info_event_rehydrate:SimpleApproval",
+                "tests.workflow.test_request_info_event_rehydrate:SlottedApproval",
+                "tests.workflow.test_request_info_event_rehydrate:TimedApproval",
+            ],
+        )
 
         # Create workflow with multiple requests
         executor = MultiRequestExecutor(id="multi_executor")
