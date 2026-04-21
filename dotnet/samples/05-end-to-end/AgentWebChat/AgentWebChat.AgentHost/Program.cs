@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using A2A;
 using A2A.AspNetCore;
 using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Custom;
@@ -156,15 +157,7 @@ app.UseExceptionHandler();
 
 // attach a2a with simple message communication
 app.MapA2A(pirateAgentBuilder, path: "/a2a/pirate");
-app.MapA2A(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves", agentCard: new()
-{
-    Name = "Knights and Knaves",
-    Description = "An agent that helps you solve the knights and knaves puzzle.",
-    Version = "1.0",
-
-    // Url can be not set, and SDK will help assign it.
-    // Url = "http://localhost:5390/a2a/knights-and-knaves"
-});
+app.MapA2A(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves");
 
 app.MapDevUI();
 

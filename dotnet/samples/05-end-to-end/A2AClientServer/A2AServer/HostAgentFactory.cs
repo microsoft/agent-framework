@@ -153,12 +153,23 @@ internal static class HostAgentFactory
 
     private static List<AgentInterface> CreateAgentInterfaces(string[] agentUrls)
     {
-        return agentUrls.Select(url => new AgentInterface
+        List<AgentInterface> agentInterfaces = [];
+
+        agentInterfaces.AddRange(agentUrls.Select(url => new AgentInterface
         {
             Url = url,
             ProtocolBinding = "JSONRPC",
             ProtocolVersion = "1.0",
-        }).ToList();
+        }));
+
+        agentInterfaces.AddRange(agentUrls.Select(url => new AgentInterface
+        {
+            Url = url,
+            ProtocolBinding = "HTTP+JSON",
+            ProtocolVersion = "1.0",
+        }));
+
+        return agentInterfaces;
     }
     #endregion
 }

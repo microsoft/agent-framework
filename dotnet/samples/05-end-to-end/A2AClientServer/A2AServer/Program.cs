@@ -3,6 +3,7 @@ using A2A;
 using A2A.AspNetCore;
 using A2AServer;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting.A2A;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -107,7 +108,8 @@ else
 
 app.MapA2A(
     hostA2AAgent,
-    path: "/",
-    agentCard: hostA2AAgentCard);
+    path: "/", protocolBindings: A2AProtocolBinding.JsonRpc | A2AProtocolBinding.HttpJson);
+
+app.MapWellKnownAgentCard(hostA2AAgentCard);
 
 await app.RunAsync();
