@@ -1,19 +1,21 @@
 <Project>
   <PropertyGroup>
     <!-- Central version prefix - applies to all nuget packages. -->
-    <VersionPrefix>0.0.1</VersionPrefix>
+    <VersionPrefix>1.1.0</VersionPrefix>
     <RCNumber>1</RCNumber>
-    <!-- Preview-only branch: all publishable packages ship as 0.0.1-preview.260417.2 regardless of IsReleaseCandidate/VersionSuffix. -->
-    <PackageVersion>$(VersionPrefix)-preview.260420.2</PackageVersion>
-    <GitTag>0.0.1</GitTag>
+    <PackageVersion Condition="'$(IsReleaseCandidate)' == 'true'">$(VersionPrefix)-rc$(RCNumber)</PackageVersion>
+    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).260410.1</PackageVersion>
+    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.260410.1</PackageVersion>
+    <PackageVersion Condition="'$(IsReleased)' == 'true'">$(VersionPrefix)</PackageVersion>
+    <GitTag>1.1.0</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>
-    <!-- Override the repo-wide IsPackable=false default from Directory.Build.props. Projects that want to stay non-packable (e.g. Mem0) set IsPackable=false AFTER importing this file. -->
     <IsPackable>true</IsPackable>
 
     <!-- Package validation. Baseline Version should be the latest version available on NuGet. -->
     <PackageValidationBaselineVersion>1.0.0</PackageValidationBaselineVersion>
-    <!-- Preview-only branch: package validation disabled entirely. -->
+    <!-- Enable validation for GA packages -->
+    <EnablePackageValidation Condition="'$(IsReleased)' == 'true'">true</EnablePackageValidation>
     <!-- Validate assembly attributes only for Publish builds -->
     <NoWarn Condition="'$(Configuration)' != 'Publish'">$(NoWarn);CP0003</NoWarn>
     <!-- Do not validate reference assemblies -->
@@ -27,7 +29,8 @@
 
     <!-- Report low, moderate, high and critical advisories -->
     <NuGetAuditLevel>low</NuGetAuditLevel>
-    
+
+
     <!-- Default description and tags. Packages can override. -->
     <Authors>Microsoft</Authors>
     <Company>Microsoft</Company>
@@ -68,7 +71,7 @@
     <None Include="$(RepoRoot)/dotnet/nuget/NUGET.md" Link="NUGET.md" Pack="true" PackagePath="." />
   </ItemGroup>
 
-  <PropertyGroup Condition=" '$(Configuration)' == 'Release' AND '$(IsPackable)' == 'true' ">
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
   </PropertyGroup>
 </Project>
