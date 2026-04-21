@@ -122,40 +122,6 @@ public static class FoundryAITool
     public static AITool CreateHostedMcpToolbox(string toolboxName, string? version = null)
         => new HostedMcpToolboxAITool(toolboxName, version);
 
-    /// <summary>
-    /// Creates an <see cref="AITool"/> marker from a <see cref="ToolboxRecord"/> retrieved
-    /// from <c>AIProjectClient</c>. Uses <see cref="ToolboxRecord.Name"/> and
-    /// <see cref="ToolboxRecord.DefaultVersion"/>.
-    /// </summary>
-    /// <param name="toolbox">The toolbox record.</param>
-    /// <returns>An <see cref="AITool"/> marker backed by <see cref="HostedMcpToolboxAITool"/>.</returns>
-    public static AITool CreateHostedMcpToolbox(ToolboxRecord toolbox)
-    {
-        if (toolbox is null)
-        {
-            throw new ArgumentNullException(nameof(toolbox));
-        }
-
-        return new HostedMcpToolboxAITool(toolbox.Name, toolbox.DefaultVersion);
-    }
-
-    /// <summary>
-    /// Creates an <see cref="AITool"/> marker from a specific <see cref="ToolboxVersion"/>
-    /// retrieved from <c>AIProjectClient</c>. Uses <see cref="ToolboxVersion.Name"/> and
-    /// <see cref="ToolboxVersion.Version"/>.
-    /// </summary>
-    /// <param name="toolboxVersion">The toolbox version.</param>
-    /// <returns>An <see cref="AITool"/> marker backed by <see cref="HostedMcpToolboxAITool"/>.</returns>
-    public static AITool CreateHostedMcpToolbox(ToolboxVersion toolboxVersion)
-    {
-        if (toolboxVersion is null)
-        {
-            throw new ArgumentNullException(nameof(toolboxVersion));
-        }
-
-        return new HostedMcpToolboxAITool(toolboxVersion.Name, toolboxVersion.Version);
-    }
-
     // --- OpenAI SDK ResponseTool factories ---
 
     /// <summary>

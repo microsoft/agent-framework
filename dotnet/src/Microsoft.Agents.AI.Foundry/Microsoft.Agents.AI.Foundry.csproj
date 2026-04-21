@@ -3,8 +3,7 @@
   <PropertyGroup>
     <IsReleased>true</IsReleased>
     <InjectSharedThrow>true</InjectSharedThrow>
-    <NoWarn>$(NoWarn);OPENAI001;MEAI001;NU1903</NoWarn> <!-- NU1903: Microsoft.Bcl.Memory 9.0.4 transitive vulnerability via Azure SDK; awaiting upstream fix -->
-    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+    <NoWarn>$(NoWarn);OPENAI001;MEAI001</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -21,10 +20,6 @@
     <InjectSharedRedaction>true</InjectSharedRedaction>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETCoreApp'">
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Microsoft.Extensions.AI" />
@@ -32,12 +27,6 @@
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="Microsoft.Extensions.Compliance.Abstractions" />
     <PackageReference Include="OpenAI" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETCoreApp'">
-    <PackageReference Include="Azure.AI.AgentServer.Responses" />
-    <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="ModelContextProtocol" />
   </ItemGroup>
 
   <!-- Evaluation support requires net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->
@@ -56,11 +45,6 @@
     <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETCoreApp'">
-    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
-    <ProjectReference Include="..\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
-  </ItemGroup>
-
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework for Foundry Agents</Title>
@@ -70,11 +54,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Foundry.UnitTests" />
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
-  </ItemGroup>
-
-  <!-- Hosting code requires .NET Core (ASP.NET Core + Azure.AI.AgentServer.Responses) -->
-  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' != '.NETCoreApp'">
-    <Compile Remove="Hosting\**" />
   </ItemGroup>
 
 </Project>
