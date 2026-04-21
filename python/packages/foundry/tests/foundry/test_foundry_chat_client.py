@@ -15,6 +15,7 @@ from agent_framework import ChatResponse, Content, Message, SupportsChatGetRespo
 from agent_framework._telemetry import AGENT_FRAMEWORK_USER_AGENT
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework_openai import OpenAIContentFilterException
+from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 from openai import BadRequestError
@@ -606,6 +607,82 @@ def test_get_mcp_tool_with_project_connection_id() -> None:
     assert tool_config["project_connection_id"] == "conn-123"
     assert tool_config["allowed_tools"] == ["search_docs"]
     assert tool_config["server_label"] == "Docs_MCP"
+
+
+def test_prepare_tools_for_openai_strips_extraneous_name_from_foundry_mcp_tool() -> None:
+    """Toolbox-returned MCP tools may carry ``name``; Foundry Responses rejects it."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryMCPTool(
+        server_label="githubmcp",
+        server_url="https://api.githubcopilot.com/mcp",
+    )
+    tool["project_connection_id"] = "githubmcp"
+    tool["name"] = "githubmcp"
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    prepared = response_tools[0]
+    assert prepared["type"] == "mcp"
+    assert prepared["server_label"] == "githubmcp"
+    assert prepared["project_connection_id"] == "githubmcp"
+    assert "name" not in prepared
+
+
+def test_prepare_tools_for_openai_strips_read_model_fields_from_toolbox_code_interpreter() -> None:
+    """Toolbox-returned code interpreter tools may carry read-model-only name/description."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = {
+        "type": "code_interpreter",
+        "name": "code_interpreter_t6bbtm",
+        "description": "Toolbox read model description",
+        "container": {"file_ids": [], "type": "auto"},
+    }
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    prepared = response_tools[0]
+    assert prepared["type"] == "code_interpreter"
+    assert prepared["container"] == {"file_ids": [], "type": "auto"}
+    assert "name" not in prepared
+    assert "description" not in prepared
+
+
+def test_prepare_tools_for_openai_strips_name_from_non_function_hosted_tool_dicts() -> None:
+    """All non-function hosted tool payloads should drop top-level read-model names."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response_tools = client._prepare_tools_for_openai([
+        {
+            "type": "file_search",
+            "name": "file_search_tool_123",
+            "description": "toolbox decoration",
+            "vector_store_ids": ["vs_123"],
+        },
+        {
+            "type": "web_search",
+            "name": "web_search_tool_456",
+            "description": "toolbox decoration",
+        },
+    ])
+
+    assert len(response_tools) == 2
+    assert response_tools[0]["type"] == "file_search"
+    assert response_tools[0]["vector_store_ids"] == ["vs_123"]
+    assert "name" not in response_tools[0]
+    assert "description" not in response_tools[0]
+    assert response_tools[1]["type"] == "web_search"
+    assert "name" not in response_tools[1]
+    assert "description" not in response_tools[1]
 
 
 @pytest.mark.flaky

@@ -1,0 +1,8 @@
+kind: hosted
+name: agent-framework-workflows
+protocols:
+  - protocol: responses
+    version: 1.0.0
+resources:
+  cpu: "0.25"
+  memory: 0.5Gi

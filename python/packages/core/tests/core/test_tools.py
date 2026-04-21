@@ -1144,3 +1144,160 @@ def test_parse_annotation_with_annotated_and_literal():
 
 
 # endregion
+
+
+# region normalize_tools flattening of tool-collection wrappers
+
+
+def _make_flatten_function_tool(name: str) -> FunctionTool:
+    """Build a FunctionTool for flattening tests."""
+
+    @tool(name=name, description=f"{name} tool")
+    def _impl(x: int) -> int:
+        return x
+
+    return _impl  # type: ignore[return-value]
+
+
+def test_normalize_tools_flattens_tool_collection_wrapper() -> None:
+    """A non-tool, non-callable iterable inside the tools list is flattened."""
+    from agent_framework._tools import normalize_tools
+
+    inner_a = _make_flatten_function_tool("inner_a")
+    inner_b = _make_flatten_function_tool("inner_b")
+
+    class ToolBundle:
+        """Minimal stand-in for a tool-collection wrapper like FoundryToolbox."""
+
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    bundle = ToolBundle([inner_a, inner_b])
+
+    normalized = normalize_tools([bundle])
+
+    assert len(normalized) == 2
+    assert normalized[0] is inner_a
+    assert normalized[1] is inner_b
+
+
+def test_normalize_tools_combines_bundle_with_individual_tools() -> None:
+    """The canonical ``tools=[bundle, my_func]`` call site spreads bundle + individual."""
+    from agent_framework._tools import normalize_tools
+
+    bundled = _make_flatten_function_tool("bundled")
+    standalone = _make_flatten_function_tool("standalone")
+
+    class ToolBundle:
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    normalized = normalize_tools([ToolBundle([bundled]), standalone])
+
+    assert len(normalized) == 2
+    assert normalized[0] is bundled
+    assert normalized[1] is standalone
+
+
+def test_normalize_tools_flattens_nested_bundles() -> None:
+    """Bundles inside bundles are flattened recursively via the recursive call."""
+    from agent_framework._tools import normalize_tools
+
+    inner = _make_flatten_function_tool("deep")
+
+    class ToolBundle:
+        def __init__(self, tools: list[Any]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    nested = ToolBundle([ToolBundle([inner])])
+
+    normalized = normalize_tools([nested])
+
+    assert len(normalized) == 1
+    assert normalized[0] is inner
+
+
+def test_normalize_tools_bundle_only_form() -> None:
+    """Passing a bundle directly (no outer list) also flattens its contents.
+
+    ``tools=bundle`` — the outer wrap-in-list happens in the non-Sequence
+    branch, then the flattening logic kicks in on the inner pass.
+    """
+    from agent_framework._tools import normalize_tools
+
+    a = _make_flatten_function_tool("a")
+    b = _make_flatten_function_tool("b")
+
+    class ToolBundle:
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    normalized = normalize_tools(ToolBundle([a, b]))  # type: ignore[arg-type]
+
+    assert len(normalized) == 2
+    assert normalized[0] is a
+    assert normalized[1] is b
+
+
+def test_normalize_tools_does_not_flatten_known_tool_types() -> None:
+    """FunctionTool / dict / callable are detected before the flatten branch."""
+    from agent_framework._tools import normalize_tools
+
+    func_tool = _make_flatten_function_tool("ft")
+    dict_tool: dict[str, Any] = {"type": "code_interpreter", "container": {"type": "auto"}}
+
+    def plain_callable(x: int) -> int:
+        return x
+
+    normalized = normalize_tools([func_tool, dict_tool, plain_callable])
+
+    assert len(normalized) == 3
+    assert normalized[0] is func_tool
+    assert normalized[1] is dict_tool
+    # plain_callable was wrapped in a FunctionTool via the @tool helper
+    assert isinstance(normalized[2], FunctionTool)
+
+
+def test_normalize_tools_flattens_mapping_like_toolbox_with_tools_attr() -> None:
+    """Mapping-like toolbox objects with ``.tools`` should still flatten."""
+    from collections.abc import Mapping as MappingABC
+
+    from agent_framework._tools import normalize_tools
+
+    bundled = _make_flatten_function_tool("bundled")
+    standalone = _make_flatten_function_tool("standalone")
+
+    class ToolBundleMapping(MappingABC[str, Any]):
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self.tools = tools
+            self._data = {"name": "research_tools", "version": "v1", "tools": tools}
+
+        def __getitem__(self, key: str) -> Any:
+            return self._data[key]
+
+        def __iter__(self):
+            return iter(self._data)
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+    normalized = normalize_tools([ToolBundleMapping([bundled]), standalone])
+
+    assert len(normalized) == 2
+    assert normalized[0] is bundled
+    assert normalized[1] is standalone
+
+
+# endregion
