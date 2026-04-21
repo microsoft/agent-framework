@@ -17,8 +17,9 @@ from agent_framework import (
     Message,
     SupportsAgentRun,
 )
-from agent_framework._types import _get_data_bytes_as_str
 from typing_extensions import override
+
+from ._utils import get_uri_data
 
 logger = logging.getLogger("agent_framework.a2a")
 
@@ -243,11 +244,8 @@ class A2AExecutor(AgentExecutor):
             if content.type == "text" and content.text:
                 parts.append(Part(root=TextPart(text=content.text)))
             elif content.type == "data" and content.uri:
-                base64_str = _get_data_bytes_as_str(content)
-                if base64_str:
-                    parts.append(
-                        Part(root=FilePart(file=FileWithBytes(bytes=base64_str, mime_type=content.media_type)))
-                    )
+                base64_str = get_uri_data(content.uri)
+                parts.append(Part(root=FilePart(file=FileWithBytes(bytes=base64_str, mime_type=content.media_type))))
             elif content.type == "uri" and content.uri:
                 parts.append(Part(root=FilePart(file=FileWithUri(uri=content.uri, mime_type=content.media_type))))
             else:

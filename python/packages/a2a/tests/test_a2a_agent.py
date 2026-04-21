@@ -35,7 +35,7 @@ from agent_framework.a2a import A2AAgent
 from pytest import fixture, mark, raises
 
 from agent_framework_a2a import A2AContinuationToken
-from agent_framework_a2a._agent import _get_uri_data  # type: ignore
+from agent_framework_a2a._utils import get_uri_data
 
 
 class MockA2AClient:
@@ -351,18 +351,18 @@ def test_parse_message_from_artifact(a2a_agent: A2AAgent) -> None:
 
 
 def test_get_uri_data_valid_uri() -> None:
-    """Test _get_uri_data with valid data URI."""
+    """Test get_uri_data with valid data URI."""
 
     uri = "data:application/json;base64,eyJ0ZXN0IjoidmFsdWUifQ=="
-    result = _get_uri_data(uri)
+    result = get_uri_data(uri)
     assert result == "eyJ0ZXN0IjoidmFsdWUifQ=="
 
 
 def test_get_uri_data_invalid_uri() -> None:
-    """Test _get_uri_data with invalid URI format."""
+    """Test get_uri_data with invalid URI format."""
 
     with raises(ValueError, match="Invalid data URI format"):
-        _get_uri_data("not-a-valid-data-uri")
+        get_uri_data("not-a-valid-data-uri")
 
 
 def test_parse_contents_from_a2a_conversion(a2a_agent: A2AAgent) -> None:
