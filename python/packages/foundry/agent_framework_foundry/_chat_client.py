@@ -16,6 +16,7 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
+from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -32,6 +33,8 @@ from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
+from ._tools import fetch_toolbox, sanitize_foundry_response_tool
+
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
 else:
@@ -46,7 +49,8 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
-    from agent_framework import ChatAndFunctionMiddlewareTypes
+    from agent_framework import ChatAndFunctionMiddlewareTypes, ToolTypes
+    from azure.ai.projects.models import ToolboxVersionObject
 
 logger: logging.Logger = logging.getLogger("agent_framework.foundry")
 
@@ -217,6 +221,21 @@ class RawFoundryChatClient(  # type: ignore[misc]
             if not self.model:
                 raise ValueError("model must be a non-empty string")
             options["model"] = self.model
+
+    @override
+    def _prepare_tools_for_openai(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+    ) -> list[Any]:
+        """Prepare tools for Foundry Responses API calls.
+
+        Foundry toolbox reads can surface MCP tool objects with extra fields
+        (for example ``name``) that are accepted by the toolbox API but rejected
+        by the Responses API. Sanitize those hosted-tool payloads before sending
+        them downstream.
+        """
+        response_tools = super()._prepare_tools_for_openai(tools)
+        return [sanitize_foundry_response_tool(tool_item) for tool_item in response_tools]
 
     async def configure_azure_monitor(
         self,
@@ -459,6 +478,37 @@ class RawFoundryChatClient(  # type: ignore[misc]
         return mcp
 
     # endregion
+
+    # region Toolbox methods (instance methods — these hit the network)
+
+    @experimental(feature_id=ExperimentalFeature.TOOLBOXES)
+    async def get_toolbox(
+        self,
+        name: str,
+        *,
+        version: str | None = None,
+    ) -> ToolboxVersionObject:
+        """Fetch a Foundry toolbox by name.
+
+        If ``version`` is omitted, resolves the toolbox's current default version
+        (two requests). If ``version`` is specified, fetches that version directly
+        (single request).
+
+        Args:
+            name: The name of the toolbox.
+
+        Keyword Args:
+            version: Optional immutable version identifier to pin to.
+
+        Returns:
+            A ``ToolboxVersionObject``. Pass its ``tools`` attribute to
+            ``Agent(tools=toolbox.tools)``.
+
+        Raises:
+            azure.core.exceptions.ResourceNotFoundError: If the toolbox or
+                the requested version does not exist.
+        """
+        return await fetch_toolbox(self.project_client, name, version)
 
 
 class FoundryChatClient(  # type: ignore[misc]

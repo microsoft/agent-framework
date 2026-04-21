@@ -207,6 +207,8 @@ temp*/
 
 # AI
 .claude/
+.omc/
+.omx/
 WARP.md
 **/memory-bank/
 **/projectBrief.md
@@ -239,3 +241,4 @@ python/dotnet-ref
 
 # Generated filtered solution files (created by eng/scripts/New-FilteredSolution.ps1)
 dotnet/filtered-*.slnx
+**/*.lscache
