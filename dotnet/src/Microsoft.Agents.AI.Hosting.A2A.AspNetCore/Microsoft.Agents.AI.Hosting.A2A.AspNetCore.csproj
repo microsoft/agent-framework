@@ -16,7 +16,7 @@
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
   </PropertyGroup>
-  
+
   <ItemGroup>
     <PackageReference Include="A2A.AspNetCore" />
   </ItemGroup>
@@ -28,7 +28,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Hosting.A2A\Microsoft.Agents.AI.Hosting.A2A.csproj" />
   </ItemGroup>
-  
+
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Hosting A2A ASP.NET Core</Title>

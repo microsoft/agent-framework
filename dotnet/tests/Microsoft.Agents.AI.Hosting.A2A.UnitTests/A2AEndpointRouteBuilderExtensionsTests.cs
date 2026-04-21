@@ -391,4 +391,50 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
 
         Assert.Equal("agentBuilder", exception.ParamName);
     }
+
+    /// <summary>
+    /// Verifies that MapA2AHttpJson throws InvalidOperationException when no A2AServer has been
+    /// registered for the specified agent via AddA2AServer.
+    /// </summary>
+    [Fact]
+    public void MapA2AHttpJson_WithoutAddA2AServer_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        IChatClient mockChatClient = new DummyChatClient();
+        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
+        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddLogging();
+        using WebApplication app = builder.Build();
+
+        // Act & Assert
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+            app.MapA2AHttpJson("agent", "/a2a"));
+
+        Assert.Contains("agent", exception.Message);
+        Assert.Contains("AddA2AServer", exception.Message);
+    }
+
+    /// <summary>
+    /// Verifies that MapA2AJsonRpc throws InvalidOperationException when no A2AServer has been
+    /// registered for the specified agent via AddA2AServer.
+    /// </summary>
+    [Fact]
+    public void MapA2AJsonRpc_WithoutAddA2AServer_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        IChatClient mockChatClient = new DummyChatClient();
+        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
+        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddLogging();
+        using WebApplication app = builder.Build();
+
+        // Act & Assert
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+            app.MapA2AJsonRpc("agent", "/a2a"));
+
+        Assert.Contains("agent", exception.Message);
+        Assert.Contains("AddA2AServer", exception.Message);
+    }
 }
