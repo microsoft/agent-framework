@@ -42,15 +42,34 @@ from azure.ai.agentserver.responses.models import (
     MessageContentOutputTextContent,
     MessageContentReasoningTextContent,
     MessageContentRefusalContent,
+    OAuthConsentRequestOutputItem,
     OutputItem,
+    OutputItemApplyPatchToolCall,
+    OutputItemApplyPatchToolCallOutput,
+    OutputItemCodeInterpreterToolCall,
+    OutputItemComputerToolCall,
+    OutputItemComputerToolCallOutputResource,
+    OutputItemCustomToolCall,
+    OutputItemCustomToolCallOutput,
+    OutputItemFileSearchToolCall,
+    OutputItemFunctionShellCall,
+    OutputItemFunctionShellCallOutput,
     OutputItemFunctionToolCall,
+    OutputItemImageGenToolCall,
+    OutputItemLocalShellToolCall,
+    OutputItemLocalShellToolCallOutput,
+    OutputItemMcpApprovalRequest,
+    OutputItemMcpApprovalResponseResource,
+    OutputItemMcpToolCall,
     OutputItemMessage,
     OutputItemOutputMessage,
     OutputItemReasoningItem,
+    OutputItemWebSearchToolCall,
     OutputMessageContent,
     OutputMessageContentOutputTextContent,
     OutputMessageContentRefusalContent,
     ResponseStreamEvent,
+    StructuredOutputsOutputItem,
     SummaryTextContent,
     TextContent,
 )
@@ -572,6 +591,203 @@ def _to_message(item: OutputItem) -> Message:
                 contents.append(Content.from_text(summary.text))
         return Message(role="assistant", contents=contents)
 
+    if item.type == "mcp_call":
+        mcp = cast(OutputItemMcpToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    mcp.id,
+                    mcp.name,
+                    server_name=mcp.server_label,
+                    arguments=mcp.arguments,
+                )
+            ],
+        )
+
+    if item.type == "mcp_approval_request":
+        mcp_req = cast(OutputItemMcpApprovalRequest, item)
+        fc = Content.from_mcp_server_tool_call(
+            mcp_req.id,
+            mcp_req.name,
+            server_name=mcp_req.server_label,
+            arguments=mcp_req.arguments,
+        )
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_approval_request(mcp_req.id, fc)],
+        )
+
+    if item.type == "mcp_approval_response":
+        mcp_resp = cast(OutputItemMcpApprovalResponseResource, item)
+        # Build a placeholder function_call Content since the original call details are not available
+        fc = Content.from_function_call(mcp_resp.approval_request_id, "mcp_approval")
+        return Message(
+            role="user",
+            contents=[Content.from_function_approval_response(mcp_resp.approve, mcp_resp.id, fc)],
+        )
+
+    if item.type == "code_interpreter_call":
+        ci = cast(OutputItemCodeInterpreterToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[Content.from_code_interpreter_tool_call(call_id=ci.id)],
+        )
+
+    if item.type == "image_generation_call":
+        ig = cast(OutputItemImageGenToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[Content.from_image_generation_tool_call(image_id=ig.id)],
+        )
+
+    if item.type == "shell_call":
+        sc = cast(OutputItemFunctionShellCall, item)
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_shell_tool_call(
+                    call_id=sc.call_id,
+                    commands=sc.action.commands,
+                    status=str(sc.status),
+                )
+            ],
+        )
+
+    if item.type == "shell_call_output":
+        sco = cast(OutputItemFunctionShellCallOutput, item)
+        outputs = [
+            Content.from_shell_command_output(
+                stdout=out.stdout or "",
+                stderr=out.stderr or "",
+                exit_code=getattr(out.outcome, "exit_code", None) if hasattr(out, "outcome") else None,
+            )
+            for out in (sco.output or [])
+        ]
+        return Message(
+            role="tool",
+            contents=[
+                Content.from_shell_tool_result(
+                    call_id=sco.call_id,
+                    outputs=outputs,
+                    max_output_length=sco.max_output_length,
+                )
+            ],
+        )
+
+    if item.type == "local_shell_call":
+        lsc = cast(OutputItemLocalShellToolCall, item)
+        commands = lsc.action.command if hasattr(lsc.action, "command") and lsc.action.command else []
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_shell_tool_call(
+                    call_id=lsc.call_id,
+                    commands=commands,
+                    status=str(lsc.status),
+                )
+            ],
+        )
+
+    if item.type == "local_shell_call_output":
+        lsco = cast(OutputItemLocalShellToolCallOutput, item)
+        return Message(
+            role="tool",
+            contents=[
+                Content.from_shell_tool_result(
+                    call_id=lsco.id,
+                    outputs=[Content.from_shell_command_output(stdout=lsco.output)],
+                )
+            ],
+        )
+
+    if item.type == "file_search_call":
+        fs = cast(OutputItemFileSearchToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    fs.id,
+                    "file_search",
+                    arguments=json.dumps({"queries": fs.queries}),
+                )
+            ],
+        )
+
+    if item.type == "web_search_call":
+        ws = cast(OutputItemWebSearchToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_call(ws.id, "web_search")],
+        )
+
+    if item.type == "computer_call":
+        cc = cast(OutputItemComputerToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    cc.call_id,
+                    "computer_use",
+                    arguments=str(cc.action),
+                )
+            ],
+        )
+
+    if item.type == "computer_call_output":
+        cco = cast(OutputItemComputerToolCallOutputResource, item)
+        return Message(
+            role="tool",
+            contents=[Content.from_function_result(cco.call_id, result=str(cco.output))],
+        )
+
+    if item.type == "custom_tool_call":
+        ct = cast(OutputItemCustomToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
+        )
+
+    if item.type == "custom_tool_call_output":
+        cto = cast(OutputItemCustomToolCallOutput, item)
+        output = cto.output if isinstance(cto.output, str) else str(cto.output)
+        return Message(
+            role="tool",
+            contents=[Content.from_function_result(cto.call_id, result=output)],
+        )
+
+    if item.type == "apply_patch_call":
+        ap = cast(OutputItemApplyPatchToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    ap.call_id,
+                    "apply_patch",
+                    arguments=str(ap.operation),
+                )
+            ],
+        )
+
+    if item.type == "apply_patch_call_output":
+        apo = cast(OutputItemApplyPatchToolCallOutput, item)
+        return Message(
+            role="tool",
+            contents=[Content.from_function_result(apo.call_id, result=apo.output or "")],
+        )
+
+    if item.type == "oauth_consent_request":
+        oauth = cast(OAuthConsentRequestOutputItem, item)
+        return Message(
+            role="assistant",
+            contents=[Content.from_oauth_consent_request(oauth.consent_link)],
+        )
+
+    if item.type == "structured_outputs":
+        so = cast(StructuredOutputsOutputItem, item)
+        text = json.dumps(so.output) if not isinstance(so.output, str) else so.output
+        return Message(role="assistant", contents=[Content.from_text(text)])
+
     raise ValueError(f"Unsupported OutputItem type: {item.type}")
 
 
@@ -752,7 +968,7 @@ async def _to_outputs(stream: ResponseEventStream, content: Content) -> AsyncIte
             yield event
     else:
         # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
-        logger.warning(f"Content type '{content.type}' is not supported yet.")
+        logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
 
 
 # endregion
