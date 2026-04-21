@@ -31,7 +31,7 @@ AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
 
 ```bash
 cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Simple
-AGENT_NAME=hosted-workflows dotnet run
+AGENT_NAME=hosted-workflow-simple dotnet run
 ```
 
 The agent will start on `http://localhost:8088`.

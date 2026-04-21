@@ -54,14 +54,14 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var sessionStore = this.ResolveSessionStore(request);
 
         // 2. Load or create a new session from the interaction
-        var sessionConversationId = request.GetConversationId() ?? Guid.NewGuid().ToString();
+        var sessionConversationId = request.GetConversationId();
 
         var chatClientAgent = agent.GetService<ChatClientAgent>();
 
-        AgentSession? session = !string.IsNullOrEmpty(sessionConversationId)
+        AgentSession? session = !string.IsNullOrWhiteSpace(sessionConversationId)
             ? await sessionStore.GetSessionAsync(agent, sessionConversationId, cancellationToken).ConfigureAwait(false)
                 : chatClientAgent is not null
-                ? await chatClientAgent.CreateSessionAsync(sessionConversationId, cancellationToken).ConfigureAwait(false)
+                ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
                 : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
         // 3. Create the SDK event stream builder
@@ -273,7 +273,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             await enumerator.DisposeAsync().ConfigureAwait(false);
 
             // Persist session after streaming completes (successful or not)
-            if (session is not null && !string.IsNullOrEmpty(sessionConversationId))
+            if (session is not null && !string.IsNullOrWhiteSpace(sessionConversationId))
             {
                 await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, CancellationToken.None).ConfigureAwait(false);
             }

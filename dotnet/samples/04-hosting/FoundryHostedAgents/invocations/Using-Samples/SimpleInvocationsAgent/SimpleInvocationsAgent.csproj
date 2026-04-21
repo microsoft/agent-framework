@@ -8,7 +8,7 @@
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
     <RootNamespace>SimpleInvocationsAgentClient</RootNamespace>
     <AssemblyName>simple-invocations-agent-client</AssemblyName>
-    <NoWarn>$(NoWarn);NU1903;NU1605</NoWarn>
+    <NoWarn>$(NoWarn);NU1605</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
