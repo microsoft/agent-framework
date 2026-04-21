@@ -158,12 +158,6 @@ app.UseExceptionHandler();
 // attach a2a with simple message communication
 app.MapA2A(pirateAgentBuilder, path: "/a2a/pirate");
 app.MapA2A(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves");
-app.MapWellKnownAgentCard(new AgentCard
-{
-    Name = "Knights and Knaves",
-    Description = "An agent that helps you solve the knights and knaves puzzle.",
-    Version = "1.0",
-});
 
 app.MapDevUI();
 
