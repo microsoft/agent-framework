@@ -349,10 +349,13 @@ setup_observability(
 **After (Current):**
 
 ```python
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.observability import create_resource, enable_instrumentation
+from azure.identity import AzureCliCredential
+from azure.monitor.opentelemetry import configure_azure_monitor
+
 async def main():
     # For Microsoft Foundry projects
-    from agent_framework.foundry import FoundryChatClient
-    from azure.identity import AzureCliCredential
     client = FoundryChatClient(
         project_endpoint="https://your-project.services.ai.azure.com",
         model="gpt-4o",
@@ -361,9 +364,6 @@ async def main():
     await client.configure_azure_monitor(enable_live_metrics=True)
 
     # For non-Azure AI projects
-    from azure.monitor.opentelemetry import configure_azure_monitor
-    from agent_framework.observability import create_resource, enable_instrumentation
-
     configure_azure_monitor(
         connection_string="InstrumentationKey=...",
         resource=create_resource(),
