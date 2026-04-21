@@ -63,12 +63,12 @@ class TestBuildSafeMetadata:
         result = _build_safe_metadata(metadata)
         assert result == metadata
 
-    def test_truncates_long_strings(self):
-        """Truncates strings over 512 chars."""
+    def test_drops_long_strings(self):
+        """Drops strings over 512 chars instead of truncating."""
         long_value = "x" * 1000
         metadata = {"key": long_value}
         result = _build_safe_metadata(metadata)
-        assert len(result["key"]) == 512
+        assert "key" not in result
 
     def test_serializes_non_strings(self):
         """Serializes non-string values to JSON."""
@@ -77,12 +77,12 @@ class TestBuildSafeMetadata:
         assert result["count"] == "42"
         assert result["items"] == "[1, 2, 3]"
 
-    def test_truncates_serialized_values(self):
-        """Truncates serialized values over 512 chars."""
+    def test_drops_oversized_serialized_values(self):
+        """Drops serialized values over 512 chars instead of truncating."""
         long_list = list(range(200))
         metadata = {"data": long_list}
         result = _build_safe_metadata(metadata)
-        assert len(result["data"]) == 512
+        assert "data" not in result
 
 
 class TestHasOnlyToolCalls:
