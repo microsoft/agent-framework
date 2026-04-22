@@ -28,7 +28,7 @@ The FIDES defense system consists of seven main components:
 
 ### Files Created
 
-1. **`_security.py`** (~2950 lines — all security primitives, middleware, tools, and configuration in a single module)
+1. **`python/packages/core/agent_framework/security.py`** (~2950 lines — all security primitives, middleware, tools, and configuration in a single public module)
    - `IntegrityLabel` enum (TRUSTED/UNTRUSTED)
    - `ConfidentialityLabel` enum (PUBLIC/PRIVATE/USER_IDENTITY)
    - `ContentLabel` class with serialization support
@@ -56,7 +56,7 @@ The FIDES defense system consists of seven main components:
    - API reference with full parameter documentation
    - Data exfiltration prevention documentation
 
-3. **`tests/test_security.py`** (~800+ lines)
+3. **`python/packages/core/tests/test_security.py`** (~800+ lines)
    - Unit tests for ContentLabel and label operations
    - Tests for ContentVariableStore functionality
    - Tests for VariableReferenceContent
@@ -72,14 +72,14 @@ The FIDES defense system consists of seven main components:
    - Design rationale and alternatives considered
    - Security properties and guarantees
 
-5. **`python/samples/02-agents/security/README.md`** (was `QUICK_START_FIDES.md`)
-   - Quick reference guide for FIDES security features
-   - Common patterns and troubleshooting
+5. **`python/samples/02-agents/security/README.md`**
+   - Sample-focused entry point for the two runnable FIDES security samples
+   - Prerequisites, run commands, and links to the developer guide for deeper details
 
 ### Files Modified
 
-1. **`__init__.py`**
-   - Added exports for security modules
+1. **`python/packages/core/agent_framework/__init__.py`**
+   - Removed root-level security exports so `agent_framework.security` is the canonical import surface
 
 ## Core Features
 
@@ -224,7 +224,7 @@ all_labels = middleware.get_all_message_labels()
 ### Recommended: SecureAgentConfig as Context Provider
 
 ```python
-from agent_framework import SecureAgentConfig
+from agent_framework.security import SecureAgentConfig
 
 config = SecureAgentConfig(
     auto_hide_untrusted=True,
@@ -245,6 +245,8 @@ agent = Agent(
 ### Processing Hidden Content with quarantined_llm
 
 ```python
+from agent_framework.security import quarantined_llm
+
 # Agent automatically uses quarantined_llm with variable_ids
 result = await quarantined_llm(
     prompt="Summarize this data",
@@ -268,13 +270,13 @@ Comprehensive test suite with:
 
 Run tests:
 ```bash
-pytest tests/test_security.py -v
+cd python/packages/core && ../../.venv/bin/pytest tests/test_security.py -v
 ```
 
 ## Code Statistics
 
-- **Total lines**: ~2,950+ lines (single `_security.py` module)
-- **New modules**: 1 (`_security.py` — consolidated from 3 original modules)
+- **Total lines**: ~2,950+ lines (single `security.py` module)
+- **New modules**: 1 (`security.py` — consolidated from 3 original modules)
 - **Total tests**: 115+ unit tests
 - **Documentation**: 1,250+ lines in developer guide
 - **Examples**: 6+ comprehensive scenarios

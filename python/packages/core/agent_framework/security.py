@@ -2,7 +2,7 @@
 
 """Security infrastructure for prompt injection defense.
 
-This module provides information-flow control-basedsecurity mechanisms to defend against prompt injection attacks
+This module provides information-flow control-based security mechanisms to defend against prompt injection attacks
 by tracking integrity and confidentiality of content throughout agent execution.
 
 It includes:
@@ -11,6 +11,8 @@ It includes:
 - Security tools (quarantined_llm, inspect_variable)
 - SecureAgentConfig as a context provider for easy setup
 """
+
+from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -85,6 +87,7 @@ class IntegrityLabel(str, Enum):
     UNTRUSTED = "untrusted"
 
     def __str__(self) -> str:
+        """Return the string value of the integrity label."""
         return self.value
 
 
@@ -103,6 +106,7 @@ class ConfidentialityLabel(str, Enum):
     USER_IDENTITY = "user_identity"
 
     def __str__(self) -> str:
+        """Return the string value of the confidentiality label."""
         return self.value
 
 
@@ -118,7 +122,7 @@ class ContentLabel(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ContentLabel, IntegrityLabel, ConfidentialityLabel
+            from agent_framework.security import ContentLabel, IntegrityLabel, ConfidentialityLabel
 
             # Create a label for trusted public content
             label = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
@@ -161,6 +165,7 @@ class ContentLabel(SerializationMixin):
         return self.confidentiality == ConfidentialityLabel.PUBLIC
 
     def __repr__(self) -> str:
+        """Return a debug representation of the content label."""
         return f"ContentLabel(integrity={self.integrity}, confidentiality={self.confidentiality})"
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
@@ -180,7 +185,7 @@ class ContentLabel(SerializationMixin):
         /,
         *,
         dependencies: MutableMapping[str, Any] | None = None,
-    ) -> "ContentLabel":
+    ) -> ContentLabel:
         """Create ContentLabel from dictionary."""
         del dependencies
         return cls(
@@ -207,7 +212,7 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
     Examples:
         .. code-block:: python
 
-            from agent_framework import ContentLabel, IntegrityLabel, ConfidentialityLabel, combine_labels
+            from agent_framework.security import ContentLabel, IntegrityLabel, ConfidentialityLabel, combine_labels
 
             label1 = ContentLabel(IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC)
             label2 = ContentLabel(IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PRIVATE)
@@ -268,7 +273,7 @@ def check_confidentiality_allowed(
     Examples:
         .. code-block:: python
 
-            from agent_framework import ContentLabel, ConfidentialityLabel, check_confidentiality_allowed
+            from agent_framework.security import ContentLabel, ConfidentialityLabel, check_confidentiality_allowed
 
             # PUBLIC data can be written anywhere
             public_label = ContentLabel(confidentiality=ConfidentialityLabel.PUBLIC)
@@ -310,7 +315,7 @@ class ContentVariableStore:
     Examples:
         .. code-block:: python
 
-            from agent_framework import ContentVariableStore, ContentLabel, IntegrityLabel
+            from agent_framework.security import ContentVariableStore, ContentLabel, IntegrityLabel
 
             store = ContentVariableStore()
 
@@ -403,7 +408,7 @@ class VariableReferenceContent:
     Examples:
         .. code-block:: python
 
-            from agent_framework import VariableReferenceContent, ContentLabel, IntegrityLabel
+            from agent_framework.security import VariableReferenceContent, ContentLabel, IntegrityLabel
 
             label = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
             ref = VariableReferenceContent(variable_id="var_abc123", label=label, description="External API response")
@@ -428,6 +433,7 @@ class VariableReferenceContent:
         self.type: str = "variable_reference"
 
     def __repr__(self) -> str:
+        """Return a debug representation of the variable reference."""
         desc = f", description='{self.description}'" if self.description else ""
         return f"VariableReferenceContent(variable_id='{self.variable_id}'{desc})"
 
@@ -455,7 +461,7 @@ class VariableReferenceContent:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "VariableReferenceContent":
+    def from_dict(cls, data: dict[str, Any]) -> VariableReferenceContent:
         """Create VariableReferenceContent from dictionary."""
         # Accept both "security_label" (preferred) and "label" (legacy) keys
         label_data = data.get("security_label") or data.get("label")
@@ -490,7 +496,7 @@ class LabeledMessage(Message):
     Examples:
         .. code-block:: python
 
-            from agent_framework import LabeledMessage, ContentLabel, IntegrityLabel
+            from agent_framework.security import LabeledMessage, ContentLabel, IntegrityLabel
 
             # User message is always TRUSTED
             user_msg = LabeledMessage(
@@ -591,6 +597,7 @@ class LabeledMessage(Message):
         return self.security_label.is_trusted()
 
     def __repr__(self) -> str:
+        """Return a debug representation of the labeled message."""
         return (
             f"LabeledMessage(role='{self.role}', "
             f"label={self.security_label.integrity.value}/{self.security_label.confidentiality.value})"
@@ -619,7 +626,7 @@ class LabeledMessage(Message):
         /,
         *,
         dependencies: MutableMapping[str, Any] | None = None,
-    ) -> "LabeledMessage":
+    ) -> LabeledMessage:
         """Create LabeledMessage from dictionary."""
         del dependencies
         source_labels: list[ContentLabel] | None = None
@@ -636,7 +643,7 @@ class LabeledMessage(Message):
         )
 
     @classmethod
-    def from_message(cls, message: dict[str, Any], index: int | None = None) -> "LabeledMessage":
+    def from_message(cls, message: dict[str, Any], index: int | None = None) -> LabeledMessage:
         """Create a LabeledMessage from a standard message dict.
 
         This is a convenience method to wrap existing messages with labels.
@@ -824,7 +831,9 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     Examples:
         .. code-block:: python
 
-            from agent_framework import Agent, LabelTrackingFunctionMiddleware
+            from agent_framework import Agent
+
+            from agent_framework.security import LabelTrackingFunctionMiddleware
 
             # Create agent with automatic hiding enabled
             middleware = LabelTrackingFunctionMiddleware(
@@ -1605,7 +1614,9 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
     Examples:
         .. code-block:: python
 
-            from agent_framework import Agent, PolicyEnforcementFunctionMiddleware
+            from agent_framework import Agent
+
+            from agent_framework.security import PolicyEnforcementFunctionMiddleware
 
             # Create policy enforcement middleware
             policy = PolicyEnforcementFunctionMiddleware(allow_untrusted_tools={"search_web", "get_news"})
@@ -2000,7 +2011,9 @@ class SecureAgentConfig(ContextProvider):
     Examples:
         .. code-block:: python
 
-            from agent_framework import Agent, SecureAgentConfig
+            from agent_framework import Agent
+
+            from agent_framework.security import SecureAgentConfig
 
             # Create security configuration (also a context provider)
             security = SecureAgentConfig(
@@ -2029,7 +2042,7 @@ class SecureAgentConfig(ContextProvider):
         approval_on_violation: bool = False,
         enable_audit_log: bool = True,
         enable_policy_enforcement: bool = True,
-        quarantine_chat_client: "SupportsChatGetResponse | None" = None,
+        quarantine_chat_client: SupportsChatGetResponse | None = None,
         source_id: str | None = None,
     ) -> None:
         """Initialize secure agent configuration.
@@ -2162,7 +2175,7 @@ class SecureAgentConfig(ContextProvider):
         """
         return self.label_tracker.list_variables()
 
-    def get_quarantine_client(self) -> "SupportsChatGetResponse | None":
+    def get_quarantine_client(self) -> SupportsChatGetResponse | None:
         """Get the quarantine chat client.
 
         Returns:
@@ -2179,10 +2192,10 @@ class SecureAgentConfig(ContextProvider):
 _global_variable_store = ContentVariableStore()
 
 # Global quarantine chat client (set via set_quarantine_client or SecureAgentConfig)
-_quarantine_chat_client: "SupportsChatGetResponse | None" = None
+_quarantine_chat_client: SupportsChatGetResponse | None = None
 
 
-def set_quarantine_client(client: "SupportsChatGetResponse | None") -> None:
+def set_quarantine_client(client: SupportsChatGetResponse | None) -> None:
     """Set the global quarantine chat client.
 
     This client will be used by quarantined_llm to make actual LLM calls
@@ -2196,7 +2209,7 @@ def set_quarantine_client(client: "SupportsChatGetResponse | None") -> None:
         .. code-block:: python
 
             from agent_framework.openai import OpenAIChatClient
-            from agent_framework import set_quarantine_client
+            from agent_framework.security import set_quarantine_client
             from azure.identity import AzureCliCredential
 
             # Create a dedicated client for quarantine operations
@@ -2215,7 +2228,7 @@ def set_quarantine_client(client: "SupportsChatGetResponse | None") -> None:
         logger.info("Quarantine chat client cleared")
 
 
-def get_quarantine_client() -> "SupportsChatGetResponse | None":
+def get_quarantine_client() -> SupportsChatGetResponse | None:
     """Get the current quarantine chat client.
 
     Returns:
@@ -2672,7 +2685,7 @@ def store_untrusted_content(
     Examples:
         .. code-block:: python
 
-            from agent_framework import store_untrusted_content, ContentLabel, IntegrityLabel
+            from agent_framework.security import store_untrusted_content, ContentLabel, IntegrityLabel
 
             # Store external API response
             external_data = get_external_api_response()
@@ -2731,7 +2744,9 @@ def get_security_tools() -> list[FunctionTool]:
     Examples:
         .. code-block:: python
 
-            from agent_framework import Agent, get_security_tools
+            from agent_framework import Agent
+
+            from agent_framework.security import get_security_tools
 
             agent = Agent(
                 chat_client=client,
