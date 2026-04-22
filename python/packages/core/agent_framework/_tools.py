@@ -609,11 +609,7 @@ class FunctionTool(SerializationMixin):
 
         configured_parser = self.result_parser
         skip_parsing = skip_parsing or configured_parser is SKIP_PARSING
-        parser = (
-            configured_parser
-            if callable(configured_parser) and configured_parser is not SKIP_PARSING
-            else FunctionTool.parse_result
-        )
+        parser = configured_parser if callable(configured_parser) else FunctionTool.parse_result
 
         parameter_names = set(self.parameters().get("properties", {}).keys())
         direct_argument_kwargs = (
