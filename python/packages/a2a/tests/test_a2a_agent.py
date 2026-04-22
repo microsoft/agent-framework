@@ -952,6 +952,24 @@ async def test_run_message_context_id_used_when_no_session(mock_a2a_client: Mock
     assert mock_a2a_client.last_message.context_id == "fallback-ctx"
 
 
+@mark.asyncio
+async def test_run_message_context_id_used_when_session_has_no_service_id(mock_a2a_client: MockA2AClient) -> None:
+    """Test fallback to additional_properties context_id when session exists but service_session_id is None."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    mock_a2a_client.add_message_response("msg-ctx4", "reply")
+
+    session = AgentSession()
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Hello")],
+        additional_properties={"context_id": "fallback-ctx"},
+    )
+    await agent.run(messages=[message], session=session)
+
+    assert mock_a2a_client.last_message is not None
+    assert mock_a2a_client.last_message.context_id == "fallback-ctx"
+
+
 # endregion
 
 

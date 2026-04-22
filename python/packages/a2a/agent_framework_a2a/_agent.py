@@ -683,7 +683,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             role=A2ARole("user"),
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
-            context_id=context_id or message.additional_properties.get("context_id"),
+            context_id=context_id if context_id is not None else message.additional_properties.get("context_id"),
             metadata=metadata,
         )
 
