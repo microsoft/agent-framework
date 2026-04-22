@@ -9,13 +9,14 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
-from agent_framework import SKIP_PARSING, Content, FunctionTool
+from agent_framework import Content, FunctionTool
 from agent_framework._tools import ApprovalMode, normalize_tools
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
@@ -111,7 +112,8 @@ class _SandboxWorker:
         return self._executor.submit(fn, *args, **kwargs).result()
 
     def shutdown(self) -> None:
-        # Do not block on in-flight runs; the worker thread exits once the current task returns.
+        # Do not block on shutdown; stop accepting new tasks, but allow the currently running
+        # task and any already-queued tasks to finish before the worker thread exits.
         self._executor.shutdown(wait=False, cancel_futures=False)
 
 
@@ -475,7 +477,7 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
 
     def _callback(**kwargs: Any) -> Any:
         async def _invoke() -> Any:
-            return await sandbox_tool.invoke(arguments=kwargs, result_parser=SKIP_PARSING)
+            return await sandbox_tool.invoke(arguments=kwargs, skip_parsing=True)
 
         # FunctionTool.invoke() is async. The real Hyperlight backend invokes
         # registered callbacks synchronously via FFI, so this must be a sync function.
@@ -557,12 +559,24 @@ class _SandboxRegistry(SandboxRuntime):
             return entry
 
     def close(self) -> None:
-        """Shut down all per-entry worker threads. Safe to call multiple times."""
+        """Shut down all per-entry worker threads and release per-entry resources.
+
+        Safe to call multiple times. Runs any sandbox close hook on the entry's
+        own worker thread to honor the PyO3 ``unsendable`` invariant.
+        """
         with self._entries_lock:
             entries = list(self._entries.values())
             self._entries.clear()
         for entry in entries:
+            close_hook = getattr(entry.sandbox, "close", None) or getattr(entry.sandbox, "shutdown", None)
+            if callable(close_hook):
+                with suppress(Exception):
+                    entry.worker.run(close_hook)
             entry.worker.shutdown()
+            for tmp_dir in (entry.input_dir, entry.output_dir):
+                if tmp_dir is not None:
+                    with suppress(Exception):
+                        tmp_dir.cleanup()
 
     def _create_entry(self, config: _RunConfig) -> _SandboxEntry:
         input_dir_handle = TemporaryDirectory() if config.filesystem_enabled else None

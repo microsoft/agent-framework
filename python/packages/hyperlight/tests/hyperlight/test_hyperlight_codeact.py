@@ -1047,6 +1047,39 @@ def test_sandbox_registry_close_shuts_down_workers(monkeypatch: pytest.MonkeyPat
         worker.submit(lambda: None)
 
 
+def test_sandbox_registry_close_releases_per_entry_resources(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """close() must invoke any sandbox close hook and release temp directories."""
+
+    close_calls: list[int] = []
+
+    class _ClosableFakeSandbox(_FakeSandbox):
+        def close(self) -> None:
+            close_calls.append(1)
+
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _ClosableFakeSandbox)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    registry = execute_code_module._SandboxRegistry()
+    execute_code = HyperlightExecuteCodeTool(workspace_root=workspace, _registry=registry)
+    asyncio.run(execute_code.invoke(arguments={"code": "None"}))
+
+    entries = list(registry._entries.values())
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.input_dir is not None and entry.output_dir is not None
+    input_path = Path(entry.input_dir.name)
+    output_path = Path(entry.output_dir.name)
+    assert input_path.exists() and output_path.exists()
+
+    registry.close()
+
+    assert close_calls == [1]
+    assert not input_path.exists()
+    assert not output_path.exists()
+
+
 async def test_make_sandbox_callback_returns_native_dict() -> None:
     """Host tool returning a dict must be forwarded as a native dict (no repr round-trip)."""
 

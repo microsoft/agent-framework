@@ -98,9 +98,11 @@ ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 class _SkipParsingSentinel:
     """Sentinel signaling that :meth:`FunctionTool.invoke` should return the raw value.
 
-    When passed as the ``result_parser`` keyword argument to ``invoke``, the configured
-    ``result_parser`` (and the default :meth:`FunctionTool.parse_result`) are bypassed
-    and the wrapped function's return value is returned unchanged.
+    When passed as ``result_parser`` to :class:`FunctionTool` (or the ``@tool`` decorator),
+    the default :meth:`FunctionTool.parse_result` is bypassed and the wrapped function's
+    return value is returned unchanged from :meth:`FunctionTool.invoke`. Callers may also
+    request the raw value on a per-call basis by passing ``skip_parsing=True`` to
+    :meth:`FunctionTool.invoke`.
 
     Use the module-level ``SKIP_PARSING`` singleton — do not instantiate this class.
     """
@@ -117,7 +119,7 @@ class _SkipParsingSentinel:
 
 
 SKIP_PARSING: Final[_SkipParsingSentinel] = _SkipParsingSentinel()
-"""Sentinel for ``FunctionTool.invoke(result_parser=...)`` meaning "do not parse the result"."""
+"""Sentinel for ``FunctionTool(result_parser=...)`` meaning "do not parse the result"."""
 
 # region Helpers
 
@@ -304,7 +306,7 @@ class FunctionTool(SerializationMixin):
         additional_properties: dict[str, Any] | None = None,
         func: Callable[..., Any] | None = None,
         input_model: type[BaseModel] | Mapping[str, Any] | None = None,
-        result_parser: Callable[[Any], str | list[Content]] | None = None,
+        result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the FunctionTool.
@@ -352,9 +354,11 @@ class FunctionTool(SerializationMixin):
             result_parser: An optional callable with signature ``Callable[[Any], str]`` that
                 overrides the default result parsing behavior. When provided, this callable
                 is used to convert the raw function return value to a string instead of the
-                built-in :meth:`parse_result` logic. Depending on your function, it may be
-                easiest to just do the serialization directly in the function body rather
-                than providing a custom ``result_parser``.
+                built-in :meth:`parse_result` logic. Pass the :data:`SKIP_PARSING` sentinel
+                instead of a callable to opt out of parsing entirely; in that case
+                :meth:`invoke` returns the wrapped function's raw return value. Depending
+                on your function, it may be easiest to just do the serialization directly
+                in the function body rather than providing a custom ``result_parser``.
             **kwargs: Additional keyword arguments.
         """
         # Core attributes (formerly from BaseTool)
@@ -540,7 +544,7 @@ class FunctionTool(SerializationMixin):
         arguments: BaseModel | Mapping[str, Any] | None = None,
         context: FunctionInvocationContext | None = None,
         tool_call_id: str | None = None,
-        result_parser: _SkipParsingSentinel,
+        skip_parsing: Literal[True],
         **kwargs: Any,
     ) -> Any: ...
 
@@ -551,7 +555,7 @@ class FunctionTool(SerializationMixin):
         arguments: BaseModel | Mapping[str, Any] | None = None,
         context: FunctionInvocationContext | None = None,
         tool_call_id: str | None = None,
-        result_parser: None = None,
+        skip_parsing: Literal[False] = False,
         **kwargs: Any,
     ) -> list[Content]: ...
 
@@ -561,7 +565,7 @@ class FunctionTool(SerializationMixin):
         arguments: BaseModel | Mapping[str, Any] | None = None,
         context: FunctionInvocationContext | None = None,
         tool_call_id: str | None = None,
-        result_parser: _SkipParsingSentinel | None = None,
+        skip_parsing: bool = False,
         **kwargs: Any,
     ) -> list[Content] | Any:
         """Run the AI function with the provided arguments as a Pydantic model.
@@ -571,25 +575,27 @@ class FunctionTool(SerializationMixin):
         configured on the tool. Every result — text, rich media, or serialized
         objects — is represented uniformly as Content items.
 
-        Pass the module-level :data:`SKIP_PARSING` sentinel as ``result_parser`` to
-        bypass parsing entirely and receive the wrapped function's raw return value.
-        This is intended for callers (e.g. sandboxed runtimes) that consume the value
-        from Python directly and would otherwise undo the ``Content`` wrapping.
+        Parsing can be skipped in two ways: configure the tool with
+        ``result_parser=SKIP_PARSING`` to always skip parsing, or pass
+        ``skip_parsing=True`` per call. Either way the wrapped function's raw value
+        is returned. This is intended for callers (e.g. sandboxed runtimes) that
+        consume the value from Python directly and would otherwise undo the
+        ``Content`` wrapping.
 
         Keyword Args:
             arguments: A mapping or model instance containing the arguments for the function.
             context: Explicit function invocation context carrying runtime kwargs.
             tool_call_id: Optional tool call identifier used for telemetry and tracing.
-            result_parser: Per-call override. Pass :data:`SKIP_PARSING` to skip parsing
-                and return the wrapped function's raw value. When omitted (the default),
-                the tool's configured ``result_parser`` (or :meth:`parse_result`) is used.
+            skip_parsing: When ``True``, bypass parsing and return the wrapped function's
+                raw value instead of a ``list[Content]``. Defaults to ``False``.
             kwargs: Direct function argument values. When provided, every keyword
                 must match a declared tool parameter. Runtime data must be passed
                 via ``context``.
 
         Returns:
             ``list[Content]`` by default. The raw function return value (``Any``) when
-            ``result_parser=SKIP_PARSING`` is supplied.
+            ``skip_parsing=True`` (or the tool was constructed with
+            ``result_parser=SKIP_PARSING``).
 
         Raises:
             TypeError: If arguments is not mapping-like or fails schema checks.
@@ -601,8 +607,13 @@ class FunctionTool(SerializationMixin):
         from ._types import Content
         from .observability import OBSERVABILITY_SETTINGS
 
-        skip_parsing = result_parser is SKIP_PARSING
-        parser = self.result_parser or FunctionTool.parse_result
+        configured_parser = self.result_parser
+        skip_parsing = skip_parsing or configured_parser is SKIP_PARSING
+        parser = (
+            configured_parser
+            if callable(configured_parser) and configured_parser is not SKIP_PARSING
+            else FunctionTool.parse_result
+        )
 
         parameter_names = set(self.parameters().get("properties", {}).keys())
         direct_argument_kwargs = (
@@ -1136,7 +1147,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str | list[Content]] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
 ) -> FunctionTool: ...
 
 
@@ -1152,7 +1163,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str | list[Content]] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
 ) -> Callable[[Callable[..., Any]], FunctionTool]: ...
 
 
@@ -1167,7 +1178,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str | list[Content]] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
 ) -> FunctionTool | Callable[[Callable[..., Any]], FunctionTool]:
     """Decorate a function to turn it into a FunctionTool that can be passed to models and executed automatically.
 

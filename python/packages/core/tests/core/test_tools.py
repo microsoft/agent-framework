@@ -1299,25 +1299,27 @@ def test_normalize_tools_flattens_mapping_like_toolbox_with_tools_attr() -> None
     assert len(normalized) == 2
     assert normalized[0] is bundled
     assert normalized[1] is standalone
-# region SKIP_PARSING sentinel
+
+
+# region SKIP_PARSING sentinel & skip_parsing
 
 
 async def test_invoke_skip_parsing_returns_native_value() -> None:
-    """invoke(result_parser=SKIP_PARSING) returns the wrapped function's raw value."""
+    """invoke(skip_parsing=True) returns the wrapped function's raw value."""
 
     @tool
     def get_weather(city: str) -> dict[str, Any]:
         """Get the weather."""
         return {"city": city, "temperature_c": 21.5, "conditions": "partly cloudy"}
 
-    raw = await get_weather.invoke(arguments={"city": "Seattle"}, result_parser=SKIP_PARSING)
+    raw = await get_weather.invoke(arguments={"city": "Seattle"}, skip_parsing=True)
 
     assert isinstance(raw, dict)
     assert raw == {"city": "Seattle", "temperature_c": 21.5, "conditions": "partly cloudy"}
 
 
 async def test_invoke_skip_parsing_passes_through_custom_objects() -> None:
-    """SKIP_PARSING must not call str()/repr() on the result."""
+    """skip_parsing must not call str()/repr() on the result."""
 
     class Custom:  # noqa: B903
         def __init__(self, value: int) -> None:
@@ -1328,7 +1330,7 @@ async def test_invoke_skip_parsing_passes_through_custom_objects() -> None:
         """Make a custom object."""
         return Custom(42)
 
-    raw = await make.invoke(result_parser=SKIP_PARSING)
+    raw = await make.invoke(skip_parsing=True)
 
     assert isinstance(raw, Custom)
     assert raw.value == 42
@@ -1340,12 +1342,12 @@ async def test_invoke_skip_parsing_awaits_async_functions() -> None:
         """Async tool."""
         return x * 2
 
-    raw = await slow.invoke(arguments={"x": 21}, result_parser=SKIP_PARSING)
+    raw = await slow.invoke(arguments={"x": 21}, skip_parsing=True)
     assert raw == 42
 
 
 async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
-    """The tool's own result_parser is bypassed when SKIP_PARSING is requested."""
+    """The tool's own result_parser is bypassed when skip_parsing=True is requested."""
     parser_calls: list[Any] = []
 
     def parser(value: Any) -> str:
@@ -1357,14 +1359,26 @@ async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
         """Returns a dict."""
         return {"a": 1}
 
-    raw = await make_dict.invoke(result_parser=SKIP_PARSING)
+    raw = await make_dict.invoke(skip_parsing=True)
     assert raw == {"a": 1}
     assert parser_calls == []
 
-    # Sanity: omitting result_parser still applies the configured parser.
+    # Sanity: omitting skip_parsing still applies the configured parser.
     parsed = await make_dict.invoke()
     assert parsed[0].type == "text"
     assert parsed[0].text == "PARSED"
+
+
+async def test_constructor_skip_parsing_sentinel_returns_raw_by_default() -> None:
+    """Constructing a tool with result_parser=SKIP_PARSING makes invoke return the raw value."""
+
+    @tool(result_parser=SKIP_PARSING)
+    def make_dict() -> dict[str, int]:
+        """Returns a dict."""
+        return {"a": 1}
+
+    raw = await make_dict.invoke()
+    assert raw == {"a": 1}
 
 
 async def test_invoke_skip_parsing_validates_arguments() -> None:
@@ -1376,7 +1390,7 @@ async def test_invoke_skip_parsing_validates_arguments() -> None:
         return x + y
 
     with pytest.raises(TypeError):
-        await adder.invoke(arguments={"x": "not-an-int", "y": 1}, result_parser=SKIP_PARSING)
+        await adder.invoke(arguments={"x": "not-an-int", "y": 1}, skip_parsing=True)
 
 
 async def test_invoke_skip_parsing_rejects_unexpected_runtime_kwargs() -> None:
@@ -1386,7 +1400,7 @@ async def test_invoke_skip_parsing_rejects_unexpected_runtime_kwargs() -> None:
         return message
 
     with pytest.raises(TypeError, match="Unexpected keyword argument"):
-        await echo.invoke(arguments={"message": "hi"}, result_parser=SKIP_PARSING, api_token="secret")
+        await echo.invoke(arguments={"message": "hi"}, skip_parsing=True, api_token="secret")
 
 
 async def test_invoke_skip_parsing_raises_for_declaration_only_tool() -> None:
@@ -1395,11 +1409,11 @@ async def test_invoke_skip_parsing_raises_for_declaration_only_tool() -> None:
     from agent_framework.exceptions import ToolException
 
     with pytest.raises(ToolException):
-        await declared.invoke(arguments={}, result_parser=SKIP_PARSING)
+        await declared.invoke(arguments={}, skip_parsing=True)
 
 
 async def test_invoke_skip_parsing_records_telemetry(span_exporter: InMemorySpanExporter) -> None:
-    """SKIP_PARSING participates in OTEL spans and records str(raw) as TOOL_RESULT."""
+    """skip_parsing participates in OTEL spans and records str(raw) as TOOL_RESULT."""
 
     @tool(name="raw_tool", description="raw tool")
     def returns_dict(x: int) -> dict[str, int]:
@@ -1407,7 +1421,7 @@ async def test_invoke_skip_parsing_records_telemetry(span_exporter: InMemorySpan
         return {"value": x}
 
     span_exporter.clear()
-    raw = await returns_dict.invoke(arguments={"x": 5}, tool_call_id="raw_call", result_parser=SKIP_PARSING)
+    raw = await returns_dict.invoke(arguments={"x": 5}, tool_call_id="raw_call", skip_parsing=True)
 
     assert raw == {"value": 5}
     spans = span_exporter.get_finished_spans()
@@ -1421,7 +1435,7 @@ async def test_invoke_skip_parsing_records_telemetry(span_exporter: InMemorySpan
 async def test_invoke_default_path_records_parsed_telemetry(
     span_exporter: InMemorySpanExporter,
 ) -> None:
-    """Regression: omitting SKIP_PARSING still records the parsed result in telemetry."""
+    """Regression: omitting skip_parsing still records the parsed result in telemetry."""
 
     def parser(value: Any) -> str:
         return f"parsed:{value}"
