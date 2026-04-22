@@ -30,8 +30,8 @@ members = [
     "agent-framework-a2a",
     "agent-framework-ag-ui",
     "agent-framework-anthropic",
-    "agent-framework-azure-ai-contentunderstanding",
     "agent-framework-azure-ai-search",
+    "agent-framework-azure-contentunderstanding",
     "agent-framework-azure-cosmos",
     "agent-framework-azurefunctions",
     "agent-framework-bedrock",
@@ -209,9 +209,24 @@ requires-dist = [
 ]
 
 [[package]]
-name = "agent-framework-azure-ai-contentunderstanding"
+name = "agent-framework-azure-ai-search"
+version = "1.0.0b260421"
+source = { editable = "packages/azure-ai-search" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-search-documents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "azure-search-documents", specifier = ">=11.7.0b2,<11.7.0b3" },
+]
+
+[[package]]
+name = "agent-framework-azure-contentunderstanding"
 version = "1.0.0a260401"
-source = { editable = "packages/azure-ai-contentunderstanding" }
+source = { editable = "packages/azure-contentunderstanding" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -225,21 +240,6 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.9,<4" },
     { name = "azure-ai-contentunderstanding", specifier = ">=1.0.0,<1.1" },
     { name = "filetype", specifier = ">=1.2,<2" },
-]
-
-[[package]]
-name = "agent-framework-azure-ai-search"
-version = "1.0.0b260421"
-source = { editable = "packages/azure-ai-search" }
-dependencies = [
-    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-search-documents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-search-documents", specifier = ">=11.7.0b2,<11.7.0b3" },
 ]
 
 [[package]]
