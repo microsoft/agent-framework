@@ -32,13 +32,13 @@ Run with DevUI:
 import os
 
 from agent_framework import Agent
-from agent_framework_azure_contentunderstanding import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 
-from agent_framework_azure_contentunderstanding import (
+from agent_framework.foundry import (
     ContentUnderstandingContextProvider,
     FileSearchConfig,
 )

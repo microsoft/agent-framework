@@ -4,6 +4,13 @@
 # Install the relevant packages for full type support.
 
 from agent_framework_anthropic import AnthropicFoundryClient, RawAnthropicFoundryClient
+from agent_framework_azure_contentunderstanding import (
+    AnalysisSection,
+    ContentUnderstandingContextProvider,
+    DocumentStatus,
+    FileSearchBackend,
+    FileSearchConfig,
+)
 from agent_framework_foundry import (
     FoundryAgent,
     FoundryChatClient,
@@ -31,7 +38,12 @@ from agent_framework_foundry_local import (
 )
 
 __all__ = [
+    "AnalysisSection",
     "AnthropicFoundryClient",
+    "ContentUnderstandingContextProvider",
+    "DocumentStatus",
+    "FileSearchBackend",
+    "FileSearchConfig",
     "FoundryAgent",
     "FoundryChatClient",
     "FoundryChatOptions",

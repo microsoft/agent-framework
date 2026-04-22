@@ -44,7 +44,7 @@ See the [samples directory](samples/) which demonstrates:
 import asyncio
 from agent_framework import Agent, AgentSession, Message, Content
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_azure_contentunderstanding import ContentUnderstandingContextProvider
+from agent_framework.foundry import ContentUnderstandingContextProvider
 from azure.identity import AzureCliCredential
 
 credential = AzureCliCredential()

@@ -16,12 +16,12 @@ import os
 from pathlib import Path
 
 from agent_framework import Agent, AgentSession, Content, Message
-from agent_framework_azure_contentunderstanding import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from openai import AsyncAzureOpenAI
 
-from agent_framework_azure_contentunderstanding import (
+from agent_framework.foundry import (
     ContentUnderstandingContextProvider,
     FileSearchConfig,
 )
