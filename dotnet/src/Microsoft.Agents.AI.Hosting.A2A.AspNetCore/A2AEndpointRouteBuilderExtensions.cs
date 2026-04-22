@@ -63,7 +63,7 @@ public static class A2AEndpointRouteBuilderExtensions
     public static IEndpointConventionBuilder MapA2AHttpJson(this IEndpointRouteBuilder endpoints, string agentName, string path)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
-        ArgumentException.ThrowIfNullOrEmpty(agentName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
         var a2aServer = endpoints.ServiceProvider.GetKeyedService<A2AServer>(agentName)
@@ -125,7 +125,7 @@ public static class A2AEndpointRouteBuilderExtensions
     public static IEndpointConventionBuilder MapA2AJsonRpc(this IEndpointRouteBuilder endpoints, string agentName, string path)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
-        ArgumentException.ThrowIfNullOrEmpty(agentName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
         var a2aServer = endpoints.ServiceProvider.GetKeyedService<A2AServer>(agentName)

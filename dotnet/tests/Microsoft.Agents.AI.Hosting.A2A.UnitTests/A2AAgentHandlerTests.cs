@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using A2A;
@@ -38,6 +39,37 @@ public sealed class A2AAgentHandlerTests
         Assert.NotNull(capturedOptions);
         Assert.False(capturedOptions.AllowBackgroundResponses);
         Assert.Null(capturedOptions.AdditionalProperties);
+    }
+
+    /// <summary>
+    /// Verifies that when metadata is non-empty, the options passed to RunAsync have
+    /// AdditionalProperties populated with the converted metadata values.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenMetadataIsNonEmpty_PassesOptionsWithAdditionalPropertiesToRunAsync()
+    {
+        // Arrange
+        AgentRunOptions? capturedOptions = null;
+        A2AAgentHandler handler = CreateHandler(CreateAgentMock(options => capturedOptions = options));
+
+        // Act
+        await InvokeExecuteAsync(handler, new RequestContext
+        {
+            TaskId = "", ContextId = "ctx", StreamingResponse = false,
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] },
+            Metadata = new Dictionary<string, JsonElement>
+            {
+                ["key1"] = JsonSerializer.SerializeToElement("value1"),
+                ["key2"] = JsonSerializer.SerializeToElement(42)
+            }
+        });
+
+        // Assert
+        Assert.NotNull(capturedOptions);
+        Assert.False(capturedOptions.AllowBackgroundResponses);
+        Assert.NotNull(capturedOptions.AdditionalProperties);
+        Assert.Equal(2, capturedOptions.AdditionalProperties.Count);
+        Assert.Equal("value1", capturedOptions.AdditionalProperties["key1"]?.ToString());
     }
 
     /// <summary>

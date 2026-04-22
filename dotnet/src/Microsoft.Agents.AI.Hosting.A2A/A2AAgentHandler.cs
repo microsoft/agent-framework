@@ -32,6 +32,9 @@ internal sealed class A2AAgentHandler : IAgentHandler
         AIHostAgent hostAgent,
         AgentRunMode runMode)
     {
+        ArgumentNullException.ThrowIfNull(hostAgent);
+        ArgumentNullException.ThrowIfNull(runMode);
+
         this._hostAgent = hostAgent;
         this._runMode = runMode;
     }

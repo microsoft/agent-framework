@@ -761,6 +761,31 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
+    public async Task RunStreamingAsync_WithContinuationToken_WhenSubscribeFailsWithNonUnsupportedError_PropagatesWithoutFallbackAsync()
+    {
+        // Arrange
+        const string TaskId = "error-task-123";
+
+        this._handler.StreamingErrorCodeToReturn = A2AErrorCode.TaskNotFound;
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(TaskId) };
+
+        // Act & Assert - the A2AException should propagate directly without fallback to GetTask
+        var exception = await Assert.ThrowsAsync<A2AException>(async () =>
+        {
+            await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
+            {
+            }
+        });
+
+        Assert.Equal(A2AErrorCode.TaskNotFound, exception.ErrorCode);
+
+        // Assert - only SubscribeToTask was called, no fallback to GetTask
+        Assert.Single(this._handler.CapturedJsonRpcRequests);
+        Assert.Equal("SubscribeToTask", this._handler.CapturedJsonRpcRequests[0].Method);
+    }
+
+    [Fact]
     public async Task RunStreamingAsync_WithContinuationToken_WhenSubscribeAndGetTaskBothFail_PropagatesExceptionAsync()
     {
         // Arrange

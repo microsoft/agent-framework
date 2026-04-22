@@ -130,15 +130,31 @@ public sealed class AgentRunModeTests
     }
 
     /// <summary>
-    /// Verifies that two AllowBackgroundWhen instances with different delegates are considered equal,
-    /// because equality is based on the mode value ("dynamic"), not the delegate.
+    /// Verifies that two AllowBackgroundWhen instances with different delegates are not considered equal,
+    /// because equality includes delegate identity for dynamic modes.
     /// </summary>
     [Fact]
-    public void Equals_AllowBackgroundWhen_DifferentDelegates_AreEqual()
+    public void Equals_AllowBackgroundWhen_DifferentDelegates_AreNotEqual()
     {
         // Arrange
         var mode1 = AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(true));
         var mode2 = AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(false));
+
+        // Act & Assert
+        Assert.False(mode1.Equals(mode2));
+        Assert.True(mode1 != mode2);
+    }
+
+    /// <summary>
+    /// Verifies that two AllowBackgroundWhen instances with the same delegate are considered equal.
+    /// </summary>
+    [Fact]
+    public void Equals_AllowBackgroundWhen_SameDelegate_AreEqual()
+    {
+        // Arrange
+        Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>> callback = (_, _) => ValueTask.FromResult(true);
+        var mode1 = AgentRunMode.AllowBackgroundWhen(callback);
+        var mode2 = AgentRunMode.AllowBackgroundWhen(callback);
 
         // Act & Assert
         Assert.True(mode1.Equals(mode2));

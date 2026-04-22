@@ -86,7 +86,7 @@ public static class A2AServerServiceCollectionExtensions
     public static IServiceCollection AddA2AServer(this IServiceCollection services, string agentName, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-        ArgumentException.ThrowIfNullOrEmpty(agentName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
 
         A2AServerRegistrationOptions? options = null;
         if (configureOptions is not null)

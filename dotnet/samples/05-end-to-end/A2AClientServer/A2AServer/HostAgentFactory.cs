@@ -159,14 +159,14 @@ internal static class HostAgentFactory
         agentInterfaces.AddRange(agentUrls.Select(url => new AgentInterface
         {
             Url = url,
-            ProtocolBinding = "JSONRPC",
+            ProtocolBinding = ProtocolBindingNames.JsonRpc,
             ProtocolVersion = "1.0",
         }));
 
         agentInterfaces.AddRange(agentUrls.Select(url => new AgentInterface
         {
             Url = url,
-            ProtocolBinding = "HTTP+JSON",
+            ProtocolBinding = ProtocolBindingNames.HttpJson,
             ProtocolVersion = "1.0",
         }));
 

@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.DiagnosticIds;
@@ -84,13 +85,17 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
 
     /// <inheritdoc/>
     public bool Equals(AgentRunMode? other) =>
-        other is not null && string.Equals(this._value, other._value, StringComparison.OrdinalIgnoreCase);
+        other is not null
+        && string.Equals(this._value, other._value, StringComparison.OrdinalIgnoreCase)
+        && ReferenceEquals(this._runInBackground, other._runInBackground);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => this.Equals(obj as AgentRunMode);
 
     /// <inheritdoc/>
-    public override int GetHashCode() => StringComparer.OrdinalIgnoreCase.GetHashCode(this._value);
+    public override int GetHashCode() => HashCode.Combine(
+        StringComparer.OrdinalIgnoreCase.GetHashCode(this._value),
+        RuntimeHelpers.GetHashCode(this._runInBackground));
 
     /// <inheritdoc/>
     public override string ToString() => this._value;
