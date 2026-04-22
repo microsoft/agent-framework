@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using A2A;
@@ -287,6 +288,135 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         Assert.Equal("agent.Name", exception.ParamName);
     }
 
+    /// <summary>
+    /// Verifies that when a custom <see cref="IAgentHandler"/> is registered as a keyed service,
+    /// the <see cref="A2AServer"/> uses it to process requests instead of the default handler.
+    /// </summary>
+    [Fact]
+    public async Task AddA2AServer_WithCustomHandler_CustomHandlerIsInvokedOnRequestAsync()
+    {
+        // Arrange
+        const string AgentName = "custom-handler-wiring";
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton(AgentName, (_, _) => CreateAgentMock(AgentName).Object);
+
+        var mockHandler = new Mock<IAgentHandler>();
+        mockHandler
+            .Setup(h => h.ExecuteAsync(
+                It.IsAny<RequestContext>(),
+                It.IsAny<AgentEventQueue>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((RequestContext _, AgentEventQueue eq, CancellationToken ct) =>
+                eq.EnqueueMessageAsync(
+                    new Message { MessageId = "resp", Role = Role.Agent, Parts = [new Part { Text = "Reply" }] }, ct).AsTask());
+
+        services.AddKeyedSingleton(AgentName, mockHandler.Object);
+
+        services.AddA2AServer(AgentName);
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+
+        // Act
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var response = await server.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+
+        // Assert - the custom handler was invoked, not the default A2AAgentHandler
+        mockHandler.Verify(
+            h => h.ExecuteAsync(
+                It.IsAny<RequestContext>(),
+                It.IsAny<AgentEventQueue>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        Assert.Equal(SendMessageResponseCase.Message, response.PayloadCase);
+        Assert.NotNull(response.Message);
+    }
+
+    /// <summary>
+    /// Verifies that when a custom <see cref="AgentSessionStore"/> is registered as a keyed service
+    /// and no custom <see cref="IAgentHandler"/> is registered, the default handler uses the custom
+    /// session store for session management during request processing.
+    /// </summary>
+    [Fact]
+    public async Task AddA2AServer_WithCustomSessionStore_NoHandler_SessionStoreIsUsedOnRequestAsync()
+    {
+        // Arrange
+        const string AgentName = "custom-sessionstore-wiring";
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton(AgentName, (_, _) => CreateAgentMock(AgentName).Object);
+
+        var mockSessionStore = new Mock<AgentSessionStore>();
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<string>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        services.AddKeyedSingleton(AgentName, mockSessionStore.Object);
+
+        services.AddA2AServer(AgentName);
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+
+        // Act
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var response = await server.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+
+        // Assert - the custom session store was used, not InMemoryAgentSessionStore
+        mockSessionStore.Verify(
+            x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        Assert.Equal(SendMessageResponseCase.Message, response.PayloadCase);
+        Assert.NotNull(response.Message);
+    }
+
+    /// <summary>
+    /// Verifies that when no custom stores or handlers are registered, the server uses
+    /// the default in-memory stores and processes requests successfully end-to-end.
+    /// </summary>
+    [Fact]
+    public async Task AddA2AServer_WithNoCustomStores_DefaultStoresProcessRequestSuccessfullyAsync()
+    {
+        // Arrange
+        const string AgentName = "default-stores-request";
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton(AgentName, (_, _) => CreateAgentMockForRequests(AgentName).Object);
+
+        services.AddA2AServer(AgentName);
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+
+        // Act
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var response = await server.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+
+        // Assert - request was processed successfully with default in-memory stores
+        Assert.NotNull(response);
+        Assert.Equal(SendMessageResponseCase.Message, response.PayloadCase);
+        Assert.NotNull(response.Message);
+    }
+
+    private static SendMessageRequest CreateTestSendMessageRequest() =>
+        new()
+        {
+            Message = new Message
+            {
+                MessageId = "test-id",
+                Role = Role.User,
+                Parts = [new Part { Text = "Hello" }]
+            }
+        };
+
     private static Mock<AIAgent> CreateAgentMock(string name)
     {
         Mock<AIAgent> agentMock = new() { CallBase = true };
@@ -303,6 +433,24 @@ public sealed class A2AServerServiceCollectionExtensionsTests
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]));
+
+        return agentMock;
+    }
+
+    /// <summary>
+    /// Creates a mock <see cref="AIAgent"/> with session serialization support, suitable for
+    /// tests that exercise the full request processing path with <see cref="InMemoryAgentSessionStore"/>.
+    /// </summary>
+    private static Mock<AIAgent> CreateAgentMockForRequests(string name)
+    {
+        Mock<AIAgent> agentMock = CreateAgentMock(name);
+        agentMock
+            .Protected()
+            .Setup<ValueTask<JsonElement>>("SerializeSessionCoreAsync",
+                ItExpr.IsAny<AgentSession>(),
+                ItExpr.IsAny<JsonSerializerOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(JsonDocument.Parse("{}").RootElement);
 
         return agentMock;
     }
