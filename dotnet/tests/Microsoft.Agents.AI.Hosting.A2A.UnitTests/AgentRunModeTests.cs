@@ -3,7 +3,6 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using A2A;
 
 namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 
@@ -152,9 +151,9 @@ public sealed class AgentRunModeTests
     public void Equals_AllowBackgroundWhen_SameDelegate_AreEqual()
     {
         // Arrange
-        Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>> callback = (_, _) => ValueTask.FromResult(true);
-        var mode1 = AgentRunMode.AllowBackgroundWhen(callback);
-        var mode2 = AgentRunMode.AllowBackgroundWhen(callback);
+        static ValueTask<bool> CallbackAsync(A2ARunDecisionContext _, CancellationToken __) => ValueTask.FromResult(true);
+        var mode1 = AgentRunMode.AllowBackgroundWhen(CallbackAsync);
+        var mode2 = AgentRunMode.AllowBackgroundWhen(CallbackAsync);
 
         // Act & Assert
         Assert.True(mode1.Equals(mode2));

@@ -692,16 +692,16 @@ public sealed class A2AAgentHandlerTests
             .ReturnsAsync(() => new TestAgentSession());
         agentMock
             .Protected()
-            .Setup<ValueTask<System.Text.Json.JsonElement>>("SerializeSessionCoreAsync",
+            .Setup<ValueTask<JsonElement>>("SerializeSessionCoreAsync",
                 ItExpr.IsAny<AgentSession>(),
-                ItExpr.IsAny<System.Text.Json.JsonSerializerOptions?>(),
+                ItExpr.IsAny<JsonSerializerOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(System.Text.Json.JsonDocument.Parse("{}").RootElement);
+            .ReturnsAsync(JsonDocument.Parse("{}").RootElement);
         agentMock
             .Protected()
             .Setup<ValueTask<AgentSession>>("DeserializeSessionCoreAsync",
-                ItExpr.IsAny<System.Text.Json.JsonElement>(),
-                ItExpr.IsAny<System.Text.Json.JsonSerializerOptions?>(),
+                ItExpr.IsAny<JsonElement>(),
+                ItExpr.IsAny<JsonSerializerOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(sessionInstance);
         agentMock
