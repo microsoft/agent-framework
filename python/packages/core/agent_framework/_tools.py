@@ -94,6 +94,31 @@ ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
+
+class _SkipParsingSentinel:
+    """Sentinel signaling that :meth:`FunctionTool.invoke` should return the raw value.
+
+    When passed as the ``result_parser`` keyword argument to ``invoke``, the configured
+    ``result_parser`` (and the default :meth:`FunctionTool.parse_result`) are bypassed
+    and the wrapped function's return value is returned unchanged.
+
+    Use the module-level ``SKIP_PARSING`` singleton — do not instantiate this class.
+    """
+
+    _instance: ClassVar[_SkipParsingSentinel | None] = None
+
+    def __new__(cls) -> _SkipParsingSentinel:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "SKIP_PARSING"
+
+
+SKIP_PARSING: Final[_SkipParsingSentinel] = _SkipParsingSentinel()
+"""Sentinel for ``FunctionTool.invoke(result_parser=...)`` meaning "do not parse the result"."""
+
 # region Helpers
 
 
@@ -508,31 +533,63 @@ class FunctionTool(SerializationMixin):
             self.invocation_exception_count += 1
             raise
 
+    @overload
     async def invoke(
         self,
         *,
         arguments: BaseModel | Mapping[str, Any] | None = None,
         context: FunctionInvocationContext | None = None,
         tool_call_id: str | None = None,
+        result_parser: _SkipParsingSentinel,
         **kwargs: Any,
-    ) -> list[Content]:
+    ) -> Any: ...
+
+    @overload
+    async def invoke(
+        self,
+        *,
+        arguments: BaseModel | Mapping[str, Any] | None = None,
+        context: FunctionInvocationContext | None = None,
+        tool_call_id: str | None = None,
+        result_parser: None = None,
+        **kwargs: Any,
+    ) -> list[Content]: ...
+
+    async def invoke(
+        self,
+        *,
+        arguments: BaseModel | Mapping[str, Any] | None = None,
+        context: FunctionInvocationContext | None = None,
+        tool_call_id: str | None = None,
+        result_parser: _SkipParsingSentinel | None = None,
+        **kwargs: Any,
+    ) -> list[Content] | Any:
         """Run the AI function with the provided arguments as a Pydantic model.
 
         The raw return value of the wrapped function is automatically parsed into a
         ``list[Content]`` using :meth:`parse_result` or the custom ``result_parser``
-        if one was provided.  Every result — text, rich media, or serialized objects —
-        is represented uniformly as Content items.
+        configured on the tool. Every result — text, rich media, or serialized
+        objects — is represented uniformly as Content items.
+
+        Pass the module-level :data:`SKIP_PARSING` sentinel as ``result_parser`` to
+        bypass parsing entirely and receive the wrapped function's raw return value.
+        This is intended for callers (e.g. sandboxed runtimes) that consume the value
+        from Python directly and would otherwise undo the ``Content`` wrapping.
 
         Keyword Args:
             arguments: A mapping or model instance containing the arguments for the function.
             context: Explicit function invocation context carrying runtime kwargs.
             tool_call_id: Optional tool call identifier used for telemetry and tracing.
+            result_parser: Per-call override. Pass :data:`SKIP_PARSING` to skip parsing
+                and return the wrapped function's raw value. When omitted (the default),
+                the tool's configured ``result_parser`` (or :meth:`parse_result`) is used.
             kwargs: Direct function argument values. When provided, every keyword
                 must match a declared tool parameter. Runtime data must be passed
                 via ``context``.
 
         Returns:
-            A list of Content items representing the tool output.
+            ``list[Content]`` by default. The raw function return value (``Any``) when
+            ``result_parser=SKIP_PARSING`` is supplied.
 
         Raises:
             TypeError: If arguments is not mapping-like or fails schema checks.
@@ -544,6 +601,7 @@ class FunctionTool(SerializationMixin):
         from ._types import Content
         from .observability import OBSERVABILITY_SETTINGS
 
+        skip_parsing = result_parser is SKIP_PARSING
         parser = self.result_parser or FunctionTool.parse_result
 
         parameter_names = set(self.parameters().get("properties", {}).keys())
@@ -616,6 +674,10 @@ class FunctionTool(SerializationMixin):
             logger.debug(f"Function arguments: {observable_kwargs}")
             res = self.__call__(**call_kwargs)
             result = await res if inspect.isawaitable(res) else res
+            if skip_parsing:
+                logger.info(f"Function {self.name} succeeded.")
+                logger.debug(f"Function result: {type(result).__name__}")
+                return result
             try:
                 parsed = parser(result)
             except Exception:
@@ -671,6 +733,13 @@ class FunctionTool(SerializationMixin):
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:
+                if skip_parsing:
+                    logger.info(f"Function {self.name} succeeded.")
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                        result_str = str(result)
+                        span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
+                        logger.debug(f"Function result: {result_str}")
+                    return result
                 try:
                     parsed = parser(result)
                 except Exception:

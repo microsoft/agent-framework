@@ -8,6 +8,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import BaseModel
 
 from agent_framework import (
+    SKIP_PARSING,
     Content,
     FunctionTool,
     tool,
@@ -1298,6 +1299,153 @@ def test_normalize_tools_flattens_mapping_like_toolbox_with_tools_attr() -> None
     assert len(normalized) == 2
     assert normalized[0] is bundled
     assert normalized[1] is standalone
+# region SKIP_PARSING sentinel
+
+
+async def test_invoke_skip_parsing_returns_native_value() -> None:
+    """invoke(result_parser=SKIP_PARSING) returns the wrapped function's raw value."""
+
+    @tool
+    def get_weather(city: str) -> dict[str, Any]:
+        """Get the weather."""
+        return {"city": city, "temperature_c": 21.5, "conditions": "partly cloudy"}
+
+    raw = await get_weather.invoke(arguments={"city": "Seattle"}, result_parser=SKIP_PARSING)
+
+    assert isinstance(raw, dict)
+    assert raw == {"city": "Seattle", "temperature_c": 21.5, "conditions": "partly cloudy"}
+
+
+async def test_invoke_skip_parsing_passes_through_custom_objects() -> None:
+    """SKIP_PARSING must not call str()/repr() on the result."""
+
+    class Custom:  # noqa: B903
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+    @tool
+    def make() -> Custom:
+        """Make a custom object."""
+        return Custom(42)
+
+    raw = await make.invoke(result_parser=SKIP_PARSING)
+
+    assert isinstance(raw, Custom)
+    assert raw.value == 42
+
+
+async def test_invoke_skip_parsing_awaits_async_functions() -> None:
+    @tool
+    async def slow(x: int) -> int:
+        """Async tool."""
+        return x * 2
+
+    raw = await slow.invoke(arguments={"x": 21}, result_parser=SKIP_PARSING)
+    assert raw == 42
+
+
+async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
+    """The tool's own result_parser is bypassed when SKIP_PARSING is requested."""
+    parser_calls: list[Any] = []
+
+    def parser(value: Any) -> str:
+        parser_calls.append(value)
+        return "PARSED"
+
+    @tool(result_parser=parser)
+    def make_dict() -> dict[str, int]:
+        """Returns a dict."""
+        return {"a": 1}
+
+    raw = await make_dict.invoke(result_parser=SKIP_PARSING)
+    assert raw == {"a": 1}
+    assert parser_calls == []
+
+    # Sanity: omitting result_parser still applies the configured parser.
+    parsed = await make_dict.invoke()
+    assert parsed[0].type == "text"
+    assert parsed[0].text == "PARSED"
+
+
+async def test_invoke_skip_parsing_validates_arguments() -> None:
+    """Argument validation is shared with the default path."""
+
+    @tool
+    def adder(x: int, y: int) -> int:
+        """Add."""
+        return x + y
+
+    with pytest.raises(TypeError):
+        await adder.invoke(arguments={"x": "not-an-int", "y": 1}, result_parser=SKIP_PARSING)
+
+
+async def test_invoke_skip_parsing_rejects_unexpected_runtime_kwargs() -> None:
+    @tool
+    async def echo(message: str) -> str:
+        """Echo."""
+        return message
+
+    with pytest.raises(TypeError, match="Unexpected keyword argument"):
+        await echo.invoke(arguments={"message": "hi"}, result_parser=SKIP_PARSING, api_token="secret")
+
+
+async def test_invoke_skip_parsing_raises_for_declaration_only_tool() -> None:
+    declared = FunctionTool(name="dummy", description="declaration only")
+
+    from agent_framework.exceptions import ToolException
+
+    with pytest.raises(ToolException):
+        await declared.invoke(arguments={}, result_parser=SKIP_PARSING)
+
+
+async def test_invoke_skip_parsing_records_telemetry(span_exporter: InMemorySpanExporter) -> None:
+    """SKIP_PARSING participates in OTEL spans and records str(raw) as TOOL_RESULT."""
+
+    @tool(name="raw_tool", description="raw tool")
+    def returns_dict(x: int) -> dict[str, int]:
+        """Returns a dict."""
+        return {"value": x}
+
+    span_exporter.clear()
+    raw = await returns_dict.invoke(arguments={"x": 5}, tool_call_id="raw_call", result_parser=SKIP_PARSING)
+
+    assert raw == {"value": 5}
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes[OtelAttr.TOOL_NAME] == "raw_tool"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "raw_call"
+    assert span.attributes[OtelAttr.TOOL_RESULT] == "{'value': 5}"
+
+
+async def test_invoke_default_path_records_parsed_telemetry(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    """Regression: omitting SKIP_PARSING still records the parsed result in telemetry."""
+
+    def parser(value: Any) -> str:
+        return f"parsed:{value}"
+
+    @tool(name="parsed_tool", description="parsed", result_parser=parser)
+    def returns_int() -> int:
+        """Returns an int."""
+        return 7
+
+    span_exporter.clear()
+    parsed = await returns_int.invoke(tool_call_id="parsed_call")
+
+    assert parsed[0].text == "parsed:7"
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].attributes[OtelAttr.TOOL_RESULT] == "parsed:7"
+
+
+def test_skip_parsing_is_singleton() -> None:
+    """SKIP_PARSING is a singleton; instantiation returns the same object."""
+    from agent_framework._tools import _SkipParsingSentinel
+
+    assert _SkipParsingSentinel() is SKIP_PARSING
+    assert repr(SKIP_PARSING) == "SKIP_PARSING"
 
 
 # endregion
