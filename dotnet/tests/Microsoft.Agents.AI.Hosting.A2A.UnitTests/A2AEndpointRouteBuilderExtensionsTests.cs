@@ -5,6 +5,7 @@ using Microsoft.Agents.AI.Hosting.A2A.UnitTests.Internal;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 
 namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 
@@ -390,6 +391,124 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
             agentBuilder.AddA2AServer());
 
         Assert.Equal("agentBuilder", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verifies that MapA2AHttpJson throws ArgumentNullException for null AIAgent.
+    /// </summary>
+    [Fact]
+    public void MapA2AHttpJson_WithAIAgent_NullAgent_ThrowsArgumentNullException()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.Services.AddLogging();
+        using WebApplication app = builder.Build();
+        AIAgent agent = null!;
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            app.MapA2AHttpJson(agent, "/a2a"));
+
+        Assert.Equal("agent", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verifies that MapA2AHttpJson throws ArgumentNullException for AIAgent with null Name.
+    /// </summary>
+    [Fact]
+    public void MapA2AHttpJson_WithAIAgent_NullName_ThrowsArgumentException()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.Services.AddLogging();
+        using WebApplication app = builder.Build();
+        var agentMock = new Mock<AIAgent>();
+        agentMock.Setup(a => a.Name).Returns((string?)null);
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            app.MapA2AHttpJson(agentMock.Object, "/a2a"));
+
+        Assert.Equal("agent.Name", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verifies that MapA2AHttpJson throws ArgumentException for AIAgent with whitespace Name.
+    /// </summary>
+    [Fact]
+    public void MapA2AHttpJson_WithAIAgent_WhitespaceName_ThrowsArgumentException()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.Services.AddLogging();
+        using WebApplication app = builder.Build();
+        var agentMock = new Mock<AIAgent>();
+        agentMock.Setup(a => a.Name).Returns("   ");
+
+        // Act & Assert
+        ArgumentException exception = Assert.Throws<ArgumentException>(() =>
+            app.MapA2AHttpJson(agentMock.Object, "/a2a"));
+
+        Assert.Equal("agent.Name", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verifies that MapA2AJsonRpc throws ArgumentNullException for null AIAgent.
+    /// </summary>
+    [Fact]
+    public void MapA2AJsonRpc_WithAIAgent_NullAgent_ThrowsArgumentNullException()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.Services.AddLogging();
+        using WebApplication app = builder.Build();
+        AIAgent agent = null!;
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            app.MapA2AJsonRpc(agent, "/a2a"));
+
+        Assert.Equal("agent", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verifies that MapA2AJsonRpc throws ArgumentNullException for AIAgent with null Name.
+    /// </summary>
+    [Fact]
+    public void MapA2AJsonRpc_WithAIAgent_NullName_ThrowsArgumentException()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.Services.AddLogging();
+        using WebApplication app = builder.Build();
+        var agentMock = new Mock<AIAgent>();
+        agentMock.Setup(a => a.Name).Returns((string?)null);
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            app.MapA2AJsonRpc(agentMock.Object, "/a2a"));
+
+        Assert.Equal("agent.Name", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verifies that MapA2AJsonRpc throws ArgumentException for AIAgent with whitespace Name.
+    /// </summary>
+    [Fact]
+    public void MapA2AJsonRpc_WithAIAgent_WhitespaceName_ThrowsArgumentException()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.Services.AddLogging();
+        using WebApplication app = builder.Build();
+        var agentMock = new Mock<AIAgent>();
+        agentMock.Setup(a => a.Name).Returns("   ");
+
+        // Act & Assert
+        ArgumentException exception = Assert.Throws<ArgumentException>(() =>
+            app.MapA2AJsonRpc(agentMock.Object, "/a2a"));
+
+        Assert.Equal("agent.Name", exception.ParamName);
     }
 
     /// <summary>

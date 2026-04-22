@@ -369,6 +369,47 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
+    /// Verifies that when the agent throws during a continuation and the cancellation token
+    /// is already cancelled, the handler still emits a Failed status and re-throws the
+    /// original exception (not an OperationCanceledException from FailAsync).
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_OnContinuation_WhenAgentThrowsWithCancelledToken_StillEmitsFailedStatusAsync()
+    {
+        // Arrange
+        int callCount = 0;
+        Mock<AIAgent> agentMock = CreateAgentMockWithCallCount(ref callCount, _ =>
+            throw new InvalidOperationException("Agent failed"));
+        A2AAgentHandler handler = CreateHandler(agentMock);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // Pre-cancel the token
+
+        // Act & Assert - the original InvalidOperationException should be thrown, not OperationCanceledException
+        var events = new EventCollector();
+        var eventQueue = new AgentEventQueue();
+        var readerTask = ReadEventsAsync(eventQueue, events);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            handler.ExecuteAsync(
+                new RequestContext
+                {
+                    StreamingResponse = false,
+                    Message = new Message { MessageId = "empty", Role = Role.User, Parts = [] },
+                    TaskId = "task-1",
+                    ContextId = "ctx-1",
+
+                    Task = new AgentTask { Id = "task-1", ContextId = "ctx-1", History = [new Message { Role = Role.User, Parts = [new Part { Text = "Hello" }] }] }
+                },
+                eventQueue,
+                cts.Token));
+        eventQueue.Complete(null);
+        await readerTask;
+
+        // Assert - should have emitted Failed status even with a cancelled token
+        Assert.True(events.StatusUpdates.Count > 0);
+    }
+
+    /// <summary>
     /// Verifies that when the agent throws OperationCanceledException during a continuation,
     /// no Failed status is emitted.
     /// </summary>

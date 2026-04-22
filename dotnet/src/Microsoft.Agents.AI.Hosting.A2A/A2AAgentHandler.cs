@@ -138,7 +138,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
         catch (Exception)
         {
             var failUpdater = new TaskUpdater(eventQueue, context.TaskId, contextId);
-            await failUpdater.FailAsync(message: null, cancellationToken).ConfigureAwait(false);
+            await failUpdater.FailAsync(message: null, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
 

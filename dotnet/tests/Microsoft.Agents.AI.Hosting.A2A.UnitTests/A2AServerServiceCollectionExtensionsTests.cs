@@ -251,6 +251,42 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         Assert.Throws<ArgumentNullException>(() => services.AddA2AServer(agent: null!));
     }
 
+    /// <summary>
+    /// Verifies that AddA2AServer with an agent instance throws when the agent's Name is null.
+    /// </summary>
+    [Fact]
+    public void AddA2AServer_WithAgent_NullName_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var agentMock = new Mock<AIAgent>();
+        agentMock.Setup(a => a.Name).Returns((string?)null);
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            services.AddA2AServer(agentMock.Object));
+
+        Assert.Equal("agent.Name", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verifies that AddA2AServer with an agent instance throws when the agent's Name is whitespace.
+    /// </summary>
+    [Fact]
+    public void AddA2AServer_WithAgent_WhitespaceName_ThrowsArgumentException()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var agentMock = new Mock<AIAgent>();
+        agentMock.Setup(a => a.Name).Returns("   ");
+
+        // Act & Assert
+        ArgumentException exception = Assert.Throws<ArgumentException>(() =>
+            services.AddA2AServer(agentMock.Object));
+
+        Assert.Equal("agent.Name", exception.ParamName);
+    }
+
     private static Mock<AIAgent> CreateAgentMock(string name)
     {
         Mock<AIAgent> agentMock = new() { CallBase = true };
