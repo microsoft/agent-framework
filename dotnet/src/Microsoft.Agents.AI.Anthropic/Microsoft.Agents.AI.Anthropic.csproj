@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsReleaseCandidate>true</IsReleaseCandidate>
+    <IsReleaseCandidate>false</IsReleaseCandidate>
     <ImplicitUsings>enable</ImplicitUsings>
     <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>

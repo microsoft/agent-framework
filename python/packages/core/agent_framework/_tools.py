@@ -12,6 +12,7 @@ from collections.abc import (
     AsyncIterable,
     Awaitable,
     Callable,
+    Iterable,
     Mapping,
     Sequence,
 )
@@ -89,6 +90,7 @@ logger = logging.getLogger("agent_framework")
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
+ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
@@ -270,7 +272,7 @@ class FunctionTool(SerializationMixin):
         *,
         name: str,
         description: str = "",
-        approval_mode: Literal["always_require", "never_require"] | None = None,
+        approval_mode: ApprovalMode | None = None,
         kind: str | None = None,
         max_invocations: int | None = None,
         max_invocation_exceptions: int | None = None,
@@ -858,6 +860,15 @@ def normalize_tools(
     Returns:
         A normalized list where callable inputs are converted to ``FunctionTool``
         using :func:`tool`, and existing tool objects are passed through unchanged.
+
+    Tool-collection wrappers are flattened in two forms:
+
+    - non-tool, non-callable iterables
+    - mapping-like objects that expose a ``.tools`` collection (for example
+      ``ToolboxVersionObject`` from azure-ai-projects)
+
+    This lets callers write ``tools=[toolbox, my_func]`` and have the
+    toolbox's contents spread in alongside individual tools.
     """
     if not tools:
         return []
@@ -882,6 +893,24 @@ def normalize_tools(
         if callable(tool_item):  # type: ignore[reportUnknownArgumentType]
             normalized.append(tool(tool_item))
             continue
+        # Mapping-like tool collections (for example ToolboxVersionObject) are
+        # not flattened by the generic Iterable branch below because they are
+        # also Mapping instances. If they expose a ``tools`` collection, spread
+        # that collection into the normalized list.
+        collection_tools = getattr(tool_item, "tools", None)  # type: ignore[reportUnknownArgumentType]
+        if isinstance(collection_tools, Iterable) and not isinstance(
+            collection_tools, (str, bytes, bytearray, Mapping)
+        ):
+            normalized.extend(normalize_tools(list(collection_tools)))  # type: ignore[reportUnknownArgumentType]
+            continue
+        # Tool-collection wrapper (e.g. FoundryToolbox): a non-tool, non-callable
+        # iterable. Flatten its contents so ``tools=[toolbox, my_func]`` works.
+        # Strings, mappings, and Pydantic BaseModel are excluded — BaseModel
+        # instances iterate over (field, value) tuples, not tools, so they
+        # should pass through as leaf tool specs (handled below).
+        if isinstance(tool_item, Iterable) and not isinstance(tool_item, (str, bytes, bytearray, Mapping, BaseModel)):
+            normalized.extend(normalize_tools(list(tool_item)))  # type: ignore[reportUnknownArgumentType]
+            continue
         normalized.append(tool_item)  # type: ignore[reportUnknownArgumentType]
     return normalized
 
@@ -905,6 +934,9 @@ def _tools_to_dict(  # pyright: ignore[reportUnusedFunction]
     for tool_item in normalized_tools:
         if isinstance(tool_item, FunctionTool):
             results.append(tool_item.to_json_schema_spec())
+            continue
+        if isinstance(tool_item, BaseModel):
+            results.append(tool_item.model_dump(exclude_none=True))
             continue
         if isinstance(tool_item, SerializationMixin):
             results.append(tool_item.to_dict())
@@ -1030,7 +1062,7 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
-    approval_mode: Literal["always_require", "never_require"] | None = None,
+    approval_mode: ApprovalMode | None = None,
     kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
@@ -1046,7 +1078,7 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
-    approval_mode: Literal["always_require", "never_require"] | None = None,
+    approval_mode: ApprovalMode | None = None,
     kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
@@ -1061,7 +1093,7 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
-    approval_mode: Literal["always_require", "never_require"] | None = None,
+    approval_mode: ApprovalMode | None = None,
     kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,

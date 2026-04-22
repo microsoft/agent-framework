@@ -14,5 +14,7 @@ This folder contains examples demonstrating how to use Google Gemini models with
 
 ## Environment Variables
 
-- `GEMINI_API_KEY`: Your Google AI Studio API key (get one from [Google AI Studio](https://aistudio.google.com/apikey))
-- `GEMINI_MODEL`: The Gemini model to use (e.g., `gemini-2.5-flash`, `gemini-2.5-pro`)
+- `GOOGLE_MODEL` or `GEMINI_MODEL`: The Gemini model to use (for example,
+  `gemini-2.5-flash-lite` or `gemini-2.5-pro`)
+- For Gemini Developer API: `GEMINI_API_KEY` or `GOOGLE_API_KEY`
+- For Vertex AI: `GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION`

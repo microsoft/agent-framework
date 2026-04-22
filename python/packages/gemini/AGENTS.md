@@ -1,6 +1,6 @@
 # Gemini Package (agent-framework-gemini)
 
-Integration with Google's Gemini API via the `google-genai` SDK.
+Integration with Google's Gemini Developer API and Vertex AI via the `google-genai` SDK.
 
 ## Core Classes
 
@@ -8,6 +8,7 @@ Integration with Google's Gemini API via the `google-genai` SDK.
 - **`GeminiChatClient`** - Full-featured chat client with function invocation, middleware, and telemetry
 - **`GeminiChatOptions`** - Options TypedDict for Gemini-specific parameters
 - **`GeminiSettings`** - Settings loaded from environment variables
+- **`GoogleGeminiSettings`** - SDK-standard `GOOGLE_*` settings loaded from environment variables
 - **`ThinkingConfig`** - Configuration for extended thinking
 
 ## Gemini-specific Options

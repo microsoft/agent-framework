@@ -69,19 +69,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Keys that are internal to AG-UI orchestration and should not be passed to chat clients
-AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state"}
+AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state", "forwarded_props"}
 
 
 def _build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Build metadata dict with truncated string values for Azure compatibility.
+    """Build metadata dict with string values for Azure compatibility.
 
-    Azure has a 512 character limit per metadata value.
+    Azure has a 512 character limit per metadata value.  String values that
+    already fit are kept as-is.  Non-string values are JSON-serialized.  If the
+    resulting string exceeds 512 characters the key is **dropped** (with a
+    warning) instead of truncated, because truncation can produce invalid JSON
+    that downstream consumers cannot decode.
 
     Args:
         thread_metadata: Raw metadata dict
 
     Returns:
-        Metadata with string values truncated to 512 chars
+        Metadata with safe string values (each <= 512 chars)
     """
     if not thread_metadata:
         return {}
@@ -89,7 +93,12 @@ def _build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, An
     for key, value in thread_metadata.items():
         value_str = value if isinstance(value, str) else json.dumps(value)
         if len(value_str) > 512:
-            value_str = value_str[:512]
+            logger.warning(
+                "Dropping metadata key %r: serialized value is %d chars (limit 512)",
+                key,
+                len(value_str),
+            )
+            continue
         safe_metadata[key] = value_str
     return safe_metadata
 
@@ -790,6 +799,10 @@ async def run_agent_stream(
         "ag_ui_thread_id": thread_id,
         "ag_ui_run_id": run_id,
     }
+    if "forwarded_props" in input_data:
+        base_metadata["forwarded_props"] = input_data["forwarded_props"]
+    elif "forwardedProps" in input_data:
+        base_metadata["forwarded_props"] = input_data["forwardedProps"]
     if flow.current_state:
         base_metadata["current_state"] = flow.current_state
     session.metadata = _build_safe_metadata(base_metadata)  # type: ignore[attr-defined]

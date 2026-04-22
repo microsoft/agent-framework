@@ -8,6 +8,7 @@ from agent_framework import (
     USER_AGENT_TELEMETRY_DISABLED_ENV_VAR,
     prepend_agent_framework_to_user_agent,
 )
+from agent_framework._telemetry import user_agent_prefix
 
 # region Test constants
 
@@ -96,3 +97,56 @@ def test_modifies_original_dict():
 
     assert result is headers  # Same object
     assert "User-Agent" in headers
+
+
+# region Test user_agent_prefix context manager
+
+
+def test_user_agent_prefix_adds_prefix():
+    """Test that the context manager adds a prefix within its scope."""
+    with user_agent_prefix("test-host"):
+        result = prepend_agent_framework_to_user_agent()
+        assert result["User-Agent"].startswith("test-host/")
+        assert AGENT_FRAMEWORK_USER_AGENT in result["User-Agent"]
+
+    # Prefix is removed after exiting the context
+    result = prepend_agent_framework_to_user_agent()
+    assert result["User-Agent"] == AGENT_FRAMEWORK_USER_AGENT
+
+
+def test_user_agent_prefix_ignores_duplicates():
+    """Test that duplicate prefixes are not added within nested scopes."""
+    with user_agent_prefix("test-host"), user_agent_prefix("test-host"):
+        result = prepend_agent_framework_to_user_agent()
+        assert result["User-Agent"].count("test-host") == 1
+
+
+def test_user_agent_prefix_ignores_empty():
+    """Test that empty strings are not added as prefixes."""
+    with user_agent_prefix(""):
+        result = prepend_agent_framework_to_user_agent()
+        assert result["User-Agent"] == AGENT_FRAMEWORK_USER_AGENT
+
+
+def test_user_agent_prefix_restores_on_exit():
+    """Test that prefixes are fully restored after the context manager exits."""
+    with user_agent_prefix("test-host"):
+        pass
+    result = prepend_agent_framework_to_user_agent()
+    assert result["User-Agent"] == AGENT_FRAMEWORK_USER_AGENT
+
+
+def test_user_agent_prefix_nesting():
+    """Test that nested context managers compose prefixes correctly."""
+    with user_agent_prefix("outer"):
+        with user_agent_prefix("inner"):
+            result = prepend_agent_framework_to_user_agent()
+            assert "outer" in result["User-Agent"]
+            assert "inner" in result["User-Agent"]
+        # Inner prefix removed
+        result = prepend_agent_framework_to_user_agent()
+        assert "outer" in result["User-Agent"]
+        assert "inner" not in result["User-Agent"]
+    # Both removed
+    result = prepend_agent_framework_to_user_agent()
+    assert result["User-Agent"] == AGENT_FRAMEWORK_USER_AGENT

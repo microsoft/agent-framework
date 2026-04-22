@@ -181,7 +181,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// Creates a non-versioned <see cref="ChatClientAgent"/> backed by the project's Responses API using the specified options.
     /// </summary>
     /// <param name="aiProjectClient">The <see cref="AIProjectClient"/> to use for Responses API calls. Cannot be <see langword="null"/>.</param>
-    /// <param name="options">Configuration options that control the agent's behavior. <see cref="ChatOptions.ModelId"/> is required.</param>
+    /// <param name="options">Optional configuration options that control the agent's behavior.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for creating loggers used by the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
@@ -190,15 +190,14 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="ArgumentException">Thrown when <paramref name="options"/> does not specify <see cref="ChatOptions.ModelId"/>.</exception>
     public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
-        ChatClientAgentOptions options,
+        ChatClientAgentOptions? options = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         ILoggerFactory? loggerFactory = null,
         IServiceProvider? services = null)
     {
         Throw.IfNull(aiProjectClient);
-        Throw.IfNull(options);
 
-        return CreateResponsesChatClientAgent(aiProjectClient, options, clientFactory, loggerFactory, services);
+        return CreateResponsesChatClientAgent(aiProjectClient, options ?? new(), clientFactory, loggerFactory, services);
     }
 
     #region Private
