@@ -8,6 +8,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Chat;
+using AgentCard = A2A.AgentCard;
 
 namespace A2AServer;
 

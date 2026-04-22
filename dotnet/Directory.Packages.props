@@ -22,11 +22,16 @@
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
     <!-- Azure.* -->
+    <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-beta.22" />
+    <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.1" />
+    <PackageVersion Include="Azure.AI.AgentServer.Responses" Version="1.0.0-beta.3" />
     <PackageVersion Include="Azure.AI.Projects" Version="2.0.0" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.10" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
-    <PackageVersion Include="Azure.Identity" Version="1.20.0" />
-    <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
+    <PackageVersion Include="Azure.Core" Version="1.53.0" />
+    <PackageVersion Include="Azure.Identity" Version="1.21.0" />
+    <PackageVersion Include="DotNetEnv" Version="3.1.1" />
+    <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.5.0" />
     <!-- Google Gemini  -->
     <PackageVersion Include="Google.GenAI" Version="1.6.0" />
     <PackageVersion Include="Mscc.GenerativeAI.Microsoft" Version="2.9.3" />
@@ -51,15 +56,15 @@
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     <PackageVersion Include="System.Net.Security" Version="4.3.2" />
     <!-- OpenTelemetry -->
-    <PackageVersion Include="OpenTelemetry" Version="1.14.0" />
-    <PackageVersion Include="OpenTelemetry.Api" Version="1.14.0" />
-    <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.14.0" />
-    <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.14.0" />
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry" Version="1.15.0" />
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.15.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.15.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.15.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.13.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.13.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.13.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.14.0" />
     <!-- Microsoft.AspNetCore.* -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.0" />
