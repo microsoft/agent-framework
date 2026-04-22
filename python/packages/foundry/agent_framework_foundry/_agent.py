@@ -34,6 +34,8 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
+from ._tools import sanitize_foundry_response_tool
+
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
 else:
@@ -306,6 +308,20 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
     def _check_model_presence(self, options: dict[str, Any]) -> None:
         """Skip model check — model is configured on the Foundry agent."""
         pass
+
+    @override
+    def _prepare_tools_for_openai(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+    ) -> list[Any]:
+        """Prepare tools for Foundry agent Responses API calls.
+
+        Mirrors ``RawFoundryChatClient`` sanitization so toolbox-fetched MCP
+        tools with extra read-model fields continue to work through the agent
+        surface.
+        """
+        response_tools = super()._prepare_tools_for_openai(tools)
+        return [sanitize_foundry_response_tool(tool_item) for tool_item in response_tools]
 
     def _prepare_messages_for_azure_ai(self, messages: Sequence[Message]) -> tuple[list[Message], str | None]:
         """Extract system/developer messages as instructions for Azure AI.
