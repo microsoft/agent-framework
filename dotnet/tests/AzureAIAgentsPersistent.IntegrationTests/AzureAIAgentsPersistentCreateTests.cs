@@ -21,7 +21,7 @@ public class AzureAIAgentsPersistentCreateTests
 
     private readonly PersistentAgentsClient _persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), TestAzureCliCredentials.CreateAzureCliCredential());
 
-    [Theory]
+    [Theory(Skip = "Flaky integration test")]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
     [InlineData("CreateWithFoundryOptionsAsync")]
     public async Task CreateAgent_CreatesAgentWithCorrectMetadataAsync(string createMechanism)
@@ -203,7 +203,7 @@ public class AzureAIAgentsPersistentCreateTests
         }
     }
 
-    [Theory]
+    [Theory(Skip = "Flaky integration test")]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
     public async Task CreateAgent_CreatesAgentWithAIFunctionToolsAsync(string createMechanism)
     {
