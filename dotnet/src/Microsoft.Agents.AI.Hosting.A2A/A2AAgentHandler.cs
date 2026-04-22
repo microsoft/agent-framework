@@ -42,11 +42,19 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// <inheritdoc/>
     public Task ExecuteAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
     {
+        // Handle task updates
         if (context.IsContinuation)
         {
             return this.HandleTaskUpdateAsync(context, eventQueue, cancellationToken);
         }
 
+        // Handle messages received via streaming endpoint
+        if (context.StreamingResponse)
+        {
+            return this.HandleNewMessageStreamingAsync(context, eventQueue, cancellationToken);
+        }
+
+        // Handle new messages received via non-streaming endpoint
         return this.HandleNewMessageAsync(context, eventQueue, cancellationToken);
     }
 
@@ -106,6 +114,34 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
             await taskUpdater.StartWorkAsync(progressMessage, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task HandleNewMessageStreamingAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
+    {
+        var contextId = context.ContextId ?? Guid.NewGuid().ToString("N");
+        var session = await this._hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
+
+        // AIAgent does not support resuming from arbitrary prior tasks.
+        // Throw explicitly so the client gets a clear error rather than a response
+        // that silently ignores the referenced task context.
+        if (context.Message?.ReferenceTaskIds is { Count: > 0 })
+        {
+            throw new NotSupportedException("ReferenceTaskIds is not supported. AIAgent cannot resume from arbitrary prior task context.");
+        }
+
+        List<ChatMessage> chatMessages = context.Message is not null ? [context.Message.ToChatMessage()] : [];
+
+        var options = context.Metadata is { Count: > 0 }
+            ? new AgentRunOptions { AdditionalProperties = context.Metadata.ToAdditionalProperties() }
+            : null;
+
+        await foreach (var update in this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken).ConfigureAwait(false))
+        {
+            var message = CreateMessageFromUpdate(contextId, update);
+            await eventQueue.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
+        }
+
+        await this._hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task HandleTaskUpdateAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
@@ -172,6 +208,16 @@ internal sealed class A2AAgentHandler : IAgentHandler
             Role = Role.Agent,
             Parts = response.Messages.ToParts(),
             Metadata = response.AdditionalProperties?.ToA2AMetadata()
+        };
+
+    private static Message CreateMessageFromUpdate(string contextId, AgentResponseUpdate update) =>
+        new()
+        {
+            MessageId = update.ResponseId ?? Guid.NewGuid().ToString("N"),
+            ContextId = contextId,
+            Role = Role.Agent,
+            Parts = update.ToParts(),
+            Metadata = update.AdditionalProperties?.ToA2AMetadata()
         };
 
     private static List<ChatMessage> ExtractChatMessagesFromTaskHistory(AgentTask? agentTask)
