@@ -1,3 +1,4 @@
+# Copyright (c) Microsoft. All rights reserved.
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
@@ -8,7 +9,6 @@
 # ///
 # Run with: uv run packages/azure-contentunderstanding/samples/01-get-started/01_document_qa.py
 
-# Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
 import os
