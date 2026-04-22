@@ -7,13 +7,15 @@ import json
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import (
+from agent_framework import ExperimentalFeature, FunctionInvocationContext, FunctionMiddleware
+from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
+from agent_framework._tools import FunctionTool, _auto_invoke_function, normalize_function_invocation_configuration
+from agent_framework._types import Content
+from agent_framework.security import (
     ConfidentialityLabel,
     ContentLabel,
     ContentVariableStore,
-    ExperimentalFeature,
-    FunctionInvocationContext,
-    FunctionMiddleware,
+    InspectVariableInput,
     IntegrityLabel,
     LabeledMessage,
     LabelTrackingFunctionMiddleware,
@@ -23,10 +25,6 @@ from agent_framework import (
     combine_labels,
     store_untrusted_content,
 )
-from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
-from agent_framework._security import InspectVariableInput
-from agent_framework._tools import FunctionTool, _auto_invoke_function, normalize_function_invocation_configuration
-from agent_framework._types import Content
 
 
 class TestContentLabel:
@@ -840,7 +838,7 @@ class TestAutomaticHiding:
         context = FunctionInvocationContext(function=mock_function, arguments=args)
 
         async def next_fn():
-            from agent_framework._security import get_current_middleware
+            from agent_framework.security import get_current_middleware
 
             # Should be able to access middleware from thread-local
             current = get_current_middleware()
@@ -893,7 +891,7 @@ class TestSecureAgentConfig:
 
     def test_create_config_defaults(self):
         """Test creating config with default values."""
-        from agent_framework import SecureAgentConfig
+        from agent_framework.security import SecureAgentConfig
 
         config = SecureAgentConfig()
 
@@ -905,7 +903,7 @@ class TestSecureAgentConfig:
 
     def test_create_config_with_options(self):
         """Test creating config with custom options."""
-        from agent_framework import SecureAgentConfig
+        from agent_framework.security import SecureAgentConfig
 
         config = SecureAgentConfig(
             auto_hide_untrusted=True,
@@ -925,7 +923,7 @@ class TestSecureAgentConfig:
 
     def test_get_tools_returns_security_tools(self):
         """Test that get_tools returns quarantined_llm and inspect_variable."""
-        from agent_framework import SecureAgentConfig
+        from agent_framework.security import SecureAgentConfig
 
         config = SecureAgentConfig()
         tools = config.get_tools()
@@ -937,7 +935,7 @@ class TestSecureAgentConfig:
 
     def test_get_instructions_returns_string(self):
         """Test that get_instructions returns instruction text."""
-        from agent_framework import SECURITY_TOOL_INSTRUCTIONS, SecureAgentConfig
+        from agent_framework.security import SECURITY_TOOL_INSTRUCTIONS, SecureAgentConfig
 
         config = SecureAgentConfig()
         instructions = config.get_instructions()
@@ -950,7 +948,7 @@ class TestSecureAgentConfig:
 
     def test_inspect_variable_uses_generic_approval_mode(self):
         """Test that inspect_variable does not require approval (context tainting handles security)."""
-        from agent_framework import get_security_tools
+        from agent_framework.security import get_security_tools
 
         inspect_variable = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
         assert inspect_variable.approval_mode == "never_require"
@@ -962,7 +960,7 @@ class TestGetSecurityTools:
 
     def test_get_security_tools_from_module(self):
         """Test importing get_security_tools from agent_framework."""
-        from agent_framework import get_security_tools
+        from agent_framework.security import get_security_tools
 
         tools = get_security_tools()
         assert len(tools) == 2
@@ -995,7 +993,7 @@ class TestQuarantinedLLMWithVariableIds:
     @pytest.mark.asyncio
     async def test_quarantined_llm_with_single_variable_id(self, middleware_with_store):
         """Test quarantined_llm retrieves content from variable store."""
-        from agent_framework import quarantined_llm
+        from agent_framework.security import quarantined_llm
 
         # Store a variable
         store = middleware_with_store.get_variable_store()
@@ -1013,7 +1011,7 @@ class TestQuarantinedLLMWithVariableIds:
     @pytest.mark.asyncio
     async def test_quarantined_llm_with_multiple_variable_ids(self, middleware_with_store):
         """Test quarantined_llm retrieves multiple variables."""
-        from agent_framework import quarantined_llm
+        from agent_framework.security import quarantined_llm
 
         # Store multiple variables
         store = middleware_with_store.get_variable_store()
@@ -1033,7 +1031,7 @@ class TestQuarantinedLLMWithVariableIds:
     @pytest.mark.asyncio
     async def test_quarantined_llm_with_unknown_variable_id(self, middleware_with_store):
         """Test quarantined_llm handles unknown variable IDs gracefully."""
-        from agent_framework import quarantined_llm
+        from agent_framework.security import quarantined_llm
 
         # Call with non-existent variable ID
         result = await quarantined_llm(prompt="Process this", variable_ids=["var_nonexistent"])
@@ -1046,7 +1044,7 @@ class TestQuarantinedLLMWithVariableIds:
     @pytest.mark.asyncio
     async def test_quarantined_llm_without_variable_ids(self, middleware_with_store):
         """Test quarantined_llm works with labelled_data instead of variable_ids."""
-        from agent_framework import quarantined_llm
+        from agent_framework.security import quarantined_llm
 
         result = await quarantined_llm(
             prompt="Process this data",
@@ -1064,7 +1062,7 @@ class TestQuarantinedLLMWithVariableIds:
     @pytest.mark.asyncio
     async def test_quarantined_llm_with_legacy_label_key(self, middleware_with_store):
         """Test quarantined_llm accepts legacy 'label' key for backward compatibility."""
-        from agent_framework import quarantined_llm
+        from agent_framework.security import quarantined_llm
 
         result = await quarantined_llm(
             prompt="Process this data",
@@ -1085,7 +1083,7 @@ class TestMiddlewareSetCurrent:
 
     def test_set_and_clear_current(self):
         """Test setting and clearing thread-local middleware reference."""
-        from agent_framework._security import get_current_middleware
+        from agent_framework.security import get_current_middleware
 
         # Initially no middleware
         assert get_current_middleware() is None
@@ -1103,7 +1101,7 @@ class TestMiddlewareSetCurrent:
 
     def test_set_current_overwrites_previous(self):
         """Test that setting current overwrites previous middleware."""
-        from agent_framework._security import get_current_middleware
+        from agent_framework.security import get_current_middleware
 
         middleware1 = LabelTrackingFunctionMiddleware()
         middleware2 = LabelTrackingFunctionMiddleware()
@@ -1375,7 +1373,7 @@ class TestLabeledMessage:
 
     def test_create_user_message_defaults_to_trusted(self):
         """Test that user messages are TRUSTED by default."""
-        from agent_framework import LabeledMessage
+        from agent_framework.security import LabeledMessage
 
         msg = LabeledMessage(role="user", content="Hello!")
         assert msg.role == "user"
@@ -1384,14 +1382,14 @@ class TestLabeledMessage:
 
     def test_create_system_message_defaults_to_trusted(self):
         """Test that system messages are TRUSTED by default."""
-        from agent_framework import LabeledMessage
+        from agent_framework.security import LabeledMessage
 
         msg = LabeledMessage(role="system", content="You are an assistant.")
         assert msg.security_label.integrity == IntegrityLabel.TRUSTED
 
     def test_create_tool_message_defaults_to_untrusted(self):
         """Test that tool messages are UNTRUSTED by default."""
-        from agent_framework import LabeledMessage
+        from agent_framework.security import LabeledMessage
 
         msg = LabeledMessage(role="tool", content="External API result")
         assert msg.security_label.integrity == IntegrityLabel.UNTRUSTED
@@ -1399,14 +1397,14 @@ class TestLabeledMessage:
 
     def test_create_assistant_message_no_sources(self):
         """Test assistant message without sources defaults to TRUSTED."""
-        from agent_framework import LabeledMessage
+        from agent_framework.security import LabeledMessage
 
         msg = LabeledMessage(role="assistant", content="I'll help you.")
         assert msg.security_label.integrity == IntegrityLabel.TRUSTED
 
     def test_create_assistant_message_with_untrusted_source(self):
         """Test assistant message inherits UNTRUSTED from sources."""
-        from agent_framework import LabeledMessage
+        from agent_framework.security import LabeledMessage
 
         untrusted_source = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
         msg = LabeledMessage(role="assistant", content="Based on the data...", source_labels=[untrusted_source])
@@ -1414,7 +1412,7 @@ class TestLabeledMessage:
 
     def test_explicit_label_overrides_inference(self):
         """Test that explicit label overrides role-based inference."""
-        from agent_framework import LabeledMessage
+        from agent_framework.security import LabeledMessage
 
         explicit_label = ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PRIVATE)
         msg = LabeledMessage(
@@ -1427,7 +1425,7 @@ class TestLabeledMessage:
 
     def test_message_serialization(self):
         """Test LabeledMessage serialization to dict."""
-        from agent_framework import LabeledMessage
+        from agent_framework.security import LabeledMessage
 
         msg = LabeledMessage(role="user", content="Hello", message_index=5, metadata={"key": "value"})
 
@@ -1439,7 +1437,7 @@ class TestLabeledMessage:
 
     def test_message_deserialization(self):
         """Test LabeledMessage deserialization from dict."""
-        from agent_framework import LabeledMessage
+        from agent_framework.security import LabeledMessage
 
         data = {
             "role": "tool",
@@ -1455,7 +1453,7 @@ class TestLabeledMessage:
 
     def test_from_message_convenience_method(self):
         """Test creating LabeledMessage from a standard message dict."""
-        from agent_framework import LabeledMessage
+        from agent_framework.security import LabeledMessage
 
         standard_msg = {"role": "user", "content": "What's the weather?"}
         labeled = LabeledMessage.from_message(standard_msg, index=0)
@@ -1534,8 +1532,7 @@ class TestQuarantinedLLM:
     @pytest.mark.asyncio
     async def test_quarantined_llm_returns_response(self):
         """Test that quarantined_llm returns a plain response dict."""
-        from agent_framework import LabelTrackingFunctionMiddleware, quarantined_llm
-        from agent_framework._security import _current_middleware
+        from agent_framework.security import LabelTrackingFunctionMiddleware, _current_middleware, quarantined_llm
 
         middleware = LabelTrackingFunctionMiddleware()
 
@@ -1560,8 +1557,7 @@ class TestQuarantinedLLM:
     @pytest.mark.asyncio
     async def test_quarantined_llm_trusted_input(self):
         """Test quarantined_llm with TRUSTED input returns response directly."""
-        from agent_framework import LabelTrackingFunctionMiddleware, quarantined_llm
-        from agent_framework._security import _current_middleware
+        from agent_framework.security import LabelTrackingFunctionMiddleware, _current_middleware, quarantined_llm
 
         middleware = LabelTrackingFunctionMiddleware()
 
@@ -1587,8 +1583,7 @@ class TestQuarantinedLLM:
     @pytest.mark.asyncio
     async def test_quarantined_llm_multiple_variables(self):
         """Test that quarantined_llm handles multiple variables correctly."""
-        from agent_framework import LabelTrackingFunctionMiddleware, quarantined_llm
-        from agent_framework._security import _current_middleware
+        from agent_framework.security import LabelTrackingFunctionMiddleware, _current_middleware, quarantined_llm
 
         middleware = LabelTrackingFunctionMiddleware()
 
@@ -1608,7 +1603,7 @@ class TestQuarantinedLLM:
 
     def test_quarantined_llm_declares_source_integrity(self):
         """Test that quarantined_llm declares source_integrity='untrusted'."""
-        from agent_framework import get_security_tools
+        from agent_framework.security import get_security_tools
 
         q_llm = next(tool for tool in get_security_tools() if tool.name == "quarantined_llm")
         assert q_llm.additional_properties.get("source_integrity") == "untrusted"
@@ -1620,7 +1615,7 @@ class TestQuarantineClient:
 
     def test_set_and_get_quarantine_client(self):
         """Test setting and getting the quarantine client."""
-        from agent_framework import get_quarantine_client, set_quarantine_client
+        from agent_framework.security import get_quarantine_client, set_quarantine_client
 
         # Initially should be None (or whatever state it's in)
         # Clear it first
@@ -1643,7 +1638,7 @@ class TestQuarantineClient:
 
     def test_secure_agent_config_sets_quarantine_client(self):
         """Test that SecureAgentConfig sets the quarantine client."""
-        from agent_framework import SecureAgentConfig, get_quarantine_client, set_quarantine_client
+        from agent_framework.security import SecureAgentConfig, get_quarantine_client, set_quarantine_client
 
         # Clear any existing client
         set_quarantine_client(None)
@@ -1669,7 +1664,7 @@ class TestQuarantineClient:
 
     def test_secure_agent_config_without_quarantine_client(self):
         """Test SecureAgentConfig without quarantine client doesn't set one."""
-        from agent_framework import SecureAgentConfig, get_quarantine_client, set_quarantine_client
+        from agent_framework.security import SecureAgentConfig, get_quarantine_client, set_quarantine_client
 
         # Clear any existing client
         set_quarantine_client(None)
@@ -1688,14 +1683,14 @@ class TestQuarantineClient:
         """Test that quarantined_llm uses real client when available."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from agent_framework import (
+        from agent_framework.security import (
             ContentLabel,
             IntegrityLabel,
             LabelTrackingFunctionMiddleware,
+            _current_middleware,
             quarantined_llm,
             set_quarantine_client,
         )
-        from agent_framework._security import _current_middleware
 
         # Clear any existing client
         set_quarantine_client(None)
@@ -1747,14 +1742,14 @@ class TestQuarantineClient:
     @pytest.mark.asyncio
     async def test_quarantined_llm_fallback_without_client(self):
         """Test that quarantined_llm falls back to placeholder without client."""
-        from agent_framework import (
+        from agent_framework.security import (
             ContentLabel,
             IntegrityLabel,
             LabelTrackingFunctionMiddleware,
+            _current_middleware,
             quarantined_llm,
             set_quarantine_client,
         )
-        from agent_framework._security import _current_middleware
 
         # Clear the client
         set_quarantine_client(None)
@@ -1785,14 +1780,14 @@ class TestQuarantineClient:
         """Test that quarantined_llm handles client errors gracefully."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from agent_framework import (
+        from agent_framework.security import (
             ContentLabel,
             IntegrityLabel,
             LabelTrackingFunctionMiddleware,
+            _current_middleware,
             quarantined_llm,
             set_quarantine_client,
         )
-        from agent_framework._security import _current_middleware
 
         # Create a mock client that raises an error
         mock_client = MagicMock()
@@ -1822,14 +1817,14 @@ class TestQuarantineClient:
         """Test that quarantined_llm builds messages correctly with content."""
         from unittest.mock import AsyncMock, MagicMock
 
-        from agent_framework import (
+        from agent_framework.security import (
             ContentLabel,
             IntegrityLabel,
             LabelTrackingFunctionMiddleware,
+            _current_middleware,
             quarantined_llm,
             set_quarantine_client,
         )
-        from agent_framework._security import _current_middleware
 
         mock_response = MagicMock()
         mock_response.text = "Summary"
@@ -2517,63 +2512,63 @@ class TestCheckConfidentialityAllowed:
 
     def test_public_to_public_allowed(self):
         """Test PUBLIC data can be written to PUBLIC destination."""
-        from agent_framework import check_confidentiality_allowed
+        from agent_framework.security import check_confidentiality_allowed
 
         public_label = ContentLabel(confidentiality=ConfidentialityLabel.PUBLIC)
         assert check_confidentiality_allowed(public_label, ConfidentialityLabel.PUBLIC) is True
 
     def test_public_to_private_allowed(self):
         """Test PUBLIC data can be written to PRIVATE destination."""
-        from agent_framework import check_confidentiality_allowed
+        from agent_framework.security import check_confidentiality_allowed
 
         public_label = ContentLabel(confidentiality=ConfidentialityLabel.PUBLIC)
         assert check_confidentiality_allowed(public_label, ConfidentialityLabel.PRIVATE) is True
 
     def test_public_to_user_identity_allowed(self):
         """Test PUBLIC data can be written to USER_IDENTITY destination."""
-        from agent_framework import check_confidentiality_allowed
+        from agent_framework.security import check_confidentiality_allowed
 
         public_label = ContentLabel(confidentiality=ConfidentialityLabel.PUBLIC)
         assert check_confidentiality_allowed(public_label, ConfidentialityLabel.USER_IDENTITY) is True
 
     def test_private_to_public_blocked(self):
         """Test PRIVATE data cannot be written to PUBLIC destination."""
-        from agent_framework import check_confidentiality_allowed
+        from agent_framework.security import check_confidentiality_allowed
 
         private_label = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
         assert check_confidentiality_allowed(private_label, ConfidentialityLabel.PUBLIC) is False
 
     def test_private_to_private_allowed(self):
         """Test PRIVATE data can be written to PRIVATE destination."""
-        from agent_framework import check_confidentiality_allowed
+        from agent_framework.security import check_confidentiality_allowed
 
         private_label = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
         assert check_confidentiality_allowed(private_label, ConfidentialityLabel.PRIVATE) is True
 
     def test_private_to_user_identity_allowed(self):
         """Test PRIVATE data can be written to USER_IDENTITY destination."""
-        from agent_framework import check_confidentiality_allowed
+        from agent_framework.security import check_confidentiality_allowed
 
         private_label = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
         assert check_confidentiality_allowed(private_label, ConfidentialityLabel.USER_IDENTITY) is True
 
     def test_user_identity_to_public_blocked(self):
         """Test USER_IDENTITY data cannot be written to PUBLIC destination."""
-        from agent_framework import check_confidentiality_allowed
+        from agent_framework.security import check_confidentiality_allowed
 
         ui_label = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
         assert check_confidentiality_allowed(ui_label, ConfidentialityLabel.PUBLIC) is False
 
     def test_user_identity_to_private_blocked(self):
         """Test USER_IDENTITY data cannot be written to PRIVATE destination."""
-        from agent_framework import check_confidentiality_allowed
+        from agent_framework.security import check_confidentiality_allowed
 
         ui_label = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
         assert check_confidentiality_allowed(ui_label, ConfidentialityLabel.PRIVATE) is False
 
     def test_user_identity_to_user_identity_allowed(self):
         """Test USER_IDENTITY data can be written to USER_IDENTITY destination."""
-        from agent_framework import check_confidentiality_allowed
+        from agent_framework.security import check_confidentiality_allowed
 
         ui_label = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
         assert check_confidentiality_allowed(ui_label, ConfidentialityLabel.USER_IDENTITY) is True

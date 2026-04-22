@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Repository Confidentiality Example - Preventing Data Exfiltration.
+"""Repository Confidentiality Example - Foundry-backed data exfiltration prevention.
 
 This example demonstrates how CONFIDENTIALITY LABELS prevent data exfiltration
-attacks via prompt injection. The security middleware requests human approval
+attacks via prompt injection while using FoundryChatClient for both the main
+agent and the quarantine client. The security middleware requests human approval
 before allowing private data to be sent to public destinations.
 
 HOW IT WORKS:
@@ -35,8 +36,9 @@ HOW IT WORKS:
 
 To run this example:
     1. Ensure you have Azure CLI credentials configured: `az login`
-    2. Set the AZURE_OPENAI_ENDPOINT environment variable
-    3. Run: python repo_confidentiality_example.py
+    2. Set the FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL environment variables
+    3. Run: `uv run samples/02-agents/security/repo_confidentiality_example.py --cli`
+       or `uv run samples/02-agents/security/repo_confidentiality_example.py --devui`
 """
 
 import asyncio
@@ -45,14 +47,14 @@ import os
 import sys
 from typing import Any
 
-from agent_framework import (
-    Agent,
-    Content,
-    SecureAgentConfig,
-    tool,
-)
+# Uncomment this filter to suppress the experimental FIDES warning before
+# using the sample's security APIs.
+# import warnings
+# warnings.filterwarnings("ignore", message=r"\[FIDES\].*", category=FutureWarning)
+from agent_framework import Agent, Content, tool
 from agent_framework.devui import serve
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.security import SecureAgentConfig
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
@@ -193,27 +195,20 @@ def setup_agent(*, approval_on_violation: bool = False):
         approval_on_violation: If True, request user approval on policy violations
             (suitable for DevUI). If False, block immediately (suitable for CLI).
     """
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    if not endpoint:
-        raise ValueError(
-            "AZURE_OPENAI_ENDPOINT environment variable is not set. Please set it to your Azure OpenAI endpoint URL."
-        )
     credential = AzureCliCredential()
 
-    # Main client - using gpt-4o-mini which may be more compliant with requests
-    main_client = OpenAIChatClient(
-        model="gpt-4o-mini",
-        azure_endpoint=endpoint,
+    # Main client - use the configured Foundry deployment for the primary agent.
+    main_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=credential,
-        function_invocation_configuration={
-            "max_iterations": 5,
-        },
+        function_invocation_configuration={"max_iterations": 5},
     )
 
-    # Quarantine client for processing untrusted content safely
-    quarantine_client = OpenAIChatClient(
+    # Quarantine client for processing untrusted content safely.
+    quarantine_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model="gpt-4o-mini",
-        azure_endpoint=endpoint,
         credential=credential,
     )
 
@@ -230,9 +225,8 @@ def setup_agent(*, approval_on_violation: bool = False):
     agent = Agent(
         client=main_client,
         name="repo_assistant",
-        instructions="""You are a helpful assistant that can read repositories, post to Slack,
-and send internal memos. Follow user instructions precisely.
-""",
+        instructions="You are a helpful assistant that can read repositories, post to Slack, "
+        "and send internal memos. Follow user instructions precisely.",
         tools=[
             read_repo,
             post_to_slack,
@@ -342,7 +336,7 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "--devui":
         run_devui()
     else:
-        print("Usage: python repo_confidentiality_example.py [--cli|--devui]")
+        print("Usage: uv run samples/02-agents/security/repo_confidentiality_example.py [--cli|--devui]")
         print("  --cli    Run in command line mode (automated scenario)")
         print("  --devui  Run with DevUI web interface (interactive)")
         sys.exit(1)
