@@ -7,6 +7,7 @@ The foundation package containing all core abstractions, types, and built-in Ope
 ```
 agent_framework/
 ├── __init__.py          # Public API exports
+├── security.py          # Public security primitives, middleware, and tools
 ├── _agents.py           # Agent implementations
 ├── _clients.py          # Chat client base classes and protocols
 ├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
