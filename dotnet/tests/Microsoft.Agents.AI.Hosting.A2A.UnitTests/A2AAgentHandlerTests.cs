@@ -946,6 +946,98 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
+    /// Verifies that in streaming mode, when RunStreamingAsync yields no updates,
+    /// no messages are enqueued and the session is still saved.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_Streaming_WhenNoUpdates_EnqueuesNoMessagesAndSavesSessionAsync()
+    {
+        // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore>();
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<string>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        A2AAgentHandler handler = CreateHandler(CreateStreamingAgentMock([]), agentSessionStore: mockSessionStore.Object);
+
+        // Act
+        var events = await CollectEventsAsync(handler, new RequestContext
+        {
+            StreamingResponse = true,
+            TaskId = "",
+            ContextId = "ctx",
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+        });
+
+        // Assert
+        Assert.Empty(events.Messages);
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<string>(s => s == "ctx"),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that the CancellationToken is propagated to RunStreamingAsync in the streaming path.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_Streaming_CancellationTokenIsPropagatedToRunStreamingAsyncAsync()
+    {
+        // Arrange
+        CancellationToken capturedToken = default;
+        using var cts = new CancellationTokenSource();
+
+        Mock<AIAgent> agentMock = new() { CallBase = true };
+        agentMock.SetupGet(x => x.Name).Returns("TestAgent");
+        agentMock
+            .Protected()
+            .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new TestAgentSession());
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>(
+                (_, _, _, ct) => capturedToken = ct)
+            .Returns(() => ToAsyncEnumerableAsync([new AgentResponseUpdate(ChatRole.Assistant, "reply") { ResponseId = "r1" }]));
+
+        A2AAgentHandler handler = CreateHandler(agentMock);
+
+        // Act
+        var eventQueue = new AgentEventQueue();
+        await handler.ExecuteAsync(
+            new RequestContext
+            {
+                TaskId = "",
+                ContextId = "ctx",
+                StreamingResponse = true,
+                Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+            },
+            eventQueue,
+            cts.Token);
+        eventQueue.Complete(null);
+
+        // Assert
+        Assert.Equal(cts.Token, capturedToken);
+    }
+
+    /// <summary>
     /// Verifies that when no session store is provided, the handler uses InMemoryAgentSessionStore
     /// and can execute successfully.
     /// </summary>
