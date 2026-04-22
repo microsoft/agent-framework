@@ -701,7 +701,7 @@ jobs:
 
       - name: Restore validation history
         id: cache-restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: validation-history/
           key: validation-history-${{ github.run_id }}
@@ -719,7 +719,7 @@ jobs:
         run: cat trend-report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save validation history
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: validation-history/
           key: validation-history-${{ github.run_id }}

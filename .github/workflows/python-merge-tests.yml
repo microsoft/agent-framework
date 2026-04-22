@@ -588,7 +588,7 @@ jobs:
           pattern: test-results-*
           path: test-results/
       - name: Restore flaky report history cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: python/flaky-report-history.json
           key: flaky-report-history-merge-${{ github.run_id }}
@@ -605,7 +605,7 @@ jobs:
         run: cat flaky-test-report.md >> $GITHUB_STEP_SUMMARY
       - name: Save flaky report history cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: python/flaky-report-history.json
           key: flaky-report-history-merge-${{ github.run_id }}
