@@ -2092,6 +2092,36 @@ def test_replace_approval_contents_with_results_uses_result_call_ids_for_placeho
     ]
 
 
+def test_replace_approval_contents_with_results_skips_results_without_call_id() -> None:
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    call_one, request_one, response_one = _build_approved_tool_roundtrip(
+        call_id="call_1", approval_id="approval_1", tool_name="first_tool"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[call_one, request_one]),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_1", result="[APPROVAL_PENDING] placeholder")],
+        ),
+        Message(role="user", contents=[response_one]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [
+            Content.from_function_result(call_id=None, result="ignored result"),
+            Content.from_function_result(call_id="call_1", result="first result"),
+        ],
+    )
+
+    assert len(messages) == 2
+    assert messages[0].contents == [call_one]
+    assert [(content.call_id, content.result) for content in messages[1].contents] == [("call_1", "first result")]
+
+
 async def test_mixed_local_and_hosted_approval_flow(chat_client_base: SupportsChatGetResponse):
     """Test that mixed local + hosted MCP approvals are handled correctly.
 
