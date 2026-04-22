@@ -17,11 +17,12 @@ namespace AzureAIAgentsPersistent.IntegrationTests;
 [Trait("Category", "Integration")]
 public class AzureAIAgentsPersistentCreateTests
 {
+    private const string SkipFlakyReason = "Flaky integration test";
     private const string SkipCodeInterpreterReason = "Azure AI Code Interpreter intermittently fails to execute uploaded files in CI";
 
     private readonly PersistentAgentsClient _persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), TestAzureCliCredentials.CreateAzureCliCredential());
 
-    [Theory(Skip = "Flaky integration test")]
+    [Theory(Skip = SkipFlakyReason)]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
     [InlineData("CreateWithFoundryOptionsAsync")]
     public async Task CreateAgent_CreatesAgentWithCorrectMetadataAsync(string createMechanism)
@@ -203,7 +204,7 @@ public class AzureAIAgentsPersistentCreateTests
         }
     }
 
-    [Theory(Skip = "Flaky integration test")]
+    [Theory(Skip = SkipFlakyReason)]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
     public async Task CreateAgent_CreatesAgentWithAIFunctionToolsAsync(string createMechanism)
     {

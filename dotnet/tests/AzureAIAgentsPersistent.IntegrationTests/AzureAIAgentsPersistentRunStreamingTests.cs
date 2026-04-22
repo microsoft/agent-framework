@@ -12,31 +12,31 @@ public class AzureAIAgentsPersistentRunStreamingTests() : RunStreamingTests<Azur
 
     public override Task RunWithNoMessageDoesNotFailAsync()
     {
-        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
-        return base.RunWithNoMessageDoesNotFailAsync();
+        Assert.Skip(SkipReason);
+        return Task.CompletedTask;
     }
 
     public override Task RunWithStringReturnsExpectedResultAsync()
     {
-        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
-        return base.RunWithStringReturnsExpectedResultAsync();
+        Assert.Skip(SkipReason);
+        return Task.CompletedTask;
     }
 
     public override Task RunWithChatMessageReturnsExpectedResultAsync()
     {
-        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
-        return base.RunWithChatMessageReturnsExpectedResultAsync();
+        Assert.Skip(SkipReason);
+        return Task.CompletedTask;
     }
 
     public override Task RunWithChatMessagesReturnsExpectedResultAsync()
     {
-        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
-        return base.RunWithChatMessagesReturnsExpectedResultAsync();
+        Assert.Skip(SkipReason);
+        return Task.CompletedTask;
     }
 
     public override Task SessionMaintainsHistoryAsync()
     {
-        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
-        return base.SessionMaintainsHistoryAsync();
+        Assert.Skip(SkipReason);
+        return Task.CompletedTask;
     }
 }

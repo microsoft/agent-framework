@@ -12,13 +12,13 @@ public class AzureAIAgentsChatClientAgentRunTests() : ChatClientAgentRunTests<Az
 
     public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync()
     {
-        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
-        return base.RunWithInstructionsAndNoMessageReturnsExpectedResultAsync();
+        Assert.Skip(SkipReason);
+        return Task.CompletedTask;
     }
 
     public override Task RunWithFunctionsInvokesFunctionsAndReturnsExpectedResultsAsync()
     {
-        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
-        return base.RunWithFunctionsInvokesFunctionsAndReturnsExpectedResultsAsync();
+        Assert.Skip(SkipReason);
+        return Task.CompletedTask;
     }
 }
