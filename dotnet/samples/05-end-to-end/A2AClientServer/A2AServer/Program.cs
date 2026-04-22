@@ -3,7 +3,6 @@ using A2A;
 using A2A.AspNetCore;
 using A2AServer;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Hosting.A2A;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -26,10 +25,6 @@ for (var i = 0; i < args.Length; i++)
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient().AddLogging();
-var app = builder.Build();
-
-var httpClient = app.Services.GetRequiredService<IHttpClientFactory>().CreateClient();
-var logger = app.Logger;
 
 IConfigurationRoot configuration = new ConfigurationBuilder()
     .AddEnvironmentVariables()
@@ -39,7 +34,7 @@ IConfigurationRoot configuration = new ConfigurationBuilder()
 string? apiKey = configuration["OPENAI_API_KEY"];
 string model = configuration["OPENAI_CHAT_MODEL_NAME"] ?? "gpt-5.4-mini";
 string? endpoint = configuration["AZURE_AI_PROJECT_ENDPOINT"];
-string[] agentUrls = (app.Configuration["urls"] ?? "http://localhost:5000").Split(';');
+string[] agentUrls = (builder.Configuration["urls"] ?? "http://localhost:5000").Split(';');
 
 var invoiceQueryPlugin = new InvoiceQuery();
 IList<AITool> tools =
@@ -106,9 +101,11 @@ else
     throw new ArgumentException("Either A2AServer:ApiKey or A2AServer:ConnectionString & agentName must be provided");
 }
 
-app.MapA2A(
-    hostA2AAgent,
-    path: "/", protocolBindings: A2AProtocolBinding.JsonRpc | A2AProtocolBinding.HttpJson);
+builder.AddA2AServer(hostA2AAgent);
+
+var app = builder.Build();
+app.MapA2AHttpJson(hostA2AAgent, "/");
+app.MapA2AJsonRpc(hostA2AAgent, "/");
 
 app.MapWellKnownAgentCard(hostA2AAgentCard);
 
