@@ -28,7 +28,6 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
-from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import AgentTelemetryLayer, ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
@@ -693,35 +692,19 @@ class RawFoundryAgent(  # type: ignore[misc]
             raise ValueError("isolation_key is required. Pass it explicitly or set default_options['isolation_key'].")
         return resolved_isolation_key
 
-    @experimental(feature_id=ExperimentalFeature.FOUNDRY_HOSTED_AGENTS_SESSIONS_CRUD)
-    async def create_service_session(
+    async def _create_service_session_id(
         self,
         *,
         isolation_key: str | None = None,
-        session_id: str | None = None,
-    ) -> AgentSession:
-        """Create a hosted Foundry service session and return it as an AgentSession.
-
-        Keyword Args:
-            isolation_key: Isolation key for the hosted-agent session. When omitted,
-                ``default_options["isolation_key"]`` is used.
-            session_id: Optional local session ID for the returned ``AgentSession``.
-
-        Returns:
-            An ``AgentSession`` with ``service_session_id`` set to the hosted agent session ID.
-
-        Raises:
-            RuntimeError: If hosted-agent preview support is not enabled.
-            ValueError: If no isolation key is available or the service does not
-                return a session ID.
-        """
+    ) -> str:
+        """Create a hosted Foundry service session and return the service session ID."""
         if not isinstance(self.client, RawFoundryAgentChatClient):
-            raise TypeError("create_service_session requires a RawFoundryAgentChatClient-based client.")
+            raise TypeError("_create_service_session_id requires a RawFoundryAgentChatClient-based client.")
         if not self.client.allow_preview:
             raise RuntimeError("Hosted Foundry service sessions require allow_preview=True.")
 
         create_session_kwargs: dict[str, Any] = {
-            "agent_name": self.name,
+            "agent_name": self.client.agent_name,
             "isolation_key": self._resolve_service_session_isolation_key(isolation_key),
         }
         if version := await self.client.get_agent_version():
@@ -734,46 +717,7 @@ class RawFoundryAgent(  # type: ignore[misc]
         if not isinstance(agent_session_id, str) or not agent_session_id:
             raise ValueError("Hosted Foundry session creation did not return a non-empty agent_session_id.")
 
-        return self.get_session(agent_session_id, session_id=session_id)
-
-    @experimental(feature_id=ExperimentalFeature.FOUNDRY_HOSTED_AGENTS_SESSIONS_CRUD)
-    async def delete_service_session(
-        self,
-        session: AgentSession | None = None,
-        *,
-        agent_session_id: str | None = None,
-        isolation_key: str | None = None,
-    ) -> None:
-        """Delete a hosted Foundry service session.
-
-        Keyword Args:
-            session: ``AgentSession`` whose ``service_session_id`` should be deleted.
-            agent_session_id: Explicit hosted-agent session ID to delete.
-            isolation_key: Isolation key for the hosted-agent session. When omitted,
-                ``default_options["isolation_key"]`` is used.
-
-        Raises:
-            RuntimeError: If hosted-agent preview support is not enabled.
-            ValueError: If no session ID or isolation key can be resolved.
-        """
-        if not isinstance(self.client, RawFoundryAgentChatClient):
-            raise TypeError("delete_service_session requires a RawFoundryAgentChatClient-based client.")
-        if not self.client.allow_preview:
-            raise RuntimeError("Hosted Foundry service sessions require allow_preview=True.")
-
-        resolved_session_id = agent_session_id
-        if resolved_session_id is None and session is not None:
-            resolved_session_id = session.service_session_id
-        if resolved_session_id is None:
-            raise ValueError("agent_session_id or a session with service_session_id is required.")
-
-        await self.client.project_client.beta.agents.delete_session(
-            agent_name=self.name,  # type: ignore[reportArgumentType, arg-type]
-            session_id=resolved_session_id,
-            isolation_key=self._resolve_service_session_isolation_key(isolation_key),
-        )
-        if session is not None and session.service_session_id == resolved_session_id:
-            session.service_session_id = None
+        return agent_session_id
 
     @override
     async def _prepare_run_context(
@@ -799,11 +743,9 @@ class RawFoundryAgent(  # type: ignore[misc]
             and session.service_session_id is None
             and effective_options.get("isolation_key") is not None
         ):
-            service_session = await self.create_service_session(
-                session_id=session.session_id,
+            session.service_session_id = await self._create_service_session_id(
                 isolation_key=cast(str | None, effective_options.get("isolation_key")),
             )
-            session.service_session_id = service_session.service_session_id
 
         return await super()._prepare_run_context(
             messages=messages,

@@ -50,7 +50,6 @@ class ExperimentalFeature(str, Enum):
     FILE_HISTORY = "FILE_HISTORY"
     SKILLS = "SKILLS"
     TOOLBOXES = "TOOLBOXES"
-    FOUNDRY_HOSTED_AGENTS_SESSIONS_CRUD = "FOUNDRY_HOSTED_AGENTS_SESSIONS_CRUD"
 
 
 class ReleaseCandidateFeature(str, Enum):
