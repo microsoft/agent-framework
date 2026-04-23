@@ -23,7 +23,7 @@ const string SecondToolboxName = "analysis_toolbox";
 // Replace with any question that exercises the tools configured in your toolbox.
 const string Query = "Introduce yourself and briefly describe the tools you can use to help me.";
 
-string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT_2")
     ?? throw new InvalidOperationException("Set FOUNDRY_PROJECT_ENDPOINT to your Foundry project endpoint.");
 string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 

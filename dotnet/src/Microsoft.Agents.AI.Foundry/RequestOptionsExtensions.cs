@@ -46,8 +46,12 @@ internal static class RequestOptionsExtensions
             return ProcessNextAsync(message, pipeline, currentIndex);
         }
 
-        private static void AddUserAgentHeader(PipelineMessage message) =>
-            message.Request.Headers.Add("User-Agent", s_userAgentValue);
+        private static void AddUserAgentHeader(PipelineMessage message)
+        {
+            var supplement = HostedAgentContext.UserAgentSupplement;
+            var value = supplement is null ? s_userAgentValue : $"{s_userAgentValue} {supplement}";
+            message.Request.Headers.Add("User-Agent", value);
+        }
 
         private static string CreateUserAgentValue()
         {

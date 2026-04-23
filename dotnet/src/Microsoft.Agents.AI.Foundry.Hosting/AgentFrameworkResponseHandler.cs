@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using Azure.AI.AgentServer.Responses;
@@ -22,6 +23,8 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public class AgentFrameworkResponseHandler : ResponseHandler
 {
+    private static readonly string HostedUserAgentValue = CreateHostedUserAgentValue();
+
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
     private readonly FoundryToolboxService? _toolboxService;
@@ -176,7 +179,12 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var options = new ChatClientAgentRunOptions(chatOptions);
 
-        // 6. Set up consent context for -32006 OAuth consent interception.
+        // 6. Set the hosted-agent User-Agent supplement so outgoing API calls include
+        //    "agent-framework-hosted/{version}" in the User-Agent header.
+        var previousUserAgent = HostedAgentContext.UserAgentSupplement;
+        HostedAgentContext.UserAgentSupplement = HostedUserAgentValue;
+
+        // 7. Set up consent context for -32006 OAuth consent interception.
         //    We create a linked CTS so the consent-aware tool wrapper can cancel the agent
         //    run mid-loop when a -32006 error is returned by the proxy. The RequestConsentState
         //    is a shared mutable object that flows via AsyncLocal to the tool wrapper.
@@ -184,7 +192,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var consentState = new RequestConsentState { CancellationSource = consentCts };
         McpConsentContext.Current.Value = consentState;
 
-        // 7. Run the agent and convert output
+        // 8. Run the agent and convert output
         // NOTE: C# forbids 'yield return' inside a try block that has a catch clause,
         // and inside catch blocks. We use a flag to defer the yield to outside the try/catch.
         bool emittedTerminal = false;
@@ -273,6 +281,10 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         }
         finally
         {
+            // Restore the previous User-Agent supplement to avoid leaking state
+            // in case of nested handlers or execution context reuse.
+            HostedAgentContext.UserAgentSupplement = previousUserAgent;
+
             await enumerator.DisposeAsync().ConfigureAwait(false);
 
             // Persist session after streaming completes (successful or not)
@@ -375,5 +387,26 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         }
 
         return agentName;
+    }
+
+    private static string CreateHostedUserAgentValue()
+    {
+        const string Name = "agent-framework-hosted";
+
+        if (typeof(AgentFrameworkResponseHandler).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion is string version)
+        {
+            int pos = version.IndexOf('+');
+            if (pos >= 0)
+            {
+                version = version.Substring(0, pos);
+            }
+
+            if (version.Length > 0)
+            {
+                return $"{Name}/{version}";
+            }
+        }
+
+        return Name;
     }
 }
