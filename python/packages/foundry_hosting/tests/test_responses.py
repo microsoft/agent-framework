@@ -915,3 +915,76 @@ class TestToMessage:
 
 
 # endregion
+
+
+# region User Agent Prefix
+
+
+class TestUserAgentPrefix:
+    """Tests that the user_agent_prefix context manager is active during agent execution."""
+
+    async def test_user_agent_prefix_set_during_non_streaming(self) -> None:
+        """The user agent should contain the foundry-hosting prefix in non-streaming mode."""
+        from agent_framework._telemetry import _get_user_agent  # type: ignore
+
+        captured_user_agent: list[str] = []
+
+        async def run_and_capture(*args: Any, **kwargs: Any) -> AgentResponse:
+            captured_user_agent.append(_get_user_agent())
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
+
+        agent = _make_agent()
+        agent.run = AsyncMock(side_effect=run_and_capture)
+        server = _make_server(agent)
+        resp = await _post(server, input_text="Hi", stream=False)
+
+        assert resp.status_code == 200
+        assert len(captured_user_agent) == 1
+        assert "foundry-hosting" in captured_user_agent[0]
+
+    async def test_user_agent_prefix_set_during_streaming(self) -> None:
+        """The user agent should contain the foundry-hosting prefix in streaming mode."""
+        from agent_framework._telemetry import _get_user_agent  # type: ignore
+
+        captured_user_agent: list[str] = []
+
+        async def _stream_gen() -> AsyncIterator[AgentResponseUpdate]:
+            captured_user_agent.append(_get_user_agent())
+            yield AgentResponseUpdate(contents=[Content.from_text("hello")], role="assistant")
+
+        def run_streaming(*args: Any, **kwargs: Any) -> Any:
+            if kwargs.get("stream"):
+                return ResponseStream(_stream_gen())  # type: ignore
+            raise NotImplementedError
+
+        agent = _make_agent()
+        agent.run = MagicMock(side_effect=run_streaming)
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        assert len(captured_user_agent) == 1
+        assert "foundry-hosting" in captured_user_agent[0]
+
+    async def test_user_agent_extra_headers_during_run(self) -> None:
+        """get_user_agent_extra_headers() should include the prefix during a request."""
+        from agent_framework._telemetry import get_user_agent_extra_headers
+
+        captured_headers: list[dict[str, str]] = []
+
+        async def run_and_capture(*args: Any, **kwargs: Any) -> AgentResponse:
+            captured_headers.append(get_user_agent_extra_headers())
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
+
+        agent = _make_agent()
+        agent.run = AsyncMock(side_effect=run_and_capture)
+        server = _make_server(agent)
+        resp = await _post(server, input_text="Hi", stream=False)
+
+        assert resp.status_code == 200
+        assert len(captured_headers) == 1
+        assert "User-Agent" in captured_headers[0]
+        assert "foundry-hosting" in captured_headers[0]["User-Agent"]
+
+
+# endregion

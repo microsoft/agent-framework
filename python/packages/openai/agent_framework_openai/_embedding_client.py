@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, ov
 
 from agent_framework._clients import BaseEmbeddingClient
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework._telemetry import USER_AGENT_KEY, get_user_agent_extra_headers
 from agent_framework._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
 from agent_framework.observability import EmbeddingTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI
@@ -282,6 +282,13 @@ class RawOpenAIEmbeddingClient(
             kwargs["encoding_format"] = encoding_format
         if user := opts.get("user"):
             kwargs["user"] = user
+        ua_headers = get_user_agent_extra_headers()
+        if ua_headers:
+            existing = kwargs.get("extra_headers")
+            if existing is None:
+                kwargs["extra_headers"] = ua_headers
+            elif USER_AGENT_KEY not in existing:
+                kwargs["extra_headers"] = {**existing, **ua_headers}
 
         response = await self.client.embeddings.create(**kwargs)  # type: ignore[union-attr]
 

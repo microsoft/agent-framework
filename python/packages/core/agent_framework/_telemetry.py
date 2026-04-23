@@ -59,6 +59,24 @@ def _get_user_agent() -> str:
     return f"{'/'.join(prefixes)}/{AGENT_FRAMEWORK_USER_AGENT}"
 
 
+def get_user_agent_extra_headers() -> dict[str, str]:
+    """Return extra headers containing the current User-Agent string for per-request injection.
+
+    This function evaluates the user agent at call time, picking up any active
+    ``user_agent_prefix`` context. Use it to supply ``extra_headers`` on individual
+    API calls so that the User-Agent reflects the current functional area.
+
+    When user agent telemetry is disabled, an empty dict is returned.
+
+    Returns:
+        A dict with ``"User-Agent"`` set to the runtime user agent string,
+        or an empty dict when telemetry is disabled.
+    """
+    if not IS_TELEMETRY_ENABLED:
+        return {}
+    return {USER_AGENT_KEY: _get_user_agent()}
+
+
 def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None) -> dict[str, Any]:
     """Prepend "agent-framework" to the User-Agent in the headers.
 

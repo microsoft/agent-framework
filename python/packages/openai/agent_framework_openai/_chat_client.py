@@ -32,7 +32,7 @@ from agent_framework._clients import BaseChatClient
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework._telemetry import USER_AGENT_KEY, get_user_agent_extra_headers
 from agent_framework._tools import (
     SHELL_TOOL_KIND_VALUE,
     FunctionInvocationConfiguration,
@@ -482,6 +482,13 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         client = self.client
         validated_options = await self._validate_options(options)
         run_options = await self._prepare_options(messages, validated_options)
+        ua_headers = get_user_agent_extra_headers()
+        if ua_headers:
+            existing = run_options.get("extra_headers")
+            if existing is None:
+                run_options["extra_headers"] = ua_headers
+            elif USER_AGENT_KEY not in existing:
+                run_options["extra_headers"] = {**existing, **ua_headers}
         return client, run_options, validated_options
 
     def _handle_request_error(self, ex: Exception) -> NoReturn:
@@ -525,6 +532,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         stream_response = await client.responses.retrieve(
                             continuation_token["response_id"],
                             stream=True,
+                            extra_headers=get_user_agent_extra_headers(),
                         )
                         async for chunk in stream_response:
                             yield self._parse_chunk_from_openai(
@@ -572,7 +580,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 client = self.client
                 validated_options = await self._validate_options(options)
                 try:
-                    response = await client.responses.retrieve(continuation_token["response_id"])
+                    response = await client.responses.retrieve(
+                        continuation_token["response_id"],
+                        extra_headers=get_user_agent_extra_headers(),
+                    )
                 except Exception as ex:
                     self._handle_request_error(ex)
                 return self._parse_response_from_openai(response, options=validated_options)

@@ -8,7 +8,7 @@ from copy import copy
 from typing import TYPE_CHECKING, Any, Literal, Union
 
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
+from agent_framework._telemetry import APP_INFO
 from agent_framework.exceptions import SettingNotFoundError
 from openai import AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, _legacy_response  # type: ignore
 from openai.types import Completion
@@ -174,7 +174,6 @@ def load_openai_service_settings(
     merged_headers = dict(copy(default_headers)) if default_headers else {}
     if APP_INFO:
         merged_headers.update(APP_INFO)
-        merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
 
     api_key_callable = api_key if callable(api_key) else None
     api_key_str = api_key if not callable(api_key) else None

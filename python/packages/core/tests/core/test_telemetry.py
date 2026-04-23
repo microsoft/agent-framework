@@ -6,6 +6,7 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     USER_AGENT_KEY,
     USER_AGENT_TELEMETRY_DISABLED_ENV_VAR,
+    get_user_agent_extra_headers,
     prepend_agent_framework_to_user_agent,
 )
 from agent_framework._telemetry import user_agent_prefix
@@ -150,3 +151,33 @@ def test_user_agent_prefix_nesting():
     # Both removed
     result = prepend_agent_framework_to_user_agent()
     assert result["User-Agent"] == AGENT_FRAMEWORK_USER_AGENT
+
+
+# region Test get_user_agent_extra_headers
+
+
+def test_get_user_agent_extra_headers_returns_user_agent():
+    """Test that get_user_agent_extra_headers returns a User-Agent header."""
+    result = get_user_agent_extra_headers()
+    assert "User-Agent" in result
+    assert result["User-Agent"] == AGENT_FRAMEWORK_USER_AGENT
+
+
+def test_get_user_agent_extra_headers_with_prefix():
+    """Test that get_user_agent_extra_headers respects user_agent_prefix context."""
+    with user_agent_prefix("test-host"):
+        result = get_user_agent_extra_headers()
+        assert result["User-Agent"].startswith("test-host/")
+        assert AGENT_FRAMEWORK_USER_AGENT in result["User-Agent"]
+
+    # After exiting context, prefix is removed
+    result = get_user_agent_extra_headers()
+    assert result["User-Agent"] == AGENT_FRAMEWORK_USER_AGENT
+
+
+def test_get_user_agent_extra_headers_with_nested_prefix():
+    """Test that get_user_agent_extra_headers picks up nested prefixes."""
+    with user_agent_prefix("outer"), user_agent_prefix("inner"):
+        result = get_user_agent_extra_headers()
+        assert "outer" in result["User-Agent"]
+        assert "inner" in result["User-Agent"]

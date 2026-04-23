@@ -22,7 +22,7 @@ from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._docstrings import apply_layered_docstring
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework._telemetry import USER_AGENT_KEY, get_user_agent_extra_headers
 from agent_framework._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -671,6 +671,16 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                 run_options["response_format"] = response_format
             else:
                 run_options["response_format"] = type_to_response_format_param(response_format)
+
+        # runtime user-agent header
+        ua_headers = get_user_agent_extra_headers()
+        if ua_headers:
+            existing = run_options.get("extra_headers")
+            if existing is None:
+                run_options["extra_headers"] = ua_headers
+            elif USER_AGENT_KEY not in existing:
+                run_options["extra_headers"] = {**existing, **ua_headers}
+
         return run_options
 
     def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> ChatResponse:

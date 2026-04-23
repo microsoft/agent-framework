@@ -122,6 +122,7 @@ from ._telemetry import (
     APP_INFO,
     USER_AGENT_KEY,
     USER_AGENT_TELEMETRY_DISABLED_ENV_VAR,
+    get_user_agent_extra_headers,
     prepend_agent_framework_to_user_agent,
 )
 from ._tools import (
@@ -422,6 +423,7 @@ __all__ = [
     "evaluator",
     "executor",
     "function_middleware",
+    "get_user_agent_extra_headers",
     "handler",
     "included_messages",
     "included_token_count",
