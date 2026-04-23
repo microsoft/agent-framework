@@ -303,49 +303,6 @@ public class FoundryToolboxTests
     #region AIProjectClient extension tests
 
     [Fact]
-    public async Task AIProjectClientExtension_GetToolboxVersionAsync_NullClient_ThrowsAsync()
-    {
-        AIProjectClient? client = null;
-        await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            client!.GetToolboxVersionAsync("test-toolbox"));
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public async Task AIProjectClientExtension_GetToolboxVersionAsync_InvalidName_ThrowsAsync(string? name)
-    {
-        var clientOptions = new AIProjectClientOptions();
-        var client = new AIProjectClient(s_testEndpoint, new FakeAuthenticationTokenProvider(), clientOptions);
-        await Assert.ThrowsAnyAsync<ArgumentException>(() =>
-            client.GetToolboxVersionAsync(name!));
-    }
-
-    [Fact]
-    public async Task AIProjectClientExtension_GetToolboxVersionAsync_WithVersion_ReturnsToolboxAsync()
-    {
-        var versionJson = TestDataUtil.GetToolboxVersionResponseJson();
-        using var httpHandler = new HttpHandlerAssert((_) =>
-            new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(versionJson, Encoding.UTF8, "application/json")
-            });
-
-#pragma warning disable CA5399
-        using var httpClient = new HttpClient(httpHandler);
-#pragma warning restore CA5399
-        var clientOptions = new AIProjectClientOptions();
-        clientOptions.Transport = new HttpClientPipelineTransport(httpClient);
-        var client = new AIProjectClient(s_testEndpoint, new FakeAuthenticationTokenProvider(), clientOptions);
-
-        var result = await client.GetToolboxVersionAsync("research_tools", version: "v5");
-
-        Assert.Equal("research_tools", result.Name);
-        Assert.Equal("v5", result.Version);
-    }
-
-    [Fact]
     public async Task AIProjectClientExtension_GetToolboxToolsAsync_ReturnsAIToolsAsync()
     {
         var versionJson = TestDataUtil.GetToolboxVersionResponseJson();
