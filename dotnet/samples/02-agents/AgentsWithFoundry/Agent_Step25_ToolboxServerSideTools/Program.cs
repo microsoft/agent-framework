@@ -3,9 +3,6 @@
 // This sample shows how to load a Foundry toolbox and pass its tools as server-side
 // tools when creating an agent. The Foundry platform handles tool execution — the agent
 // process does not invoke tools locally.
-//
-// This is the dotnet equivalent of the Python sample:
-//   python/samples/02-agents/providers/foundry/foundry_chat_client_with_toolbox.py
 
 using System.ClientModel;
 using System.ClientModel.Primitives;
@@ -27,10 +24,13 @@ const string SecondToolboxName = "analysis_toolbox";
 // Replace with any question that exercises the tools configured in your toolbox.
 const string Query = "Introduce yourself and briefly describe the tools you can use to help me.";
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT_2")
     ?? throw new InvalidOperationException("Set AZURE_AI_PROJECT_ENDPOINT to your Foundry project endpoint.");
-string model = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 var projectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
 await Main(projectClient, model);
@@ -107,7 +107,7 @@ static async Task CreateSampleToolboxAsync(AIProjectClient projectClient, string
     var options = new AgentAdministrationClientOptions();
     options.AddPolicy(new FoundryFeaturesPolicy("Toolboxes=V1Preview"), PipelinePosition.PerCall);
     var adminClient = new AgentAdministrationClient(
-        new Uri(Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")!),
+        new Uri(endpoint),
         new DefaultAzureCredential(),
         options);
     var toolboxClient = adminClient.GetAgentToolboxes();
