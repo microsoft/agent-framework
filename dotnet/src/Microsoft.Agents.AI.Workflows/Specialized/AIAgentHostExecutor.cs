@@ -299,7 +299,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
                 AuthorName = message.AuthorName,
                 MessageId = message.MessageId,
                 CreatedAt = message.CreatedAt,
-                AdditionalProperties = message.AdditionalProperties,
+                AdditionalProperties = message.AdditionalProperties is null ? null : new(message.AdditionalProperties),
             });
         }
 
