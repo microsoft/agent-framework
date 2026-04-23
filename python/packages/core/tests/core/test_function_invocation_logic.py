@@ -3808,6 +3808,7 @@ async def test_user_input_request_empty_contents_returns_fallback(chat_client_ba
     assert len(function_results) >= 1
     assert any("user input" in (fr.result or "").lower() for fr in function_results)
 
+
 @pytest.mark.parametrize(
     "option_key,option_value",
     [
