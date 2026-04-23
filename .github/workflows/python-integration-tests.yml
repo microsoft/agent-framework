@@ -157,7 +157,7 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
-      OLLAMA_MODEL: qwen2.5:0.5b
+      OLLAMA_MODEL: qwen2.5:1.5b
       OLLAMA_EMBEDDING_MODEL: nomic-embed-text
     defaults:
       run:
@@ -180,7 +180,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
-          key: ollama-models-qwen2.5-0.5b-nomic-embed-text-v1
+          key: ollama-models-qwen2.5-1.5b-nomic-embed-text-v1
       - name: Start Ollama and pull models
         run: |
           ollama serve &
@@ -190,7 +190,7 @@ jobs:
             fi
             sleep 1
           done
-          ollama pull qwen2.5:0.5b
+          ollama pull qwen2.5:1.5b
           ollama pull nomic-embed-text
         working-directory: .
       - name: Start local MCP server
