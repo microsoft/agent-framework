@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
+from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -473,7 +474,7 @@ def _build_execution_contents(
 
 
 def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
-    sandbox_tool = tool_obj
+    sandbox_tool = copy(tool_obj)
 
     def _callback(**kwargs: Any) -> Any:
         async def _invoke() -> Any:
