@@ -20,7 +20,6 @@ from agent_framework import (
     SupportsAgentRun,
     WorkflowAgent,
 )
-from agent_framework._telemetry import user_agent_prefix
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseEventStream,
@@ -90,7 +89,6 @@ logger = logging.getLogger(__name__)
 class ResponsesHostServer(ResponsesAgentServerHost):
     """A responses server host for an agent."""
 
-    USER_AGENT_PREFIX = "foundry-hosting"
     # TODO(@taochen): Allow a different checkpoint storage that stores checkpoints externally
     CHECKPOINT_STORAGE_PATH = "/.checkpoints"
 
@@ -150,37 +148,32 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._is_workflow_agent = True
 
         self._agent = agent
-        self.response_handler(self._handler)  # pyright: ignore[reportUnknownMemberType]
+        self.response_handler(self._handle_response)  # pyright: ignore[reportUnknownMemberType]
 
     @staticmethod
     def _is_streaming_request(request: CreateResponse) -> bool:
         """Check if the request is a streaming request."""
         return request.stream is not None and request.stream is True
 
-    async def _handler(
+    async def _handle_response(
         self,
         request: CreateResponse,
         context: ResponseContext,
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
-        with user_agent_prefix(self.USER_AGENT_PREFIX):
-            async for event in self._handle_inner(request, context, cancellation_signal):
-                yield event
+        if self._is_workflow_agent:
+            # Workflow agents are handled differently because they require checkpoint restoration
+            return self._handle_workflow_agent(request, context)
 
-    async def _handle_inner(
+        return self._handle_regular_agent(request, context)
+
+    async def _handle_regular_agent(
         self,
         request: CreateResponse,
         context: ResponseContext,
-        cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
-        """Core handler logic."""
-        if self._is_workflow_agent:
-            # Workflow agents are handled differently because they require checkpoint restoration
-            async for event in self._handle_workflow_agent(request, context, cancellation_signal):
-                yield event
-            return
-
+        """Handle the creation of a response for a regular (non-workflow) agent."""
         input_text = await context.get_input_text()
         history = await context.get_history()
         messages: list[str | Content | Message] = [*_to_messages(history), input_text]
@@ -243,7 +236,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self,
         request: CreateResponse,
         context: ResponseContext,
-        cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response for a workflow agent.
 
