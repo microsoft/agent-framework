@@ -108,6 +108,10 @@ jobs:
     needs: team_check
     if: ${{ needs.team_check.outputs.is_team_member == 'true' }}
     timeout-minutes: 60
+    # Advisory check: failures here should not block the PR. The reviewer
+    # posts comments as a best-effort signal; if the pipeline breaks, the
+    # PR author should still be able to merge without a red required check.
+    continue-on-error: true
 
     steps:
       # Safe checkout: base repo only, not the untrusted PR head.

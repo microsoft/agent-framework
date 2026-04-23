@@ -607,6 +607,14 @@ def test_get_mcp_tool_with_project_connection_id() -> None:
     assert tool_config["project_connection_id"] == "conn-123"
     assert tool_config["allowed_tools"] == ["search_docs"]
     assert tool_config["server_label"] == "Docs_MCP"
+    # ``server_url`` should not be fabricated when only a project connection is supplied.
+    assert "server_url" not in tool_config
+
+
+def test_get_mcp_tool_requires_url_or_project_connection_id() -> None:
+    """Missing both ``url`` and ``project_connection_id`` is always invalid."""
+    with pytest.raises(ValueError, match="url.*project_connection_id"):
+        FoundryChatClient.get_mcp_tool(name="x")
 
 
 def test_prepare_tools_for_openai_strips_extraneous_name_from_foundry_mcp_tool() -> None:
@@ -653,6 +661,103 @@ def test_prepare_tools_for_openai_strips_read_model_fields_from_toolbox_code_int
     assert prepared["container"] == {"file_ids": [], "type": "auto"}
     assert "name" not in prepared
     assert "description" not in prepared
+
+
+def test_prepare_tools_for_openai_injects_default_container_for_code_interpreter_dict() -> None:
+    """Toolbox-returned code_interpreter without a container must get a default injected.
+
+    The Azure SDK treats ``container`` as optional, but the Responses API rejects
+    ``code_interpreter`` entries without one. The sanitizer backfills ``{"type": "auto"}``.
+    """
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = {
+        "type": "code_interpreter",
+        "name": "code_interpreter_t6bbtm",
+    }
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    prepared = response_tools[0]
+    assert prepared["type"] == "code_interpreter"
+    assert prepared["container"] == {"type": "auto"}
+    assert "name" not in prepared
+
+
+def test_prepare_tools_for_openai_injects_default_container_for_code_interpreter_sdk_instance() -> None:
+    """SDK ``CodeInterpreterTool`` instances without a container must also be backfilled.
+
+    Reproduces the toolbox creation path that calls
+    ``CodeInterpreterTool(name="code_interpreter")`` without a container.
+    """
+    from azure.ai.projects.models import CodeInterpreterTool
+
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response_tools = client._prepare_tools_for_openai([CodeInterpreterTool(name="code_interpreter")])
+
+    assert len(response_tools) == 1
+    prepared = response_tools[0]
+    assert prepared["type"] == "code_interpreter"
+    assert prepared["container"] == {"type": "auto"}
+    assert "name" not in prepared
+
+
+def test_prepare_tools_for_openai_preserves_existing_code_interpreter_container() -> None:
+    """An already-populated container must not be overwritten by the sanitizer."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    explicit_container = {"file_ids": ["file_123"], "type": "auto"}
+    tool = {"type": "code_interpreter", "container": explicit_container}
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert response_tools[0]["container"] == explicit_container
+
+
+def test_prepare_tools_for_openai_rejects_file_search_without_vector_store_ids() -> None:
+    """``file_search`` without ``vector_store_ids`` is always invalid — surface a clear error."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    with pytest.raises(ValueError, match="vector_store_ids"):
+        client._prepare_tools_for_openai([{"type": "file_search", "name": "fs"}])
+
+
+def test_prepare_tools_for_openai_rejects_mcp_without_server_destination() -> None:
+    """``mcp`` with neither ``server_url`` nor ``project_connection_id`` is always invalid."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryMCPTool(server_label="orphan")
+
+    with pytest.raises(ValueError, match="server_url.*project_connection_id"):
+        client._prepare_tools_for_openai([tool])
+
+
+def test_prepare_tools_for_openai_accepts_mcp_with_only_project_connection_id() -> None:
+    """MCP tools backed by a Foundry connection (no ``server_url``) must still pass validation."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryMCPTool(server_label="githubmcp")
+    tool["project_connection_id"] = "githubmcp"
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    assert response_tools[0]["project_connection_id"] == "githubmcp"
+    assert "server_url" not in response_tools[0]
 
 
 def test_prepare_tools_for_openai_strips_name_from_non_function_hosted_tool_dicts() -> None:

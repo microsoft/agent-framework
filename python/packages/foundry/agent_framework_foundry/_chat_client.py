@@ -455,8 +455,18 @@ class RawFoundryChatClient(  # type: ignore[misc]
 
         Returns:
             An MCPTool configuration ready to pass to an Agent.
+
+        Raises:
+            ValueError: If neither ``url`` nor ``project_connection_id`` is supplied
+                — one is required by the Foundry Responses API.
         """
-        mcp = FoundryMCPTool(server_label=name.replace(" ", "_"), server_url=url or "", **kwargs)
+        if not url and not project_connection_id:
+            raise ValueError("MCP tool requires either 'url' or 'project_connection_id' to be specified.")
+
+        mcp_kwargs: dict[str, Any] = {"server_label": name.replace(" ", "_"), **kwargs}
+        if url:
+            mcp_kwargs["server_url"] = url
+        mcp = FoundryMCPTool(**mcp_kwargs)
 
         if description:
             mcp["server_description"] = description

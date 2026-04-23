@@ -344,11 +344,13 @@
     <Project Path="samples/04-hosting/DurableAgents/ConsoleApps/06_LongRunningTools/06_LongRunningTools.csproj" />
     <Project Path="samples/04-hosting/DurableAgents/ConsoleApps/07_ReliableStreaming/07_ReliableStreaming.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/A2A/">
-    <File Path="samples/04-hosting/A2A/README.md" />
-    <Project Path="samples/04-hosting/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
-    <Project Path="samples/04-hosting/A2A/A2AAgent_PollingForTaskCompletion/A2AAgent_PollingForTaskCompletion.csproj" />
-  </Folder>
+  <Folder Name="/Samples/02-agents/A2A/">
+    <File Path="samples/02-agents/A2A/README.md" />
+    <Project Path="samples/02-agents/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
+    <Project Path="samples/02-agents/A2A/A2AAgent_PollingForTaskCompletion/A2AAgent_PollingForTaskCompletion.csproj" />
+    <Project Path="samples/02-agents/A2A/A2AAgent_StreamReconnection/A2AAgent_StreamReconnection.csproj" />
+    <Project Path="samples/02-agents/A2A/A2AAgent_ProtocolSelection/A2AAgent_ProtocolSelection.csproj" />
+  </Folder>  
   <Folder Name="/Samples/05-end-to-end/">
     <Project Path="samples/05-end-to-end/AgentWithPurview/AgentWithPurview.csproj" />
     <Project Path="samples/05-end-to-end/M365Agent/M365Agent.csproj" />

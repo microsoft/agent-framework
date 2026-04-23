@@ -18,8 +18,12 @@ AIAgent agent = agentCard.AsAIAgent();
 
 AgentSession session = await agent.CreateSessionAsync();
 
+// AllowBackgroundResponses must be true so the server returns immediately with a continuation token
+// instead of blocking until the task is complete.
+AgentRunOptions options = new() { AllowBackgroundResponses = true };
+
 // Start the initial run with a long-running task.
-AgentResponse response = await agent.RunAsync("Conduct a comprehensive analysis of quantum computing applications in cryptography, including recent breakthroughs, implementation challenges, and future roadmap. Please include diagrams and visual representations to illustrate complex concepts.", session);
+AgentResponse response = await agent.RunAsync("Conduct a comprehensive analysis of quantum computing applications in cryptography, including recent breakthroughs, implementation challenges, and future roadmap. Please include diagrams and visual representations to illustrate complex concepts.", session, options: options);
 
 // Poll until the response is complete.
 while (response.ContinuationToken is { } token)
