@@ -16,8 +16,9 @@ This is the dotnet equivalent of the Python sample:
 - `AZURE_AI_PROJECT_ENDPOINT` environment variable set to your Foundry project endpoint
 - `AZURE_AI_MODEL_DEPLOYMENT_NAME` environment variable set (defaults to `gpt-5.4-mini`)
 
-The sample creates a toolbox automatically on first run. Comment out the
-`CreateSampleToolboxAsync` call if your toolbox already exists.
+The sample recreates the toolbox on each run, replacing any existing toolbox with
+the same name. Comment out the `CreateSampleToolboxAsync` call if you want to keep
+an existing toolbox unchanged.
 
 ## How it works
 
