@@ -504,3 +504,38 @@ async def test_foundry_agent_custom_client_run() -> None:
     assert isinstance(response, AgentResponse)
     assert response.text is not None
     assert "response test" in response.text.lower()
+
+
+async def test_foundry_agent_telemetry_defaults() -> None:
+    """Test that agent name acts as a fallback and _prepare_options lazily gets model."""
+    mock_project = MagicMock()
+    mock_openai = MagicMock()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    # Mock agents getter
+    mock_agent_instance = MagicMock()
+    mock_agent_instance.model = "gpt-telemetry-test"
+    mock_project.agents.get_agent = AsyncMock(return_value=mock_agent_instance)
+
+    agent = FoundryAgent(
+        project_client=mock_project,
+        agent_name="my-telemetry-agent",
+        name=None  # Explicitly None to test fallback
+    )
+
+    assert agent.name == "my-telemetry-agent"
+    assert getattr(agent.client, "model", "unknown") == "unknown"
+
+    # Call prepare_options to trigger lazy load
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={},
+    ):
+        await agent.client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={},
+        )
+
+    assert agent.client.model == "gpt-telemetry-test"
+    mock_project.agents.get_agent.assert_called_once_with("my-telemetry-agent")

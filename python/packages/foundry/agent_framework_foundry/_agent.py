@@ -216,6 +216,15 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             ref["version"] = self.agent_version
         return ref
 
+    @property
+    def model(self) -> str:
+        """Get the lazily fetched model name, or 'unknown' if not yet fetched."""
+        return getattr(self, "_fetched_model", "unknown")
+
+    @model.setter
+    def model(self, value: str) -> None:
+        pass
+
     @override
     def as_agent(
         self,
@@ -271,6 +280,29 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Prepare options for the Responses API, injecting agent reference and validating tools."""
+        # Lazily fetch the model name if not already cached
+        if not hasattr(self, "_fetched_model"):
+            try:
+                agent = await self.project_client.agents.get_agent(self.agent_name)
+                self._fetched_model = getattr(agent, "model", "unknown")
+            except Exception:
+                self._fetched_model = "unknown"
+
+            # Try to update the current OpenTelemetry span directly
+            if hasattr(self, "_fetched_model") and self._fetched_model != "unknown":
+                try:
+                    from opentelemetry import trace
+                    from agent_framework.observability import OtelAttr
+
+                    current_span = trace.get_current_span()
+                    if current_span and current_span.is_recording():
+                        current_span.set_attribute(OtelAttr.REQUEST_MODEL, self._fetched_model)
+                        span_name_parts = current_span.name.split(" ", 1)
+                        if len(span_name_parts) > 0:
+                            current_span.update_name(f"{span_name_parts[0]} {self._fetched_model}")
+                except Exception:
+                    pass
+
         # Validate tools — only FunctionTool allowed
         tools = options.get("tools", [])
         if tools:
@@ -566,11 +598,13 @@ class RawFoundryAgent(  # type: ignore[misc]
 
         client = actual_client_type(**client_kwargs)
 
+        resolved_name = name if name is not None else getattr(client, "agent_name", None)
+
         super().__init__(
             client=client,  # type: ignore[arg-type]
             instructions=instructions,
             id=id,
-            name=name,
+            name=resolved_name,
             description=description,
             tools=tools,  # type: ignore[arg-type]
             default_options=cast(FoundryAgentOptionsT | None, default_options),
