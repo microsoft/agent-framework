@@ -52,6 +52,12 @@ def create_server(*, host: str, port: int, mount_path: str) -> FastMCP:
             }
         )
 
+    @server.custom_route("/liveness", methods=["GET"], include_in_schema=False)
+    async def liveness(_request: Request) -> Response:
+        """Return a simple liveness response for Kubernetes liveness probes."""
+        await asyncio.sleep(0)
+        return JSONResponse({"status": "alive"})
+
     @server.tool(
         name="search_agent_framework_docs",
         description="Return deterministic Agent Framework documentation text for MCP integration tests.",
