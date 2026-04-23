@@ -497,38 +497,7 @@ The instructions explain:
 
 ### 9. LabeledMessage Class
 
-<<<<<<< HEAD
 **LabeledMessage** automatically infers security labels based on message role:
-=======
-The middleware now tracks security labels at the **message level**, not just tool calls:
-
-```python
-from agent_framework.security import LabelTrackingFunctionMiddleware, LabeledMessage
-
-middleware = LabelTrackingFunctionMiddleware()
-
-# Label messages in a conversation
-messages = [
-    {"role": "user", "content": "Hello"},           # Auto-labeled TRUSTED
-    {"role": "assistant", "content": "Hi there"},   # Auto-labeled TRUSTED (no untrusted sources)
-    {"role": "tool", "content": "API response"},    # Auto-labeled UNTRUSTED
-]
-
-labeled_messages = middleware.label_messages(messages)
-# labeled_messages[0].security_label.integrity == TRUSTED
-# labeled_messages[2].security_label.integrity == UNTRUSTED
-
-# Individual message labeling
-middleware.label_message(message_index=5, label=custom_label)
-label = middleware.get_message_label(5)
-
-# Get all message labels
-all_labels = middleware.get_all_message_labels()
-```
-
-**LabeledMessage Class:**
-- Automatically infers labels based on message role
->>>>>>> 1d4a67d210d9af8a55f4a939a0283ee6b9fb450f
 - User/system messages → TRUSTED
 - Tool messages → UNTRUSTED
 - Assistant messages → Inherit from source_labels or TRUSTED
