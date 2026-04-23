@@ -180,6 +180,43 @@ def test_init_with_default_header() -> None:
         assert client.default_headers[key] == value
 
 
+def test_default_headers_forwarded_to_openai_client() -> None:
+    """Regression: ``default_headers`` must be forwarded to the underlying AsyncOpenAI client.
+
+    Previously, ``FoundryChatClient(default_headers=...)`` stored the headers on the instance
+    but called ``project_client.get_openai_client()`` without forwarding them, so the headers
+    never reached outbound HTTP requests.
+    """
+    default_headers = {"x-custom-header": "repro-value"}
+    mock_openai_client = _make_mock_openai_client()
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+
+    FoundryChatClient(
+        project_client=project_client,
+        model=_TEST_FOUNDRY_MODEL,
+        default_headers=default_headers,
+    )
+
+    project_client.get_openai_client.assert_called_once()
+    forwarded = project_client.get_openai_client.call_args.kwargs.get("default_headers")
+    assert forwarded is not None
+    for key, value in default_headers.items():
+        assert forwarded.get(key) == value
+
+
+def test_get_openai_client_not_called_with_headers_kwarg_when_unset() -> None:
+    """When ``default_headers`` is not passed, don't inject an empty dict into the Azure call."""
+    mock_openai_client = _make_mock_openai_client()
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+
+    FoundryChatClient(project_client=project_client, model=_TEST_FOUNDRY_MODEL)
+
+    project_client.get_openai_client.assert_called_once()
+    assert "default_headers" not in project_client.get_openai_client.call_args.kwargs
+
+
 def test_init_with_project_endpoint_creates_project_client() -> None:
     credential = MagicMock()
     mock_openai_client = _make_mock_openai_client()
