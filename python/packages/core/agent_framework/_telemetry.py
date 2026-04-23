@@ -33,6 +33,7 @@ _FOUNDRY_HOSTING_ENV_VAR = "FOUNDRY_HOSTING_ENVIRONMENT"
 _HOSTED_USER_AGENT_PREFIX = "foundry-hosting"
 
 _user_agent_prefixes: set[str] = set()
+_hosted_env_detected: bool = False
 
 
 def _add_user_agent_prefix(prefix: str) -> None:
@@ -52,8 +53,15 @@ def _detect_hosted_environment() -> None:
     """Detect if running in a hosted environment and add the user agent prefix.
 
     Checks the ``FOUNDRY_HOSTING_ENVIRONMENT`` env var first, then falls back
-    to importing ``AgentConfig`` from the agent server SDK as a second layer.
+    to checking whether the agent server SDK is installed (via
+    ``importlib.util.find_spec``) before importing it, to avoid unnecessary
+    import overhead for non-hosted scenarios.
     """
+    global _hosted_env_detected
+    if _hosted_env_detected:
+        return
+    _hosted_env_detected = True
+
     env_value = os.environ.get(_FOUNDRY_HOSTING_ENV_VAR)
     if env_value is not None:
         # Env var exists — trust its value and skip the fallback.
@@ -62,6 +70,11 @@ def _detect_hosted_environment() -> None:
         return
 
     # Env var not set — fall back to AgentConfig as a second layer of defense.
+    # Use find_spec to avoid the cost of a full import when the SDK is not installed.
+    import importlib.util
+
+    if importlib.util.find_spec("azure.ai.agentserver.core") is None:
+        return
     try:
         from azure.ai.agentserver.core import AgentConfig  # pyright: ignore[reportMissingImports]
 
@@ -71,12 +84,9 @@ def _detect_hosted_environment() -> None:
         pass
 
 
-# Run detection of hosted environment on import
-_detect_hosted_environment()
-
-
 def get_user_agent() -> str:
     """Return the full user agent string including any registered prefixes."""
+    _detect_hosted_environment()
     if not _user_agent_prefixes:
         return AGENT_FRAMEWORK_USER_AGENT
     return f"{'/'.join(sorted(_user_agent_prefixes))}/{AGENT_FRAMEWORK_USER_AGENT}"

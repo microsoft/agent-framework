@@ -155,7 +155,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         """Check if the request is a streaming request."""
         return request.stream is not None and request.stream is True
 
-    async def _handle_response(
+    def _handle_response(
         self,
         request: CreateResponse,
         context: ResponseContext,
