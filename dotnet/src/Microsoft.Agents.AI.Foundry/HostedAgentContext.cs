@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// <para>
 /// When an agent is running inside a Foundry Hosted Agent, the hosting layer sets
-/// <see cref="UserAgentSupplement"/> to a string like <c>"agent-framework-hosted/1.0.0"</c>.
+/// <see cref="UserAgentSupplement"/> to a string like <c>"foundry-hosting/agent-framework-dotnet/1.0.0"</c>.
 /// The MEAI pipeline policy reads this value on each outgoing request and appends it to
 /// the <c>User-Agent</c> header.
 /// </para>
@@ -27,7 +27,7 @@ public static class HostedAgentContext
     private static readonly AsyncLocal<string?> s_userAgentSupplement = new();
 
     /// <summary>
-    /// Gets or sets an optional supplemental User-Agent segment (e.g. <c>"agent-framework-hosted/1.0.0"</c>)
+    /// Gets or sets an optional supplemental User-Agent segment (e.g. <c>"foundry-hosting/agent-framework-dotnet/1.0.0"</c>)
     /// that will be appended to the base MEAI User-Agent header on outgoing requests.
     /// </summary>
     /// <value>

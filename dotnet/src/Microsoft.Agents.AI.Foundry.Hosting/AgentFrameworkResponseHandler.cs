@@ -391,7 +391,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
     private static string CreateHostedUserAgentValue()
     {
-        const string Name = "agent-framework-hosted";
+        const string Name = "foundry-hosting/agent-framework-dotnet";
 
         if (typeof(AgentFrameworkResponseHandler).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion is string version)
         {
