@@ -2351,7 +2351,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
                     # Once a background response completes, strip polling/background
                     # options so subsequent tool-loop iterations POST results normally.
-                    if response.continuation_token is None:
+                    if response.continuation_token is None and (
+                        "continuation_token" in mutable_options or "background" in mutable_options
+                    ):
                         mutable_options.pop("continuation_token", None)
                         mutable_options.pop("background", None)
 
@@ -2504,7 +2506,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
                 # Once a background response completes, strip polling/background
                 # options so subsequent tool-loop iterations POST results normally.
-                if response.continuation_token is None:
+                if response.continuation_token is None and (
+                    "continuation_token" in mutable_options or "background" in mutable_options
+                ):
                     mutable_options.pop("continuation_token", None)
                     mutable_options.pop("background", None)
 

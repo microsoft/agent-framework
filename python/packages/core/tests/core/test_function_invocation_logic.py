@@ -3808,14 +3808,66 @@ async def test_user_input_request_empty_contents_returns_fallback(chat_client_ba
     assert len(function_results) >= 1
     assert any("user input" in (fr.result or "").lower() for fr in function_results)
 
-
-async def test_continuation_token_stripped_after_completed_response(chat_client_base: SupportsChatGetResponse):
-    """continuation_token from options must not persist across tool-loop iterations.
+@pytest.mark.parametrize(
+    "option_key,option_value",
+    [
+        ("continuation_token", {"response_id": "resp_abc123"}),
+        ("background", True),
+    ],
+    ids=["continuation_token", "background"],
+)
+async def test_polling_option_stripped_after_completed_response(
+    chat_client_base: SupportsChatGetResponse, option_key: str, option_value: Any
+):
+    """Polling/background options must not persist across tool-loop iterations.
 
     When a background response completes (continuation_token becomes None),
     subsequent tool-result submissions should POST normally instead of
-    retrieving the same completed response.
+    retrieving the same completed response or starting new background jobs.
     """
+    recorded_options: list[dict[str, Any]] = []
+    original_get = chat_client_base._get_non_streaming_response
+
+    async def _tracking_get(*, messages, options, **kwargs):
+        recorded_options.append(dict(options))
+        return await original_get(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _tracking_get
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup(query: str) -> str:
+        return f"found: {query}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="c1", name="lookup", arguments='{"query": "test"}'),
+                ],
+            ),
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["answer"])),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["find test"])],
+        options={
+            "tools": [lookup],
+            "tool_choice": "auto",
+            option_key: option_value,
+        },
+    )
+
+    assert chat_client_base.call_count >= 2
+    assert option_key in recorded_options[0], f"First call should include {option_key}"
+    assert option_key not in recorded_options[1], (
+        f"{option_key} must be stripped after the background response completes"
+    )
+
+
+async def test_both_polling_options_stripped_after_completed_response(chat_client_base: SupportsChatGetResponse):
+    """Both continuation_token and background are stripped together on completion."""
     recorded_options: list[dict[str, Any]] = []
     original_get = chat_client_base._get_non_streaming_response
 
@@ -3847,21 +3899,23 @@ async def test_continuation_token_stripped_after_completed_response(chat_client_
             "tools": [lookup],
             "tool_choice": "auto",
             "continuation_token": {"response_id": "resp_abc123"},
+            "background": True,
         },
     )
 
     assert chat_client_base.call_count >= 2
-    assert "continuation_token" in recorded_options[0], "First call should include continuation_token"
+    assert "continuation_token" in recorded_options[0]
+    assert recorded_options[0].get("background") is True
     assert "continuation_token" not in recorded_options[1], (
         "continuation_token must be stripped after the background response completes"
     )
+    assert not recorded_options[1].get("background", False), (
+        "background must be stripped after the background response completes"
+    )
 
 
-async def test_background_option_stripped_after_completed_response(chat_client_base: SupportsChatGetResponse):
-    """background=True from options must not persist across tool-loop iterations.
-
-    Tool-result submissions should not start new background jobs.
-    """
+async def test_polling_options_preserved_while_background_in_progress(chat_client_base: SupportsChatGetResponse):
+    """Options are preserved when continuation_token is non-None (background job still in progress)."""
     recorded_options: list[dict[str, Any]] = []
     original_get = chat_client_base._get_non_streaming_response
 
@@ -3876,6 +3930,7 @@ async def test_background_option_stripped_after_completed_response(chat_client_b
         return f"found: {query}"
 
     chat_client_base.run_responses = [
+        # First response: still in progress (non-None continuation_token) with a function call
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -3883,7 +3938,9 @@ async def test_background_option_stripped_after_completed_response(chat_client_b
                     Content.from_function_call(call_id="c1", name="lookup", arguments='{"query": "test"}'),
                 ],
             ),
+            continuation_token={"response_id": "resp_in_progress"},
         ),
+        # Second response: completed (continuation_token defaults to None)
         ChatResponse(messages=Message(role="assistant", contents=["answer"])),
     ]
 
@@ -3892,12 +3949,78 @@ async def test_background_option_stripped_after_completed_response(chat_client_b
         options={
             "tools": [lookup],
             "tool_choice": "auto",
+            "continuation_token": {"response_id": "resp_abc123"},
             "background": True,
         },
     )
 
     assert chat_client_base.call_count >= 2
-    assert recorded_options[0].get("background") is True, "First call should include background=True"
-    assert not recorded_options[1].get("background", False), (
-        "background must be stripped after the background response completes"
+    # After the first response with non-None continuation_token, options should be preserved
+    assert "continuation_token" in recorded_options[1], (
+        "continuation_token should be preserved while background job is in progress"
+    )
+    assert recorded_options[1].get("background") is True, (
+        "background should be preserved while background job is in progress"
+    )
+
+
+@pytest.mark.parametrize(
+    "option_key,option_value",
+    [
+        ("continuation_token", {"response_id": "resp_abc123"}),
+        ("background", True),
+    ],
+    ids=["continuation_token", "background"],
+)
+async def test_polling_option_stripped_after_completed_streaming_response(
+    chat_client_base: SupportsChatGetResponse, option_key: str, option_value: Any
+):
+    """Streaming path: polling/background options must not persist across tool-loop iterations."""
+    recorded_options: list[dict[str, Any]] = []
+    original_stream = chat_client_base._get_streaming_response
+
+    def _tracking_stream(*, messages, options, **kwargs):
+        recorded_options.append(dict(options))
+        return original_stream(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_streaming_response = _tracking_stream
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup(query: str) -> str:
+        return f"found: {query}"
+
+    chat_client_base.streaming_responses = [
+        # First streaming round: function call
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="c1", name="lookup", arguments='{"query": "test"}')],
+                role="assistant",
+                finish_reason="function_call",
+            ),
+        ],
+        # Second streaming round: final answer
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("answer")],
+                role="assistant",
+                finish_reason="stop",
+            ),
+        ],
+    ]
+
+    async for _ in chat_client_base.get_response(
+        [Message(role="user", contents=["find test"])],
+        options={
+            "tools": [lookup],
+            "tool_choice": "auto",
+            option_key: option_value,
+        },
+        stream=True,
+    ):
+        pass
+
+    assert chat_client_base.call_count >= 2
+    assert option_key in recorded_options[0], f"First call should include {option_key}"
+    assert option_key not in recorded_options[1], (
+        f"{option_key} must be stripped after the background streaming response completes"
     )
