@@ -30,6 +30,7 @@ from typing import Any
 
 from agent_framework import (
     Agent,
+    AgentSession,
     Content,
     SecureAgentConfig,
     tool,
@@ -284,7 +285,13 @@ async def run_scenarios(agent, config):
     print("- Injection attempts in emails are NOT followed")
     print()
 
-    response = await agent.run("Please fetch my recent emails and give me a brief summary of each one.")
+    # Use a shared session so conversation history persists across scenarios.
+    # Without this, each agent.run() starts a fresh conversation and the LLM
+    # won't know about the emails fetched in Scenario 1 — it would never
+    # attempt to call send_email, so the policy enforcer would never trigger.
+    session = AgentSession()
+
+    response = await agent.run("Please fetch my recent emails and give me a brief summary of each one.", session=session)
     print(f"\n📋 Agent Response:\n{'-' * 40}")
     print(response.text)
 
@@ -301,7 +308,9 @@ async def run_scenarios(agent, config):
     print("- Agent should explain it cannot send email due to security policy")
     print()
 
-    response = await agent.run("Now please send an email to colleague@company.com summarizing what you found.")
+    response = await agent.run(
+        "Now please send an email to colleague@company.com summarizing what you found.", session=session
+    )
     print(f"\n📋 Agent Response:\n{'-' * 40}")
     print(response.text)
 

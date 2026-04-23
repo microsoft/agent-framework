@@ -108,16 +108,32 @@ async def fetch_emails(count: int = 5) -> list[Content]:
             }),
             additional_properties={
                 "security_label": {
-                    "integrity": "trusted" if email["is_internal"] else "untrusted",
+                    "integrity": "trusted" if email["internal"] else "untrusted",
                     "confidentiality": "private",
                 }
-            },
+            ),
+        )
+        for email in emails
+    ]
+```
+
+These embedded labels are automatically consumed by `LabelTrackingFunctionMiddleware`, which:
+- Extracts the `security_label` from `additional_properties`
+- Uses the embedded label as the highest-priority source for that item
+- Automatically hides UNTRUSTED items in the variable store
+- Replaces hidden items with `VariableReferenceContent` in the LLM context
+- Preserves TRUSTED items visible to the LLM without tainting the context label
+
+This enables tools to return mixed-trust data where some items (internal emails) remain visible while untrusted items (external emails) are automatically hidden without manual intervention.
+           },
         )
         for email in emails
     ]
 ```
 
 ### 3. Automatic Variable Hiding
+
+This feature automatically hides any UNTRUSTED content returned by tools while keeping the hiding logic transparent to the developer. Developers do not need to manually call `store_untrusted_content()`. This allows the LLM /agent's context to remain clean and secure. Key aspects include:
 
 - **Automatic Detection**: Middleware checks integrity label after each tool call
 - **Automatic Storage**: UNTRUSTED results/items stored in variable store
@@ -166,16 +182,6 @@ agent = Agent(
     tools=[my_tool],
     context_providers=[config],  # That's it!
 )
-```
-
-### 7. Message-Level Label Tracking (Phase 1)
-
-Track security labels at the message level:
-
-```python
-labeled_messages = middleware.label_messages(messages)
-label = middleware.get_message_label(5)
-all_labels = middleware.get_all_message_labels()
 ```
 
 ## Security Properties
@@ -320,11 +326,6 @@ pytest tests/test_security.py -v
 ✅ `get_tools()`, `get_instructions()`, `get_middleware()` methods (for manual use)
 ✅ `quarantine_chat_client` support for real LLM calls
 ✅ `SECURITY_TOOL_INSTRUCTIONS` constant
-
-### Phase 1: Message-Level Tracking
-✅ `LabeledMessage` class with auto-inference from role
-✅ `label_message()`, `get_message_label()`, `label_messages()` methods
-✅ `get_all_message_labels()` method
 
 ### Documentation & Testing
 ✅ Complete FIDES Developer Guide (~1250 lines)

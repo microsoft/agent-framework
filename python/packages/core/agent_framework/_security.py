@@ -824,13 +824,17 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     Examples:
         .. code-block:: python
 
-            from agent_framework import Agent, LabelTrackingFunctionMiddleware
+from agent_framework import Agent, LabelTrackingFunctionMiddleware, tool
+
+            @tool(additional_properties={"source_integrity": "trusted"})
+            async def get_weather(city: str) -> str:
+                return f"Weather in {city}: 72°F"
 
             # Create agent with automatic hiding enabled
             middleware = LabelTrackingFunctionMiddleware(
                 auto_hide_untrusted=True  # Enabled by default
             )
-            agent = Agent(client=client, name="assistant", middleware=[middleware])
+            agent = Agent(client=client, name="assistant", tools=[get_weather], middleware=[middleware])
 
             # Run agent - untrusted tool results are automatically hidden
             response = await agent.run(messages=[{"role": "user", "content": "What's the weather?"}])
@@ -871,10 +875,6 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         # Metadata about stored variables
         self._variable_metadata: dict[str, dict[str, Any]] = {}
 
-        # Phase 1: Message-level label tracking
-        # Maps message index to its security label
-        self._message_labels: dict[int, ContentLabel] = {}
-
     def get_context_label(self) -> ContentLabel:
         """Get the current context-level security label.
 
@@ -895,78 +895,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         self._context_label = ContentLabel(
             integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC, metadata={"reset": True}
         )
-        # Also reset message labels for new conversation
-        self._message_labels.clear()
         logger.info("Context label reset to TRUSTED + PUBLIC")
-
-    # ========== Phase 1: Message-Level Label Tracking ==========
-
-    def label_message(
-        self,
-        message_index: int,
-        label: ContentLabel,
-        source_labels: list[ContentLabel] | None = None,
-    ) -> None:
-        """Assign a security label to a message in the conversation.
-
-        Args:
-            message_index: The index of the message in the conversation.
-            label: The security label to assign.
-            source_labels: Optional list of labels that contributed to this message.
-        """
-        self._message_labels[message_index] = label
-        logger.debug(f"Labeled message {message_index}: {label.integrity.value}/{label.confidentiality.value}")
-
-    def get_message_label(self, message_index: int) -> ContentLabel | None:
-        """Get the security label of a specific message.
-
-        Args:
-            message_index: The index of the message.
-
-        Returns:
-            The message's ContentLabel, or None if not labeled.
-        """
-        return self._message_labels.get(message_index)
-
-    def label_messages(self, messages: list[dict[str, Any]]) -> list[LabeledMessage]:
-        """Label a list of messages based on their roles and content.
-
-        This method automatically assigns labels to messages:
-        - user/system messages: TRUSTED
-        - assistant messages: Inherit from source labels or TRUSTED
-        - tool messages: UNTRUSTED (external data)
-
-        Args:
-            messages: List of message dicts with 'role' and 'content'.
-
-        Returns:
-            List of LabeledMessage objects.
-        """
-        labeled: list[LabeledMessage] = []
-        for i, msg in enumerate(messages):
-            # Check if message already has a label
-            existing_label = self._message_labels.get(i)
-
-            labeled_msg = LabeledMessage(
-                role=msg.get("role", "unknown"),
-                content=msg.get("content", ""),
-                security_label=existing_label,  # Will auto-infer if None
-                message_index=i,
-            )
-
-            # Store the label
-            self._message_labels[i] = labeled_msg.security_label
-            labeled.append(labeled_msg)
-
-        return labeled
-
-    def get_all_message_labels(self) -> dict[int, ContentLabel]:
-        """Get all message labels.
-
-        Returns:
-            Dictionary mapping message index to ContentLabel.
-        """
-        return dict(self._message_labels)
 
     def _update_context_label(self, new_content_label: ContentLabel) -> None:
         """Update the context label based on new content added to the context.

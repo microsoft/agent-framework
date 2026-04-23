@@ -148,7 +148,6 @@ from ._tools import (
     FunctionInvocationLayer,
     FunctionTool,
     ToolTypes,
-    ai_function,
     normalize_function_invocation_configuration,
     tool,
 )

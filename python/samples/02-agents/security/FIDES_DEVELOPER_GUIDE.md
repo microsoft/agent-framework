@@ -493,36 +493,9 @@ The instructions explain:
 - How to pass `variable_ids` to reference hidden content
 - Best practices for secure content handling
 
-### 9. Message-Level Label Tracking (Phase 1)
+### 9. LabeledMessage Class
 
-The middleware now tracks security labels at the **message level**, not just tool calls:
-
-```python
-from agent_framework import LabelTrackingFunctionMiddleware, LabeledMessage
-
-middleware = LabelTrackingFunctionMiddleware()
-
-# Label messages in a conversation
-messages = [
-    {"role": "user", "content": "Hello"},           # Auto-labeled TRUSTED
-    {"role": "assistant", "content": "Hi there"},   # Auto-labeled TRUSTED (no untrusted sources)
-    {"role": "tool", "content": "API response"},    # Auto-labeled UNTRUSTED
-]
-
-labeled_messages = middleware.label_messages(messages)
-# labeled_messages[0].security_label.integrity == TRUSTED
-# labeled_messages[2].security_label.integrity == UNTRUSTED
-
-# Individual message labeling
-middleware.label_message(message_index=5, label=custom_label)
-label = middleware.get_message_label(5)
-
-# Get all message labels
-all_labels = middleware.get_all_message_labels()
-```
-
-**LabeledMessage Class:**
-- Automatically infers labels based on message role
+**LabeledMessage** automatically infers security labels based on message role:
 - User/system messages → TRUSTED
 - Tool messages → UNTRUSTED
 - Assistant messages → Inherit from source_labels or TRUSTED
@@ -1103,18 +1076,6 @@ msg.is_trusted() -> bool                      # Check if message is trusted
 msg.to_dict() -> Dict[str, Any]               # Serialize
 LabeledMessage.from_dict(data) -> LabeledMessage  # Deserialize
 LabeledMessage.from_message(msg, index) -> LabeledMessage  # Wrap standard message
-```
-
-### LabelTrackingFunctionMiddleware Extensions
-
-```python
-middleware = LabelTrackingFunctionMiddleware(...)
-
-# Message-level label tracking (Phase 1)
-middleware.label_message(message_index, label, source_labels=None)  # Label a message
-middleware.get_message_label(message_index) -> ContentLabel | None  # Get message label
-middleware.label_messages(messages) -> List[LabeledMessage]         # Batch label messages
-middleware.get_all_message_labels() -> Dict[int, ContentLabel]      # Get all message labels
 ```
 
 ### SecureAgentConfig
