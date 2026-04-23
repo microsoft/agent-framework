@@ -10,7 +10,6 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Foundry.Hosting;
 using OpenAI.Responses;
 
 #pragma warning disable OPENAI001 // Experimental API
@@ -24,8 +23,8 @@ const string SecondToolboxName = "analysis_toolbox";
 // Replace with any question that exercises the tools configured in your toolbox.
 const string Query = "Introduce yourself and briefly describe the tools you can use to help me.";
 
-string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT_2")
-    ?? throw new InvalidOperationException("Set AZURE_AI_PROJECT_ENDPOINT to your Foundry project endpoint.");
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("Set FOUNDRY_PROJECT_ENDPOINT to your Foundry project endpoint.");
 string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
@@ -47,13 +46,7 @@ static async Task Main(AIProjectClient projectClient, string model, string endpo
     await CreateSampleToolboxAsync(ToolboxName, endpoint);
 
     // Omit the version to resolve the toolbox's current default version at runtime.
-    var toolbox = await projectClient.GetToolboxVersionAsync(ToolboxName);
-    Console.WriteLine($"Loaded toolbox '{toolbox.Name}' v{toolbox.Version} ({toolbox.Tools.Count} tool(s))");
-
-    // Convert toolbox tools to AITool instances and pass to the agent.
-    // These are sent as server-side tool definitions in the Responses API request —
-    // the Foundry platform handles execution, so no local tool invocation is needed.
-    var tools = toolbox.ToAITools();
+    var tools = await projectClient.GetToolboxToolsAsync(ToolboxName);
 
     AIAgent agent = projectClient
         .AsAIAgent(
@@ -76,13 +69,10 @@ static async Task CombineToolboxes(AIProjectClient projectClient, string model, 
     await CreateSampleToolboxAsync(ToolboxName, endpoint);
     await CreateSampleToolboxAsync(SecondToolboxName, endpoint);
 
-    var toolboxA = await projectClient.GetToolboxVersionAsync(ToolboxName);
-    var toolboxB = await projectClient.GetToolboxVersionAsync(SecondToolboxName);
-    Console.WriteLine(
-        $"Loaded toolboxes: {toolboxA.Name}@{toolboxA.Version} ({toolboxA.Tools.Count} tool(s)), "
-        + $"{toolboxB.Name}@{toolboxB.Version} ({toolboxB.Tools.Count} tool(s))");
+    var toolboxA = await projectClient.GetToolboxToolsAsync(ToolboxName);
+    var toolboxB = await projectClient.GetToolboxToolsAsync(SecondToolboxName);
 
-    var allTools = toolboxA.ToAITools().Concat(toolboxB.ToAITools()).ToList();
+    var allTools = toolboxA.Concat(toolboxB).ToList();
 
     AIAgent agent = projectClient
         .AsAIAgent(

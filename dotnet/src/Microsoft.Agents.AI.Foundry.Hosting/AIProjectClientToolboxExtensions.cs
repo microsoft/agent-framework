@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
@@ -28,33 +27,6 @@ namespace Azure.AI.Projects;
 public static class AIProjectClientToolboxExtensions
 {
     /// <summary>
-    /// Fetches a toolbox version from the Foundry project and returns the raw SDK <see cref="ToolboxVersion"/>.
-    /// </summary>
-    /// <param name="projectClient">The <see cref="AIProjectClient"/> to use. Cannot be <see langword="null"/>.</param>
-    /// <param name="name">The name of the toolbox to fetch.</param>
-    /// <param name="version">
-    /// The specific toolbox version to fetch. When <see langword="null"/>, the toolbox's
-    /// default version is resolved automatically (requires an additional API call).
-    /// </param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>The <see cref="ToolboxVersion"/> containing tool definitions.</returns>
-    /// <exception cref="System.ArgumentNullException">
-    /// Thrown when <paramref name="projectClient"/> or <paramref name="name"/> is <see langword="null"/>.
-    /// </exception>
-    public static async Task<ToolboxVersion> GetToolboxVersionAsync(
-        this AIProjectClient projectClient,
-        string name,
-        string? version = null,
-        CancellationToken cancellationToken = default)
-    {
-        Throw.IfNull(projectClient);
-        Throw.IfNullOrWhitespace(name);
-
-        var toolboxClient = projectClient.AgentAdministrationClient.GetAgentToolboxes();
-        return await FoundryToolbox.GetToolboxVersionCoreAsync(toolboxClient, name, version, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
     /// Fetches a toolbox from the Foundry project and returns its tools as <see cref="AITool"/> instances
     /// ready for use as server-side tools in the Responses API.
     /// </summary>
@@ -75,7 +47,11 @@ public static class AIProjectClientToolboxExtensions
         string? version = null,
         CancellationToken cancellationToken = default)
     {
-        var toolboxVersion = await GetToolboxVersionAsync(projectClient, name, version, cancellationToken).ConfigureAwait(false);
+        Throw.IfNull(projectClient);
+        Throw.IfNullOrWhitespace(name);
+
+        var toolboxClient = projectClient.AgentAdministrationClient.GetAgentToolboxes();
+        var toolboxVersion = await FoundryToolbox.GetToolboxVersionCoreAsync(toolboxClient, name, version, cancellationToken).ConfigureAwait(false);
         return toolboxVersion.ToAITools();
     }
 }
