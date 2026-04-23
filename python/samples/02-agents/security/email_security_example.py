@@ -1,16 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Email Security Example - Demonstrating Prompt Injection Defense.
+"""Email Security Example - Foundry-backed prompt injection defense.
 
-This example shows how to use the Agent Framework's security features to safely
-process untrusted email content while protecting sensitive operations like
-sending emails.
+This example shows how to use the Agent Framework's security features with
+FoundryChatClient to safely process untrusted email content while protecting
+sensitive operations like sending emails.
 
 Key concepts demonstrated:
 1. Using SecureAgentConfig for automatic security middleware setup
-2. Processing untrusted content safely with quarantined_llm (real LLM calls)
+2. Processing untrusted content safely with quarantined_llm using a Foundry-backed quarantine client
 3. Human-in-the-loop approval for policy violations (approval_on_violation=True)
-4. Proper separation between main agent and quarantine LLM clients
+4. Proper separation between main agent and quarantine Foundry clients
 
 When a policy violation is detected (e.g., calling send_email in untrusted context),
 the framework will request user approval via the DevUI instead of blocking. The user
@@ -18,8 +18,9 @@ can see the violation reason and choose to approve or reject the action.
 
 To run this example:
     1. Ensure you have Azure CLI credentials configured: `az login`
-    2. Set the AZURE_OPENAI_ENDPOINT environment variable
-    3. Run: python email_security_example.py
+    2. Set the FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL environment variables
+    3. Run: `uv run samples/02-agents/security/email_security_example.py --cli`
+       or `uv run samples/02-agents/security/email_security_example.py --devui`
 """
 
 import asyncio
@@ -28,15 +29,14 @@ import os
 import sys
 from typing import Any
 
-from agent_framework import (
-    Agent,
-    AgentSession,
-    Content,
-    SecureAgentConfig,
-    tool,
-)
+# Uncomment this filter to suppress the experimental FIDES warning before
+# using the sample's security APIs.
+# import warnings
+# warnings.filterwarnings("ignore", message=r"\[FIDES\].*", category=FutureWarning)
+from agent_framework import Agent, Content, tool
 from agent_framework.devui import serve
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.security import SecureAgentConfig
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
@@ -211,26 +211,19 @@ async def fetch_emails(
 
 def setup_agent():
     """Create and return the secure email agent with all configuration."""
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    if not endpoint:
-        raise ValueError(
-            "AZURE_OPENAI_ENDPOINT environment variable is not set. Please set it to your Azure OpenAI endpoint URL."
-        )
-
     credential = AzureCliCredential()
 
-    # Create the main agent's chat client (uses gpt-4o for main reasoning)
-    main_client = OpenAIChatClient(
-        model="gpt-4o",
-        azure_endpoint=endpoint,
+    # Create the main agent's Foundry chat client using the configured deployment.
+    main_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=credential,
     )
 
-    # Create a SEPARATE client for quarantine operations
-    # Uses gpt-4o-mini (cheaper model) since it processes untrusted content
-    quarantine_client = OpenAIChatClient(
-        model="gpt-4o-mini",  # Use cheaper model for quarantine
-        azure_endpoint=endpoint,
+    # Create a separate Foundry client for quarantine operations.
+    quarantine_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model="gpt-4o-mini",
         credential=credential,
     )
 
@@ -387,7 +380,7 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "--devui":
         run_devui()
     else:
-        print("Usage: python email_security_example.py [--cli|--devui]")
+        print("Usage: uv run samples/02-agents/security/email_security_example.py [--cli|--devui]")
         print("  --cli    Run in command line mode (automated scenarios)")
         print("  --devui  Run with DevUI web interface (interactive)")
         sys.exit(1)

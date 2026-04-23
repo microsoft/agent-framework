@@ -37,6 +37,18 @@ def _group_id(message: Message) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _build_approved_tool_roundtrip(
+    *,
+    call_id: str,
+    approval_id: str,
+    tool_name: str,
+) -> tuple[Content, Content, Content]:
+    function_call = Content.from_function_call(call_id=call_id, name=tool_name, arguments="{}")
+    approval_request = Content.from_function_approval_request(id=approval_id, function_call=function_call)
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    return function_call, approval_request, approval_response
+
+
 async def test_base_client_with_function_calling(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 
@@ -2006,6 +2018,108 @@ def test_is_hosted_tool_approval_without_server_label():
     # Also test with None/non-content objects
     assert _is_hosted_tool_approval(None) is False
     assert _is_hosted_tool_approval("not a content") is False
+
+
+def test_replace_approval_contents_with_results_uses_result_call_ids_without_placeholders() -> None:
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    call_one, request_one, response_one = _build_approved_tool_roundtrip(
+        call_id="call_1", approval_id="approval_1", tool_name="first_tool"
+    )
+    call_two, request_two, response_two = _build_approved_tool_roundtrip(
+        call_id="call_2", approval_id="approval_2", tool_name="second_tool"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[call_one, request_one, call_two, request_two]),
+        Message(role="user", contents=[response_one, response_two]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [
+            Content.from_function_result(call_id="call_2", result="second result"),
+            Content.from_function_result(call_id="call_1", result="first result"),
+        ],
+    )
+
+    assert len(messages) == 2
+    assert messages[0].contents == [call_one, call_two]
+    assert messages[1].role == "tool"
+    assert [(content.call_id, content.result) for content in messages[1].contents] == [
+        ("call_1", "first result"),
+        ("call_2", "second result"),
+    ]
+
+
+def test_replace_approval_contents_with_results_uses_result_call_ids_for_placeholders() -> None:
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    call_one, request_one, response_one = _build_approved_tool_roundtrip(
+        call_id="call_1", approval_id="approval_1", tool_name="first_tool"
+    )
+    call_two, request_two, response_two = _build_approved_tool_roundtrip(
+        call_id="call_2", approval_id="approval_2", tool_name="second_tool"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[call_one, request_one, call_two, request_two]),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="call_1", result="[APPROVAL_PENDING] first placeholder"),
+                Content.from_function_result(call_id="call_2", result="[APPROVAL_PENDING] second placeholder"),
+            ],
+        ),
+        Message(role="user", contents=[response_one, response_two]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [
+            Content.from_function_result(call_id="call_2", result="second result"),
+            Content.from_function_result(call_id="call_1", result="first result"),
+        ],
+    )
+
+    assert len(messages) == 2
+    assert messages[0].contents == [call_one, call_two]
+    assert [(content.call_id, content.result) for content in messages[1].contents] == [
+        ("call_1", "first result"),
+        ("call_2", "second result"),
+    ]
+
+
+def test_replace_approval_contents_with_results_skips_results_without_call_id() -> None:
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    call_one, request_one, response_one = _build_approved_tool_roundtrip(
+        call_id="call_1", approval_id="approval_1", tool_name="first_tool"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[call_one, request_one]),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_1", result="[APPROVAL_PENDING] placeholder")],
+        ),
+        Message(role="user", contents=[response_one]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [
+            Content.from_function_result(call_id=None, result="ignored result"),
+            Content.from_function_result(call_id="call_1", result="first result"),
+        ],
+    )
+
+    assert len(messages) == 2
+    assert messages[0].contents == [call_one]
+    assert [(content.call_id, content.result) for content in messages[1].contents] == [("call_1", "first result")]
 
 
 async def test_mixed_local_and_hosted_approval_flow(chat_client_base: SupportsChatGetResponse):

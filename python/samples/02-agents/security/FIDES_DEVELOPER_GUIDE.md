@@ -42,7 +42,7 @@ Every piece of content (tool calls, results, messages) can be assigned a `Conten
 - **USER_IDENTITY**: Content is restricted to specific user identities only
 
 ```python
-from agent_framework import ContentLabel, IntegrityLabel, ConfidentialityLabel
+from agent_framework.security import ContentLabel, IntegrityLabel, ConfidentialityLabel
 
 # Create a label
 label = ContentLabel(
@@ -107,7 +107,8 @@ When declared, `source_integrity` alone determines the result label — input ar
 
 ```python
 import json
-from agent_framework import Content, LabelTrackingFunctionMiddleware, SecureAgentConfig, tool
+from agent_framework import Content, tool
+from agent_framework.security import LabelTrackingFunctionMiddleware, SecureAgentConfig
 
 # Define a tool that returns mixed-trust data with per-item labels
 @tool(description="Fetch emails from inbox")
@@ -256,7 +257,7 @@ async def fetch_external_data(query: str) -> dict:
 **Key Insight:** The policy enforcer checks if a tool can be called given the current security state of the entire conversation, not just the individual call.
 
 ```python
-from agent_framework import PolicyEnforcementFunctionMiddleware
+from agent_framework.security import PolicyEnforcementFunctionMiddleware
 
 policy_enforcer = PolicyEnforcementFunctionMiddleware(
     allow_untrusted_tools={"search_web", "get_news"},  # Tools that can run in untrusted context
@@ -271,7 +272,7 @@ policy_enforcer = PolicyEnforcementFunctionMiddleware(
 - Logs all violations for audit purposes
 
 ```python
-from agent_framework import PolicyEnforcementFunctionMiddleware
+from agent_framework.security import PolicyEnforcementFunctionMiddleware
 
 policy_enforcer = PolicyEnforcementFunctionMiddleware(
     allow_untrusted_tools={"search_web", "get_news"},
@@ -322,7 +323,7 @@ def search_web(query: str) -> str:
 #    - LLM sees: "Content stored in variable var_abc123"
 #    - Actual content: NEVER reaches LLM context!
 
-from agent_framework._security import inspect_variable
+from agent_framework.security import inspect_variable
 
 
 # 4. If LLM needs to inspect (with audit trail):
@@ -354,7 +355,7 @@ Makes isolated LLM calls with labeled data in a security-isolated context. The q
 **NEW**: Now supports **real LLM calls** when a `quarantine_chat_client` is configured via `SecureAgentConfig`.
 
 ```python
-from agent_framework import quarantined_llm
+from agent_framework.security import quarantined_llm
 
 # Option 1: Using variable_ids (RECOMMENDED for agent integration)
 result = await quarantined_llm(
@@ -385,7 +386,7 @@ result = await quarantined_llm(
 Retrieves content from variable store (with audit logging):
 
 ```python
-from agent_framework._security import inspect_variable
+from agent_framework.security import inspect_variable
 
 
 async def inspect_content() -> None:
@@ -410,8 +411,9 @@ call would otherwise be blocked by the current security context.
 The easiest way to configure a secure agent with all security features. `SecureAgentConfig` extends `ContextProvider` and automatically injects tools, instructions, and middleware via the `before_run()` hook:
 
 ```python
-from agent_framework import Agent, SecureAgentConfig
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.security import SecureAgentConfig
 from azure.identity import AzureCliCredential
 
 # Create main chat client
@@ -476,7 +478,7 @@ agent = Agent(
 )
 
 # Or manually add instructions if not using context providers:
-from agent_framework import SECURITY_TOOL_INSTRUCTIONS
+from agent_framework.security import SECURITY_TOOL_INSTRUCTIONS
 
 agent = Agent(
     client=client,
@@ -495,13 +497,44 @@ The instructions explain:
 
 ### 9. LabeledMessage Class
 
+<<<<<<< HEAD
 **LabeledMessage** automatically infers security labels based on message role:
+=======
+The middleware now tracks security labels at the **message level**, not just tool calls:
+
+```python
+from agent_framework.security import LabelTrackingFunctionMiddleware, LabeledMessage
+
+middleware = LabelTrackingFunctionMiddleware()
+
+# Label messages in a conversation
+messages = [
+    {"role": "user", "content": "Hello"},           # Auto-labeled TRUSTED
+    {"role": "assistant", "content": "Hi there"},   # Auto-labeled TRUSTED (no untrusted sources)
+    {"role": "tool", "content": "API response"},    # Auto-labeled UNTRUSTED
+]
+
+labeled_messages = middleware.label_messages(messages)
+# labeled_messages[0].security_label.integrity == TRUSTED
+# labeled_messages[2].security_label.integrity == UNTRUSTED
+
+# Individual message labeling
+middleware.label_message(message_index=5, label=custom_label)
+label = middleware.get_message_label(5)
+
+# Get all message labels
+all_labels = middleware.get_all_message_labels()
+```
+
+**LabeledMessage Class:**
+- Automatically infers labels based on message role
+>>>>>>> 1d4a67d210d9af8a55f4a939a0283ee6b9fb450f
 - User/system messages → TRUSTED
 - Tool messages → UNTRUSTED
 - Assistant messages → Inherit from source_labels or TRUSTED
 
 ```python
-from agent_framework import LabeledMessage
+from agent_framework.security import LabeledMessage
 
 # Create with automatic label inference
 msg = LabeledMessage(role="tool", content="External data")
@@ -541,7 +574,7 @@ result = await quarantined_llm(
 The easiest way to set up a secure agent using the context provider pattern:
 
 ```python
-from agent_framework import SecureAgentConfig
+from agent_framework.security import SecureAgentConfig
 
 # Create secure configuration (also a ContextProvider)
 config = SecureAgentConfig(
@@ -568,7 +601,7 @@ response = await agent.run(messages=[
 ### Example 2: Manual Setup (More Control)
 
 ```python
-from agent_framework import (
+from agent_framework.security import (
     LabelTrackingFunctionMiddleware,
     PolicyEnforcementFunctionMiddleware,
     get_security_tools,
@@ -622,12 +655,12 @@ result = await quarantined_llm(
 ### Example 4: Handling External Data with Automatic Hiding
 
 ```python
-from agent_framework import (
+from agent_framework import tool
+from agent_framework.security import (
     LabelTrackingFunctionMiddleware,
     quarantined_llm,
     ContentLabel,
     IntegrityLabel,
-    tool,
 )
 
 # Configure middleware with automatic hiding
@@ -760,7 +793,8 @@ An attacker injects instructions in untrusted content (e.g., a public GitHub iss
 Tools that write to external destinations declare `max_allowed_confidentiality` to restrict what data they can receive:
 
 ```python
-from agent_framework import tool, check_confidentiality_allowed
+from agent_framework import tool
+from agent_framework.security import check_confidentiality_allowed
 from pydantic import Field
 
 # Tool that reads from repositories with dynamic confidentiality
@@ -827,7 +861,7 @@ PUBLIC (0) < PRIVATE (1) < USER_IDENTITY (2)
 For tools that need dynamic confidentiality checks (e.g., a single `send_message()` tool that can post to different destinations), use `check_confidentiality_allowed()`:
 
 ```python
-from agent_framework import check_confidentiality_allowed, ContentLabel, ConfidentialityLabel
+from agent_framework.security import check_confidentiality_allowed, ContentLabel, ConfidentialityLabel
 
 def get_destination_confidentiality(destination: str) -> ConfidentialityLabel:
     """Determine confidentiality level of a destination."""
@@ -1029,7 +1063,7 @@ This demonstrates:
 ### Imports
 
 ```python
-from agent_framework import (
+from agent_framework.security import (
     # Labels
     ContentLabel,
     IntegrityLabel,
@@ -1056,7 +1090,7 @@ from agent_framework import (
     SecureAgentConfig,
     SECURITY_TOOL_INSTRUCTIONS,
 )
-from agent_framework._security import inspect_variable
+from agent_framework.security import inspect_variable
 ```
 
 ### LabeledMessage (Phase 1)
@@ -1122,7 +1156,7 @@ result = await quarantined_llm(
 ### inspect_variable
 
 ```python
-from agent_framework._security import inspect_variable
+from agent_framework.security import inspect_variable
 
 
 async def inspect_content() -> None:
@@ -1157,4 +1191,4 @@ Potential improvements:
 ## References
 
 - [ADR-0007: Agent Filtering Middleware](../../../../docs/decisions/0007-agent-filtering-middleware.md)
-- [Security Module](../../../packages/core/agent_framework/_security.py) — All security primitives, middleware, tools, and configuration
+- [Security Module](../../../packages/core/agent_framework/security.py) — All security primitives, middleware, tools, and configuration

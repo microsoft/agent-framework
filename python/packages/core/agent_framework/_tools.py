@@ -1809,21 +1809,16 @@ def _replace_approval_contents_with_results(
         Content,
     )
 
-    # Build a map of call_id -> actual result for replacing placeholders
+    # Match results back to approvals by actual call_id instead of relying on
+    # approval/result iteration order.
     result_by_call_id: dict[str, Content] = {}
-    for resp in fcc_todo.values():
-        if resp.approved and resp.function_call is not None and resp.function_call.call_id is not None:
-            # Map the call_id from the function_call to be replaced
-            call_id = resp.function_call.call_id
-            if call_id not in result_by_call_id and approved_function_results:
-                idx = len(result_by_call_id)
-                if idx < len(approved_function_results):
-                    result_by_call_id[call_id] = approved_function_results[idx]
+    for approved_result in approved_function_results:
+        if approved_result.call_id is not None and approved_result.call_id not in result_by_call_id:
+            result_by_call_id[approved_result.call_id] = approved_result
 
     # Track which call_ids had their placeholders replaced
     placeholders_replaced: set[str] = set()
 
-    result_idx = 0
     for msg in messages:
         # First pass - collect existing function call IDs to avoid duplicates
         existing_call_ids = {
@@ -1862,9 +1857,9 @@ def _replace_approval_contents_with_results(
                     else:
                         # No placeholder - replace approval response with result directly
                         # This handles the original approval_mode="always_require" case
-                        if result_idx < len(approved_function_results):
-                            msg.contents[content_idx] = approved_function_results[result_idx]
-                            result_idx += 1
+                        replacement_result = result_by_call_id.get(call_id)
+                        if replacement_result is not None:
+                            msg.contents[content_idx] = replacement_result
                             msg.role = "tool"
                 else:
                     # Create a "not approved" result for rejected calls
