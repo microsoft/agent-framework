@@ -970,6 +970,24 @@ async def test_run_message_context_id_used_when_session_has_no_service_id(mock_a
     assert mock_a2a_client.last_message.context_id == "fallback-ctx"
 
 
+@mark.asyncio
+async def test_run_empty_service_session_id_preserved(mock_a2a_client: MockA2AClient) -> None:
+    """Test that empty string service_session_id is preserved and not overridden by additional_properties."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    mock_a2a_client.add_message_response("msg-ctx5", "reply")
+
+    session = AgentSession(service_session_id="")
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Hello")],
+        additional_properties={"context_id": "fallback-ctx"},
+    )
+    await agent.run(messages=[message], session=session)
+
+    assert mock_a2a_client.last_message is not None
+    assert mock_a2a_client.last_message.context_id == ""
+
+
 # endregion
 
 
