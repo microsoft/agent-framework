@@ -258,9 +258,11 @@ internal static class OutputConverter
             totalTokens += existing.TotalTokens;
         }
 
-        return AzureAIAgentServerResponsesModelFactory.ResponseUsage(
+        return new ResponseUsage(
             inputTokens: inputTokens,
+            inputTokensDetails: new ResponseUsageInputTokensDetails(0),
             outputTokens: outputTokens,
+            outputTokensDetails: new ResponseUsageOutputTokensDetails(0),
             totalTokens: totalTokens);
     }
 
