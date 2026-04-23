@@ -44,7 +44,7 @@ static async Task Main(AIProjectClient projectClient, string model, string endpo
     Console.WriteLine("=== Foundry Toolbox Server-Side Tools Example ===");
 
     // Comment out if the toolbox already exists in your Foundry project.
-    await CreateSampleToolboxAsync(projectClient, ToolboxName, endpoint);
+    await CreateSampleToolboxAsync(ToolboxName, endpoint);
 
     // Omit the version to resolve the toolbox's current default version at runtime.
     var toolbox = await projectClient.GetToolboxVersionAsync(ToolboxName);
@@ -73,8 +73,8 @@ static async Task CombineToolboxes(AIProjectClient projectClient, string model, 
     Console.WriteLine("=== Combine Toolboxes Example ===");
 
     // Comment out if the toolboxes already exist in your Foundry project.
-    await CreateSampleToolboxAsync(projectClient, ToolboxName, endpoint);
-    await CreateSampleToolboxAsync(projectClient, SecondToolboxName, endpoint);
+    await CreateSampleToolboxAsync(ToolboxName, endpoint);
+    await CreateSampleToolboxAsync(SecondToolboxName, endpoint);
 
     var toolboxA = await projectClient.GetToolboxVersionAsync(ToolboxName);
     var toolboxB = await projectClient.GetToolboxVersionAsync(SecondToolboxName);
@@ -97,7 +97,7 @@ static async Task CombineToolboxes(AIProjectClient projectClient, string model, 
 // ---------------------------------------------------------------------------
 // Helper: create (or replace) a sample toolbox so the sample works out-of-the-box
 // ---------------------------------------------------------------------------
-static async Task CreateSampleToolboxAsync(AIProjectClient projectClient, string name, string endpoint)
+static async Task CreateSampleToolboxAsync(string name, string endpoint)
 {
     // Toolboxes are normally configured in the Foundry portal or a deployment
     // script, not the application itself. This helper exists so the sample can
