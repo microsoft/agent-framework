@@ -28,6 +28,7 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
+from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import AgentTelemetryLayer, ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
@@ -692,6 +693,7 @@ class RawFoundryAgent(  # type: ignore[misc]
             raise ValueError("isolation_key is required. Pass it explicitly or set default_options['isolation_key'].")
         return resolved_isolation_key
 
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_HOSTED_AGENTS_SESSIONS_CRUD)
     async def create_service_session(
         self,
         *,
@@ -734,6 +736,7 @@ class RawFoundryAgent(  # type: ignore[misc]
 
         return self.get_session(agent_session_id, session_id=session_id)
 
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_HOSTED_AGENTS_SESSIONS_CRUD)
     async def delete_service_session(
         self,
         session: AgentSession | None = None,
@@ -765,7 +768,7 @@ class RawFoundryAgent(  # type: ignore[misc]
             raise ValueError("agent_session_id or a session with service_session_id is required.")
 
         await self.client.project_client.beta.agents.delete_session(
-            agent_name=self.name,  # type: ignore[reportArgumentType]
+            agent_name=self.name,  # type: ignore[reportArgumentType, arg-type]
             session_id=resolved_session_id,
             isolation_key=self._resolve_service_session_isolation_key(isolation_key),
         )
