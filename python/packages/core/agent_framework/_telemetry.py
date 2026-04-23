@@ -73,7 +73,10 @@ def _detect_hosted_environment() -> None:
     # Use find_spec to avoid the cost of a full import when the SDK is not installed.
     import importlib.util
 
-    if importlib.util.find_spec("azure.ai.agentserver.core") is None:
+    try:
+        if importlib.util.find_spec("azure.ai.agentserver.core") is None:
+            return
+    except (ModuleNotFoundError, ValueError):
         return
     try:
         from azure.ai.agentserver.core import AgentConfig  # pyright: ignore[reportMissingImports]

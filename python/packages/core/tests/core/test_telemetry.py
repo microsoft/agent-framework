@@ -155,24 +155,29 @@ def test_add_user_agent_prefix_multiple():
 def test_detect_hosted_env_var_truthy_adds_prefix():
     """Test that a truthy FOUNDRY_HOSTING_ENVIRONMENT env var adds the prefix."""
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
     with patch.dict("os.environ", {_FOUNDRY_HOSTING_ENV_VAR: "production"}):
         _detect_hosted_environment()
     assert _HOSTED_USER_AGENT_PREFIX in _telemetry_mod._user_agent_prefixes
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
 
 
 def test_detect_hosted_env_var_empty_skips_prefix():
     """Test that an empty FOUNDRY_HOSTING_ENVIRONMENT env var does NOT add the prefix."""
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
     with patch.dict("os.environ", {_FOUNDRY_HOSTING_ENV_VAR: ""}):
         _detect_hosted_environment()
     assert _HOSTED_USER_AGENT_PREFIX not in _telemetry_mod._user_agent_prefixes
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
 
 
 def test_detect_hosted_env_var_set_skips_agent_config_fallback():
     """Test that when the env var is set, AgentConfig is never consulted even if import would fail."""
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
     import builtins
 
     real_import = builtins.__import__
@@ -189,6 +194,7 @@ def test_detect_hosted_env_var_set_skips_agent_config_fallback():
         _detect_hosted_environment()
     assert _HOSTED_USER_AGENT_PREFIX in _telemetry_mod._user_agent_prefixes
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
 
 
 def _mock_agent_config(*, is_hosted: bool) -> MagicMock:
@@ -203,34 +209,43 @@ def _mock_agent_config(*, is_hosted: bool) -> MagicMock:
 def test_detect_hosted_fallback_agent_config_is_hosted():
     """Test that AgentConfig fallback adds the prefix when is_hosted is True."""
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
     env = {k: v for k, v in os.environ.items() if k != _FOUNDRY_HOSTING_ENV_VAR}
     mock_module = _mock_agent_config(is_hosted=True)
+    mock_spec = MagicMock()
     with (
         patch.dict("os.environ", env, clear=True),
         patch.dict("sys.modules", {"azure.ai.agentserver.core": mock_module}),
+        patch("importlib.util.find_spec", return_value=mock_spec),
     ):
         _detect_hosted_environment()
     assert _HOSTED_USER_AGENT_PREFIX in _telemetry_mod._user_agent_prefixes
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
 
 
 def test_detect_hosted_fallback_agent_config_not_hosted():
     """Test that AgentConfig fallback does NOT add the prefix when is_hosted is False."""
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
     mock_module = _mock_agent_config(is_hosted=False)
+    mock_spec = MagicMock()
     env = {k: v for k, v in os.environ.items() if k != _FOUNDRY_HOSTING_ENV_VAR}
     with (
         patch.dict("os.environ", env, clear=True),
         patch.dict("sys.modules", {"azure.ai.agentserver.core": mock_module}),
+        patch("importlib.util.find_spec", return_value=mock_spec),
     ):
         _detect_hosted_environment()
     assert _HOSTED_USER_AGENT_PREFIX not in _telemetry_mod._user_agent_prefixes
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
 
 
 def test_detect_hosted_fallback_import_error():
     """Test that ImportError from AgentConfig is silently handled."""
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
     env = {k: v for k, v in os.environ.items() if k != _FOUNDRY_HOSTING_ENV_VAR}
     with patch.dict("os.environ", env, clear=True):
         # The real import may succeed or fail depending on the environment;
@@ -248,29 +263,27 @@ def test_detect_hosted_fallback_import_error():
             _detect_hosted_environment()
     assert _HOSTED_USER_AGENT_PREFIX not in _telemetry_mod._user_agent_prefixes
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
 
 
 # region Test module-level auto-detection
 
 
-def test_module_reload_runs_hosted_detection():
-    """Test that reloading _telemetry auto-detects the hosted environment.
+def test_lazy_detection_on_get_user_agent():
+    """Test that get_user_agent() lazily detects the hosted environment.
 
-    This ensures the module-level ``_detect_hosted_environment()`` call is
-    present and executes on import, so that ``get_user_agent()`` includes
-    the hosting prefix without any explicit call by consumer code.
+    Since detection is deferred to the first ``get_user_agent()`` call,
+    this verifies the prefix is included without any explicit call to
+    ``_detect_hosted_environment()`` by consumer code.
     """
-    import importlib
-
     _telemetry_mod._user_agent_prefixes.clear()
+    _telemetry_mod._hosted_env_detected = False
     with patch.dict("os.environ", {_FOUNDRY_HOSTING_ENV_VAR: "production"}):
-        importlib.reload(_telemetry_mod)
+        user_agent = _telemetry_mod.get_user_agent()
 
     assert _HOSTED_USER_AGENT_PREFIX in _telemetry_mod._user_agent_prefixes
-    assert _telemetry_mod.get_user_agent().startswith(f"{_HOSTED_USER_AGENT_PREFIX}/")
+    assert user_agent.startswith(f"{_HOSTED_USER_AGENT_PREFIX}/")
 
-    # Clean up: reload without the env var to restore normal state
+    # Clean up
     _telemetry_mod._user_agent_prefixes.clear()
-    env = {k: v for k, v in os.environ.items() if k != _FOUNDRY_HOSTING_ENV_VAR}
-    with patch.dict("os.environ", env, clear=True):
-        importlib.reload(_telemetry_mod)
+    _telemetry_mod._hosted_env_detected = False
