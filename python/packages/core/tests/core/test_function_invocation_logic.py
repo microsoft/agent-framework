@@ -3807,3 +3807,97 @@ async def test_user_input_request_empty_contents_returns_fallback(chat_client_ba
     ]
     assert len(function_results) >= 1
     assert any("user input" in (fr.result or "").lower() for fr in function_results)
+
+
+async def test_continuation_token_stripped_after_completed_response(chat_client_base: SupportsChatGetResponse):
+    """continuation_token from options must not persist across tool-loop iterations.
+
+    When a background response completes (continuation_token becomes None),
+    subsequent tool-result submissions should POST normally instead of
+    retrieving the same completed response.
+    """
+    recorded_options: list[dict[str, Any]] = []
+    original_get = chat_client_base._get_non_streaming_response
+
+    async def _tracking_get(*, messages, options, **kwargs):
+        recorded_options.append(dict(options))
+        return await original_get(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _tracking_get
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup(query: str) -> str:
+        return f"found: {query}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="c1", name="lookup", arguments='{"query": "test"}'),
+                ],
+            ),
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["answer"])),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["find test"])],
+        options={
+            "tools": [lookup],
+            "tool_choice": "auto",
+            "continuation_token": {"response_id": "resp_abc123"},
+        },
+    )
+
+    assert chat_client_base.call_count >= 2
+    assert "continuation_token" in recorded_options[0], "First call should include continuation_token"
+    assert "continuation_token" not in recorded_options[1], (
+        "continuation_token must be stripped after the background response completes"
+    )
+
+
+async def test_background_option_stripped_after_completed_response(chat_client_base: SupportsChatGetResponse):
+    """background=True from options must not persist across tool-loop iterations.
+
+    Tool-result submissions should not start new background jobs.
+    """
+    recorded_options: list[dict[str, Any]] = []
+    original_get = chat_client_base._get_non_streaming_response
+
+    async def _tracking_get(*, messages, options, **kwargs):
+        recorded_options.append(dict(options))
+        return await original_get(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _tracking_get
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup(query: str) -> str:
+        return f"found: {query}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="c1", name="lookup", arguments='{"query": "test"}'),
+                ],
+            ),
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["answer"])),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["find test"])],
+        options={
+            "tools": [lookup],
+            "tool_choice": "auto",
+            "background": True,
+        },
+    )
+
+    assert chat_client_base.call_count >= 2
+    assert recorded_options[0].get("background") is True, "First call should include background=True"
+    assert not recorded_options[1].get("background", False), (
+        "background must be stripped after the background response completes"
+    )

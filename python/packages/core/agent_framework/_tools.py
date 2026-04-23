@@ -2349,6 +2349,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         options=mutable_options,
                     )
 
+                    # Once a background response completes, strip polling/background
+                    # options so subsequent tool-loop iterations POST results normally.
+                    if response.continuation_token is None:
+                        mutable_options.pop("continuation_token", None)
+                        mutable_options.pop("background", None)
+
                     if response.conversation_id is not None:
                         prepped_messages = []
 
@@ -2495,6 +2501,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     session=invocation_session,
                     options=mutable_options,
                 )
+
+                # Once a background response completes, strip polling/background
+                # options so subsequent tool-loop iterations POST results normally.
+                if response.continuation_token is None:
+                    mutable_options.pop("continuation_token", None)
+                    mutable_options.pop("background", None)
 
                 if not any(
                     item.type in ("function_call", "function_approval_request")
