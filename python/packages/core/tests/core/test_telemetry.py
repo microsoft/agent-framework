@@ -248,3 +248,29 @@ def test_detect_hosted_fallback_import_error():
             _detect_hosted_environment()
     assert _HOSTED_USER_AGENT_PREFIX not in _telemetry_mod._user_agent_prefixes
     _telemetry_mod._user_agent_prefixes.clear()
+
+
+# region Test module-level auto-detection
+
+
+def test_module_reload_runs_hosted_detection():
+    """Test that reloading _telemetry auto-detects the hosted environment.
+
+    This ensures the module-level ``_detect_hosted_environment()`` call is
+    present and executes on import, so that ``get_user_agent()`` includes
+    the hosting prefix without any explicit call by consumer code.
+    """
+    import importlib
+
+    _telemetry_mod._user_agent_prefixes.clear()
+    with patch.dict("os.environ", {_FOUNDRY_HOSTING_ENV_VAR: "production"}):
+        importlib.reload(_telemetry_mod)
+
+    assert _HOSTED_USER_AGENT_PREFIX in _telemetry_mod._user_agent_prefixes
+    assert _telemetry_mod.get_user_agent().startswith(f"{_HOSTED_USER_AGENT_PREFIX}/")
+
+    # Clean up: reload without the env var to restore normal state
+    _telemetry_mod._user_agent_prefixes.clear()
+    env = {k: v for k, v in os.environ.items() if k != _FOUNDRY_HOSTING_ENV_VAR}
+    with patch.dict("os.environ", env, clear=True):
+        importlib.reload(_telemetry_mod)
