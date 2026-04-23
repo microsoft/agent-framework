@@ -75,7 +75,7 @@ def _detect_hosted_environment() -> None:
 _detect_hosted_environment()
 
 
-def _get_user_agent() -> str:
+def get_user_agent() -> str:
     """Return the full user agent string including any registered prefixes."""
     if not _user_agent_prefixes:
         return AGENT_FRAMEWORK_USER_AGENT
@@ -112,7 +112,7 @@ def prepend_agent_framework_to_user_agent(headers: dict[str, Any] | None = None)
     """
     if not IS_TELEMETRY_ENABLED:
         return headers or {}
-    user_agent = _get_user_agent()
+    user_agent = get_user_agent()
     if not headers:
         return {USER_AGENT_KEY: user_agent}
     headers[USER_AGENT_KEY] = f"{user_agent} {headers[USER_AGENT_KEY]}" if USER_AGENT_KEY in headers else user_agent

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import ChatResponse, Content, Message, SupportsChatGetResponse, tool
-from agent_framework._telemetry import AGENT_FRAMEWORK_USER_AGENT
+from agent_framework._telemetry import get_user_agent
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework_openai import OpenAIContentFilterException
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
@@ -199,7 +199,7 @@ def test_init_with_project_endpoint_creates_project_client() -> None:
     assert factory.call_args.kwargs["endpoint"] == _TEST_FOUNDRY_PROJECT_ENDPOINT
     assert factory.call_args.kwargs["credential"] is credential
     assert factory.call_args.kwargs["allow_preview"] is True
-    assert factory.call_args.kwargs["user_agent"] == AGENT_FRAMEWORK_USER_AGENT
+    assert factory.call_args.kwargs["user_agent"] == get_user_agent()
 
 
 def test_init_with_empty_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:

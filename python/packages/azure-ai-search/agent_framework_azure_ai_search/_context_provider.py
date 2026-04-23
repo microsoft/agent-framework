@@ -14,7 +14,6 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, overload
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     AgentSession,
     Annotation,
     Content,
@@ -25,6 +24,7 @@ from agent_framework import (
     SupportsGetEmbeddings,
     load_settings,
 )
+from agent_framework._telemetry import get_user_agent
 from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -535,7 +535,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 endpoint=self.endpoint,
                 index_name=self.index_name,
                 credential=self.credential,
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
+                user_agent=get_user_agent(),
             )
 
         self._index_client: SearchIndexClient | None = None
@@ -544,7 +544,7 @@ class AzureAISearchContextProvider(ContextProvider):
             self._index_client = SearchIndexClient(
                 endpoint=self.endpoint,
                 credential=self.credential,
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
+                user_agent=get_user_agent(),
             )
 
         self._knowledge_base_initialized = False
@@ -640,7 +640,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 self._index_client = SearchIndexClient(
                     endpoint=self.endpoint,
                     credential=self.credential,
-                    user_agent=AGENT_FRAMEWORK_USER_AGENT,
+                    user_agent=get_user_agent(),
                 )
             if not self.index_name:
                 logger.warning("Cannot auto-discover vector field: index_name is not set.")
@@ -740,7 +740,7 @@ class AzureAISearchContextProvider(ContextProvider):
                     endpoint=self.endpoint,
                     knowledge_base_name=knowledge_base_name,
                     credential=self.credential,
-                    user_agent=AGENT_FRAMEWORK_USER_AGENT,
+                    user_agent=get_user_agent(),
                 )
             self._knowledge_base_initialized = True
             return
@@ -802,7 +802,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 endpoint=self.endpoint,
                 knowledge_base_name=knowledge_base_name,
                 credential=self.credential,
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
+                user_agent=get_user_agent(),
             )
 
     async def _agentic_search(self, messages: list[Message]) -> list[Message]:

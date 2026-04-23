@@ -15,7 +15,6 @@ from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequen
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     AgentMiddlewareLayer,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
@@ -28,6 +27,7 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import AgentTelemetryLayer, ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -190,7 +190,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": resolved_endpoint,
                 "credential": credential,
-                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+                "user_agent": get_user_agent(),
             }
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview

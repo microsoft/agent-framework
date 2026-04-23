@@ -8,7 +8,6 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     ChatMiddlewareLayer,
     Content,
     FunctionInvocationConfiguration,
@@ -17,6 +16,7 @@ from agent_framework import (
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._feature_stage import ExperimentalFeature, experimental
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -198,7 +198,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": project_endpoint,
                 "credential": credential,  # type: ignore[arg-type]
-                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+                "user_agent": get_user_agent(),
             }
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
