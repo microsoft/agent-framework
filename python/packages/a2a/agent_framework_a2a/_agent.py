@@ -295,7 +295,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         else:
             if not normalized_messages:
                 raise ValueError("At least one message is required when starting a new task (no continuation_token).")
-            a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
+            a2a_message = self._prepare_message_for_a2a(
+                normalized_messages[-1],
+                context_id=session.service_session_id if session else None,
+            )
             a2a_stream = self.client.send_message(a2a_message)
 
         provider_session = session
@@ -584,7 +587,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             return AgentResponse.from_updates(updates)
         return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
 
-    def _prepare_message_for_a2a(self, message: Message) -> A2AMessage:
+    def _prepare_message_for_a2a(self, message: Message, *, context_id: str | None = None) -> A2AMessage:
         """Prepare a Message for the A2A protocol.
 
         Transforms Agent Framework Message objects into A2A protocol Messages by:
@@ -593,6 +596,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         - Converting file references (URI/data/hosted_file) to FilePart objects
         - Preserving metadata and additional properties from the original message
         - Setting the role to 'user' as framework messages are treated as user input
+
+        Args:
+            message: The framework Message to convert.
+            context_id: Optional fallback context identifier (e.g. derived from
+                ``AgentSession.service_session_id``). When the *message* already
+                carries a ``context_id`` in its ``additional_properties`` that
+                value takes precedence; otherwise this fallback is used.
         """
         parts: list[A2APart] = []
         if not message.contents:
@@ -672,7 +682,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             role=A2ARole("user"),
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
-            context_id=message.additional_properties.get("context_id"),
+            context_id=message.additional_properties.get("context_id") or context_id,
             metadata=metadata,
         )
 

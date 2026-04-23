@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: hosted-text-rag
+displayName: "Hosted Text RAG Agent"
+
+description: >
+  A support specialist agent for Contoso Outdoors with RAG capabilities.
+  Uses TextSearchProvider to ground answers in product documentation
+  before each model invocation.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - RAG
+    - Text Search
+    - Agent Framework
+
+template:
+  name: hosted-text-rag
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  resources:
+    cpu: "0.25"
+    memory: 0.5Gi
+parameters:
+  properties: []
+resources: []

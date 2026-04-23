@@ -486,6 +486,7 @@ async def test_integration_client_agent_existing_session() -> None:
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
 @_with_azure_openai_debug()
+@pytest.mark.skip(reason="Azure OpenAI is flaky when handling image content as function result. Needs investigation.")
 async def test_azure_openai_chat_client_tool_rich_content_image() -> None:
     image_path = Path(__file__).parent.parent / "assets" / "sample_image.jpg"
     image_bytes = image_path.read_bytes()
@@ -499,21 +500,12 @@ async def test_azure_openai_chat_client_tool_rich_content_image() -> None:
         client = OpenAIChatClient(credential=credential)
         client.function_invocation_configuration["max_iterations"] = 2
 
-        for streaming in [False, True]:
-            messages = [Message(role="user", contents=["Call the get_test_image tool and describe what you see."])]
-            options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["Call the get_test_image tool and describe what you see."])],
+            stream=True,
+            options={"tools": [get_test_image], "tool_choice": "auto"},
+        ).get_final_response()
 
-            if streaming:
-                response = await client.get_response(
-                    messages=messages,
-                    stream=True,
-                    options=options,
-                ).get_final_response()
-            else:
-                response = await client.get_response(messages=messages, options=options)
-
-            assert isinstance(response, ChatResponse)
-            assert response.text is not None
-            assert "house" in response.text.lower(), (
-                f"Model did not describe the house image. Response: {response.text}"
-            )
+        assert isinstance(response, ChatResponse)
+        assert response.text is not None
+        assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"

@@ -87,6 +87,14 @@ jobs:
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-openai
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
   # Azure OpenAI integration tests
   python-tests-azure-openai:
@@ -130,6 +138,14 @@ jobs:
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-azure-openai
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
   # Misc integration tests (Anthropic, Hyperlight, Ollama, MCP)
   python-tests-misc-integration:
@@ -173,6 +189,14 @@ jobs:
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 30
+          --junitxml=pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-misc
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
       - name: Stop local MCP server
         if: always()
         shell: bash
@@ -249,6 +273,14 @@ jobs:
           -x
           --timeout=360 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-functions
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
   # Foundry integration tests
   python-tests-foundry:
@@ -295,6 +327,14 @@ jobs:
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-foundry
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
   # Azure Cosmos integration tests
   python-tests-cosmos:
@@ -339,7 +379,80 @@ jobs:
           echo "Cosmos DB emulator did not become ready in time." >&2
           exit 1
       - name: Test with pytest (Cosmos integration)
-        run: uv run --directory packages/azure-cosmos poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
+        run: uv run --directory packages/azure-cosmos poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5 --junitxml=${{ github.workspace }}/python/pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-cosmos
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
+  # Flaky test trend report (aggregates per-job JUnit XML results)
+  python-flaky-test-report:
+    name: Flaky Test Report
+    if: >
+      always() &&
+      (contains(join(needs.*.result, ','), 'success') ||
+       contains(join(needs.*.result, ','), 'failure'))
+    needs:
+      [
+        python-tests-openai,
+        python-tests-azure-openai,
+        python-tests-misc-integration,
+        python-tests-functions,
+        python-tests-foundry,
+        python-tests-cosmos,
+      ]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Download all test results from current run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          path: test-results/
+      - name: Restore flaky report history cache
+        uses: actions/cache/restore@v4
+        with:
+          path: python/flaky-report-history.json
+          key: flaky-report-history-integration-${{ github.run_id }}
+          restore-keys: |
+            flaky-report-history-integration-
+      - name: Generate trend report
+        run: >
+          uv run python scripts/flaky_report/aggregate.py
+          ../test-results/
+          flaky-report-history.json
+          flaky-test-report.md
+      - name: Post to Job Summary
+        if: always()
+        run: cat flaky-test-report.md >> $GITHUB_STEP_SUMMARY
+      - name: Save flaky report history cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: python/flaky-report-history.json
+          key: flaky-report-history-integration-${{ github.run_id }}
+      - name: Upload unified trend report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flaky-test-report
+          path: |
+            python/flaky-test-report.md
+            python/flaky-report-history.json
 
   python-integration-tests-check:
     if: always()

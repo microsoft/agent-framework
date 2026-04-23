@@ -8,6 +8,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import BaseModel
 
 from agent_framework import (
+    SKIP_PARSING,
     Content,
     FunctionTool,
     tool,
@@ -1141,6 +1142,324 @@ def test_parse_annotation_with_annotated_and_literal():
     literal_type = args[0]
     assert get_origin(literal_type) is Literal
     assert get_args(literal_type) == ("A", "B", "C")
+
+
+# endregion
+
+
+# region normalize_tools flattening of tool-collection wrappers
+
+
+def _make_flatten_function_tool(name: str) -> FunctionTool:
+    """Build a FunctionTool for flattening tests."""
+
+    @tool(name=name, description=f"{name} tool")
+    def _impl(x: int) -> int:
+        return x
+
+    return _impl  # type: ignore[return-value]
+
+
+def test_normalize_tools_flattens_tool_collection_wrapper() -> None:
+    """A non-tool, non-callable iterable inside the tools list is flattened."""
+    from agent_framework._tools import normalize_tools
+
+    inner_a = _make_flatten_function_tool("inner_a")
+    inner_b = _make_flatten_function_tool("inner_b")
+
+    class ToolBundle:
+        """Minimal stand-in for a tool-collection wrapper like FoundryToolbox."""
+
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    bundle = ToolBundle([inner_a, inner_b])
+
+    normalized = normalize_tools([bundle])
+
+    assert len(normalized) == 2
+    assert normalized[0] is inner_a
+    assert normalized[1] is inner_b
+
+
+def test_normalize_tools_combines_bundle_with_individual_tools() -> None:
+    """The canonical ``tools=[bundle, my_func]`` call site spreads bundle + individual."""
+    from agent_framework._tools import normalize_tools
+
+    bundled = _make_flatten_function_tool("bundled")
+    standalone = _make_flatten_function_tool("standalone")
+
+    class ToolBundle:
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    normalized = normalize_tools([ToolBundle([bundled]), standalone])
+
+    assert len(normalized) == 2
+    assert normalized[0] is bundled
+    assert normalized[1] is standalone
+
+
+def test_normalize_tools_flattens_nested_bundles() -> None:
+    """Bundles inside bundles are flattened recursively via the recursive call."""
+    from agent_framework._tools import normalize_tools
+
+    inner = _make_flatten_function_tool("deep")
+
+    class ToolBundle:
+        def __init__(self, tools: list[Any]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    nested = ToolBundle([ToolBundle([inner])])
+
+    normalized = normalize_tools([nested])
+
+    assert len(normalized) == 1
+    assert normalized[0] is inner
+
+
+def test_normalize_tools_bundle_only_form() -> None:
+    """Passing a bundle directly (no outer list) also flattens its contents.
+
+    ``tools=bundle`` — the outer wrap-in-list happens in the non-Sequence
+    branch, then the flattening logic kicks in on the inner pass.
+    """
+    from agent_framework._tools import normalize_tools
+
+    a = _make_flatten_function_tool("a")
+    b = _make_flatten_function_tool("b")
+
+    class ToolBundle:
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self._tools = tools
+
+        def __iter__(self):
+            return iter(self._tools)
+
+    normalized = normalize_tools(ToolBundle([a, b]))  # type: ignore[arg-type]
+
+    assert len(normalized) == 2
+    assert normalized[0] is a
+    assert normalized[1] is b
+
+
+def test_normalize_tools_does_not_flatten_known_tool_types() -> None:
+    """FunctionTool / dict / callable are detected before the flatten branch."""
+    from agent_framework._tools import normalize_tools
+
+    func_tool = _make_flatten_function_tool("ft")
+    dict_tool: dict[str, Any] = {"type": "code_interpreter", "container": {"type": "auto"}}
+
+    def plain_callable(x: int) -> int:
+        return x
+
+    normalized = normalize_tools([func_tool, dict_tool, plain_callable])
+
+    assert len(normalized) == 3
+    assert normalized[0] is func_tool
+    assert normalized[1] is dict_tool
+    # plain_callable was wrapped in a FunctionTool via the @tool helper
+    assert isinstance(normalized[2], FunctionTool)
+
+
+def test_normalize_tools_flattens_mapping_like_toolbox_with_tools_attr() -> None:
+    """Mapping-like toolbox objects with ``.tools`` should still flatten."""
+    from collections.abc import Mapping as MappingABC
+
+    from agent_framework._tools import normalize_tools
+
+    bundled = _make_flatten_function_tool("bundled")
+    standalone = _make_flatten_function_tool("standalone")
+
+    class ToolBundleMapping(MappingABC[str, Any]):
+        def __init__(self, tools: list[FunctionTool]) -> None:
+            self.tools = tools
+            self._data = {"name": "research_tools", "version": "v1", "tools": tools}
+
+        def __getitem__(self, key: str) -> Any:
+            return self._data[key]
+
+        def __iter__(self):
+            return iter(self._data)
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+    normalized = normalize_tools([ToolBundleMapping([bundled]), standalone])
+
+    assert len(normalized) == 2
+    assert normalized[0] is bundled
+    assert normalized[1] is standalone
+
+
+# region SKIP_PARSING sentinel & skip_parsing
+
+
+async def test_invoke_skip_parsing_returns_native_value() -> None:
+    """invoke(skip_parsing=True) returns the wrapped function's raw value."""
+
+    @tool
+    def get_weather(city: str) -> dict[str, Any]:
+        """Get the weather."""
+        return {"city": city, "temperature_c": 21.5, "conditions": "partly cloudy"}
+
+    raw = await get_weather.invoke(arguments={"city": "Seattle"}, skip_parsing=True)
+
+    assert isinstance(raw, dict)
+    assert raw == {"city": "Seattle", "temperature_c": 21.5, "conditions": "partly cloudy"}
+
+
+async def test_invoke_skip_parsing_passes_through_custom_objects() -> None:
+    """skip_parsing must not call str()/repr() on the result."""
+
+    class Custom:  # noqa: B903
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+    @tool
+    def make() -> Custom:
+        """Make a custom object."""
+        return Custom(42)
+
+    raw = await make.invoke(skip_parsing=True)
+
+    assert isinstance(raw, Custom)
+    assert raw.value == 42
+
+
+async def test_invoke_skip_parsing_awaits_async_functions() -> None:
+    @tool
+    async def slow(x: int) -> int:
+        """Async tool."""
+        return x * 2
+
+    raw = await slow.invoke(arguments={"x": 21}, skip_parsing=True)
+    assert raw == 42
+
+
+async def test_invoke_skip_parsing_bypasses_configured_result_parser() -> None:
+    """The tool's own result_parser is bypassed when skip_parsing=True is requested."""
+    parser_calls: list[Any] = []
+
+    def parser(value: Any) -> str:
+        parser_calls.append(value)
+        return "PARSED"
+
+    @tool(result_parser=parser)
+    def make_dict() -> dict[str, int]:
+        """Returns a dict."""
+        return {"a": 1}
+
+    raw = await make_dict.invoke(skip_parsing=True)
+    assert raw == {"a": 1}
+    assert parser_calls == []
+
+    # Sanity: omitting skip_parsing still applies the configured parser.
+    parsed = await make_dict.invoke()
+    assert parsed[0].type == "text"
+    assert parsed[0].text == "PARSED"
+
+
+async def test_constructor_skip_parsing_sentinel_returns_raw_by_default() -> None:
+    """Constructing a tool with result_parser=SKIP_PARSING makes invoke return the raw value."""
+
+    @tool(result_parser=SKIP_PARSING)
+    def make_dict() -> dict[str, int]:
+        """Returns a dict."""
+        return {"a": 1}
+
+    raw = await make_dict.invoke()
+    assert raw == {"a": 1}
+
+
+async def test_invoke_skip_parsing_validates_arguments() -> None:
+    """Argument validation is shared with the default path."""
+
+    @tool
+    def adder(x: int, y: int) -> int:
+        """Add."""
+        return x + y
+
+    with pytest.raises(TypeError):
+        await adder.invoke(arguments={"x": "not-an-int", "y": 1}, skip_parsing=True)
+
+
+async def test_invoke_skip_parsing_rejects_unexpected_runtime_kwargs() -> None:
+    @tool
+    async def echo(message: str) -> str:
+        """Echo."""
+        return message
+
+    with pytest.raises(TypeError, match="Unexpected keyword argument"):
+        await echo.invoke(arguments={"message": "hi"}, skip_parsing=True, api_token="secret")
+
+
+async def test_invoke_skip_parsing_raises_for_declaration_only_tool() -> None:
+    declared = FunctionTool(name="dummy", description="declaration only")
+
+    from agent_framework.exceptions import ToolException
+
+    with pytest.raises(ToolException):
+        await declared.invoke(arguments={}, skip_parsing=True)
+
+
+async def test_invoke_skip_parsing_records_telemetry(span_exporter: InMemorySpanExporter) -> None:
+    """skip_parsing participates in OTEL spans and records str(raw) as TOOL_RESULT."""
+
+    @tool(name="raw_tool", description="raw tool")
+    def returns_dict(x: int) -> dict[str, int]:
+        """Returns a dict."""
+        return {"value": x}
+
+    span_exporter.clear()
+    raw = await returns_dict.invoke(arguments={"x": 5}, tool_call_id="raw_call", skip_parsing=True)
+
+    assert raw == {"value": 5}
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes[OtelAttr.TOOL_NAME] == "raw_tool"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "raw_call"
+    assert span.attributes[OtelAttr.TOOL_RESULT] == "{'value': 5}"
+
+
+async def test_invoke_default_path_records_parsed_telemetry(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    """Regression: omitting skip_parsing still records the parsed result in telemetry."""
+
+    def parser(value: Any) -> str:
+        return f"parsed:{value}"
+
+    @tool(name="parsed_tool", description="parsed", result_parser=parser)
+    def returns_int() -> int:
+        """Returns an int."""
+        return 7
+
+    span_exporter.clear()
+    parsed = await returns_int.invoke(tool_call_id="parsed_call")
+
+    assert parsed[0].text == "parsed:7"
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].attributes[OtelAttr.TOOL_RESULT] == "parsed:7"
+
+
+def test_skip_parsing_is_singleton() -> None:
+    """SKIP_PARSING is a singleton; instantiation returns the same object."""
+    from agent_framework._tools import _SkipParsingSentinel
+
+    assert _SkipParsingSentinel() is SKIP_PARSING
+    assert repr(SKIP_PARSING) == "SKIP_PARSING"
 
 
 # endregion

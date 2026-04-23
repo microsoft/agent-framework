@@ -664,6 +664,21 @@ def test_function_approval_serialization_roundtrip():
     # The Content union will need to be handled differently when we fully migrate
 
 
+def test_function_approval_request_function_call_none_guard():
+    """Test that accessing function_call attributes is safe when function_call is None."""
+    # Construct a Content with type "function_approval_request" but no function_call.
+    # This verifies the None-guard pattern used in samples to prevent AttributeError.
+    content = Content("function_approval_request", id="req-none")
+    assert content.function_call is None
+
+    # A proper approval request always has function_call set
+    fc = Content.from_function_call(call_id="call-1", name="do_something", arguments={"a": 1})
+    req = Content.from_function_approval_request(id="req-1", function_call=fc)
+    assert req.function_call is not None
+    assert req.function_call.name == "do_something"
+    assert req.function_call.arguments == {"a": 1}
+
+
 def test_function_approval_accepts_mcp_call():
     """Ensure FunctionApprovalRequestContent supports MCP server tool calls."""
     mcp_call = Content.from_mcp_server_tool_call(
