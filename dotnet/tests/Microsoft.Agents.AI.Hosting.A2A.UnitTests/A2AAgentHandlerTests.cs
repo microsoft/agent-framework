@@ -994,7 +994,7 @@ public sealed class A2AAgentHandlerTests
     /// Verifies that the CancellationToken is propagated to RunStreamingAsync in the streaming path.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_Streaming_CancellationTokenIsPropagatedToRunStreamingAsyncAsync()
+    public async Task ExecuteAsync_Streaming_CancellationTokenIsPropagatedToRunStreamingAsync()
     {
         // Arrange
         CancellationToken capturedToken = default;
@@ -1272,6 +1272,308 @@ public sealed class A2AAgentHandlerTests
         Assert.True(capturedOptions.AllowBackgroundResponses);
     }
 
+    /// <summary>
+    /// Verifies that in the non-streaming path, SaveSessionAsync is called with
+    /// CancellationToken.None even when RunAsync throws an exception.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_NonStreaming_WhenRunAsyncThrows_SavesSessionWithUncancelledTokenAsync()
+    {
+        // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore>();
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        Mock<AIAgent> agentMock = new() { CallBase = true };
+        agentMock.SetupGet(x => x.Name).Returns("TestAgent");
+        agentMock.Protected()
+            .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new TestAgentSession());
+        agentMock.Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("Agent failed"));
+
+        using var cts = new CancellationTokenSource();
+        A2AAgentHandler handler = CreateHandler(agentMock, agentSessionStore: mockSessionStore.Object);
+
+        // Act
+        var eventQueue = new AgentEventQueue();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            handler.ExecuteAsync(
+                new RequestContext
+                {
+                    TaskId = "", ContextId = "ctx", StreamingResponse = false,
+                    Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+                },
+                eventQueue,
+                cts.Token));
+
+        // Assert - SaveSessionAsync was called with CancellationToken.None despite the exception
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<string>(s => s == "ctx"),
+                It.IsAny<AgentSession>(),
+                It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that in the streaming path, SaveSessionAsync is called with
+    /// CancellationToken.None even when RunStreamingAsync throws an exception.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_Streaming_WhenRunStreamingAsyncThrows_SavesSessionWithUncancelledTokenAsync()
+    {
+        // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore>();
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        Mock<AIAgent> agentMock = new() { CallBase = true };
+        agentMock.SetupGet(x => x.Name).Returns("TestAgent");
+        agentMock.Protected()
+            .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new TestAgentSession());
+        agentMock.Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ToThrowingAsyncEnumerableAsync(new InvalidOperationException("Stream failed")));
+
+        using var cts = new CancellationTokenSource();
+        A2AAgentHandler handler = CreateHandler(agentMock, agentSessionStore: mockSessionStore.Object);
+
+        // Act
+        var eventQueue = new AgentEventQueue();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            handler.ExecuteAsync(
+                new RequestContext
+                {
+                    TaskId = "", ContextId = "ctx-stream", StreamingResponse = true,
+                    Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+                },
+                eventQueue,
+                cts.Token));
+
+        // Assert - SaveSessionAsync was called with CancellationToken.None despite the exception
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<string>(s => s == "ctx-stream"),
+                It.IsAny<AgentSession>(),
+                It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that on the continuation path, SaveSessionAsync is called with
+    /// CancellationToken.None even when RunAsync throws an exception.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_OnContinuation_WhenRunAsyncThrows_SavesSessionWithUncancelledTokenAsync()
+    {
+        // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore>();
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        Mock<AIAgent> agentMock = new() { CallBase = true };
+        agentMock.SetupGet(x => x.Name).Returns("TestAgent");
+        agentMock.Protected()
+            .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new TestAgentSession());
+        agentMock.Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("Agent failed"));
+
+        using var cts = new CancellationTokenSource();
+        A2AAgentHandler handler = CreateHandler(agentMock, agentSessionStore: mockSessionStore.Object);
+
+        // Act
+        var eventQueue = new AgentEventQueue();
+        var events = new EventCollector();
+        var readerTask = ReadEventsAsync(eventQueue, events);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            handler.ExecuteAsync(
+                new RequestContext
+                {
+                    StreamingResponse = false,
+                    TaskId = "task-1", ContextId = "ctx-cont",
+                    Message = new Message { MessageId = "empty", Role = Role.User, Parts = [] },
+                    Task = new AgentTask { Id = "task-1", ContextId = "ctx-cont", History = [new Message { Role = Role.User, Parts = [new Part { Text = "Hello" }] }] }
+                },
+                eventQueue,
+                cts.Token));
+        eventQueue.Complete(null);
+        await readerTask;
+
+        // Assert - SaveSessionAsync was called with CancellationToken.None despite the exception
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<string>(s => s == "ctx-cont"),
+                It.IsAny<AgentSession>(),
+                It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that in the non-streaming path, SaveSessionAsync is called with
+    /// CancellationToken.None rather than the caller's cancellation token.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_NonStreaming_SavesSessionWithUncancelledTokenAsync()
+    {
+        // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore>();
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response), agentSessionStore: mockSessionStore.Object);
+
+        using var cts = new CancellationTokenSource();
+
+        // Act
+        var eventQueue = new AgentEventQueue();
+        await handler.ExecuteAsync(
+            new RequestContext
+            {
+                TaskId = "", ContextId = "ctx", StreamingResponse = false,
+                Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+            },
+            eventQueue,
+            cts.Token);
+        eventQueue.Complete(null);
+
+        // Assert - SaveSessionAsync was called with CancellationToken.None, not the caller's token
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<string>(s => s == "ctx"),
+                It.IsAny<AgentSession>(),
+                It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that in the streaming path, SaveSessionAsync is called with
+    /// CancellationToken.None rather than the caller's cancellation token.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_Streaming_SavesSessionWithUncancelledTokenAsync()
+    {
+        // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore>();
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        AgentResponseUpdate[] updates = [new AgentResponseUpdate(ChatRole.Assistant, "chunk") { ResponseId = "r1" }];
+        A2AAgentHandler handler = CreateHandler(CreateStreamingAgentMock(updates), agentSessionStore: mockSessionStore.Object);
+
+        using var cts = new CancellationTokenSource();
+
+        // Act
+        var eventQueue = new AgentEventQueue();
+        await handler.ExecuteAsync(
+            new RequestContext
+            {
+                TaskId = "", ContextId = "ctx-stream", StreamingResponse = true,
+                Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+            },
+            eventQueue,
+            cts.Token);
+        eventQueue.Complete(null);
+
+        // Assert - SaveSessionAsync was called with CancellationToken.None, not the caller's token
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<string>(s => s == "ctx-stream"),
+                It.IsAny<AgentSession>(),
+                It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that on the continuation path, SaveSessionAsync is called with
+    /// CancellationToken.None rather than the caller's cancellation token.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_OnContinuation_SavesSessionWithUncancelledTokenAsync()
+    {
+        // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore>();
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Done!")]);
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response), agentSessionStore: mockSessionStore.Object);
+
+        using var cts = new CancellationTokenSource();
+
+        // Act
+        var eventQueue = new AgentEventQueue();
+        var events = new EventCollector();
+        var readerTask = ReadEventsAsync(eventQueue, events);
+        await handler.ExecuteAsync(
+            new RequestContext
+            {
+                StreamingResponse = false,
+                TaskId = "task-1", ContextId = "ctx-cont",
+                Message = new Message { MessageId = "empty", Role = Role.User, Parts = [] },
+                Task = new AgentTask { Id = "task-1", ContextId = "ctx-cont", History = [new Message { Role = Role.User, Parts = [new Part { Text = "Hello" }] }] }
+            },
+            eventQueue,
+            cts.Token);
+        eventQueue.Complete(null);
+        await readerTask;
+
+        // Assert - SaveSessionAsync was called with CancellationToken.None, not the caller's token
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<string>(s => s == "ctx-cont"),
+                It.IsAny<AgentSession>(),
+                It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once);
+    }
+
     private static A2AAgentHandler CreateHandler(
         Mock<AIAgent> agentMock,
         AgentRunMode? runMode = null,
@@ -1406,6 +1708,16 @@ public sealed class A2AAgentHandlerTests
         {
             yield return item;
         }
+    }
+
+    private static async IAsyncEnumerable<AgentResponseUpdate> ToThrowingAsyncEnumerableAsync(Exception exception)
+    {
+        await Task.Yield();
+        throw exception;
+
+#pragma warning disable CS0162 // Unreachable code detected - yield is required for async iterator
+        yield break;
+#pragma warning restore CS0162
     }
 
     private static async Task InvokeExecuteAsync(A2AAgentHandler handler, RequestContext context)

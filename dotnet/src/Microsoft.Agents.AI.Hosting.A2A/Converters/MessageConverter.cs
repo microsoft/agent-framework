@@ -10,7 +10,7 @@ internal static class MessageConverter
 {
     public static List<Part> ToParts(this AgentResponseUpdate update)
     {
-        if (update.Contents is not { Count: > 0 })
+        if (update is null || update.Contents is not { Count: > 0 })
         {
             return [];
         }

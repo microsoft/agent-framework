@@ -88,13 +88,19 @@ internal sealed class A2AAgentHandler : IAgentHandler
             ? new AgentRunOptions { AllowBackgroundResponses = allowBackgroundResponses }
             : new AgentRunOptions { AllowBackgroundResponses = allowBackgroundResponses, AdditionalProperties = context.Metadata.ToAdditionalProperties() };
 
-        var response = await this._hostAgent.RunAsync(
-            chatMessages,
-            session: session,
-            options: options,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        await this._hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
+        AgentResponse response;
+        try
+        {
+            response = await this._hostAgent.RunAsync(
+                chatMessages,
+                session: session,
+                options: options,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
+        }
 
         if (response.ContinuationToken is null)
         {
@@ -135,13 +141,18 @@ internal sealed class A2AAgentHandler : IAgentHandler
             ? new AgentRunOptions { AdditionalProperties = context.Metadata.ToAdditionalProperties() }
             : null;
 
-        await foreach (var update in this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken).ConfigureAwait(false))
+        try
         {
-            var message = CreateMessageFromUpdate(contextId, update);
-            await eventQueue.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
+            await foreach (var update in this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken).ConfigureAwait(false))
+            {
+                var message = CreateMessageFromUpdate(contextId, update);
+                await eventQueue.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
+            }
         }
-
-        await this._hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
+        finally
+        {
+            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
+        }
     }
 
     private async Task HandleTaskUpdateAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
@@ -177,8 +188,10 @@ internal sealed class A2AAgentHandler : IAgentHandler
             await failUpdater.FailAsync(message: null, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
-
-        await this._hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
+        finally
+        {
+            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
+        }
 
         if (response.ContinuationToken is null)
         {
