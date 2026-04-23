@@ -275,6 +275,8 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
+      OLLAMA_MODEL: qwen2.5:0.5b
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text
     defaults:
       run:
         working-directory: python
@@ -286,6 +288,26 @@ jobs:
         with:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+        working-directory: .
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-qwen2.5-0.5b-nomic-embed-text-v1
+      - name: Start Ollama and pull models
+        run: |
+          ollama serve &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          ollama pull qwen2.5:0.5b
+          ollama pull nomic-embed-text
+        working-directory: .
       - name: Start local MCP server
         id: local-mcp
         uses: ./.github/actions/setup-local-mcp-server
@@ -555,9 +577,9 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
-  # Flaky test trend report (aggregates per-job JUnit XML results)
-  python-flaky-test-report:
-    name: Flaky Test Report
+  # Integration test trend report (aggregates per-job JUnit XML results)
+  python-integration-test-report:
+    name: Integration Test Report
     if: >
       always() &&
       (contains(join(needs.*.result, ','), 'success') ||
@@ -587,36 +609,36 @@ jobs:
         with:
           pattern: test-results-*
           path: test-results/
-      - name: Restore flaky report history cache
+      - name: Restore report history cache
         uses: actions/cache/restore@v4
         with:
-          path: python/flaky-report-history.json
-          key: flaky-report-history-merge-${{ github.run_id }}
+          path: python/integration-report-history.json
+          key: integration-report-history-merge-${{ github.run_id }}
           restore-keys: |
-            flaky-report-history-merge-
+            integration-report-history-merge-
       - name: Generate trend report
         run: >
           uv run python scripts/flaky_report/aggregate.py
           ../test-results/
-          flaky-report-history.json
-          flaky-test-report.md
+          integration-report-history.json
+          integration-test-report.md
       - name: Post to Job Summary
         if: always()
-        run: cat flaky-test-report.md >> $GITHUB_STEP_SUMMARY
-      - name: Save flaky report history cache
+        run: cat integration-test-report.md >> $GITHUB_STEP_SUMMARY
+      - name: Save report history cache
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: python/flaky-report-history.json
-          key: flaky-report-history-merge-${{ github.run_id }}
+          path: python/integration-report-history.json
+          key: integration-report-history-merge-${{ github.run_id }}
       - name: Upload unified trend report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: flaky-test-report
+          name: integration-test-report
           path: |
-            python/flaky-test-report.md
-            python/flaky-report-history.json
+            python/integration-test-report.md
+            python/integration-report-history.json
 
   python-integration-tests-check:
     if: always()

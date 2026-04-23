@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Flaky test report aggregation and trend generation.
+"""Integration test report aggregation and trend generation.
 
 Parses JUnit XML (``pytest.xml``) files produced by each CI job, merges
 them with historical data, and generates a markdown trend report showing

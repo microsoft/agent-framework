@@ -247,7 +247,7 @@ def _short_name(nodeid: str) -> str:
 def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     """Generate a markdown trend report from run history."""
     lines = [
-        "# 🔬 Flaky Test Report",
+        "# 🔬 Integration Test Report",
         "",
         f"*Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*",
         "",
