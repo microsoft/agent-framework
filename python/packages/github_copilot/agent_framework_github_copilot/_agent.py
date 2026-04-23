@@ -376,7 +376,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Raises:
             AgentException: If the request fails.
         """
-        del middleware  # not used; accepted for interface compatibility with AgentTelemetryLayer
+        if middleware:
+            logger.warning(
+                "Per-run middleware is not supported by RawGitHubCopilotAgent: the GitHub Copilot SDK "
+                "handles tool execution internally, so chat/function middleware cannot be injected into "
+                "the tool call path. Use agent-level middleware via the GitHubCopilotAgent constructor instead."
+            )
         if stream:
             ctx_holder: dict[str, Any] = {}
 

@@ -196,6 +196,7 @@ class TestGitHubCopilotAgentInit:
         )
         opts = agent.default_options
         assert opts["model"] == "claude-sonnet-4-5"
+        assert "timeout" not in opts  # timeout is extracted into _settings, not returned in default_options
 
     def test_default_options_without_model_configured(self) -> None:
         """Test that default_options works correctly when no model is configured."""
