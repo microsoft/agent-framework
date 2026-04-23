@@ -831,17 +831,11 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     Examples:
         .. code-block:: python
 
-<<<<<<< HEAD:python/packages/core/agent_framework/_security.py
-from agent_framework import Agent, LabelTrackingFunctionMiddleware, tool
+            from agent_framework import Agent, LabelTrackingFunctionMiddleware, tool
 
             @tool(additional_properties={"source_integrity": "trusted"})
             async def get_weather(city: str) -> str:
                 return f"Weather in {city}: 72°F"
-=======
-            from agent_framework import Agent
-
-            from agent_framework.security import LabelTrackingFunctionMiddleware
->>>>>>> 1d4a67d210d9af8a55f4a939a0283ee6b9fb450f:python/packages/core/agent_framework/security.py
 
             # Create agent with automatic hiding enabled
             middleware = LabelTrackingFunctionMiddleware(

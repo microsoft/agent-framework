@@ -282,7 +282,7 @@ async def run_scenarios(agent, config):
     # Without this, each agent.run() starts a fresh conversation and the LLM
     # won't know about the emails fetched in Scenario 1 — it would never
     # attempt to call send_email, so the policy enforcer would never trigger.
-    session = AgentSession()
+    session = agent.create_session()
 
     response = await agent.run("Please fetch my recent emails and give me a brief summary of each one.", session=session)
     print(f"\n📋 Agent Response:\n{'-' * 40}")
