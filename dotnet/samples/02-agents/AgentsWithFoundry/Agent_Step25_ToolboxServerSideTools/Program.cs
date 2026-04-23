@@ -33,18 +33,18 @@ string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-m
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 var projectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
-await Main(projectClient, model);
-// await CombineToolboxes(projectClient, model);
+await Main(projectClient, model, endpoint);
+// await CombineToolboxes(projectClient, model, endpoint);
 
 // ---------------------------------------------------------------------------
 // Main: single toolbox
 // ---------------------------------------------------------------------------
-static async Task Main(AIProjectClient projectClient, string model)
+static async Task Main(AIProjectClient projectClient, string model, string endpoint)
 {
     Console.WriteLine("=== Foundry Toolbox Server-Side Tools Example ===");
 
     // Comment out if the toolbox already exists in your Foundry project.
-    await CreateSampleToolboxAsync(projectClient, ToolboxName);
+    await CreateSampleToolboxAsync(projectClient, ToolboxName, endpoint);
 
     // Omit the version to resolve the toolbox's current default version at runtime.
     var toolbox = await projectClient.GetToolboxVersionAsync(ToolboxName);
@@ -68,13 +68,13 @@ static async Task Main(AIProjectClient projectClient, string model)
 // ---------------------------------------------------------------------------
 // Alternative: combine tools from multiple toolboxes
 // ---------------------------------------------------------------------------
-static async Task CombineToolboxes(AIProjectClient projectClient, string model)
+static async Task CombineToolboxes(AIProjectClient projectClient, string model, string endpoint)
 {
     Console.WriteLine("=== Combine Toolboxes Example ===");
 
     // Comment out if the toolboxes already exist in your Foundry project.
-    await CreateSampleToolboxAsync(projectClient, ToolboxName);
-    await CreateSampleToolboxAsync(projectClient, SecondToolboxName);
+    await CreateSampleToolboxAsync(projectClient, ToolboxName, endpoint);
+    await CreateSampleToolboxAsync(projectClient, SecondToolboxName, endpoint);
 
     var toolboxA = await projectClient.GetToolboxVersionAsync(ToolboxName);
     var toolboxB = await projectClient.GetToolboxVersionAsync(SecondToolboxName);
@@ -97,7 +97,7 @@ static async Task CombineToolboxes(AIProjectClient projectClient, string model)
 // ---------------------------------------------------------------------------
 // Helper: create (or replace) a sample toolbox so the sample works out-of-the-box
 // ---------------------------------------------------------------------------
-static async Task CreateSampleToolboxAsync(AIProjectClient projectClient, string name)
+static async Task CreateSampleToolboxAsync(AIProjectClient projectClient, string name, string endpoint)
 {
     // Toolboxes are normally configured in the Foundry portal or a deployment
     // script, not the application itself. This helper exists so the sample can
