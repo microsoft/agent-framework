@@ -204,9 +204,13 @@ class RawFoundryChatClient(  # type: ignore[misc]
                 project_client_kwargs["allow_preview"] = allow_preview
             project_client = AIProjectClient(**project_client_kwargs)
 
+        openai_kwargs: dict[str, Any] = {}
+        if default_headers:
+            openai_kwargs["default_headers"] = default_headers
+
         super().__init__(
             model=resolved_model,
-            async_client=project_client.get_openai_client(),
+            async_client=project_client.get_openai_client(**openai_kwargs),
             default_headers=default_headers,
             instruction_role=instruction_role,
             compaction_strategy=compaction_strategy,

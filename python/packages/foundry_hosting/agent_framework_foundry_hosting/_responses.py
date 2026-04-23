@@ -172,12 +172,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._agent = agent
         self.response_handler(self._handle_response)  # pyright: ignore[reportUnknownMemberType]
 
-    @staticmethod
-    def _is_streaming_request(request: CreateResponse) -> bool:
-        """Check if the request is a streaming request."""
-        return request.stream is not None and request.stream is True
-
-    def _handle_response(
+    async def _handle_response(
         self,
         request: CreateResponse,
         context: ResponseContext,
@@ -186,11 +181,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         """Handle the creation of a response."""
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration
-            return self._handle_workflow_agent(request, context)
+            return self._handle_inner_workflow(request, context)
+        return self._handle_inner_agent(request, context)
 
-        return self._handle_regular_agent(request, context)
-
-    async def _handle_regular_agent(
+    async def _handle_inner_agent(
         self,
         request: CreateResponse,
         context: ResponseContext,
@@ -200,25 +194,24 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         input_messages = _items_to_messages(input_items)
 
         history = await context.get_history()
-        messages: list[str | Content | Message] = [*_output_items_to_messages(history), *input_messages]
+        run_kwargs: dict[str, Any] = {"messages": [*_output_items_to_messages(history), input_messages]}
+        is_streaming_request = request.stream is not None and request.stream is True
 
         chat_options, are_options_set = _to_chat_options(request)
 
-        is_streaming_request = self._is_streaming_request(request)
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
 
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
+        if are_options_set and not isinstance(self._agent, RawAgent):
+            logger.warning("Agent doesn't support runtime options. They will be ignored.")
+        else:
+            run_kwargs["options"] = chat_options
+
         if not is_streaming_request:
             # Run the agent in non-streaming mode
-            if isinstance(self._agent, RawAgent):
-                raw_agent = cast("RawAgent[Any]", self._agent)  # type: ignore[redundant-cast]  # pyright: ignore[reportUnknownMemberType]
-                response = await raw_agent.run(messages, stream=False, options=chat_options)
-            else:
-                if are_options_set:
-                    logger.warning("Agent doesn't support runtime options. They will be ignored.")
-                response = await self._agent.run(messages, stream=False)
+            response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
 
             for message in response.messages:
                 for content in message.contents:
@@ -229,13 +222,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             return
 
         # Run the agent in streaming mode
-        if isinstance(self._agent, RawAgent):
-            raw_agent = cast("RawAgent[Any]", self._agent)  # type: ignore[redundant-cast]  # pyright: ignore[reportUnknownMemberType]
-            response_stream = raw_agent.run(messages, stream=True, options=chat_options)
-        else:
-            if are_options_set:
-                logger.warning("Agent doesn't support runtime options. They will be ignored.")
-            response_stream = self._agent.run(messages, stream=True)
+        response_stream = self._agent.run(stream=True, **run_kwargs)  # type: ignore[reportUnknownMemberType]
 
         # Track the current active output item builder for streaming;
         # lazily created on matching content, closed when a different type arrives.
@@ -256,7 +243,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         yield response_event_stream.emit_completed()
 
-    async def _handle_workflow_agent(
+    async def _handle_inner_workflow(
         self,
         request: CreateResponse,
         context: ResponseContext,
@@ -269,8 +256,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         """
         input_items = await context.get_input_items()
         input_messages = _items_to_messages(input_items)
-
-        is_streaming_request = self._is_streaming_request(request)
+        is_streaming_request = request.stream is not None and request.stream is True
 
         _, are_options_set = _to_chat_options(request)
         if are_options_set:
@@ -311,7 +297,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
 
         # Create a new checkpoint storage for this response based on the following rules:
-        # - If no previous response ID or conversation ID is provided, create a new checkpoint storage for this response
+        # - If no previous response ID or conversation ID is provided,
+        #   create a new checkpoint storage for this response
         # - If a previous response ID is provided, create a new checkpoint storage for this response
         # - If a conversation ID is provided, reuse the existing checkpoint storage for the conversation
         context_id = context.conversation_id or context.response_id

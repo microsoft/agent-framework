@@ -1,0 +1,15 @@
+[project]
+name = "foundry-hosted-agents-responses-01-basic"
+version = "0.1.0"
+description = "Basic Foundry hosted agent sample using the responses protocol."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-foundry-hosting",
+    "azure-identity",
+    "python-dotenv",
+]
+
+[tool.uv]
+package = false
