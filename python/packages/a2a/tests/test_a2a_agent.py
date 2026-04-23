@@ -46,6 +46,7 @@ class MockA2AClient:
         self.responses: list[Any] = []
         self.resubscribe_responses: list[Any] = []
         self.get_task_response: Task | None = None
+        self.last_message: Any = None
 
     def add_message_response(self, message_id: str, text: str, role: str = "agent") -> None:
         """Add a mock Message response."""
@@ -111,6 +112,7 @@ class MockA2AClient:
 
     async def send_message(self, message: Any) -> AsyncIterator[Any]:
         """Mock send_message method that yields responses."""
+        self.last_message = message
         self.call_count += 1
 
         # All queued responses are delivered as a single streaming batch per call.
@@ -539,6 +541,37 @@ def test_prepare_message_for_a2a_forwards_context_id() -> None:
     assert result.metadata == {"trace_id": "trace-456"}
 
 
+def test_prepare_message_for_a2a_uses_fallback_context_id() -> None:
+    """Test that context_id kwarg is used when message has no context_id property."""
+
+    agent = A2AAgent(client=MagicMock(), http_client=None)
+
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Hello")],
+    )
+
+    result = agent._prepare_message_for_a2a(message, context_id="session-ctx-1")
+
+    assert result.context_id == "session-ctx-1"
+
+
+def test_prepare_message_for_a2a_message_context_id_takes_precedence() -> None:
+    """Test that message.additional_properties context_id wins over the fallback."""
+
+    agent = A2AAgent(client=MagicMock(), http_client=None)
+
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Hello")],
+        additional_properties={"context_id": "explicit-ctx"},
+    )
+
+    result = agent._prepare_message_for_a2a(message, context_id="session-ctx-1")
+
+    assert result.context_id == "explicit-ctx"
+
+
 def test_parse_contents_from_a2a_with_data_part() -> None:
     """Test conversion of A2A DataPart."""
 
@@ -863,6 +896,43 @@ async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2A
     assert response.continuation_token is None
     assert len(response.messages) == 1
     assert response.messages[0].text == "Poll result"
+
+
+# endregion
+
+
+# region Session context_id Integration Tests
+
+
+@mark.asyncio
+async def test_run_passes_session_service_session_id_as_context_id(mock_a2a_client: MockA2AClient) -> None:
+    """Test that run() wires session.service_session_id to the A2A message context_id."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    mock_a2a_client.add_message_response("msg-ctx", "reply")
+
+    session = AgentSession(service_session_id="svc-session-42")
+    await agent.run("Hello", session=session)
+
+    assert mock_a2a_client.last_message is not None
+    assert mock_a2a_client.last_message.context_id == "svc-session-42"
+
+
+@mark.asyncio
+async def test_run_message_context_id_takes_precedence_over_session(mock_a2a_client: MockA2AClient) -> None:
+    """Test that an explicit context_id on the message wins over session.service_session_id."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    mock_a2a_client.add_message_response("msg-ctx2", "reply")
+
+    session = AgentSession(service_session_id="svc-session-42")
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Hello")],
+        additional_properties={"context_id": "explicit-ctx"},
+    )
+    await agent.run(messages=[message], session=session)
+
+    assert mock_a2a_client.last_message is not None
+    assert mock_a2a_client.last_message.context_id == "explicit-ctx"
 
 
 # endregion
