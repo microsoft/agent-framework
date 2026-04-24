@@ -1117,6 +1117,8 @@ def _convert_message_content(content: MessageContent) -> Content:
             return Content.from_uri(file.file_url)
         if file.file_id:
             return Content.from_hosted_file(file.file_id, name=file.filename)
+        if file.file_data:
+            return Content.from_uri(file.file_data)
     if content.type == "computer_screenshot":
         screenshot = cast(ComputerScreenshotContent, content)
         return Content.from_uri(screenshot.image_url)

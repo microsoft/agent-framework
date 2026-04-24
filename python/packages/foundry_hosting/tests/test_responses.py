@@ -1507,6 +1507,47 @@ class TestMultiTurnMixedContent:
         assert messages[0].contents[1].type == "uri"
         assert messages[0].contents[1].uri == "https://example.com/doc.pdf"
 
+    async def test_text_and_file_data_input_single_turn(self) -> None:
+        """Agent receives a message with text and file content via inline file_data."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("File received")])])
+        )
+        server = _make_server(agent)
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Summarize this document"},
+                            {
+                                "type": "input_file",
+                                "file_data": "data:application/pdf;base64,JVBERi0xLjQ=",
+                                "filename": "doc.pdf",
+                            },
+                        ],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        messages = agent.run.call_args.kwargs["messages"]
+        assert len(messages) == 1
+        assert len(messages[0].contents) == 2
+        assert messages[0].contents[0].type == "text"
+        assert messages[0].contents[0].text == "Summarize this document"
+        assert messages[0].contents[1].type == "data"
+        assert messages[0].contents[1].uri == "data:application/pdf;base64,JVBERi0xLjQ="
+
     async def test_mixed_text_and_image_input(self) -> None:
         """Agent receives a single message with both text and image content."""
         agent = _make_agent(
