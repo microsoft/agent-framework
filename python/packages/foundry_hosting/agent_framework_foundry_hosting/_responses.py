@@ -221,14 +221,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             yield response_event_stream.emit_completed()
             return
 
-        # Run the agent in streaming mode
-        response_stream = self._agent.run(stream=True, **run_kwargs)  # type: ignore[reportUnknownMemberType]
-
         # Track the current active output item builder for streaming;
         # lazily created on matching content, closed when a different type arrives.
         tracker = _OutputItemTracker(response_event_stream)
 
-        async for update in response_stream:
+        # Run the agent in streaming mode
+        async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
             for content in update.contents:
                 for event in tracker.handle(content):
                     yield event
@@ -320,14 +318,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             yield response_event_stream.emit_completed()
             return
 
-        # Run the agent in streaming mode
-        response_stream = self._agent.run(input_messages, stream=True, checkpoint_storage=checkpoint_storage)
-
         # Track the current active output item builder for streaming;
         # lazily created on matching content, closed when a different type arrives.
         tracker = _OutputItemTracker(response_event_stream)
 
-        async for update in response_stream:
+        # Run the workflow agent in streaming mode
+        async for update in self._agent.run(input_messages, stream=True, checkpoint_storage=checkpoint_storage):
             for content in update.contents:
                 for event in tracker.handle(content):
                     yield event
@@ -342,7 +338,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         await self._delete_not_latest_checkpoints(checkpoint_storage, self._agent.workflow.name)
         yield response_event_stream.emit_completed()
-        return
 
     @staticmethod
     async def _delete_not_latest_checkpoints(checkpoint_storage: FileCheckpointStorage, workflow_name: str) -> None:

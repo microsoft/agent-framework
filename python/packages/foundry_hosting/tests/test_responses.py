@@ -269,7 +269,7 @@ class TestNonStreaming:
     async def test_chat_options_forwarded(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
-            raw_agent=False,
+            raw_agent=True,
         )
         server = _make_server(agent)
         resp = await _post(
@@ -302,7 +302,7 @@ class TestStreaming:
     async def test_chat_options_forwarded(self) -> None:
         agent = _make_agent(
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")],
-            raw_agent=False,
+            raw_agent=True,
         )
         server = _make_server(agent)
         resp = await _post(

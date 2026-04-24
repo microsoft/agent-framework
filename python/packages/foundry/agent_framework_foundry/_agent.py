@@ -247,9 +247,8 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             openai_client_kwargs["default_headers"] = dict(default_headers)
         if allow_preview:
             openai_client_kwargs["agent_name"] = self.agent_name
-        async_client = self.project_client.get_openai_client(**openai_client_kwargs)
         super().__init__(
-            async_client=async_client,
+            async_client=self.project_client.get_openai_client(**openai_client_kwargs),
             default_headers=default_headers,
             instruction_role=instruction_role,
             compaction_strategy=compaction_strategy,
