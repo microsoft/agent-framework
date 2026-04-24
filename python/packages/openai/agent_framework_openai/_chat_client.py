@@ -1405,7 +1405,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         else "auto",
                     }
                     file_id = content.additional_properties.get("file_id") if content.additional_properties else None
-                    if file_id:
+                    if file_id is not None:
                         result["file_id"] = file_id
                     return result
                 if content.has_top_level_media_type("audio"):
@@ -2028,6 +2028,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         local_shell_tool_name = self._get_local_shell_tool_name(options.get("tools"))
         conversation_id: str | None = None
         response_id: str | None = None
+        created_at: str | None = None
         continuation_token: OpenAIContinuationToken | None = None
         model = self.model
         match event.type:
@@ -2209,6 +2210,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 model = event.response.model
+                created_at = datetime.fromtimestamp(event.response.created_at, tz=timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%S.%fZ"
+                )
                 if event.response.usage:
                     usage = self._parse_usage_from_openai(event.response.usage)
                     if usage:
@@ -2589,6 +2593,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             response_id=response_id,
             role="assistant",
             model=model,
+            created_at=created_at,
             continuation_token=continuation_token,
             additional_properties=metadata,
             raw_representation=event,

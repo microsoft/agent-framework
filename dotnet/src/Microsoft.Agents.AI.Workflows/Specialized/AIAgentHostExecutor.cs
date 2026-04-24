@@ -185,9 +185,12 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         // that are internal to this agent. Forwarding them to other agents in the workflow
         // causes invalid request errors when the receiving agent uses the Responses API,
         // because these item types are not valid as input items.
-        var forwardableMessages = FilterForwardableMessages(response.Messages);
-        await context.SendMessageAsync(forwardableMessages, cancellationToken)
-                     .ConfigureAwait(false);
+        List<ChatMessage> forwardableMessages = FilterForwardableMessages(response.Messages).ToList();
+        if (forwardableMessages.Count > 0)
+        {
+            await context.SendMessageAsync(forwardableMessages, cancellationToken)
+                         .ConfigureAwait(false);
+        }
 
         // If we have no outstanding requests, we can yield a turn token back to the workflow.
         if (!this.HasOutstandingRequests)
@@ -280,7 +283,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         {
             // Extract only the content items that are portable across agents.
             List<AIContent> forwardableContents = message.Contents
-                .Where(c => s_forwardableContentTypes.Contains(c.GetType()))
+                .Where(c => s_forwardableContentTypes.Any(t => t.IsAssignableFrom(c.GetType())))
                 .ToList();
 
             if (forwardableContents.Count == 0)
@@ -296,7 +299,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
                 AuthorName = message.AuthorName,
                 MessageId = message.MessageId,
                 CreatedAt = message.CreatedAt,
-                AdditionalProperties = message.AdditionalProperties,
+                AdditionalProperties = message.AdditionalProperties is null ? null : new(message.AdditionalProperties),
             });
         }
 

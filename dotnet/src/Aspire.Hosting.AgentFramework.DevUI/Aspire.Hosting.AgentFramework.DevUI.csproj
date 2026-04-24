@@ -2,12 +2,20 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
-    <IsPackable>true</IsPackable>
-    <PackageTags>aspire integration hosting agent-framework devui ai agents</PackageTags>
-    <Description>Microsoft Agent Framework DevUI support for Aspire.</Description>
+    <VersionSuffix>preview</VersionSuffix>
     <!-- Suppress analyzer warnings for Aspire integration code -->
     <!-- IL2026/IL3050: Suppress trimming/AOT warnings - DevUI is a dev-only tool not intended for AOT -->
     <NoWarn>$(NoWarn);CA1873;RCS1061;VSTHRD002;IL2026;IL3050</NoWarn>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework DevUI for Aspire</Title>
+    <PackageTags>aspire integration hosting agent-framework devui ai agents</PackageTags>
+    <Description>Microsoft Agent Framework DevUI support for Aspire.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,4 +30,7 @@
     <PackageReference Include="Aspire.Hosting" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 </Project>
