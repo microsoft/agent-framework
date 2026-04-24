@@ -9,6 +9,11 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
 
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
+
 from agent_framework import (
     AgentMiddlewareLayer,
     AgentMiddlewareTypes,
@@ -252,7 +257,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._default_options = opts
         self._started = False
 
-    async def __aenter__(self) -> RawGitHubCopilotAgent[OptionsT]:
+    async def __aenter__(self) -> Self:
         """Start the agent when entering async context."""
         await self.start()
         return self
