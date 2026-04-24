@@ -130,7 +130,6 @@ from ._tools import (
     FunctionInvocationLayer,
     FunctionTool,
     ToolTypes,
-    ai_function,
     normalize_function_invocation_configuration,
     tool,
 )
@@ -430,7 +429,6 @@ __all__ = [
     "__version__",
     "add_usage_details",
     "agent_middleware",
-    "ai_function",
     "annotate_message_groups",
     "apply_compaction",
     "chat_middleware",

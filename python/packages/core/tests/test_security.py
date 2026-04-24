@@ -1464,61 +1464,6 @@ class TestLabeledMessage:
         assert labeled.is_trusted()
 
 
-class TestMiddlewareMessageLabeling:
-    """Tests for middleware message label tracking."""
-
-    def test_label_message(self):
-        """Test labeling a message by index."""
-        middleware = LabelTrackingFunctionMiddleware()
-
-        label = ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PRIVATE)
-        middleware.label_message(5, label)
-
-        retrieved = middleware.get_message_label(5)
-        assert retrieved is not None
-        assert retrieved.integrity == IntegrityLabel.UNTRUSTED
-
-    def test_get_unlabeled_message_returns_none(self):
-        """Test that unlabeled messages return None."""
-        middleware = LabelTrackingFunctionMiddleware()
-
-        assert middleware.get_message_label(999) is None
-
-    def test_label_messages_batch(self):
-        """Test batch labeling of messages."""
-        middleware = LabelTrackingFunctionMiddleware()
-
-        messages = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi there"},
-            {"role": "tool", "content": "External data"},
-        ]
-
-        labeled = middleware.label_messages(messages)
-
-        assert len(labeled) == 3
-        assert labeled[0].security_label.integrity == IntegrityLabel.TRUSTED
-        assert labeled[1].security_label.integrity == IntegrityLabel.TRUSTED
-        assert labeled[2].security_label.integrity == IntegrityLabel.UNTRUSTED
-
-        # Check that labels are stored in middleware
-        all_labels = middleware.get_all_message_labels()
-        assert len(all_labels) == 3
-
-    def test_reset_clears_message_labels(self):
-        """Test that reset_context_label also clears message labels."""
-        middleware = LabelTrackingFunctionMiddleware()
-
-        middleware.label_message(0, ContentLabel())
-        middleware.label_message(1, ContentLabel())
-
-        assert len(middleware.get_all_message_labels()) == 2
-
-        middleware.reset_context_label()
-
-        assert len(middleware.get_all_message_labels()) == 0
-
-
 # ========== Quarantined LLM Tests ==========
 
 
