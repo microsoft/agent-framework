@@ -8,7 +8,7 @@ import os
 if os.environ.get("MEM0_TELEMETRY") is None:
     os.environ["MEM0_TELEMETRY"] = "false"
 
-from ._provider import Mem0Provider
+from ._context_provider import Mem0ContextProvider
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -16,6 +16,6 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development mode
 
 __all__ = [
-    "Mem0Provider",
+    "Mem0ContextProvider",
     "__version__",
 ]

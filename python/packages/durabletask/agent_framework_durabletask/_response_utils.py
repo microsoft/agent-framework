@@ -2,12 +2,13 @@
 
 """Shared utilities for handling AgentResponse parsing and validation."""
 
+import logging
 from typing import Any
 
-from agent_framework import AgentResponse, get_logger
+from agent_framework import AgentResponse
 from pydantic import BaseModel
 
-logger = get_logger("agent_framework.durabletask.response_utils")
+logger = logging.getLogger("agent_framework.durabletask")
 
 
 def load_agent_response(agent_response: AgentResponse | dict[str, Any] | None) -> AgentResponse:
@@ -57,8 +58,8 @@ def ensure_response_format(
     """
     if response_format is not None:
         # Set the response format on the response so .value knows how to parse
-        response._response_format = response_format
-        response._value_parsed = False  # Reset to allow re-parsing with new format
+        response._response_format = response_format  # pyright: ignore[reportPrivateUsage]
+        response._value_parsed = False  # pyright: ignore[reportPrivateUsage]  # Reset to allow re-parsing with new format
 
         # Access response.value to trigger parsing (may raise ValidationError)
         # Validate that parsing succeeded

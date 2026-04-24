@@ -3,9 +3,9 @@
 namespace Microsoft.Agents.AI.Workflows;
 
 /// <summary>
-/// Provides extensions methods for creating <see cref="Configured{TSubject}"/> objects
+/// Provides extension methods for creating <see cref="Configured{TSubject}"/> objects
 /// </summary>
-public static class ConfigurationExtensions
+internal static class ConfigurationExtensions
 {
     /// <summary>
     /// Creates a new configuration that treats the subject as its base type, allowing configuration to be applied at
@@ -16,7 +16,7 @@ public static class ConfigurationExtensions
     /// <param name="configured">The existing configuration for the subject type to be upcast to its parent type. Cannot be null.</param>
     /// <returns>A new <see cref="Configured{TParent}"/> instance that applies the original configuration logic to the parent type.</returns>
     public static Configured<TParent> Super<TSubject, TParent>(this Configured<TSubject> configured) where TSubject : TParent
-        => new(async (config, runId) => await configured.FactoryAsync(config, runId).ConfigureAwait(false), configured.Id, configured.Raw);
+        => new(async (config, sessionId) => await configured.FactoryAsync(config, sessionId).ConfigureAwait(false), configured.Id, configured.Raw);
 
     /// <summary>
     /// Creates a new configuration that treats the subject as its base type, allowing configuration to be applied at

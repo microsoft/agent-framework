@@ -1,11 +1,22 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""ChatKit integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-chatkit``
+
+Supported classes and functions:
+- ThreadItemConverter
+- simple_to_agent_input
+- stream_agent_response
+"""
+
 import importlib
 from typing import Any
 
 IMPORT_PATH = "agent_framework_chatkit"
 PACKAGE_NAME = "agent-framework-chatkit"
-_IMPORTS = ["__version__", "ThreadItemConverter", "simple_to_agent_input", "stream_agent_response"]
+_IMPORTS = ["ThreadItemConverter", "simple_to_agent_input", "stream_agent_response"]
 
 
 def __getattr__(name: str) -> Any:

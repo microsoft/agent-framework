@@ -15,7 +15,7 @@ internal sealed class ProcessConversationMetadata : ProcessContentMetadataBase
     /// <summary>
     /// Initializes a new instance of the <see cref="ProcessConversationMetadata"/> class.
     /// </summary>
-    public ProcessConversationMetadata(ContentBase contentBase, string identifier, bool isTruncated, string name) : base(contentBase, identifier, isTruncated, name)
+    public ProcessConversationMetadata(ContentBase contentBase, string identifier, bool isTruncated, string name, string correlationId) : base(contentBase, identifier, isTruncated, name, correlationId)
     {
         this.DataType = ProcessConversationMetadataDataType;
     }

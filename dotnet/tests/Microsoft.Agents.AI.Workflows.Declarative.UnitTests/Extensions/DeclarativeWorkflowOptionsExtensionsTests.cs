@@ -58,7 +58,7 @@ public sealed class DeclarativeWorkflowOptionsExtensionsTests
         int? maximumExpressionLength = null,
         int? maximumCallDepth = null)
     {
-        Mock<WorkflowAgentProvider> providerMock = new(MockBehavior.Strict);
+        Mock<ResponseAgentProvider> providerMock = new(MockBehavior.Strict);
         return
             new(providerMock.Object)
             {

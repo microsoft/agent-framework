@@ -1,69 +1,49 @@
 # Copyright (c) Microsoft. All rights reserved.
+
+from __future__ import annotations
+
 import base64
 import json
+import logging
 import re
 import sys
+from asyncio import iscoroutine
 from collections.abc import (
     AsyncIterable,
+    AsyncIterator,
+    Awaitable,
     Callable,
+    Iterable,
     Mapping,
     MutableMapping,
     Sequence,
+    Sized,
 )
 from copy import deepcopy
+from datetime import datetime
+from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
 from pydantic import BaseModel
+from typing_extensions import TypedDict
 
-from ._logging import get_logger
 from ._serialization import SerializationMixin
-from ._tools import ToolProtocol, tool
+from ._tools import ToolTypes
+from ._tools import normalize_tools as _normalize_tools
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-__all__ = [
-    "AgentResponse",
-    "AgentResponseUpdate",
-    "Annotation",
-    "ChatMessage",
-    "ChatOptions",
-    "ChatResponse",
-    "ChatResponseUpdate",
-    "Content",
-    "FinishReason",
-    "FinishReasonLiteral",
-    "Role",
-    "RoleLiteral",
-    "TextSpanRegion",
-    "ToolMode",
-    "UsageDetails",
-    "add_usage_details",
-    "detect_media_type_from_base64",
-    "merge_chat_options",
-    "normalize_messages",
-    "normalize_tools",
-    "prepare_function_call_results",
-    "prepend_instructions_to_messages",
-    "validate_chat_options",
-    "validate_tool_mode",
-    "validate_tools",
-]
-
-logger = get_logger("agent_framework")
+logger = logging.getLogger("agent_framework")
 
 
 # region Content Parsing Utilities
 
 
-def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
+def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
     """Parse a list of content data into appropriate Content objects.
 
     Args:
@@ -72,7 +52,7 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list["Content"]:
     Returns:
         List of Content objects with unknown types logged and ignored
     """
-    contents: list["Content"] = []
+    contents: list[Content] = []
     for content_data in contents_data:
         if content_data is None:
             continue
@@ -112,12 +92,12 @@ def detect_media_type_from_base64(
             This will look at the actual data to determine the media_type and not at the URI prefix.
             Will also not compare those two values.
 
-    Raises:
-        ValueError: If not exactly 1 of data_bytes, data_str, or data_uri is provided, or if base64 decoding fails.
-
     Returns:
         The detected media type (e.g., 'image/png', 'audio/wav', 'application/pdf')
         or None if the format is not recognized.
+
+    Raises:
+        ValueError: If not exactly 1 of data_bytes, data_str, or data_uri is provided, or if base64 decoding fails.
 
     Examples:
         .. code-block:: python
@@ -184,7 +164,7 @@ def detect_media_type_from_base64(
     return None
 
 
-def _get_data_bytes_as_str(content: "Content") -> str | None:
+def _get_data_bytes_as_str(content: Content) -> str | None:
     """Extract base64 data string from data URI.
 
     Args:
@@ -213,7 +193,7 @@ def _get_data_bytes_as_str(content: "Content") -> str | None:
     return data  # type: ignore[return-value, no-any-return]
 
 
-def _get_data_bytes(content: "Content") -> bytes | None:
+def _get_data_bytes(content: Content) -> bytes | None:  # pyright: ignore[reportUnusedFunction]
     """Extract and decode binary data from data URI.
 
     Args:
@@ -289,24 +269,37 @@ def _serialize_value(value: Any, exclude_none: bool) -> Any:
     if isinstance(value, Content):
         return value.to_dict(exclude_none=exclude_none)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_serialize_value(item, exclude_none) for item in value]
+        return [_serialize_value(item, exclude_none) for item in cast(Iterable[Any], value)]
     if isinstance(value, Mapping):
-        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}
+        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
     if hasattr(value, "to_dict"):
         return value.to_dict()  # type: ignore[call-arg]
     return value
+
+
+def _restore_compaction_annotation_in_additional_properties(
+    additional_properties: MutableMapping[str, Any] | None,
+    *,
+    allow_none: bool = False,
+) -> dict[str, Any] | None:
+    if additional_properties is None:
+        return None if allow_none else {}
+
+    return dict(additional_properties)
 
 
 # endregion
 
 # region Constants and types
 _T = TypeVar("_T")
-TEmbedding = TypeVar("TEmbedding")
-TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
-TToolMode = TypeVar("TToolMode", bound="ToolMode")
-TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentResponse")
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None, covariant=True)
-TResponseModelT = TypeVar("TResponseModelT", bound=BaseModel)
+EmbeddingT = TypeVar("EmbeddingT", default="list[float]")
+EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
+ChatResponseT = TypeVar("ChatResponseT", bound="ChatResponse")
+ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
+AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
+ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -358,8 +351,14 @@ ContentType = Literal[
     "image_generation_tool_result",
     "mcp_server_tool_call",
     "mcp_server_tool_result",
+    "search_tool_call",
+    "search_tool_result",
+    "shell_tool_call",
+    "shell_tool_result",
+    "shell_command_output",
     "function_approval_request",
     "function_approval_response",
+    "oauth_consent_request",
 ]
 
 
@@ -385,16 +384,22 @@ class Annotation(TypedDict, total=False):
     raw_representation: Any
 
 
-TContent = TypeVar("TContent", bound="Content")
+ContentT = TypeVar("ContentT", bound="Content")
 
 # endregion
 
 
-class UsageDetails(TypedDict, total=False):
+class UsageDetails(TypedDict, total=False, extra_items=int):  # type: ignore[call-arg]
     """A dictionary representing usage details.
 
     This is a non-closed dictionary, so any specific provider fields can be added as needed.
     Whenever they can be mapped to standard fields, they will be.
+
+    Keys:
+        input_token_count: The number of input tokens used.
+        output_token_count: The number of output tokens generated.
+        total_token_count: The total number of tokens (input + output).
+
     """
 
     input_token_count: int | None
@@ -404,6 +409,9 @@ class UsageDetails(TypedDict, total=False):
 
 def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) -> UsageDetails:
     """Add two UsageDetails dictionaries by summing all numeric values.
+
+    If any of the two usage details contains a key with a non-int value, it will be skipped,
+    even if the other contains a int-value on that key.
 
     Args:
         usage1: First usage details dictionary.
@@ -428,22 +436,15 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
         return usage1
 
     result = UsageDetails()
-
     # Combine all keys from both dictionaries
     all_keys = set(usage1.keys()) | set(usage2.keys())
-
     for key in all_keys:
-        val1 = usage1.get(key)
-        val2 = usage2.get(key)
-
-        # Sum if both present, otherwise use the non-None value
-        if val1 is not None and val2 is not None:
-            result[key] = val1 + val2  # type: ignore[literal-required, operator]
-        elif val1 is not None:
-            result[key] = val1  # type: ignore[literal-required]
-        elif val2 is not None:
-            result[key] = val2  # type: ignore[literal-required]
-
+        if not isinstance((val1 := usage1.get(key, 0)), (int | None)) or not isinstance(
+            (val2 := usage2.get(key, 0)), (int | None)
+        ):
+            logger.warning("Non `int` value found in usage details, skipping.")
+            continue
+        result[key] = (val1 or 0) + (val2 or 0)  # type: ignore[literal-required]
     return result
 
 
@@ -457,6 +458,8 @@ class Content:
     Use the class methods like `Content.from_text()`, `Content.from_data()`,
     `Content.from_uri()`, etc. to create instances.
     """
+
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
 
     def __init__(
         self,
@@ -473,30 +476,43 @@ class Content:
         error_code: str | None = None,
         error_details: str | None = None,
         # Usage content fields
-        usage_details: dict[str, Any] | UsageDetails | None = None,
+        usage_details: UsageDetails | None = None,
         # Function call/result fields
         call_id: str | None = None,
         name: str | None = None,
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
         result: Any = None,
+        items: Sequence[Content] | None = None,
         # Hosted file/vector store fields
         file_id: str | None = None,
         vector_store_id: str | None = None,
         # Code interpreter tool fields
-        inputs: list["Content"] | None = None,
-        outputs: list["Content"] | Any | None = None,
+        inputs: list[Content] | None = None,
+        outputs: list[Content] | Any | None = None,
         # Image generation tool fields
         image_id: str | None = None,
+        # Shell tool fields
+        commands: list[str] | None = None,
+        timeout_ms: int | None = None,
+        max_output_length: int | None = None,
+        status: str | None = None,
+        # Shell command output fields
+        stdout: str | None = None,
+        stderr: str | None = None,
+        exit_code: int | None = None,
+        timed_out: bool | None = None,
         # MCP server tool fields
         tool_name: str | None = None,
         server_name: str | None = None,
         output: Any = None,
         # Function approval fields
         id: str | None = None,
-        function_call: "Content | None" = None,
+        function_call: Content | None = None,
         user_input_request: bool | None = None,
         approved: bool | None = None,
+        # OAuth consent fields
+        consent_link: str | None = None,
         # Common fields
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -508,7 +524,9 @@ class Content:
         """
         self.type = type
         self.annotations = annotations
-        self.additional_properties: dict[str, Any] = additional_properties or {}  # type: ignore[assignment]
+        self.additional_properties: dict[str, Any] = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.raw_representation = raw_representation
 
         # Set all content-specific attributes
@@ -525,11 +543,20 @@ class Content:
         self.arguments = arguments
         self.exception = exception
         self.result = result
+        self.items = items
         self.file_id = file_id
         self.vector_store_id = vector_store_id
         self.inputs = inputs
         self.outputs = outputs
         self.image_id = image_id
+        self.commands = commands
+        self.timeout_ms = timeout_ms
+        self.max_output_length = max_output_length
+        self.status = status
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exit_code = exit_code
+        self.timed_out = timed_out
         self.tool_name = tool_name
         self.server_name = server_name
         self.output = output
@@ -537,16 +564,34 @@ class Content:
         self.function_call = function_call
         self.user_input_request = user_input_request
         self.approved = approved
+        self.consent_link = consent_link
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Content:
+        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+
+        Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
+        (e.g., proto/gRPC responses) that are not safe to deep-copy.
+        """
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        shallow = cls._SHALLOW_COPY_FIELDS
+        for k, v in self.__dict__.items():
+            if k in shallow:
+                object.__setattr__(result, k, v)
+            else:
+                object.__setattr__(result, k, deepcopy(v, memo))
+        return result
 
     @classmethod
     def from_text(
-        cls: type[TContent],
+        cls: type[ContentT],
         text: str,
         *,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create text content."""
         return cls(
             "text",
@@ -558,17 +603,19 @@ class Content:
 
     @classmethod
     def from_text_reasoning(
-        cls: type[TContent],
+        cls: type[ContentT],
         *,
+        id: str | None = None,
         text: str | None = None,
         protected_data: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create text reasoning content."""
         return cls(
             "text_reasoning",
+            id=id,
             text=text,
             protected_data=protected_data,
             annotations=annotations,
@@ -578,14 +625,14 @@ class Content:
 
     @classmethod
     def from_data(
-        cls: type[TContent],
+        cls: type[ContentT],
         data: bytes,
         media_type: str,
         *,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         r"""Create data content from raw binary data.
 
         Use this to create content from binary data (images, audio, documents, etc.).
@@ -654,14 +701,14 @@ class Content:
 
     @classmethod
     def from_uri(
-        cls: type[TContent],
+        cls: type[ContentT],
         uri: str,
         *,
         media_type: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create content from a URI, can be both data URI or external URI.
 
         Use this when you already have a properly formed data URI
@@ -679,6 +726,9 @@ class Content:
             annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from an underlying implementation.
+
+        Returns:
+            A Content instance with type="data" for data URIs or type="uri" for external URIs.
 
         Raises:
             ContentError: If the URI is not valid.
@@ -703,9 +753,6 @@ class Content:
                         raw_base64_string
                     }"
                 )
-
-        Returns:
-            A Content instance with type="data" for data URIs or type="uri" for external URIs.
         """
         return cls(
             **_validate_uri(uri, media_type),
@@ -716,7 +763,7 @@ class Content:
 
     @classmethod
     def from_error(
-        cls: type[TContent],
+        cls: type[ContentT],
         *,
         message: str | None = None,
         error_code: str | None = None,
@@ -724,7 +771,7 @@ class Content:
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create error content."""
         return cls(
             "error",
@@ -738,7 +785,7 @@ class Content:
 
     @classmethod
     def from_function_call(
-        cls: type[TContent],
+        cls: type[ContentT],
         call_id: str,
         name: str,
         *,
@@ -747,7 +794,7 @@ class Content:
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create function call content."""
         return cls(
             "function_call",
@@ -762,7 +809,7 @@ class Content:
 
     @classmethod
     def from_function_result(
-        cls: type[TContent],
+        cls: type[ContentT],
         call_id: str,
         *,
         result: Any = None,
@@ -770,12 +817,49 @@ class Content:
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
-        """Create function result content."""
+    ) -> ContentT:
+        """Create function result content.
+
+        All tool output is represented uniformly as Content items in the
+        ``items`` field.  The ``result`` field is populated with the concatenated
+        text from text items for backwards compatibility.
+
+        Args:
+            call_id: The ID of the function call this result corresponds to.
+
+        Keyword Args:
+            result: The tool output.  Accepts a ``list[Content]`` (the canonical
+                form produced by :meth:`~FunctionTool.parse_result`), a plain
+                ``str``, or any other value (which is stringified).
+            exception: The exception message if the function call failed.
+            annotations: Optional annotations for the content.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from the provider.
+        """
+        if isinstance(result, list):
+            if all(isinstance(c, Content) for c in result):  # type: ignore[reportUnknownVariableType]
+                items_list: list[Content] = list(result)  # type: ignore[reportUnknownArgumentType]
+            else:
+                items_list = [Content.from_text(str(result))]  # type: ignore[reportUnknownArgumentType]
+        elif isinstance(result, str):
+            items_list = [Content.from_text(result)]
+        elif result is not None:
+            try:
+                text = json.dumps(result, default=str)
+            except (TypeError, ValueError):
+                text = str(result)
+            items_list = [Content.from_text(text)]
+        else:
+            items_list = [Content.from_text("")]
+
+        text_parts = [c.text for c in items_list if c.type == "text" and c.text]
+        text_result = "\n".join(text_parts) if text_parts else ""
+
         return cls(
             "function_result",
             call_id=call_id,
-            result=result,
+            result=text_result,
+            items=items_list,
             exception=exception,
             annotations=annotations,
             additional_properties=additional_properties,
@@ -783,14 +867,64 @@ class Content:
         )
 
     @classmethod
+    def from_search_tool_call(
+        cls: type[ContentT],
+        call_id: str,
+        *,
+        tool_name: str,
+        arguments: str | Mapping[str, Any] | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create search tool call content."""
+        return cls(
+            "search_tool_call",
+            call_id=call_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            status=status,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_search_tool_result(
+        cls: type[ContentT],
+        call_id: str,
+        *,
+        tool_name: str,
+        result: Any = None,
+        items: Sequence[Content] | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create search tool result content."""
+        return cls(
+            "search_tool_result",
+            call_id=call_id,
+            tool_name=tool_name,
+            result=result,
+            items=list(items) if items is not None else None,
+            status=status,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
     def from_usage(
-        cls: type[TContent],
+        cls: type[ContentT],
         usage_details: UsageDetails,
         *,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create usage content."""
         return cls(
             "usage",
@@ -802,7 +936,7 @@ class Content:
 
     @classmethod
     def from_hosted_file(
-        cls: type[TContent],
+        cls: type[ContentT],
         file_id: str,
         *,
         media_type: str | None = None,
@@ -810,7 +944,7 @@ class Content:
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create hosted file content."""
         return cls(
             "hosted_file",
@@ -824,13 +958,13 @@ class Content:
 
     @classmethod
     def from_hosted_vector_store(
-        cls: type[TContent],
+        cls: type[ContentT],
         vector_store_id: str,
         *,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create hosted vector store content."""
         return cls(
             "hosted_vector_store",
@@ -842,14 +976,14 @@ class Content:
 
     @classmethod
     def from_code_interpreter_tool_call(
-        cls: type[TContent],
+        cls: type[ContentT],
         *,
         call_id: str | None = None,
-        inputs: Sequence["Content"] | None = None,
+        inputs: Sequence[Content] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create code interpreter tool call content."""
         return cls(
             "code_interpreter_tool_call",
@@ -862,14 +996,14 @@ class Content:
 
     @classmethod
     def from_code_interpreter_tool_result(
-        cls: type[TContent],
+        cls: type[ContentT],
         *,
         call_id: str | None = None,
-        outputs: Sequence["Content"] | None = None,
+        outputs: Sequence[Content] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create code interpreter tool result content."""
         return cls(
             "code_interpreter_tool_result",
@@ -882,13 +1016,13 @@ class Content:
 
     @classmethod
     def from_image_generation_tool_call(
-        cls: type[TContent],
+        cls: type[ContentT],
         *,
         image_id: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create image generation tool call content."""
         return cls(
             "image_generation_tool_call",
@@ -900,14 +1034,14 @@ class Content:
 
     @classmethod
     def from_image_generation_tool_result(
-        cls: type[TContent],
+        cls: type[ContentT],
         *,
         image_id: str | None = None,
         outputs: Any = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create image generation tool result content."""
         return cls(
             "image_generation_tool_result",
@@ -919,8 +1053,114 @@ class Content:
         )
 
     @classmethod
+    def from_shell_tool_call(
+        cls: type[ContentT],
+        *,
+        call_id: str | None = None,
+        commands: list[str] | None = None,
+        timeout_ms: int | None = None,
+        max_output_length: int | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell tool call content.
+
+        This content represents the model's request to run one or more shell
+        commands. It is request metadata, not command output.
+
+        Keyword Args:
+            call_id: The unique identifier for this tool call.
+            commands: The list of commands to execute.
+            timeout_ms: The timeout in milliseconds for the shell command execution.
+            max_output_length: The maximum output length in characters.
+            status: The status of the shell call (e.g., "in_progress", "completed", "incomplete").
+            annotations: Optional annotations for this content.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_tool_call",
+            call_id=call_id,
+            commands=commands,
+            timeout_ms=timeout_ms,
+            max_output_length=max_output_length,
+            status=status,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_shell_tool_result(
+        cls: type[ContentT],
+        *,
+        call_id: str | None = None,
+        outputs: Sequence[Content] | None = None,
+        max_output_length: int | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell tool result content.
+
+        This content represents the aggregate result for a shell tool call.
+        Use :meth:`from_shell_command_output` to build each per-command output
+        item and pass those objects via ``outputs``.
+
+        Keyword Args:
+            call_id: The function call ID for which this is the result.
+            outputs: The list of shell command output Content objects.
+            max_output_length: The maximum output length in characters.
+            annotations: Optional annotations for this content.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_tool_result",
+            call_id=call_id,
+            outputs=list(outputs) if outputs is not None else None,
+            max_output_length=max_output_length,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_shell_command_output(
+        cls: type[ContentT],
+        *,
+        stdout: str | None = None,
+        stderr: str | None = None,
+        exit_code: int | None = None,
+        timed_out: bool | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell command output content for one command execution.
+
+        Keyword Args:
+            stdout: The standard output of the command.
+            stderr: The standard error output of the command.
+            exit_code: The exit code of the command, or None if the command timed out.
+            timed_out: Whether the command execution timed out.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_command_output",
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=exit_code,
+            timed_out=timed_out,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
     def from_mcp_server_tool_call(
-        cls: type[TContent],
+        cls: type[ContentT],
         call_id: str,
         tool_name: str,
         *,
@@ -929,7 +1169,7 @@ class Content:
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create MCP server tool call content."""
         return cls(
             "mcp_server_tool_call",
@@ -944,14 +1184,14 @@ class Content:
 
     @classmethod
     def from_mcp_server_tool_result(
-        cls: type[TContent],
+        cls: type[ContentT],
         call_id: str,
         *,
         output: Any = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create MCP server tool result content."""
         return cls(
             "mcp_server_tool_result",
@@ -964,14 +1204,14 @@ class Content:
 
     @classmethod
     def from_function_approval_request(
-        cls: type[TContent],
+        cls: type[ContentT],
         id: str,
-        function_call: "Content",
+        function_call: Content,
         *,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create function approval request content."""
         return cls(
             "function_approval_request",
@@ -985,15 +1225,15 @@ class Content:
 
     @classmethod
     def from_function_approval_response(
-        cls: type[TContent],
+        cls: type[ContentT],
         approved: bool,
         id: str,
-        function_call: "Content",
+        function_call: Content,
         *,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
-    ) -> TContent:
+    ) -> ContentT:
         """Create function approval response content."""
         return cls(
             "function_approval_response",
@@ -1005,10 +1245,41 @@ class Content:
             raw_representation=raw_representation,
         )
 
+    @classmethod
+    def from_oauth_consent_request(
+        cls: type[ContentT],
+        consent_link: str,
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create OAuth consent request content.
+
+        Args:
+            consent_link: The URL the user must visit to complete OAuth consent.
+
+        Keyword Args:
+            annotations: Optional annotations.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from the provider.
+
+        Returns:
+            A new Content instance with type ``oauth_consent_request``.
+        """
+        return cls(
+            "oauth_consent_request",
+            consent_link=consent_link,
+            user_input_request=True,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
     def to_function_approval_response(
         self,
         approved: bool,
-    ) -> "Content":
+    ) -> Content:
         """Convert a function approval request content to a function approval response content."""
         if self.type != "function_approval_request":
             raise ContentError(
@@ -1039,11 +1310,20 @@ class Content:
             "arguments",
             "exception",
             "result",
+            "items",
             "file_id",
             "vector_store_id",
             "inputs",
             "outputs",
             "image_id",
+            "commands",
+            "timeout_ms",
+            "max_output_length",
+            "status",
+            "stdout",
+            "stderr",
+            "exit_code",
+            "timed_out",
             "tool_name",
             "server_name",
             "output",
@@ -1051,6 +1331,7 @@ class Content:
             "user_input_request",
             "approved",
             "id",
+            "consent_link",
             "additional_properties",
         )
 
@@ -1087,7 +1368,7 @@ class Content:
         return f"Content(type={self.type})"
 
     @classmethod
-    def from_dict(cls: type[TContent], data: Mapping[str, Any]) -> TContent:
+    def from_dict(cls: type[ContentT], data: Mapping[str, Any]) -> ContentT:
         """Create a Content instance from a mapping."""
         if not (content_type := data.get("type")):
             raise ValueError("Content mapping requires 'type'")
@@ -1103,19 +1384,16 @@ class Content:
             return cls.from_data(remaining["data"], remaining["media_type"])
 
         # Handle nested Content objects (e.g., function_call in function_approval_request)
-        if "function_call" in remaining and isinstance(remaining["function_call"], dict):
-            remaining["function_call"] = cls.from_dict(remaining["function_call"])
+        if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):
+            remaining["function_call"] = cls.from_dict(function_call)  # type: ignore[reportUnknownArgumentType]
 
         # Handle list of Content objects (e.g., inputs in code_interpreter_tool_call)
-        if "inputs" in remaining and isinstance(remaining["inputs"], list):
-            remaining["inputs"] = [
-                cls.from_dict(item) if isinstance(item, dict) else item for item in remaining["inputs"]
-            ]
-
-        if "outputs" in remaining and isinstance(remaining["outputs"], list):
-            remaining["outputs"] = [
-                cls.from_dict(item) if isinstance(item, dict) else item for item in remaining["outputs"]
-            ]
+        if (input_items := remaining.get("inputs")) and isinstance(input_items, list):
+            remaining["inputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in input_items]  # type: ignore[reportUnknownVariableType]
+        if (output_items := remaining.get("outputs")) and isinstance(output_items, list):
+            remaining["outputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in output_items]  # type: ignore[reportUnknownVariableType]
+        if (content_items := remaining.get("items")) and isinstance(content_items, list):
+            remaining["items"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in content_items]  # type: ignore[reportUnknownVariableType]
 
         return cls(
             type=content_type,
@@ -1125,7 +1403,7 @@ class Content:
             **remaining,
         )
 
-    def __add__(self, other: "Content") -> "Content":
+    def __add__(self, other: Content) -> Content:
         """Concatenate or merge two Content instances."""
         if not isinstance(other, Content):
             raise TypeError(f"Incompatible type: Cannot add Content with {type(other).__name__}")
@@ -1143,56 +1421,24 @@ class Content:
             return self._add_usage_content(other)
         raise ContentError(f"Addition not supported for content type: {self.type}")
 
-    def _add_text_content(self, other: "Content") -> "Content":
+    def _add_text_content(self, other: Content) -> Content:
         """Add two TextContent instances."""
-        # Merge raw representations
-        if self.raw_representation is None:
-            raw_representation = other.raw_representation
-        elif other.raw_representation is None:
-            raw_representation = self.raw_representation
-        else:
-            raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
-        # Merge annotations
-        if self.annotations is None:
-            annotations = other.annotations
-        elif other.annotations is None:
-            annotations = self.annotations
-        else:
-            annotations = self.annotations + other.annotations  # type: ignore[operator]
-
         return Content(
             "text",
             text=self.text + other.text,  # type: ignore[attr-defined, operator]
-            annotations=annotations,
-            additional_properties={
-                **(other.additional_properties or {}),
-                **(self.additional_properties or {}),
-            },
-            raw_representation=raw_representation,
+            annotations=_combine_annotations(self.annotations, other.annotations),
+            additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
+            raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
 
-    def _add_text_reasoning_content(self, other: "Content") -> "Content":
+    def _add_text_reasoning_content(self, other: Content) -> Content:
         """Add two TextReasoningContent instances."""
-        # Merge raw representations
-        if self.raw_representation is None:
-            raw_representation = other.raw_representation
-        elif other.raw_representation is None:
-            raw_representation = self.raw_representation
-        else:
-            raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
-        # Merge annotations
-        if self.annotations is None:
-            annotations = other.annotations
-        elif other.annotations is None:
-            annotations = self.annotations
-        else:
-            annotations = self.annotations + other.annotations  # type: ignore[operator]
+        # Ensure we do not silently merge contents with conflicting ids
+        if self.id and other.id and self.id != other.id:
+            raise AdditionItemMismatch(
+                f"Cannot add text_reasoning content with different ids: {self.id!r} != {other.id!r}"
+            )
+        combined_id = self.id or other.id
 
         # Concatenate text, handling None values
         self_text = self.text or ""  # type: ignore[attr-defined]
@@ -1204,17 +1450,15 @@ class Content:
 
         return Content(
             "text_reasoning",
+            id=combined_id,
             text=combined_text,
             protected_data=protected_data,
-            annotations=annotations,
-            additional_properties={
-                **(other.additional_properties or {}),
-                **(self.additional_properties or {}),
-            },
-            raw_representation=raw_representation,
+            annotations=_combine_annotations(self.annotations, other.annotations),
+            additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
+            raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
 
-    def _add_function_call_content(self, other: "Content") -> "Content":
+    def _add_function_call_content(self, other: Content) -> Content:
         """Add two FunctionCallContent instances."""
         other_call_id = getattr(other, "call_id", None)
         self_call_id = getattr(self, "call_id", None)
@@ -1235,64 +1479,23 @@ class Content:
         else:
             raise TypeError("Incompatible argument types")
 
-        # Merge raw representations
-        if self.raw_representation is None:
-            raw_representation: Any = other.raw_representation
-        elif other.raw_representation is None:
-            raw_representation = self.raw_representation
-        else:
-            raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
         return Content(
             "function_call",
             call_id=self_call_id,
             name=getattr(self, "name", getattr(other, "name", None)),
             arguments=arguments,
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
-            additional_properties={
-                **(self.additional_properties or {}),
-                **(other.additional_properties or {}),
-            },
-            raw_representation=raw_representation,
+            additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
+            raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
 
-    def _add_usage_content(self, other: "Content") -> "Content":
+    def _add_usage_content(self, other: Content) -> Content:
         """Add two UsageContent instances by combining their usage details."""
-        self_details = getattr(self, "usage_details", {})
-        other_details = getattr(other, "usage_details", {})
-
-        # Combine token counts
-        combined_details: dict[str, Any] = {}
-        for key in set(list(self_details.keys()) + list(other_details.keys())):
-            self_val = self_details.get(key)
-            other_val = other_details.get(key)
-            if isinstance(self_val, int) and isinstance(other_val, int):
-                combined_details[key] = self_val + other_val
-            elif self_val is not None:
-                combined_details[key] = self_val
-            elif other_val is not None:
-                combined_details[key] = other_val
-
-        # Merge raw representations
-        if self.raw_representation is None:
-            raw_representation = other.raw_representation
-        elif other.raw_representation is None:
-            raw_representation = self.raw_representation
-        else:
-            raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
         return Content(
             "usage",
-            usage_details=combined_details,
-            additional_properties={
-                **(self.additional_properties or {}),
-                **(other.additional_properties or {}),
-            },
-            raw_representation=raw_representation,
+            usage_details=add_usage_details(self.usage_details, other.usage_details),
+            additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
+            raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
 
     def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
@@ -1327,7 +1530,7 @@ class Content:
         return span.lower() == top_level_media_type.lower()
 
     def parse_arguments(self) -> dict[str, Any | None] | None:
-        """Parse arguments from function_call or mcp_server_tool_call content.
+        """Parse arguments from function_call, mcp_server_tool_call, or search_tool_call content.
 
         If arguments cannot be parsed as JSON or the result is not a dict,
         they are returned as a dictionary with a single key "raw".
@@ -1369,37 +1572,43 @@ class Content:
         return self.arguments  # type: ignore[return-value]
 
 
+def _combine_additional_props(
+    self_additional_properties: dict[str, Any], other_additional_properties: dict[str, Any]
+) -> dict[str, Any]:
+    """Combine additional properties for addition operations."""
+    return {
+        **other_additional_properties,
+        **self_additional_properties,
+    }
+
+
+def _combine_raw_representations(
+    self_repr: Any,
+    other_repr: Any,
+) -> Any:
+    """Combine raw representations for addition operations."""
+    if self_repr is None:
+        return other_repr
+    if other_repr is None:
+        return self_repr
+    self_list = self_repr if isinstance(self_repr, list) else [self_repr]  # type: ignore[reportUnknownVariableType]
+    other_list = other_repr if isinstance(other_repr, list) else [other_repr]  # type: ignore[reportUnknownVariableType]
+    return self_list + other_list  # type: ignore[reportUnknownVariableType]
+
+
+def _combine_annotations(
+    self_annotations: Sequence[Annotation] | None,
+    other_annotations: Sequence[Annotation] | None,
+) -> Sequence[Annotation] | None:
+    """Combine annotations for addition operations."""
+    if self_annotations is None:
+        return other_annotations
+    if other_annotations is None:
+        return self_annotations
+    return [*self_annotations, *other_annotations]
+
+
 # endregion
-
-
-def _prepare_function_call_results_as_dumpable(content: "Content | Any | list[Content | Any]") -> Any:
-    if isinstance(content, list):
-        # Particularly deal with lists of Content
-        return [_prepare_function_call_results_as_dumpable(item) for item in content]
-    if isinstance(content, dict):
-        return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
-    if isinstance(content, BaseModel):
-        return content.model_dump()
-    if hasattr(content, "to_dict"):
-        return content.to_dict(exclude={"raw_representation", "additional_properties"})
-    # Handle objects with text attribute (e.g., MCP TextContent)
-    if hasattr(content, "text") and isinstance(content.text, str):
-        return content.text
-    return content
-
-
-def prepare_function_call_results(content: "Content | Any | list[Content | Any]") -> str:
-    """Prepare the values of the function call results."""
-    if isinstance(content, Content):
-        # For BaseContent objects, use to_dict and serialize to JSON
-        # Use default=str to handle datetime and other non-JSON-serializable objects
-        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}), default=str)
-
-    dumpable = _prepare_function_call_results_as_dumpable(content)
-    if isinstance(dumpable, str):
-        return dumpable
-    # fallback - use default=str to handle datetime and other non-JSON-serializable objects
-    return json.dumps(dumpable, default=str)
 
 
 # region Chat Response constants
@@ -1415,14 +1624,14 @@ Known values: "system", "user", "assistant", "tool"
 Examples:
     .. code-block:: python
 
-        from agent_framework import ChatMessage
+        from agent_framework import Message
 
         # Use string values directly
-        user_msg = ChatMessage("user", ["Hello"])
-        assistant_msg = ChatMessage("assistant", ["Hi there!"])
+        user_msg = Message("user", ["Hello"])
+        assistant_msg = Message("assistant", ["Hi there!"])
 
         # Custom roles are also supported
-        custom_msg = ChatMessage("custom", ["Custom role message"])
+        custom_msg = Message("custom", ["Custom role message"])
 
         # Compare roles directly as strings
         if user_msg.role == "user":
@@ -1456,10 +1665,10 @@ Examples:
 """
 
 
-# region ChatMessage
+# region Message
 
 
-class ChatMessage(SerializationMixin):
+class Message(SerializationMixin):
     """Represents a chat message.
 
     Attributes:
@@ -1474,17 +1683,17 @@ class ChatMessage(SerializationMixin):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatMessage, Content
+            from agent_framework import Message, Content
 
             # Create a message with text content
-            user_msg = ChatMessage("user", ["What's the weather?"])
+            user_msg = Message("user", ["What's the weather?"])
             print(user_msg.text)  # "What's the weather?"
 
             # Create a system message
-            system_msg = ChatMessage("system", ["You are a helpful assistant."])
+            system_msg = Message("system", ["You are a helpful assistant."])
 
             # Create a message with mixed content types
-            assistant_msg = ChatMessage(
+            assistant_msg = Message(
                 "assistant",
                 ["The weather is sunny!", Content.from_image_uri("https://...")],
             )
@@ -1494,13 +1703,13 @@ class ChatMessage(SerializationMixin):
             msg_dict = user_msg.to_dict()
             # {'type': 'chat_message', 'role': 'user',
             #  'contents': [{'type': 'text', 'text': "What's the weather?"}], 'additional_properties': {}}
-            restored_msg = ChatMessage.from_dict(msg_dict)
+            restored_msg = Message.from_dict(msg_dict)
             print(restored_msg.text)  # "What's the weather?"
 
             # Serialization - to_json and from_json
             msg_json = user_msg.to_json()
             # '{"type": "chat_message", "role": "user", "contents": [...], ...}'
-            restored_from_json = ChatMessage.from_json(msg_json)
+            restored_from_json = Message.from_json(msg_json)
             print(restored_from_json.role)  # "user"
 
     """
@@ -1510,15 +1719,14 @@ class ChatMessage(SerializationMixin):
     def __init__(
         self,
         role: RoleLiteral | str,
-        contents: "Sequence[Content | str | Mapping[str, Any]] | None" = None,
+        contents: Sequence[Content | str | Mapping[str, Any]] | None = None,
         *,
-        text: str | None = None,
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
-        """Initialize ChatMessage.
+        """Initialize Message.
 
         Args:
             role: The role of the author of the message (e.g., "user", "assistant", "system", "tool").
@@ -1526,30 +1734,21 @@ class ChatMessage(SerializationMixin):
                 to TextContent), or dicts (parsed via Content.from_dict). Defaults to empty list.
 
         Keyword Args:
-            text: Deprecated. Text content of the message. Use contents instead.
-                This parameter is kept for backward compatibility with serialization.
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
                 Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
         """
-        # Handle role conversion from legacy dict format
-        if isinstance(role, dict) and "value" in role:
-            role = role["value"]
-
-        # Handle contents conversion
         parsed_contents = [] if contents is None else _parse_content_list(contents)
-
-        # Handle text for backward compatibility (from serialization)
-        if text is not None:
-            parsed_contents.append(Content.from_text(text=text))
 
         self.role: str = role
         self.contents = parsed_contents
         self.author_name = author_name
         self.message_id = message_id
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.raw_representation = raw_representation
 
     @property
@@ -1562,87 +1761,51 @@ class ChatMessage(SerializationMixin):
         return " ".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
 
-def prepare_messages(
-    messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage],
-    system_instructions: str | Sequence[str] | None = None,
-) -> list[ChatMessage]:
-    """Convert various message input formats into a list of ChatMessage objects.
-
-    Args:
-        messages: The input messages in various supported formats. Can be:
-            - A string (converted to a user message)
-            - A Content object (wrapped in a user ChatMessage)
-            - A ChatMessage object
-            - A sequence containing any mix of the above
-        system_instructions: The system instructions. They will be inserted to the start of the messages list.
-
-    Returns:
-        A list of ChatMessage objects.
-    """
-    if system_instructions is not None:
-        if isinstance(system_instructions, str):
-            system_instructions = [system_instructions]
-        system_instruction_messages = [ChatMessage("system", [instr]) for instr in system_instructions]
-    else:
-        system_instruction_messages = []
-
-    if isinstance(messages, str):
-        return [*system_instruction_messages, ChatMessage("user", [messages])]
-    if isinstance(messages, Content):
-        return [*system_instruction_messages, ChatMessage("user", [messages])]
-    if isinstance(messages, ChatMessage):
-        return [*system_instruction_messages, messages]
-
-    return_messages: list[ChatMessage] = system_instruction_messages
-    for msg in messages:
-        if isinstance(msg, (str, Content)):
-            msg = ChatMessage("user", [msg])
-        return_messages.append(msg)
-    return return_messages
+AgentRunInputs = str | Content | Message | Sequence[str | Content | Message]
 
 
 def normalize_messages(
-    messages: str | Content | ChatMessage | Sequence[str | Content | ChatMessage] | None = None,
-) -> list[ChatMessage]:
-    """Normalize message inputs to a list of ChatMessage objects.
+    messages: AgentRunInputs | None = None,
+) -> list[Message]:
+    """Normalize message inputs to a list of Message objects.
 
     Args:
         messages: The input messages in various supported formats. Can be:
             - None (returns empty list)
             - A string (converted to a user message)
-            - A Content object (wrapped in a user ChatMessage)
-            - A ChatMessage object
+            - A Content object (wrapped in a user Message)
+            - A Message object
             - A sequence containing any mix of the above
 
     Returns:
-        A list of ChatMessage objects.
+        A list of Message objects.
     """
     if messages is None:
         return []
 
     if isinstance(messages, str):
-        return [ChatMessage("user", [messages])]
+        return [Message("user", [messages])]
 
     if isinstance(messages, Content):
-        return [ChatMessage("user", [messages])]
+        return [Message("user", [messages])]
 
-    if isinstance(messages, ChatMessage):
+    if isinstance(messages, Message):
         return [messages]
 
-    result: list[ChatMessage] = []
+    result: list[Message] = []
     for msg in messages:
         if isinstance(msg, (str, Content)):
-            result.append(ChatMessage("user", [msg]))
+            result.append(Message("user", [msg]))
         else:
             result.append(msg)
     return result
 
 
 def prepend_instructions_to_messages(
-    messages: list[ChatMessage],
+    messages: list[Message],
     instructions: str | Sequence[str] | None,
     role: RoleLiteral | str = "system",
-) -> list[ChatMessage]:
+) -> list[Message]:
     """Prepend instructions to a list of messages with a specified role.
 
     This is a helper method for chat clients that need to add instructions
@@ -1650,7 +1813,7 @@ def prepend_instructions_to_messages(
     instructions (e.g., OpenAI uses "system", some providers might use "user").
 
     Args:
-        messages: The existing list of ChatMessage objects.
+        messages: The existing list of Message objects.
         instructions: The instructions to prepend. Can be a single string or a sequence of strings.
         role: The role to use for the instruction messages. Defaults to "system".
 
@@ -1660,9 +1823,9 @@ def prepend_instructions_to_messages(
     Examples:
         .. code-block:: python
 
-            from agent_framework import prepend_instructions_to_messages, ChatMessage
+            from agent_framework import prepend_instructions_to_messages, Message
 
-            messages = [ChatMessage("user", ["Hello"])]
+            messages = [Message("user", ["Hello"])]
             instructions = "You are a helpful assistant"
 
             # Prepend as system message (default)
@@ -1677,16 +1840,26 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    instruction_messages = [ChatMessage(role, [instr]) for instr in instructions]
+    # Skip instructions that are already present as leading messages with the
+    # same role and text.  This prevents duplicate system messages when
+    # instructions are injected by multiple layers (e.g. Agent + chat client).
+    deduplicated: list[str] = []
+    for idx, instr in enumerate(instructions):
+        if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
+            continue
+        deduplicated.append(instr)
+
+    if not deduplicated:
+        return messages
+
+    instruction_messages = [Message(role, [instr]) for instr in deduplicated]
     return [*instruction_messages, *messages]
 
 
 # region ChatResponse
 
 
-def _process_update(
-    response: "ChatResponse | AgentResponse", update: "ChatResponseUpdate | AgentResponseUpdate"
-) -> None:
+def _process_update(response: ChatResponse | AgentResponse, update: ChatResponseUpdate | AgentResponseUpdate) -> None:
     """Processes a single update and modifies the response in place."""
     is_new_message = False
     if (
@@ -1701,7 +1874,7 @@ def _process_update(
         is_new_message = True
 
     if is_new_message:
-        message = ChatMessage("assistant", [])
+        message = Message("assistant", [])
         response.messages.append(message)
     else:
         message = response.messages[-1]
@@ -1743,35 +1916,47 @@ def _process_update(
     if update.created_at is not None:
         response.created_at = update.created_at
     if update.additional_properties is not None:
-        if response.additional_properties is None:
-            response.additional_properties = {}
         response.additional_properties.update(update.additional_properties)
     if response.raw_representation is None:
         response.raw_representation = []
     if not isinstance(response.raw_representation, list):
         response.raw_representation = [response.raw_representation]
-    response.raw_representation.append(update.raw_representation)
+    raw_representation_value = cast(Any, getattr(response, "raw_representation", None))
+    raw_representation_list = cast(list[Any], raw_representation_value)
+    raw_representation_list.append(update.raw_representation)
     if isinstance(response, ChatResponse) and isinstance(update, ChatResponseUpdate):
         if update.conversation_id is not None:
             response.conversation_id = update.conversation_id
         if update.finish_reason is not None:
             response.finish_reason = update.finish_reason
-        if update.model_id is not None:
-            response.model_id = update.model_id
+        if update.model is not None:
+            response.model = update.model
+    if (
+        isinstance(response, AgentResponse)
+        and isinstance(update, AgentResponseUpdate)
+        and update.finish_reason is not None
+    ):
+        response.finish_reason = update.finish_reason
+    response.continuation_token = update.continuation_token
 
 
-def _coalesce_text_content(contents: list["Content"], type_str: Literal["text", "text_reasoning"]) -> None:
+def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
     """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
     if not contents:
         return
-    coalesced_contents: list["Content"] = []
+    coalesced_contents: list[Content] = []
     first_new_content: Any | None = None
     for content in contents:
         if content.type == type_str:
             if first_new_content is None:
                 first_new_content = deepcopy(content)
             else:
-                first_new_content += content
+                try:
+                    first_new_content += content
+                except AdditionItemMismatch:
+                    # Different IDs means a new logical segment; flush the current one
+                    coalesced_contents.append(first_new_content)
+                    first_new_content = deepcopy(content)
         else:
             # skip this content, it is not of the right type
             # so write the existing one to the list and start a new one,
@@ -1787,21 +1972,74 @@ def _coalesce_text_content(contents: list["Content"], type_str: Literal["text", 
     contents.extend(coalesced_contents)
 
 
-def _finalize_response(response: "ChatResponse | AgentResponse") -> None:
+def _finalize_response(response: ChatResponse | AgentResponse) -> None:
     """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, "text")
         _coalesce_text_content(msg.contents, "text_reasoning")
 
 
-class ChatResponse(SerializationMixin, Generic[TResponseModel]):
+# region ContinuationToken
+
+
+class ContinuationToken(TypedDict):
+    """Opaque token for resuming long-running agent operations.
+
+    A JSON-serializable dict used to poll for completion or resume a
+    streaming response.  Presence on a response indicates the operation
+    is still in progress; ``None`` means the operation is complete.
+
+    Each provider subclasses this with its own fields; consumers should
+    treat the token as opaque and simply pass it back to the same agent.
+
+    Examples:
+        .. code-block:: python
+
+            import json
+
+            # Persist token across restarts
+            token_json = json.dumps(response.continuation_token)
+
+            # Restore and resume
+            token = json.loads(token_json)
+            response = await agent.run(
+                session=session,
+                options={"continuation_token": token},
+            )
+    """
+
+
+# endregion
+
+
+def _parse_structured_response_value(text: str, response_format: Any | None) -> Any | None:
+    if response_format is None:
+        return None
+    if not text:
+        return None
+    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        return response_format.model_validate_json(text)
+    if isinstance(response_format, Mapping):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Response text is not valid JSON: {exc}") from exc
+    logger.warning(
+        "Unable to parse structured response value, use either a Pydantic model or a dict defining the schema, "
+        "received response_format type: %s",
+        type(response_format),  # type: ignore[reportUnknownArgumentType]
+    )
+    return None
+
+
+class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     """Represents the response to a chat request.
 
     Attributes:
         messages: The list of chat messages in the response.
         response_id: The ID of the chat response.
         conversation_id: An identifier for the state of the conversation.
-        model_id: The model ID used in the creation of the chat response.
+        model: The model used in the creation of the chat response.
         created_at: A timestamp for the chat response.
         finish_reason: The reason for the chat response.
         usage_details: The usage details for the chat response.
@@ -1810,21 +2048,21 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
         raw_representation: The raw representation of the chat response from an underlying implementation.
 
     Note:
-        The `author_name` attribute is available on the `ChatMessage` objects inside `messages`,
+        The `author_name` attribute is available on the `Message` objects inside `messages`,
         not on the `ChatResponse` itself. Use `response.messages[0].author_name` to access
         the author name of individual messages.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatResponse, ChatMessage
+            from agent_framework import ChatResponse, Message
 
             # Create a response with messages
-            msg = ChatMessage("assistant", ["The weather is sunny."])
+            msg = Message("assistant", ["The weather is sunny."])
             response = ChatResponse(
                 messages=[msg],
                 finish_reason="stop",
-                model_id="gpt-4",
+                model="gpt-4",
             )
             print(response.text)  # "The weather is sunny."
 
@@ -1834,101 +2072,129 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
             # Serialization - to_dict and from_dict
             response_dict = response.to_dict()
-            # {'type': 'chat_response', 'messages': [...], 'model_id': 'gpt-4', 'finish_reason': 'stop'}
+            # {'type': 'chat_response', 'messages': [...], 'model': 'gpt-4', 'finish_reason': 'stop'}
             restored_response = ChatResponse.from_dict(response_dict)
-            print(restored_response.model_id)  # "gpt-4"
+            print(restored_response.model)  # "gpt-4"
 
             # Serialization - to_json and from_json
             response_json = response.to_json()
-            # '{"type": "chat_response", "messages": [...], "model_id": "gpt-4", ...}'
+            # '{"type": "chat_response", "messages": [...], "model": "gpt-4", ...}'
             restored_from_json = ChatResponse.from_json(response_json)
             print(restored_from_json.text)  # "The weather is sunny."
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
+    _INTERNAL_CONVERSATION_ID_KEY: ClassVar[str] = "_agent_framework_internal_conversation_id"
 
     def __init__(
         self,
         *,
-        messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        messages: Message | Sequence[Message] | None = None,
         response_id: str | None = None,
         conversation_id: str | None = None,
-        model_id: str | None = None,
+        model: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: FinishReasonLiteral | str | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         usage_details: UsageDetails | None = None,
-        value: TResponseModel | None = None,
-        response_format: type[BaseModel] | None = None,
+        value: ResponseModelT | None = None,
+        response_format: StructuredResponseFormat = None,
+        continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
 
         Keyword Args:
-            messages: A single ChatMessage or sequence of ChatMessage objects to include in the response.
+            messages: A single Message or sequence of Message objects to include in the response.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
-            model_id: Optional model ID used in the creation of the chat response.
-            created_at: Optional timestamp for the chat response.
+            model: Optional model used in the creation of the chat response.
+            created_at: Optional timestamp for when the response was created.
             finish_reason: Optional reason for the chat response (e.g., "stop", "length", "tool_calls").
             usage_details: Optional usage details for the chat response.
             value: Optional value of the structured output.
             response_format: Optional response format for the chat response.
+            continuation_token: Optional token for resuming a long-running background operation.
+                When present, indicates the operation is still in progress.
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
         """
         if messages is None:
-            self.messages: list[ChatMessage] = []
-        elif isinstance(messages, ChatMessage):
+            self.messages: list[Message] = []
+        elif isinstance(messages, Message):
             self.messages = [messages]
         else:
-            # Handle both ChatMessage objects and dicts (for from_dict support)
-            processed_messages: list[ChatMessage] = []
+            # Handle both Message objects and dicts (for from_dict support)
+            processed_messages: list[Message] = []
             for msg in messages:
-                if isinstance(msg, ChatMessage):
+                if isinstance(msg, Message):
                     processed_messages.append(msg)
                 elif isinstance(msg, dict):
-                    processed_messages.append(ChatMessage.from_dict(msg))
+                    processed_messages.append(Message.from_dict(msg))
                 else:
                     processed_messages.append(msg)
             self.messages = processed_messages
         self.response_id = response_id
         self.conversation_id = conversation_id
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
-        self.finish_reason: str | None = finish_reason
+        self.finish_reason = finish_reason
         self.usage_details = usage_details
-        self._value: TResponseModel | None = value
-        self._response_format: type[BaseModel] | None = response_format
+        self._value: ResponseModelT | None = value
+        self._response_format: StructuredResponseFormat = response_format
         self._value_parsed: bool = value is not None
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
+        self.continuation_token = continuation_token
         self.raw_representation: Any | list[Any] | None = raw_representation
 
-    @overload
-    @classmethod
-    def from_updates(
-        cls: type["ChatResponse[Any]"],
-        updates: Sequence["ChatResponseUpdate"],
-        *,
-        output_format_type: type[TResponseModelT],
-    ) -> "ChatResponse[TResponseModelT]": ...
+    def mark_internal_conversation_id(self) -> None:
+        """Mark the current conversation_id as internal control-flow state."""
+        self.additional_properties[self._INTERNAL_CONVERSATION_ID_KEY] = True
+
+    def clear_internal_conversation_id(self) -> None:
+        """Remove the internal conversation-id marker."""
+        self.additional_properties.pop(self._INTERNAL_CONVERSATION_ID_KEY, None)
+
+    def has_internal_conversation_id(self) -> bool:
+        """Return whether conversation_id is internal control-flow state."""
+        return bool(self.additional_properties.get(self._INTERNAL_CONVERSATION_ID_KEY, False))
 
     @overload
     @classmethod
     def from_updates(
-        cls: type["ChatResponse[Any]"],
-        updates: Sequence["ChatResponseUpdate"],
+        cls: type[ChatResponse[Any]],
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        output_format_type: type[ResponseModelBoundT],
+    ) -> ChatResponse[ResponseModelBoundT]: ...
+
+    @overload
+    @classmethod
+    def from_updates(
+        cls: type[ChatResponse[Any]],
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        output_format_type: Mapping[str, Any],
+    ) -> ChatResponse[Any]: ...
+
+    @overload
+    @classmethod
+    def from_updates(
+        cls: type[ChatResponse[Any]],
+        updates: Sequence[ChatResponseUpdate],
         *,
         output_format_type: None = None,
-    ) -> "ChatResponse[Any]": ...
+    ) -> ChatResponse[Any]: ...
 
     @classmethod
     def from_updates(
-        cls: type[TChatResponse],
-        updates: Sequence["ChatResponseUpdate"],
+        cls: type[ChatResponseT],
+        updates: Sequence[ChatResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
-    ) -> TChatResponse:
+        output_format_type: StructuredResponseFormat = None,
+    ) -> ChatResponseT:
         """Joins multiple updates into a single ChatResponse.
 
         Example:
@@ -1950,10 +2216,10 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
             updates: A sequence of ChatResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
         """
-        response_format = output_format_type if isinstance(output_format_type, type) else None
-        msg = cls(messages=[], response_format=response_format)
+        msg = cls(messages=[], response_format=output_format_type)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -1962,28 +2228,37 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
     @overload
     @classmethod
     async def from_update_generator(
-        cls: type["ChatResponse[Any]"],
-        updates: AsyncIterable["ChatResponseUpdate"],
+        cls: type[ChatResponse[Any]],
+        updates: AsyncIterable[ChatResponseUpdate],
         *,
-        output_format_type: type[TResponseModelT],
-    ) -> "ChatResponse[TResponseModelT]": ...
+        output_format_type: type[ResponseModelBoundT],
+    ) -> ChatResponse[ResponseModelBoundT]: ...
 
     @overload
     @classmethod
     async def from_update_generator(
-        cls: type["ChatResponse[Any]"],
-        updates: AsyncIterable["ChatResponseUpdate"],
+        cls: type[ChatResponse[Any]],
+        updates: AsyncIterable[ChatResponseUpdate],
+        *,
+        output_format_type: Mapping[str, Any],
+    ) -> ChatResponse[Any]: ...
+
+    @overload
+    @classmethod
+    async def from_update_generator(
+        cls: type[ChatResponse[Any]],
+        updates: AsyncIterable[ChatResponseUpdate],
         *,
         output_format_type: None = None,
-    ) -> "ChatResponse[Any]": ...
+    ) -> ChatResponse[Any]: ...
 
     @classmethod
     async def from_update_generator(
-        cls: type[TChatResponse],
-        updates: AsyncIterable["ChatResponseUpdate"],
+        cls: type[ChatResponseT],
+        updates: AsyncIterable[ChatResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
-    ) -> TChatResponse:
+        output_format_type: StructuredResponseFormat = None,
+    ) -> ChatResponseT:
         """Joins multiple updates into a single ChatResponse.
 
         Example:
@@ -2001,10 +2276,10 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
             updates: An async iterable of ChatResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
         """
-        response_format = output_format_type if isinstance(output_format_type, type) else None
-        msg = cls(messages=[], response_format=response_format)
+        msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -2013,10 +2288,10 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
     @property
     def text(self) -> str:
         """Returns the concatenated text of all messages in the response."""
-        return ("\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))).strip()
+        return ("\n".join(message.text for message in self.messages if isinstance(message, Message))).strip()
 
     @property
-    def value(self) -> TResponseModel | None:
+    def value(self) -> ResponseModelT | None:
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
@@ -2024,15 +2299,12 @@ class ChatResponse(SerializationMixin, Generic[TResponseModel]):
 
         Raises:
             ValidationError: If the response text doesn't match the expected schema.
+            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
-        if (
-            self._response_format is not None
-            and isinstance(self._response_format, type)
-            and issubclass(self._response_format, BaseModel)
-        ):
-            self._value = cast(TResponseModel, self._response_format.model_validate_json(self.text))
+        if self._response_format is not None:
+            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
             self._value_parsed = True
         return self._value
 
@@ -2052,11 +2324,11 @@ class ChatResponseUpdate(SerializationMixin):
         author_name: The name of the author of the response update. This is primarily used in
             multi-agent scenarios to identify which agent or participant generated the response.
             When updates are combined into a `ChatResponse`, the `author_name` is propagated
-            to the resulting `ChatMessage` objects.
+            to the resulting `Message` objects.
         response_id: The ID of the response of which this update is a part.
         message_id: The ID of the message of which this update is a part.
         conversation_id: An identifier for the state of the conversation of which this update is a part.
-        model_id: The model ID associated with this response update.
+        model: The model associated with this response update.
         created_at: A timestamp for the chat response update.
         finish_reason: The finish reason for the operation.
         additional_properties: Any additional properties associated with the chat response update.
@@ -2096,14 +2368,15 @@ class ChatResponseUpdate(SerializationMixin):
         self,
         *,
         contents: Sequence[Content] | None = None,
-        role: RoleLiteral | str | None = None,
+        role: RoleLiteral | Role | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
-        model_id: str | None = None,
+        model: str | None = None,
         created_at: CreatedAtT | None = None,
-        finish_reason: FinishReasonLiteral | str | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
+        continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -2116,9 +2389,11 @@ class ChatResponseUpdate(SerializationMixin):
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             conversation_id: Optional identifier for the state of the conversation of which this update is a part
-            model_id: Optional model ID associated with this response update.
+            model: Optional model associated with this response update.
             created_at: Optional timestamp for the chat response update.
             finish_reason: Optional finish reason for the operation.
+            continuation_token: Optional token for resuming a long-running background operation.
+                When present, indicates the operation is still in progress.
             additional_properties: Optional additional properties associated with the chat response update.
             raw_representation: Optional raw representation of the chat response update
                 from an underlying implementation.
@@ -2138,21 +2413,19 @@ class ChatResponseUpdate(SerializationMixin):
                     processed_contents.append(c)
             self.contents = processed_contents
 
-        # Handle legacy dict formats for role and finish_reason
-        if isinstance(role, dict) and "value" in role:
-            role = role["value"]
-        if isinstance(finish_reason, dict) and "value" in finish_reason:
-            finish_reason = finish_reason["value"]
-
-        self.role: str | None = role
+        self.role = role
         self.author_name = author_name
         self.response_id = response_id
         self.message_id = message_id
         self.conversation_id = conversation_id
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
-        self.finish_reason: str | None = finish_reason
-        self.additional_properties = additional_properties
+        self.finish_reason = finish_reason
+        self.continuation_token = continuation_token
+        self.additional_properties = _restore_compaction_annotation_in_additional_properties(
+            additional_properties,
+            allow_none=True,
+        )
         self.raw_representation = raw_representation
 
     @property
@@ -2167,7 +2440,7 @@ class ChatResponseUpdate(SerializationMixin):
 # region AgentResponse
 
 
-class AgentResponse(SerializationMixin, Generic[TResponseModel]):
+class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
     """Represents the response to an Agent run request.
 
     Provides one or more response messages and metadata about the response.
@@ -2175,17 +2448,17 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
     messages in scenarios involving function calls, RAG retrievals, or complex logic.
 
     Note:
-        The `author_name` attribute is available on the `ChatMessage` objects inside `messages`,
+        The `author_name` attribute is available on the `Message` objects inside `messages`,
         not on the `AgentResponse` itself. Use `response.messages[0].author_name` to access
         the author name of individual messages.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentResponse, ChatMessage
+            from agent_framework import AgentResponse, Message
 
             # Create agent response
-            msg = ChatMessage("assistant", ["Task completed successfully."])
+            msg = Message("assistant", ["Task completed successfully."])
             response = AgentResponse(messages=[msg], response_id="run_123")
             print(response.text)  # "Task completed successfully."
 
@@ -2216,53 +2489,64 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
     def __init__(
         self,
         *,
-        messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        messages: Message | Sequence[Message] | None = None,
         response_id: str | None = None,
         agent_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
         usage_details: UsageDetails | None = None,
-        value: TResponseModel | None = None,
-        response_format: type[BaseModel] | None = None,
+        value: ResponseModelT | None = None,
+        response_format: StructuredResponseFormat = None,
+        continuation_token: ContinuationToken | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
         """Initialize an AgentResponse.
 
         Keyword Args:
-            messages: A single ChatMessage or sequence of ChatMessage objects to include in the response.
+            messages: A single Message or sequence of Message objects to include in the response.
             response_id: The ID of the chat response.
             agent_id: The identifier of the agent that produced this response. Useful in multi-agent
                 scenarios to track which agent generated the response.
             created_at: A timestamp for the chat response.
+            finish_reason: The reason the model stopped generating. Common values include
+                ``"stop"`` (natural completion), ``"length"`` (token limit), and
+                ``"tool_calls"`` (the model invoked a tool).
             usage_details: The usage details for the chat response.
             value: The structured output of the agent run response, if applicable.
             response_format: Optional response format for the agent response.
+            continuation_token: Optional token for resuming a long-running background operation.
+                When present, indicates the operation is still in progress.
             additional_properties: Any additional properties associated with the chat response.
             raw_representation: The raw representation of the chat response from an underlying implementation.
         """
         if messages is None:
-            self.messages: list[ChatMessage] = []
-        elif isinstance(messages, ChatMessage):
+            self.messages: list[Message] = []
+        elif isinstance(messages, Message):
             self.messages = [messages]
         else:
-            # Handle both ChatMessage objects and dicts (for from_dict support)
-            processed_messages: list[ChatMessage] = []
+            # Handle both Message objects and dicts (for from_dict support)
+            processed_messages: list[Message] = []
             for msg in messages:
-                if isinstance(msg, ChatMessage):
+                if isinstance(msg, Message):
                     processed_messages.append(msg)
                 elif isinstance(msg, dict):
-                    processed_messages.append(ChatMessage.from_dict(msg))
+                    processed_messages.append(Message.from_dict(msg))
                 else:
                     processed_messages.append(msg)
             self.messages = processed_messages
         self.response_id = response_id
         self.agent_id = agent_id
         self.created_at = created_at
+        self.finish_reason = finish_reason
         self.usage_details = usage_details
-        self._value: TResponseModel | None = value
-        self._response_format: type[BaseModel] | None = response_format
+        self._value: ResponseModelT | None = value
+        self._response_format: type[BaseModel] | Mapping[str, Any] | None = response_format
         self._value_parsed: bool = value is not None
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
+        self.continuation_token = continuation_token
         self.raw_representation = raw_representation
 
     @property
@@ -2271,7 +2555,7 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
         return "".join(msg.text for msg in self.messages) if self.messages else ""
 
     @property
-    def value(self) -> TResponseModel | None:
+    def value(self) -> ResponseModelT | None:
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
@@ -2279,15 +2563,12 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
 
         Raises:
             ValidationError: If the response text doesn't match the expected schema.
+            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
-        if (
-            self._response_format is not None
-            and isinstance(self._response_format, type)
-            and issubclass(self._response_format, BaseModel)
-        ):
-            self._value = cast(TResponseModel, self._response_format.model_validate_json(self.text))
+        if self._response_format is not None:
+            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
             self._value_parsed = True
         return self._value
 
@@ -2304,37 +2585,52 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
     @overload
     @classmethod
     def from_updates(
-        cls: type["AgentResponse[Any]"],
-        updates: Sequence["AgentResponseUpdate"],
+        cls: type[AgentResponse[Any]],
+        updates: Sequence[AgentResponseUpdate],
         *,
-        output_format_type: type[TResponseModelT],
-    ) -> "AgentResponse[TResponseModelT]": ...
+        output_format_type: type[ResponseModelBoundT],
+        value: Any | None = None,
+    ) -> AgentResponse[ResponseModelBoundT]: ...
 
     @overload
     @classmethod
     def from_updates(
-        cls: type["AgentResponse[Any]"],
-        updates: Sequence["AgentResponseUpdate"],
+        cls: type[AgentResponse[Any]],
+        updates: Sequence[AgentResponseUpdate],
+        *,
+        output_format_type: Mapping[str, Any],
+        value: Any | None = None,
+    ) -> AgentResponse[Any]: ...
+
+    @overload
+    @classmethod
+    def from_updates(
+        cls: type[AgentResponse[Any]],
+        updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: None = None,
-    ) -> "AgentResponse[Any]": ...
+        value: Any | None = None,
+    ) -> AgentResponse[Any]: ...
 
     @classmethod
     def from_updates(
-        cls: type[TAgentRunResponse],
-        updates: Sequence["AgentResponseUpdate"],
+        cls: type[AgentResponseT],
+        updates: Sequence[AgentResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
-    ) -> TAgentRunResponse:
+        output_format_type: StructuredResponseFormat = None,
+        value: Any | None = None,
+    ) -> AgentResponseT:
         """Joins multiple updates into a single AgentResponse.
 
         Args:
             updates: A sequence of AgentResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
+            value: Optional pre-parsed structured output value to set directly on the response.
         """
-        msg = cls(messages=[], response_format=output_format_type)
+        msg = cls(messages=[], response_format=output_format_type, value=value)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -2342,36 +2638,46 @@ class AgentResponse(SerializationMixin, Generic[TResponseModel]):
 
     @overload
     @classmethod
-    async def from_agent_response_generator(
-        cls: type["AgentResponse[Any]"],
-        updates: AsyncIterable["AgentResponseUpdate"],
+    async def from_update_generator(
+        cls: type[AgentResponse[Any]],
+        updates: AsyncIterable[AgentResponseUpdate],
         *,
-        output_format_type: type[TResponseModelT],
-    ) -> "AgentResponse[TResponseModelT]": ...
+        output_format_type: type[ResponseModelBoundT],
+    ) -> AgentResponse[ResponseModelBoundT]: ...
 
     @overload
     @classmethod
-    async def from_agent_response_generator(
-        cls: type["AgentResponse[Any]"],
-        updates: AsyncIterable["AgentResponseUpdate"],
+    async def from_update_generator(
+        cls: type[AgentResponse[Any]],
+        updates: AsyncIterable[AgentResponseUpdate],
+        *,
+        output_format_type: Mapping[str, Any],
+    ) -> AgentResponse[Any]: ...
+
+    @overload
+    @classmethod
+    async def from_update_generator(
+        cls: type[AgentResponse[Any]],
+        updates: AsyncIterable[AgentResponseUpdate],
         *,
         output_format_type: None = None,
-    ) -> "AgentResponse[Any]": ...
+    ) -> AgentResponse[Any]: ...
 
     @classmethod
-    async def from_agent_response_generator(
-        cls: type[TAgentRunResponse],
-        updates: AsyncIterable["AgentResponseUpdate"],
+    async def from_update_generator(
+        cls: type[AgentResponseT],
+        updates: AsyncIterable[AgentResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
-    ) -> TAgentRunResponse:
+        output_format_type: StructuredResponseFormat = None,
+    ) -> AgentResponseT:
         """Joins multiple updates into a single AgentResponse.
 
         Args:
             updates: An async iterable of AgentResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
@@ -2394,7 +2700,7 @@ class AgentResponseUpdate(SerializationMixin):
         role: The role of the author of the response update.
         author_name: The name of the author of the response update. In multi-agent scenarios,
             this identifies which agent generated this update. When updates are combined into
-            an `AgentResponse`, the `author_name` is propagated to the resulting `ChatMessage` objects.
+            an `AgentResponse`, the `author_name` is propagated to the resulting `Message` objects.
         agent_id: The identifier of the agent that produced this update. Useful in multi-agent
             scenarios to track which agent generated specific parts of the response.
         response_id: The ID of the response of which this update is a part.
@@ -2445,6 +2751,8 @@ class AgentResponseUpdate(SerializationMixin):
         response_id: str | None = None,
         message_id: str | None = None,
         created_at: CreatedAtT | None = None,
+        finish_reason: FinishReasonLiteral | FinishReason | None = None,
+        continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -2459,6 +2767,11 @@ class AgentResponseUpdate(SerializationMixin):
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             created_at: Optional timestamp for the chat response update.
+            finish_reason: The reason the model stopped generating. Common values include
+                ``"stop"`` (natural completion), ``"length"`` (token limit), and
+                ``"tool_calls"`` (the model invoked a tool).
+            continuation_token: Optional token for resuming a long-running background operation.
+                When present, indicates the operation is still in progress.
             additional_properties: Optional additional properties associated with the chat response update.
             raw_representation: Optional raw representation of the chat response update.
 
@@ -2477,17 +2790,18 @@ class AgentResponseUpdate(SerializationMixin):
                     processed_contents.append(c)
             self.contents = processed_contents
 
-        # Handle legacy dict format for role
-        if isinstance(role, dict) and "value" in role:
-            role = role["value"]
-
         self.role: str | None = role
         self.author_name = author_name
         self.agent_id = agent_id
         self.response_id = response_id
         self.message_id = message_id
         self.created_at = created_at
-        self.additional_properties = additional_properties
+        self.finish_reason = finish_reason
+        self.continuation_token = continuation_token
+        self.additional_properties = _restore_compaction_annotation_in_additional_properties(
+            additional_properties,
+            allow_none=True,
+        )
         self.raw_representation: Any | list[Any] | None = raw_representation
 
     @property
@@ -2502,6 +2816,379 @@ class AgentResponseUpdate(SerializationMixin):
 
     def __str__(self) -> str:
         return self.text
+
+
+# region ResponseStream
+
+
+def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None) -> AgentResponseUpdate:
+    return AgentResponseUpdate(
+        contents=update.contents,
+        role=update.role,
+        author_name=update.author_name or agent_name,
+        response_id=update.response_id,
+        message_id=update.message_id,
+        created_at=update.created_at,
+        finish_reason=update.finish_reason,  # type: ignore[arg-type]
+        continuation_token=update.continuation_token,
+        additional_properties=update.additional_properties,
+        raw_representation=update,
+    )
+
+
+# Type variables for ResponseStream
+UpdateT = TypeVar("UpdateT")
+FinalT = TypeVar("FinalT")
+OuterUpdateT = TypeVar("OuterUpdateT")
+OuterFinalT = TypeVar("OuterFinalT")
+
+
+class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
+    """Async stream wrapper that supports iteration and deferred finalization."""
+
+    def __init__(
+        self,
+        stream: AsyncIterable[UpdateT] | Awaitable[AsyncIterable[UpdateT]],
+        *,
+        finalizer: Callable[[Sequence[UpdateT]], FinalT | Awaitable[FinalT]] | None = None,
+        transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] | None = None,
+        cleanup_hooks: list[Callable[[], Awaitable[None] | None]] | None = None,
+        result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] | None = None,
+    ) -> None:
+        """A Async Iterable stream of updates.
+
+        Args:
+            stream: An async iterable or awaitable that resolves to an async iterable of updates.
+
+        Keyword Args:
+            finalizer: An optional callable that takes the list of all updates and produces a final result.
+            transform_hooks: Optional list of callables that transform each update as it is yielded.
+            cleanup_hooks: Optional list of callables that run after the stream is fully consumed (before finalizer).
+            result_hooks: Optional list of callables that transform the final result (after finalizer).
+
+        """
+        self._stream_source = stream
+        self._finalizer = finalizer
+        self._stream: AsyncIterable[UpdateT] | None = None
+        self._iterator: AsyncIterator[UpdateT] | None = None
+        self._updates: list[UpdateT] = []
+        self._consumed: bool = False
+        self._finalized: bool = False
+        self._final_result: FinalT | None = None
+        self._transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] = (
+            transform_hooks if transform_hooks is not None else []
+        )
+        self._result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] = (
+            result_hooks if result_hooks is not None else []
+        )
+        self._cleanup_hooks: list[Callable[[], Awaitable[None] | None]] = (
+            cleanup_hooks if cleanup_hooks is not None else []
+        )
+        self._cleanup_run: bool = False
+        self._stream_error: Exception | None = None
+        self._inner_stream: ResponseStream[Any, Any] | None = None
+        self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
+        self._wrap_inner: bool = False
+        self._map_update: Callable[[Any], UpdateT | Awaitable[UpdateT]] | None = None
+
+    def map(
+        self,
+        transform: Callable[[UpdateT], OuterUpdateT | Awaitable[OuterUpdateT]],
+        finalizer: Callable[[Sequence[OuterUpdateT]], OuterFinalT | Awaitable[OuterFinalT]],
+    ) -> ResponseStream[OuterUpdateT, OuterFinalT]:
+        """Create a new stream that transforms each update.
+
+        The returned stream delegates iteration to this stream, ensuring single consumption.
+        Each update is transformed by the provided function before being yielded.
+
+        Since the update type changes, a new finalizer MUST be provided that works with
+        the transformed update type. The inner stream's finalizer cannot be used as it
+        expects the original update type.
+
+        When ``get_final_response()`` is called on the mapped stream:
+        1. The inner stream's finalizer runs first (on the original updates)
+        2. The inner stream's result_hooks run (on the inner final result)
+        3. The outer stream's finalizer runs (on the transformed updates)
+        4. The outer stream's result_hooks run (on the outer final result)
+
+        This ensures that post-processing hooks registered on the inner stream (e.g.,
+        context provider notifications, telemetry) are still executed.
+
+        Args:
+            transform: Function to transform each update to a new type.
+            finalizer: Function to convert collected (transformed) updates to the final type.
+                This is required because the inner stream's finalizer won't work with
+                the new update type.
+
+        Returns:
+            A new ResponseStream with transformed update and final types.
+
+        Example:
+            >>> chat_stream.map(
+            ...     lambda u: AgentResponseUpdate(...),
+            ...     AgentResponse.from_updates,
+            ... )
+        """
+        stream: ResponseStream[OuterUpdateT, OuterFinalT] = ResponseStream(self, finalizer=finalizer)
+        stream._inner_stream_source = self
+        stream._wrap_inner = True
+        stream._map_update = transform
+        return stream
+
+    def with_finalizer(
+        self,
+        finalizer: Callable[[Sequence[UpdateT]], OuterFinalT | Awaitable[OuterFinalT]],
+    ) -> ResponseStream[UpdateT, OuterFinalT]:
+        """Create a new stream with a different finalizer.
+
+        The returned stream delegates iteration to this stream, ensuring single consumption.
+        When `get_final_response()` is called, the new finalizer is used instead of any
+        existing finalizer.
+
+        **IMPORTANT**: The inner stream's finalizer and result_hooks are NOT called when
+        a new finalizer is provided via this method.
+
+        Args:
+            finalizer: Function to convert collected updates to the final response type.
+
+        Returns:
+            A new ResponseStream with the new final type.
+
+        Example:
+            >>> stream.with_finalizer(AgentResponse.from_updates)
+        """
+        stream: ResponseStream[UpdateT, OuterFinalT] = ResponseStream(self, finalizer=finalizer)
+        stream._inner_stream_source = self
+        stream._wrap_inner = True
+        return stream
+
+    @classmethod
+    def from_awaitable(
+        cls,
+        awaitable: Awaitable[ResponseStream[UpdateT, FinalT]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Create a ResponseStream from an awaitable that resolves to a ResponseStream.
+
+        This is useful when you have an async function that returns a ResponseStream
+        and you want to wrap it to add hooks or use it in a pipeline.
+
+        The returned stream delegates to the inner stream once it resolves, using the
+        inner stream's finalizer if no new finalizer is provided.
+
+        Args:
+            awaitable: An awaitable that resolves to a ResponseStream.
+
+        Returns:
+            A new ResponseStream that wraps the awaitable.
+
+        Example:
+            >>> async def get_stream() -> ResponseStream[Update, Response]: ...
+            >>> stream = ResponseStream.from_awaitable(get_stream())
+        """
+        stream: ResponseStream[UpdateT, FinalT] = cls(cast(Awaitable[AsyncIterable[UpdateT]], awaitable))
+        stream._inner_stream_source = awaitable
+        stream._wrap_inner = True
+        return stream
+
+    async def _get_stream(self) -> AsyncIterable[UpdateT]:
+        if self._stream is None:
+            if hasattr(self._stream_source, "__aiter__"):
+                self._stream = self._stream_source  # type: ignore[assignment]
+            else:
+                if not iscoroutine(self._stream_source):
+                    self._stream = self._stream_source  # type: ignore[assignment]
+                else:
+                    self._stream = await self._stream_source
+            if isinstance(self._stream, ResponseStream) and self._wrap_inner:
+                self._inner_stream = self._stream  # type: ignore[assignment]
+                return self._inner_stream
+        return self._stream  # type: ignore[return-value]
+
+    def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
+        return self
+
+    async def __anext__(self) -> UpdateT:
+        if self._iterator is None:
+            stream = await self._get_stream()
+            self._iterator = stream.__aiter__()
+        try:
+            update: UpdateT = await self._iterator.__anext__()
+        except StopAsyncIteration:
+            self._consumed = True
+            await self._run_cleanup_hooks()
+            await self.get_final_response()
+            raise
+        except Exception as exc:
+            self._stream_error = exc
+            try:
+                await self._run_cleanup_hooks()
+            finally:
+                self._stream_error = None
+            raise
+        if self._map_update is not None:
+            update = self._map_update(update)  # type: ignore[assignment]
+            if isawaitable(update):
+                update = await update
+        self._updates.append(update)
+        for hook in self._transform_hooks:
+            hooked = hook(update)
+            if isawaitable(hooked):
+                hooked = await hooked
+            if hooked is not None:
+                update = hooked
+        return update
+
+    def __await__(self) -> Any:
+        async def _wrap() -> ResponseStream[UpdateT, FinalT]:
+            await self._get_stream()
+            return self
+
+        return _wrap().__await__()
+
+    async def get_final_response(self) -> FinalT:
+        """Get the final response by applying the finalizer to all collected updates.
+
+        If a finalizer is configured, it receives the list of updates and returns the final type.
+        Result hooks are then applied in order to transform the result.
+
+        If no finalizer is configured, returns the collected updates as Sequence[UpdateT].
+
+        For wrapped streams (created via .map() or .from_awaitable()):
+        - The inner stream's finalizer is called first to produce the inner final result.
+        - The inner stream's result_hooks are then applied to that inner result.
+        - The outer stream's finalizer is called to convert the outer (mapped) updates to the final type.
+        - The outer stream's result_hooks are then applied to transform the outer result.
+
+        This ensures that post-processing hooks registered on the inner stream (e.g., context
+        provider notifications) are still executed even when the stream is wrapped/mapped.
+        """
+        if self._wrap_inner:
+            if self._inner_stream is None:
+                # Use _get_stream() to resolve the awaitable - this properly handles
+                # the case where _stream_source and _inner_stream_source are the same
+                # coroutine (e.g., from from_awaitable), avoiding double-await errors.
+                await self._get_stream()
+            if self._inner_stream is None:
+                raise RuntimeError("Inner stream not available")
+            if not self._finalized and not self._consumed:
+                # Consume outer stream (which delegates to inner) if not already consumed
+                async for _ in self:
+                    pass
+
+            # Re-check: __anext__ auto-finalization may have already finalized this stream
+            if not self._finalized:
+                # This ensures inner post-processing (e.g., context provider notifications) runs
+                # Skip if inner stream was already finalized (e.g., via auto-finalization on iteration)
+                if not self._inner_stream._finalized:
+                    inner_stream = self._inner_stream
+                    inner_result: Any
+                    if inner_stream._finalizer is not None:
+                        inner_finalizer = inner_stream._finalizer
+                        inner_result = inner_finalizer(inner_stream._updates)
+                        if isawaitable(inner_result):
+                            inner_result = await inner_result
+                    else:
+                        inner_result = list(inner_stream._updates)
+
+                    # Run inner stream's result hooks
+                    inner_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], inner_stream._result_hooks)
+                    for hook in inner_hooks:
+                        hooked_result = hook(inner_result)
+                        if isawaitable(hooked_result):
+                            hooked_result = await hooked_result
+                        if hooked_result is not None:
+                            inner_result = hooked_result
+                    inner_stream._final_result = inner_result
+                    inner_stream._finalized = True
+                else:
+                    inner_result = self._inner_stream._final_result
+
+                # Now finalize the outer stream with its own finalizer
+                # If outer has no finalizer, use inner's result (preserves from_awaitable behavior)
+                outer_result: Any
+                if self._finalizer is not None:
+                    outer_result = self._finalizer(self._updates)
+                    if isawaitable(outer_result):
+                        outer_result = await outer_result
+                else:
+                    # No outer finalizer - use inner's finalized result
+                    outer_result = inner_result
+
+                # Apply outer's result_hooks
+                outer_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], self._result_hooks)
+                for hook in outer_hooks:
+                    outer_hook_result = hook(outer_result)
+                    if isawaitable(outer_hook_result):
+                        outer_hook_result = await outer_hook_result
+                    if outer_hook_result is not None:
+                        outer_result = outer_hook_result
+                self._final_result = outer_result
+                self._finalized = True
+            return self._final_result  # type: ignore[return-value]
+
+        if not self._finalized and not self._consumed:
+            async for _ in self:
+                pass
+
+        # Re-check: __anext__ auto-finalization may have already finalized this stream
+        if not self._finalized:
+            result: Any
+            if self._finalizer is not None:
+                result = self._finalizer(self._updates)
+                if isawaitable(result):
+                    result = await result
+            else:
+                result = list(self._updates)
+
+            final_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], self._result_hooks)
+            for hook in final_hooks:
+                final_hook_result = hook(result)
+                if isawaitable(final_hook_result):
+                    final_hook_result = await final_hook_result
+                if final_hook_result is not None:
+                    result = final_hook_result
+            self._final_result = result
+            self._finalized = True
+        return self._final_result  # type: ignore[return-value]
+
+    def with_transform_hook(
+        self,
+        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a transform hook executed for each update during iteration."""
+        self._transform_hooks.append(hook)
+        return self
+
+    def with_result_hook(
+        self,
+        hook: Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a result hook executed after finalization."""
+        self._result_hooks.append(hook)
+        self._finalized = False
+        self._final_result = None
+        return self
+
+    def with_cleanup_hook(
+        self,
+        hook: Callable[[], Awaitable[None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a cleanup hook executed after stream consumption (before finalizer)."""
+        self._cleanup_hooks.append(hook)
+        return self
+
+    async def _run_cleanup_hooks(self) -> None:
+        if self._cleanup_run:
+            return
+        self._cleanup_run = True
+        for hook in self._cleanup_hooks:
+            result = hook()
+            if isawaitable(result):
+                await result
+
+    @property
+    def updates(self) -> Sequence[UpdateT]:
+        return self._updates
 
 
 # region ChatOptions
@@ -2540,12 +3227,12 @@ class _ChatOptionsBase(TypedDict, total=False):
             options: ChatOptions = {
                 "temperature": 0.7,
                 "max_tokens": 1000,
-                "model_id": "gpt-4",
+                "model": "gpt-4",
             }
 
             # With tools
             options_with_tools: ChatOptions = {
-                "model_id": "gpt-4",
+                "model": "gpt-4",
                 "tool_choice": "auto",
                 "temperature": 0.7,
             }
@@ -2555,8 +3242,7 @@ class _ChatOptionsBase(TypedDict, total=False):
     """
 
     # Model selection
-    model_id: str
-
+    model: str
     # Generation parameters
     temperature: float
     top_p: float
@@ -2570,7 +3256,7 @@ class _ChatOptionsBase(TypedDict, total=False):
     presence_penalty: float
 
     # Tool configuration (forward reference to avoid circular import)
-    tools: "ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None"  # noqa: E501
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
     tool_choice: ToolMode | Literal["auto", "required", "none"]
     allow_multiple_tool_calls: bool
 
@@ -2589,8 +3275,8 @@ class _ChatOptionsBase(TypedDict, total=False):
 
 if TYPE_CHECKING:
 
-    class ChatOptions(_ChatOptionsBase, Generic[TResponseModel], total=False):
-        response_format: type[TResponseModel] | Mapping[str, Any] | None  # type: ignore[misc]
+    class ChatOptions(_ChatOptionsBase, Generic[ResponseModelT], total=False):
+        response_format: type[ResponseModelT] | Mapping[str, Any] | None  # type: ignore[misc]
 
 else:
     ChatOptions = _ChatOptionsBase
@@ -2657,18 +3343,11 @@ async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_tools(
-    tools: (
-        ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None
-    ),
-) -> list[ToolProtocol | MutableMapping[str, Any]]:
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+) -> list[ToolTypes]:
     """Normalize tools into a list.
 
-    Converts callables to FunctionTool objects and ensures all tools are either
-    ToolProtocol instances or MutableMappings.
+    Converts callables to FunctionTool objects and preserves existing tool objects.
 
     Args:
         tools: Tools to normalize - can be a single tool, callable, or sequence.
@@ -2693,37 +3372,16 @@ def normalize_tools(
             # List of tools
             tools = normalize_tools([my_tool, another_tool])
     """
-    final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
-    if not tools:
-        return final_tools
-    if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
-        # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
-        if not isinstance(tools, (ToolProtocol, MutableMapping)):
-            return [tool(tools)]
-        return [tools]
-    for tool_item in tools:
-        if isinstance(tool_item, (ToolProtocol, MutableMapping)):
-            final_tools.append(tool_item)
-        else:
-            # Convert callable to FunctionTool
-            final_tools.append(tool(tool_item))
-    return final_tools
+    return _normalize_tools(tools)
 
 
 async def validate_tools(
-    tools: (
-        ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None
-    ),
-) -> list[ToolProtocol | MutableMapping[str, Any]]:
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+) -> list[ToolTypes]:
     """Validate and normalize tools into a list.
 
     Converts callables to FunctionTool objects, expands MCP tools to their constituent
-    functions (connecting them if needed), and ensures all tools are either ToolProtocol
-    instances or MutableMappings.
+    functions (connecting them if needed), while preserving non-callable tool objects.
 
     Args:
         tools: Tools to validate - can be a single tool, callable, or sequence.
@@ -2752,7 +3410,7 @@ async def validate_tools(
     normalized = normalize_tools(tools)
 
     # Handle MCP tool expansion (async-only)
-    final_tools: list[ToolProtocol | MutableMapping[str, Any]] = []
+    final_tools: list[ToolTypes] = []
     for tool_ in normalized:
         # Import MCPTool here to avoid circular imports
         from ._mcp import MCPTool
@@ -2770,20 +3428,21 @@ async def validate_tools(
 
 def validate_tool_mode(
     tool_choice: ToolMode | Literal["auto", "required", "none"] | None,
-) -> ToolMode:
+) -> ToolMode | None:
     """Validate and normalize tool_choice to a ToolMode dict.
 
     Args:
         tool_choice: The tool choice value to validate.
 
     Returns:
-        A ToolMode dict (contains keys: "mode", and optionally "required_function_name").
+        A ToolMode dict (contains keys: "mode", and optionally
+        "required_function_name"), or ``None`` when not provided.
 
     Raises:
         ContentError: If the tool_choice string is invalid.
     """
-    if not tool_choice:
-        return {"mode": "none"}
+    if tool_choice is None:
+        return None
     if isinstance(tool_choice, str):
         if tool_choice not in ("auto", "required", "none"):
             raise ContentError(f"Invalid tool choice: {tool_choice}")
@@ -2819,10 +3478,10 @@ def merge_chat_options(
 
             from agent_framework import merge_chat_options
 
-            base = {"temperature": 0.5, "model_id": "gpt-4"}
+            base = {"temperature": 0.5, "model": "gpt-4"}
             override = {"temperature": 0.7, "max_tokens": 1000}
             merged = merge_chat_options(base, override)
-            # {"temperature": 0.7, "model_id": "gpt-4", "max_tokens": 1000}
+            # {"temperature": 0.7, "model": "gpt-4", "max_tokens": 1000}
     """
     if not base:
         return dict(override) if override else {}
@@ -2834,9 +3493,9 @@ def merge_chat_options(
     # Copy base values (shallow copy for simple values, dict copy for dicts)
     for key, value in base.items():
         if isinstance(value, dict):
-            result[key] = dict(value)
+            result[key] = dict(value)  # type: ignore[reportUnknownArgumentType]
         elif isinstance(value, list):
-            result[key] = list(value)
+            result[key] = list(value)  # type: ignore[reportUnknownArgumentType]
         else:
             result[key] = value
 
@@ -2858,19 +3517,19 @@ def merge_chat_options(
             if base_tools and value:
                 # Add tools that aren't already present
                 merged_tools = list(base_tools)
-                for tool in value if isinstance(value, list) else [value]:
+                for tool in value if isinstance(value, Iterable) else [value]:  # type: ignore[reportUnknownVariableType]
                     if tool not in merged_tools:
                         merged_tools.append(tool)
                 result["tools"] = merged_tools
             elif value:
-                result["tools"] = list(value) if isinstance(value, list) else [value]
+                result["tools"] = value if isinstance(value, list) else [value]
         elif key in ("logit_bias", "metadata", "additional_properties"):
             # Merge dicts
             base_dict = result.get(key)
-            if base_dict and isinstance(value, dict):
+            if base_dict and isinstance(base_dict, dict) and isinstance(value, dict):
                 result[key] = {**base_dict, **value}
             elif value:
-                result[key] = dict(value) if isinstance(value, dict) else value
+                result[key] = dict(cast(Mapping[Any, Any], value)) if isinstance(value, dict) else value
         elif key == "tool_choice":
             # tool_choice from override takes precedence
             result["tool_choice"] = value if value else result.get("tool_choice")
@@ -2882,3 +3541,133 @@ def merge_chat_options(
             result[key] = value
 
     return result
+
+
+# region Embedding Types
+
+
+class EmbeddingGenerationOptions(TypedDict, total=False):
+    """Common request settings for embedding generation.
+
+    All fields are optional (total=False) to allow partial specification.
+    Provider-specific TypedDicts extend this with additional options.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import EmbeddingGenerationOptions
+
+            options: EmbeddingGenerationOptions = {
+                "model": "text-embedding-3-small",
+                "dimensions": 1536,
+            }
+    """
+
+    model: str
+    dimensions: int
+
+
+class Embedding(Generic[EmbeddingT]):
+    """A single embedding vector with metadata.
+
+    Generic over the embedding vector type, e.g. ``Embedding[list[float]]``,
+    ``Embedding[list[int]]``, or ``Embedding[bytes]``.
+
+    Args:
+        vector: The embedding vector data.
+        model: The model used to generate this embedding.
+        dimensions: Explicit dimension count (computed from vector length if omitted).
+        created_at: Timestamp of when the embedding was generated.
+        additional_properties: Additional metadata.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Embedding
+
+            embedding = Embedding(
+                vector=[0.1, 0.2, 0.3],
+                model="text-embedding-3-small",
+            )
+            assert embedding.dimensions == 3
+    """
+
+    def __init__(
+        self,
+        vector: EmbeddingT,
+        *,
+        model: str | None = None,
+        dimensions: int | None = None,
+        created_at: datetime | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        self.vector = vector
+        self._dimensions = dimensions
+        self.model = model
+        self.created_at = created_at
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
+
+    @property
+    def dimensions(self) -> int | None:
+        """Return the number of dimensions in the embedding vector.
+
+        Uses the explicitly provided value if set, otherwise computes from vector length.
+        """
+        if self._dimensions is not None:
+            return self._dimensions
+        if isinstance(self.vector, Sized) and not isinstance(self.vector, str):
+            return len(cast(Sized, self.vector))
+        return None
+
+
+EmbeddingOptionsT = TypeVar(
+    "EmbeddingOptionsT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+)
+
+
+class GeneratedEmbeddings(list[Embedding[EmbeddingT]], Generic[EmbeddingT, EmbeddingOptionsT]):
+    """A list of generated embeddings with usage metadata.
+
+    Extends list for direct iteration and indexing.
+    Generic over both the embedding vector type and the options type used for generation.
+
+    Args:
+        embeddings: Sequence of Embedding objects.
+        options: The options used to generate these embeddings.
+        usage: Token usage information (e.g. prompt_tokens, total_tokens).
+        additional_properties: Additional metadata.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Embedding, GeneratedEmbeddings
+
+            embeddings = GeneratedEmbeddings(
+                [Embedding(vector=[0.1, 0.2]), Embedding(vector=[0.3, 0.4])],
+                usage={"prompt_tokens": 10, "total_tokens": 10},
+            )
+            assert len(embeddings) == 2
+            assert embeddings.usage["prompt_tokens"] == 10
+    """
+
+    def __init__(
+        self,
+        embeddings: Iterable[Embedding[EmbeddingT]] | None = None,
+        *,
+        options: EmbeddingOptionsT | None = None,
+        usage: UsageDetails | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(embeddings or [])
+        self.options = options
+        self.usage = usage
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
+
+
+# endregion

@@ -16,18 +16,32 @@ internal sealed class AIContentExternalHandler<TRequestContent, TResponseContent
     where TResponseContent : AIContent
 {
     private readonly PortBinding? _portBinding;
+    private readonly string _portId;
     private ConcurrentDictionary<string, TRequestContent> _pendingRequests = new();
 
-    public AIContentExternalHandler(ref RouteBuilder routeBuilder, string portId, bool intercepted, Func<TResponseContent, IWorkflowContext, CancellationToken, ValueTask> handler)
+    public AIContentExternalHandler(ref ProtocolBuilder protocolBuilder, string portId, bool intercepted, Func<TResponseContent, IWorkflowContext, CancellationToken, ValueTask> handler)
     {
+        this._portId = portId;
+        PortBinding? portBinding = null;
+        protocolBuilder = protocolBuilder.ConfigureRoutes(routeBuilder => ConfigureRoutes(routeBuilder, out portBinding));
+        this._portBinding = portBinding;
+
         if (intercepted)
         {
-            this._portBinding = null;
-            routeBuilder = routeBuilder.AddHandler(handler);
+            protocolBuilder = protocolBuilder.SendsMessage<TRequestContent>();
         }
-        else
+
+        void ConfigureRoutes(RouteBuilder routeBuilder, out PortBinding? portBinding)
         {
-            routeBuilder = routeBuilder.AddPortHandler<TRequestContent, TResponseContent>(portId, handler, out this._portBinding);
+            if (intercepted)
+            {
+                portBinding = null;
+                routeBuilder.AddHandler(handler);
+            }
+            else
+            {
+                routeBuilder.AddPortHandler<TRequestContent, TResponseContent>(portId, handler, out portBinding);
+            }
         }
     }
 
@@ -46,12 +60,14 @@ internal sealed class AIContentExternalHandler<TRequestContent, TResponseContent
     {
         if (!this._pendingRequests.TryAdd(id, requestContent))
         {
-            throw new InvalidOperationException($"A pending request with ID '{id}' already exists.");
+            // Request is already pending; treat as an idempotent re-emission.
+            // Do not repost to the sink because request IDs must remain unique while pending.
+            return default;
         }
 
         return this.IsIntercepted
              ? context.SendMessageAsync(requestContent, cancellationToken: cancellationToken)
-             : this._portBinding.PostRequestAsync(requestContent, id, cancellationToken);
+             : this._portBinding.PostRequestAsync(requestContent, this.CreateExternalRequestId(id), cancellationToken);
     }
 
     public bool MarkRequestAsHandled(string id)
@@ -61,6 +77,8 @@ internal sealed class AIContentExternalHandler<TRequestContent, TResponseContent
 
     [MemberNotNullWhen(false, nameof(_portBinding))]
     private bool IsIntercepted => this._portBinding == null;
+
+    private string CreateExternalRequestId(string requestId) => $"{this._portId.Length}:{this._portId}:{requestId}";
 
     private static string MakeKey(string id) => $"{id}_PendingRequests";
 

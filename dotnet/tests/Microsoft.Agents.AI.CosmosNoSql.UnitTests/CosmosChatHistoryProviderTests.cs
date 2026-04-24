@@ -3,8 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
 using Azure.Core;
 using Azure.Identity;
@@ -20,8 +18,8 @@ namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 /// - Default Mode: Cleans up all test data after each test run (deletes database)
 /// - Preserve Mode: Keeps containers and data for inspection in Cosmos DB Emulator Data Explorer
 ///
-/// To enable Preserve Mode, set environment variable: COSMOS_PRESERVE_CONTAINERS=true
-/// Example: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test
+/// To enable Preserve Mode, set environment variable: COSMOSDB_PRESERVE_CONTAINERS=true
+/// Example: $env:COSMOSDB_PRESERVE_CONTAINERS="true"; dotnet test
 ///
 /// In Preserve Mode, you can view the data in Cosmos DB Emulator Data Explorer at:
 /// https://localhost:8081/_explorer/index.html
@@ -31,19 +29,23 @@ namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 /// Environment Variable Reference:
 /// | Variable | Values | Description |
 /// |----------|--------|-------------|
-/// | COSMOS_PRESERVE_CONTAINERS | true / false | Controls whether to preserve test data after completion |
+/// | COSMOSDB_PRESERVE_CONTAINERS | true / false | Controls whether to preserve test data after completion |
 ///
 /// Usage Examples:
-/// - Run all tests in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/
-/// - Run specific test category in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/ --filter "Category=CosmosDB"
-/// - Reset to cleanup mode: $env:COSMOS_PRESERVE_CONTAINERS=""; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/
+/// - Run all tests in preserve mode: $env:COSMOSDB_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/
+/// - Run specific test category in preserve mode: $env:COSMOSDB_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/ --filter "Category=CosmosDB"
+/// - Reset to cleanup mode: $env:COSMOSDB_PRESERVE_CONTAINERS=""; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/
 /// </summary>
 [Collection("CosmosDB")]
 public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 {
-    // Cosmos DB Emulator connection settings
-    private const string EmulatorEndpoint = "https://localhost:8081";
-    private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
+    private static readonly AIAgent s_mockAgent = new Moq.Mock<AIAgent>().Object;
+
+    private static AgentSession CreateMockSession() => new Moq.Mock<AgentSession>().Object;
+
+    // Cosmos DB Emulator connection settings (can be overridden via COSMOSDB_ENDPOINT and COSMOSDB_KEY environment variables)
+    private static readonly string s_emulatorEndpoint = Environment.GetEnvironmentVariable("COSMOSDB_ENDPOINT") ?? "https://localhost:8081";
+    private static readonly string s_emulatorKey = Environment.GetEnvironmentVariable("COSMOSDB_KEY") ?? "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string TestContainerId = "ChatMessages";
     private const string HierarchicalTestContainerId = "HierarchicalChatMessages";
     // Use unique database ID per test class instance to avoid conflicts  
@@ -56,21 +58,21 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
     private bool _preserveContainer;
     private CosmosClient? _setupClient; // Only used for test setup/cleanup
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         // Fail fast if emulator is not available
         this.SkipIfEmulatorNotAvailable();
 
         // Check environment variable to determine if we should preserve containers
-        // Set COSMOS_PRESERVE_CONTAINERS=true to keep containers and data for inspection
-        this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
+        // Set COSMOSDB_PRESERVE_CONTAINERS=true to keep containers and data for inspection
+        this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOSDB_PRESERVE_CONTAINERS"), bool.TrueString, StringComparison.OrdinalIgnoreCase);
 
-        this._connectionString = $"AccountEndpoint={EmulatorEndpoint};AccountKey={EmulatorKey}";
+        this._connectionString = $"AccountEndpoint={s_emulatorEndpoint};AccountKey={s_emulatorKey}";
 
         try
         {
             // Only create CosmosClient for test setup - the actual tests will use connection string constructors
-            this._setupClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
+            this._setupClient = new CosmosClient(s_emulatorEndpoint, s_emulatorKey);
 
             // Test connection by attempting to create database
             var databaseResponse = await this._setupClient.CreateDatabaseIfNotExistsAsync(s_testDatabaseId);
@@ -98,8 +100,10 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         }
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
+
         if (this._setupClient != null && this._emulatorAvailable)
         {
             try
@@ -137,16 +141,47 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     private void SkipIfEmulatorNotAvailable()
     {
-        // In CI: Skip if COSMOS_EMULATOR_AVAILABLE is not set to "true"
+        // In CI: Skip if COSMOSDB_EMULATOR_AVAILABLE is not set to "true"
         // Locally: Skip if emulator connection check failed
-        var ciEmulatorAvailable = string.Equals(Environment.GetEnvironmentVariable("COSMOS_EMULATOR_AVAILABLE"), "true", StringComparison.OrdinalIgnoreCase);
+        var ciEmulatorAvailable = string.Equals(Environment.GetEnvironmentVariable("COSMOSDB_EMULATOR_AVAILABLE"), bool.TrueString, StringComparison.OrdinalIgnoreCase);
 
-        Xunit.Skip.If(!ciEmulatorAvailable && !this._emulatorAvailable, "Cosmos DB Emulator is not available");
+        Assert.SkipWhen(!ciEmulatorAvailable && !this._emulatorAvailable, "Cosmos DB Emulator is not available");
     }
 
     #region Constructor Tests
 
-    [SkippableFact]
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public void StateKeys_ReturnsDefaultKey_WhenNoStateKeyProvided()
+    {
+        // Arrange & Act
+        this.SkipIfEmulatorNotAvailable();
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State("test-conversation"));
+
+        // Assert
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("CosmosChatHistoryProvider", provider.StateKeys);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public void StateKeys_ReturnsCustomKey_WhenSetViaConstructor()
+    {
+        // Arrange & Act
+        this.SkipIfEmulatorNotAvailable();
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State("test-conversation"),
+            stateKey: "custom-key");
+
+        // Assert
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
+    }
+
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithConnectionString_ShouldCreateInstance()
     {
@@ -154,70 +189,53 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Act
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, "test-conversation");
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State("test-conversation"));
 
         // Assert
         Assert.NotNull(provider);
-        Assert.Equal("test-conversation", provider.ConversationId);
         Assert.Equal(s_testDatabaseId, provider.DatabaseId);
         Assert.Equal(TestContainerId, provider.ContainerId);
     }
 
-    [SkippableFact]
-    [Trait("Category", "CosmosDB")]
-    public void Constructor_WithConnectionStringNoConversationId_ShouldCreateInstance()
-    {
-        // Arrange
-        this.SkipIfEmulatorNotAvailable();
-
-        // Act
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId);
-
-        // Assert
-        Assert.NotNull(provider);
-        Assert.NotNull(provider.ConversationId);
-        Assert.Equal(s_testDatabaseId, provider.DatabaseId);
-        Assert.Equal(TestContainerId, provider.ContainerId);
-    }
-
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithNullConnectionString_ShouldThrowArgumentException()
     {
         // Arrange & Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
-            new CosmosChatHistoryProvider((string)null!, s_testDatabaseId, TestContainerId, "test-conversation"));
+            new CosmosChatHistoryProvider((string)null!, s_testDatabaseId, TestContainerId,
+                _ => new CosmosChatHistoryProvider.State("test-conversation")));
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
-    public void Constructor_WithEmptyConversationId_ShouldThrowArgumentException()
+    public void Constructor_WithNullStateInitializer_ShouldThrowArgumentNullException()
     {
         // Arrange & Act & Assert
         this.SkipIfEmulatorNotAvailable();
 
-        Assert.Throws<ArgumentException>(() =>
-            new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ""));
+        Assert.Throws<ArgumentNullException>(() =>
+            new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, null!));
     }
 
     #endregion
 
     #region InvokedAsync Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_WithSingleMessage_ShouldAddMessageAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         var conversationId = Guid.NewGuid().ToString();
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversationId);
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId));
         var message = new ChatMessage(ChatRole.User, "Hello, world!");
 
-        var context = new ChatHistoryProvider.InvokedContext([message], [])
-        {
-            ResponseMessages = []
-        };
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [message], []);
 
         // Act
         await provider.InvokedAsync(context);
@@ -226,7 +244,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Assert
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
         var messages = await provider.InvokingAsync(invokingContext);
         var messageList = messages.ToList();
 
@@ -270,40 +288,35 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(ChatRole.User, messageList[0].Role);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_WithMultipleMessages_ShouldAddAllMessagesAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         var conversationId = Guid.NewGuid().ToString();
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversationId);
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId));
         var requestMessages = new[]
         {
             new ChatMessage(ChatRole.User, "First message"),
             new ChatMessage(ChatRole.Assistant, "Second message"),
-            new ChatMessage(ChatRole.User, "Third message")
-        };
-        var aiContextProviderMessages = new[]
-        {
-            new ChatMessage(ChatRole.System, "System context message")
+            new ChatMessage(ChatRole.User, "Third message"),
+            new ChatMessage(ChatRole.System, "System context message") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.AIContextProvider, "TestSource") } } }
         };
         var responseMessages = new[]
         {
             new ChatMessage(ChatRole.Assistant, "Response message")
         };
 
-        var context = new ChatHistoryProvider.InvokedContext(requestMessages, [])
-        {
-            AIContextProviderMessages = aiContextProviderMessages,
-            ResponseMessages = responseMessages
-        };
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, requestMessages, responseMessages);
 
         // Act
         await provider.InvokedAsync(context);
 
         // Assert
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
         var retrievedMessages = await provider.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
         Assert.Equal(5, messageList.Count);
@@ -318,43 +331,49 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     #region InvokingAsync Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokingAsync_WithNoMessages_ShouldReturnEmptyAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
+        var session = CreateMockSession();
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(Guid.NewGuid().ToString()));
 
         // Act
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
         var messages = await provider.InvokingAsync(invokingContext);
 
         // Assert
         Assert.Empty(messages);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokingAsync_WithConversationIsolation_ShouldOnlyReturnMessagesForConversationAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         var conversation1 = Guid.NewGuid().ToString();
         var conversation2 = Guid.NewGuid().ToString();
 
-        using var store1 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversation1);
-        using var store2 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversation2);
+        // Use different stateKey values so the providers don't overwrite each other's state in the shared session
+        using var store1 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversation1), stateKey: "conv1");
+        using var store2 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversation2), stateKey: "conv2");
 
-        var context1 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message for conversation 1")], []);
-        var context2 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message for conversation 2")], []);
+        var context1 = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [new ChatMessage(ChatRole.User, "Message for conversation 1")], []);
+        var context2 = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [new ChatMessage(ChatRole.User, "Message for conversation 2")], []);
 
         await store1.InvokedAsync(context1);
         await store2.InvokedAsync(context2);
 
         // Act
-        var invokingContext1 = new ChatHistoryProvider.InvokingContext([]);
-        var invokingContext2 = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext1 = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
+        var invokingContext2 = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
 
         var messages1 = await store1.InvokingAsync(invokingContext1);
         var messages2 = await store2.InvokingAsync(invokingContext2);
@@ -366,20 +385,24 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Single(messageList2);
         Assert.Equal("Message for conversation 1", messageList1[0].Text);
         Assert.Equal("Message for conversation 2", messageList2[0].Text);
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, messageList1[0].GetAgentRequestMessageSourceType());
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, messageList2[0].GetAgentRequestMessageSourceType());
     }
 
     #endregion
 
     #region Integration Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task FullWorkflow_AddAndGet_ShouldWorkCorrectlyAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         var conversationId = $"test-conversation-{Guid.NewGuid():N}"; // Use unique conversation ID
-        using var originalStore = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversationId);
+        using var originalStore = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId));
 
         var messages = new[]
         {
@@ -391,18 +414,21 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         };
 
         // Act 1: Add messages
-        var invokedContext = new ChatHistoryProvider.InvokedContext(messages, []);
+        var invokedContext = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
         await originalStore.InvokedAsync(invokedContext);
 
         // Act 2: Verify messages were added
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
         var retrievedMessages = await originalStore.InvokingAsync(invokingContext);
         var retrievedList = retrievedMessages.ToList();
         Assert.Equal(5, retrievedList.Count);
 
         // Act 3: Create new provider instance for same conversation (test persistence)
-        using var newProvider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, conversationId);
-        var persistedMessages = await newProvider.InvokingAsync(invokingContext);
+        using var newProvider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId));
+        var newSession = CreateMockSession();
+        var newInvokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, newSession, []);
+        var persistedMessages = await newProvider.InvokingAsync(newInvokingContext);
         var persistedList = persistedMessages.ToList();
 
         // Assert final state
@@ -418,25 +444,27 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     #region Disposal Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Dispose_AfterUse_ShouldNotThrow()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
-        var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
+        var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(Guid.NewGuid().ToString()));
 
         // Act & Assert
         provider.Dispose(); // Should not throw
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Dispose_MultipleCalls_ShouldNotThrow()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
-        var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
+        var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(Guid.NewGuid().ToString()));
 
         // Act & Assert
         provider.Dispose(); // First call
@@ -447,7 +475,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     #region Hierarchical Partitioning Tests
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalConnectionString_ShouldCreateInstance()
     {
@@ -455,16 +483,16 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Act
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId,
+            _ => new CosmosChatHistoryProvider.State("session-789", "tenant-123", "user-456"));
 
         // Assert
         Assert.NotNull(provider);
-        Assert.Equal("session-789", provider.ConversationId);
         Assert.Equal(s_testDatabaseId, provider.DatabaseId);
         Assert.Equal(HierarchicalTestContainerId, provider.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalEndpoint_ShouldCreateInstance()
     {
@@ -473,79 +501,66 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
         // Act
         TokenCredential credential = new DefaultAzureCredential();
-        using var provider = new CosmosChatHistoryProvider(EmulatorEndpoint, credential, s_testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
+        using var provider = new CosmosChatHistoryProvider(s_emulatorEndpoint, credential, s_testDatabaseId, HierarchicalTestContainerId,
+            _ => new CosmosChatHistoryProvider.State("session-789", "tenant-123", "user-456"));
 
         // Assert
         Assert.NotNull(provider);
-        Assert.Equal("session-789", provider.ConversationId);
         Assert.Equal(s_testDatabaseId, provider.DatabaseId);
         Assert.Equal(HierarchicalTestContainerId, provider.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalCosmosClient_ShouldCreateInstance()
     {
         // Arrange & Act
         this.SkipIfEmulatorNotAvailable();
 
-        using var cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
-        using var provider = new CosmosChatHistoryProvider(cosmosClient, s_testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
+        using var cosmosClient = new CosmosClient(s_emulatorEndpoint, s_emulatorKey);
+        using var provider = new CosmosChatHistoryProvider(cosmosClient, s_testDatabaseId, HierarchicalTestContainerId,
+            _ => new CosmosChatHistoryProvider.State("session-789", "tenant-123", "user-456"));
 
         // Assert
         Assert.NotNull(provider);
-        Assert.Equal("session-789", provider.ConversationId);
         Assert.Equal(s_testDatabaseId, provider.DatabaseId);
         Assert.Equal(HierarchicalTestContainerId, provider.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
-    public void Constructor_WithHierarchicalNullTenantId_ShouldThrowArgumentException()
+    public void State_WithEmptyConversationId_ShouldThrowArgumentException()
     {
         // Arrange & Act & Assert
-        this.SkipIfEmulatorNotAvailable();
-
-        Assert.Throws<ArgumentNullException>(() =>
-            new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, null!, "user-456", "session-789"));
-    }
-
-    [SkippableFact]
-    [Trait("Category", "CosmosDB")]
-    public void Constructor_WithHierarchicalEmptyUserId_ShouldThrowArgumentException()
-    {
-        // Arrange & Act & Assert
-        this.SkipIfEmulatorNotAvailable();
-
         Assert.Throws<ArgumentException>(() =>
-            new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, "tenant-123", "", "session-789"));
+            new CosmosChatHistoryProvider.State(""));
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
-    public void Constructor_WithHierarchicalWhitespaceSessionId_ShouldThrowArgumentException()
+    public void State_WithWhitespaceConversationId_ShouldThrowArgumentException()
     {
         // Arrange & Act & Assert
-        this.SkipIfEmulatorNotAvailable();
-
         Assert.Throws<ArgumentException>(() =>
-            new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "   "));
+            new CosmosChatHistoryProvider.State("   "));
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_WithHierarchicalPartitioning_ShouldAddMessageWithMetadataAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         const string TenantId = "tenant-123";
         const string UserId = "user-456";
         const string SessionId = "session-789";
         // Test hierarchical partitioning constructor with connection string
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId,
+            _ => new CosmosChatHistoryProvider.State(SessionId, TenantId, UserId));
         var message = new ChatMessage(ChatRole.User, "Hello from hierarchical partitioning!");
 
-        var context = new ChatHistoryProvider.InvokedContext([message], []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [message], []);
 
         // Act
         await provider.InvokedAsync(context);
@@ -554,7 +569,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Assert
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
         var messages = await provider.InvokingAsync(invokingContext);
         var messageList = messages.ToList();
 
@@ -584,17 +599,19 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(SessionId, (string)document!.sessionId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokedAsync_WithHierarchicalMultipleMessages_ShouldAddAllMessagesAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         const string TenantId = "tenant-batch";
         const string UserId = "user-batch";
         const string SessionId = "session-batch";
         // Test hierarchical partitioning constructor with connection string
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId,
+            _ => new CosmosChatHistoryProvider.State(SessionId, TenantId, UserId));
         var messages = new[]
         {
             new ChatMessage(ChatRole.User, "First hierarchical message"),
@@ -602,7 +619,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             new ChatMessage(ChatRole.User, "Third hierarchical message")
         };
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
 
         // Act
         await provider.InvokedAsync(context);
@@ -611,7 +628,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Assert
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
         var retrievedMessages = await provider.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
 
@@ -621,24 +638,28 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Third hierarchical message", messageList[2].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task InvokingAsync_WithHierarchicalPartitionIsolation_ShouldIsolateMessagesByUserIdAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         const string TenantId = "tenant-isolation";
         const string UserId1 = "user-1";
         const string UserId2 = "user-2";
         const string SessionId = "session-isolation";
 
         // Different userIds create different hierarchical partitions, providing proper isolation
-        using var store1 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId1, SessionId);
-        using var store2 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId2, SessionId);
+        // Use different stateKey values so the providers don't overwrite each other's state in the shared session
+        using var store1 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId,
+            _ => new CosmosChatHistoryProvider.State(SessionId, TenantId, UserId1), stateKey: "user1");
+        using var store2 = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId,
+            _ => new CosmosChatHistoryProvider.State(SessionId, TenantId, UserId2), stateKey: "user2");
 
         // Add messages to both stores
-        var context1 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message from user 1")], []);
-        var context2 = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Message from user 2")], []);
+        var context1 = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [new ChatMessage(ChatRole.User, "Message from user 1")], []);
+        var context2 = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [new ChatMessage(ChatRole.User, "Message from user 2")], []);
 
         await store1.InvokedAsync(context1);
         await store2.InvokedAsync(context2);
@@ -647,8 +668,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Act & Assert
-        var invokingContext1 = new ChatHistoryProvider.InvokingContext([]);
-        var invokingContext2 = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext1 = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
+        var invokingContext2 = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
 
         var messages1 = await store1.InvokingAsync(invokingContext1);
         var messageList1 = messages1.ToList();
@@ -663,48 +684,42 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Message from user 2", messageList2[0].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
-    public async Task SerializeDeserialize_WithHierarchicalPartitioning_ShouldPreserveStateAsync()
+    public async Task StateBag_WithHierarchicalPartitioning_ShouldPreserveStateAcrossProviderInstancesAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         const string TenantId = "tenant-serialize";
         const string UserId = "user-serialize";
         const string SessionId = "session-serialize";
 
-        using var originalStore = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
+        using var originalStore = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId,
+            _ => new CosmosChatHistoryProvider.State(SessionId, TenantId, UserId));
 
-        var context = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Test serialization message")], []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [new ChatMessage(ChatRole.User, "Test serialization message")], []);
         await originalStore.InvokedAsync(context);
-
-        // Act - Serialize the provider state
-        var serializedState = originalStore.Serialize();
-
-        // Create a new provider from the serialized state
-        using var cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
-        var serializerOptions = new JsonSerializerOptions
-        {
-            TypeInfoResolver = new DefaultJsonTypeInfoResolver()
-        };
-        using var deserializedStore = CosmosChatHistoryProvider.CreateFromSerializedState(cosmosClient, serializedState, s_testDatabaseId, HierarchicalTestContainerId, serializerOptions);
 
         // Wait a moment for eventual consistency
         await Task.Delay(100);
 
-        // Assert - The deserialized provider should have the same functionality
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
-        var messages = await deserializedStore.InvokingAsync(invokingContext);
+        // Act - Create a new provider that uses a different intializer, but we will use the same session.
+        using var newStore = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId,
+            _ => new CosmosChatHistoryProvider.State(Guid.NewGuid().ToString()));
+
+        // Assert - The new provider should read the same messages from Cosmos DB
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
+        var messages = await newStore.InvokingAsync(invokingContext);
         var messageList = messages.ToList();
 
         Assert.Single(messageList);
         Assert.Equal("Test serialization message", messageList[0].Text);
-        Assert.Equal(SessionId, deserializedStore.ConversationId);
-        Assert.Equal(s_testDatabaseId, deserializedStore.DatabaseId);
-        Assert.Equal(HierarchicalTestContainerId, deserializedStore.ContainerId);
+        Assert.Equal(s_testDatabaseId, newStore.DatabaseId);
+        Assert.Equal(HierarchicalTestContainerId, newStore.ContainerId);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task HierarchicalAndSimplePartitioning_ShouldCoexistAsync()
     {
@@ -712,13 +727,17 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
         const string SessionId = "coexist-session";
 
+        var session = CreateMockSession();
         // Create simple provider using simple partitioning container and hierarchical provider using hierarchical container
-        using var simpleProvider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, SessionId);
-        using var hierarchicalProvider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId, "tenant-coexist", "user-coexist", SessionId);
+        // Use different stateKey values so the providers don't overwrite each other's state in the shared session
+        using var simpleProvider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(SessionId), stateKey: "simple");
+        using var hierarchicalProvider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId,
+            _ => new CosmosChatHistoryProvider.State(SessionId, "tenant-coexist", "user-coexist"), stateKey: "hierarchical");
 
         // Add messages to both
-        var simpleContext = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Simple partitioning message")], []);
-        var hierarchicalContext = new ChatHistoryProvider.InvokedContext([new ChatMessage(ChatRole.User, "Hierarchical partitioning message")], []);
+        var simpleContext = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [new ChatMessage(ChatRole.User, "Simple partitioning message")], []);
+        var hierarchicalContext = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, [new ChatMessage(ChatRole.User, "Hierarchical partitioning message")], []);
 
         await simpleProvider.InvokedAsync(simpleContext);
         await hierarchicalProvider.InvokedAsync(hierarchicalContext);
@@ -727,7 +746,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         await Task.Delay(100);
 
         // Act & Assert
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
 
         var simpleMessages = await simpleProvider.InvokingAsync(invokingContext);
         var simpleMessageList = simpleMessages.ToList();
@@ -742,15 +761,17 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Hierarchical partitioning message", hierarchicalMessageList[0].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task MaxMessagesToRetrieve_ShouldLimitAndReturnMostRecentAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         const string ConversationId = "max-messages-test";
 
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ConversationId);
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId));
 
         // Add 10 messages
         var messages = new List<ChatMessage>();
@@ -760,7 +781,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             await Task.Delay(10); // Small delay to ensure different timestamps
         }
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
         await provider.InvokedAsync(context);
 
         // Wait for eventual consistency
@@ -768,7 +789,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
         // Act - Set max to 5 and retrieve
         provider.MaxMessagesToRetrieve = 5;
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
         var retrievedMessages = await provider.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
 
@@ -781,15 +802,17 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("Message 10", messageList[4].Text);
     }
 
-    [SkippableFact]
+    [Fact]
     [Trait("Category", "CosmosDB")]
     public async Task MaxMessagesToRetrieve_Null_ShouldReturnAllMessagesAsync()
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         const string ConversationId = "max-messages-null-test";
 
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ConversationId);
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId));
 
         // Add 10 messages
         var messages = new List<ChatMessage>();
@@ -798,14 +821,14 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
         }
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
         await provider.InvokedAsync(context);
 
         // Wait for eventual consistency
         await Task.Delay(100);
 
         // Act - No limit set (default null)
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
         var retrievedMessages = await provider.InvokingAsync(invokingContext);
         var messageList = retrievedMessages.ToList();
 
@@ -813,6 +836,239 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(10, messageList.Count);
         Assert.Equal("Message 1", messageList[0].Text);
         Assert.Equal("Message 10", messageList[9].Text);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessageCountAsync_WithMessages_ShouldReturnCorrectCountAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        const string ConversationId = "count-test-conversation";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId));
+
+        // Add 5 messages
+        var messages = new List<ChatMessage>();
+        for (int i = 1; i <= 5; i++)
+        {
+            messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
+        }
+
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
+        await provider.InvokedAsync(context);
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Act
+        var count = await provider.GetMessageCountAsync(session);
+
+        // Assert
+        Assert.Equal(5, count);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessageCountAsync_WithNoMessages_ShouldReturnZeroAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        const string ConversationId = "empty-count-test-conversation";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId));
+
+        // Act
+        var count = await provider.GetMessageCountAsync(session);
+
+        // Assert
+        Assert.Equal(0, count);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task ClearMessagesAsync_WithMessages_ShouldDeleteAndReturnCountAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        const string ConversationId = "clear-test-conversation";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId));
+
+        // Add 3 messages
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Message 1"),
+            new(ChatRole.Assistant, "Message 2"),
+            new(ChatRole.User, "Message 3")
+        };
+
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
+        await provider.InvokedAsync(context);
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Verify messages exist
+        var countBefore = await provider.GetMessageCountAsync(session);
+        Assert.Equal(3, countBefore);
+
+        // Act
+        var deletedCount = await provider.ClearMessagesAsync(session);
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Assert
+        Assert.Equal(3, deletedCount);
+
+        // Verify messages are deleted
+        var countAfter = await provider.GetMessageCountAsync(session);
+        Assert.Equal(0, countAfter);
+
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
+        var retrievedMessages = await provider.InvokingAsync(invokingContext);
+        Assert.Empty(retrievedMessages);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task ClearMessagesAsync_WithNoMessages_ShouldReturnZeroAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        const string ConversationId = "empty-clear-test-conversation";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId));
+
+        // Act
+        var deletedCount = await provider.ClearMessagesAsync(session);
+
+        // Assert
+        Assert.Equal(0, deletedCount);
+    }
+
+    #endregion
+
+    #region Message Filter Tests
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task InvokedAsync_DefaultFilter_ExcludesChatHistoryMessagesFromStorageAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        var conversationId = Guid.NewGuid().ToString();
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId));
+
+        var requestMessages = new[]
+        {
+            new ChatMessage(ChatRole.User, "External message"),
+            new ChatMessage(ChatRole.System, "From history") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "HistorySource") } } },
+            new ChatMessage(ChatRole.System, "From context provider") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.AIContextProvider, "ContextSource") } } },
+        };
+
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, requestMessages, [new ChatMessage(ChatRole.Assistant, "Response")]);
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Assert - ChatHistory message excluded, External + AIContextProvider + Response stored
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
+        var messages = (await provider.InvokingAsync(invokingContext)).ToList();
+        Assert.Equal(3, messages.Count);
+        Assert.Equal("External message", messages[0].Text);
+        Assert.Equal("From context provider", messages[1].Text);
+        Assert.Equal("Response", messages[2].Text);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task InvokedAsync_CustomStorageInputFilter_OverridesDefaultAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        var conversationId = Guid.NewGuid().ToString();
+        using var provider = new CosmosChatHistoryProvider(
+            this._connectionString,
+            s_testDatabaseId,
+            TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId),
+            storeInputRequestMessageFilter: messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External));
+
+        var requestMessages = new[]
+        {
+            new ChatMessage(ChatRole.User, "External message"),
+            new ChatMessage(ChatRole.System, "From history") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "HistorySource") } } },
+            new ChatMessage(ChatRole.System, "From context provider") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.AIContextProvider, "ContextSource") } } },
+        };
+
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, requestMessages, [new ChatMessage(ChatRole.Assistant, "Response")]);
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Assert - Custom filter: only External + Response stored (both ChatHistory and AIContextProvider excluded)
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
+        var messages = (await provider.InvokingAsync(invokingContext)).ToList();
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("External message", messages[0].Text);
+        Assert.Equal("Response", messages[1].Text);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task InvokingAsync_RetrievalOutputFilter_FiltersRetrievedMessagesAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        var conversationId = Guid.NewGuid().ToString();
+        using var provider = new CosmosChatHistoryProvider(
+            this._connectionString,
+            s_testDatabaseId,
+            TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId),
+            provideOutputMessageFilter: messages => messages.Where(m => m.Role == ChatRole.User));
+
+        var requestMessages = new[]
+        {
+            new ChatMessage(ChatRole.User, "User message"),
+            new ChatMessage(ChatRole.System, "System message"),
+        };
+
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, requestMessages, [new ChatMessage(ChatRole.Assistant, "Assistant response")]);
+
+        await provider.InvokedAsync(context);
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Act
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
+        var messages = (await provider.InvokingAsync(invokingContext)).ToList();
+
+        // Assert - Only User messages returned (System and Assistant filtered by ProvideOutputMessageFilter)
+        Assert.Single(messages);
+        Assert.Equal("User message", messages[0].Text);
+        Assert.Equal(ChatRole.User, messages[0].Role);
     }
 
     #endregion

@@ -33,11 +33,11 @@ Then edit `.env` and add your API keys:
 ```bash
 # For OpenAI (minimum required)
 OPENAI_API_KEY="your-api-key-here"
-OPENAI_CHAT_MODEL_ID="gpt-4o-mini"
+OPENAI_CHAT_COMPLETION_MODEL="gpt-4o-mini"
 
 # Or for Azure OpenAI
 AZURE_OPENAI_ENDPOINT="your-endpoint"
-AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="your-deployment-name"
+AZURE_OPENAI_MODEL="your-deployment-name"
 ```
 
 ## 4. Test DevUI
@@ -45,7 +45,7 @@ AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="your-deployment-name"
 **Option A: In-Memory Mode (Recommended for quick testing)**
 
 ```bash
-cd samples/getting_started/devui
+cd samples/02-agents/devui
 python in_memory_mode.py
 ```
 
@@ -54,7 +54,7 @@ This runs a simple example with predefined agents and opens your browser automat
 **Option B: Directory-Based Discovery**
 
 ```bash
-cd samples/getting_started/devui
+cd samples/02-agents/devui
 devui
 ```
 

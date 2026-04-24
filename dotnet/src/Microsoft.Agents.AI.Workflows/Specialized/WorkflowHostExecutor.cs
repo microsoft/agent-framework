@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -15,13 +16,15 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 {
-    private readonly string _runId;
+    private readonly string _sessionId;
     private readonly Workflow _workflow;
+    private readonly ProtocolDescriptor _workflowProtocol;
     private readonly object _ownershipToken;
 
     private InProcessRunner? _activeRunner;
     private InMemoryCheckpointManager? _checkpointManager;
     private readonly ExecutorOptions _options;
+    private readonly ConcurrentDictionary<string, RequestPortInfo> _pendingResponsePorts = new(StringComparer.Ordinal);
 
     private ISuperStepJoinContext? _joinContext;
     private string? _joinId;
@@ -30,19 +33,25 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     [MemberNotNullWhen(true, nameof(_checkpointManager))]
     private bool WithCheckpointing => this._checkpointManager != null;
 
-    public WorkflowHostExecutor(string id, Workflow workflow, string runId, object ownershipToken, ExecutorOptions? options = null) : base(id, options)
+    public WorkflowHostExecutor(string id, Workflow workflow, ProtocolDescriptor workflowProtocol, string sessionId, object ownershipToken, ExecutorOptions? options = null) : base(id, options)
     {
         this._options = options ?? new();
 
-        Throw.IfNull(workflow);
-        this._runId = Throw.IfNull(runId);
+        this._sessionId = Throw.IfNull(sessionId);
         this._ownershipToken = Throw.IfNull(ownershipToken);
         this._workflow = Throw.IfNull(workflow);
+        this._workflowProtocol = Throw.IfNull(workflowProtocol);
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return routeBuilder.AddCatchAll(this.QueueExternalMessageAsync);
+        if (this._options.AutoYieldOutputHandlerResultObject)
+        {
+            protocolBuilder = protocolBuilder.YieldsOutputTypes(this._workflowProtocol.Yields);
+        }
+
+        return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddCatchAll(this.QueueExternalMessageAsync))
+                              .SendsMessageTypes(this._workflowProtocol.Yields);
     }
 
     private async ValueTask QueueExternalMessageAsync(PortableValue portableValue, IWorkflowContext context, CancellationToken cancellationToken)
@@ -73,7 +82,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     {
         if (this._activeRunner == null)
         {
-            if (this.JoinContext.WithCheckpointing)
+            if (this.JoinContext.IsCheckpointingEnabled)
             {
                 // Use a seprate in-memory checkpoint manager for scoping purposes. We do not need to worry about
                 // serialization because we will be relying on the parent workflow's checkpoint manager to do that,
@@ -84,7 +93,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 
             this._activeRunner = InProcessRunner.CreateSubworkflowRunner(this._workflow,
                                                                          this._checkpointManager,
-                                                                         this._runId,
+                                                                         this._sessionId,
                                                                          this._ownershipToken,
                                                                          this.JoinContext.ConcurrentRunsEnabled);
         }
@@ -114,7 +123,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
             if (resume)
             {
                 // Attempting to resume from checkpoint
-                if (!this._checkpointManager.TryGetLastCheckpoint(this._runId, out CheckpointInfo? lastCheckpoint))
+                if (!this._checkpointManager.TryGetLastCheckpoint(this._sessionId, out CheckpointInfo? lastCheckpoint))
                 {
                     throw new InvalidOperationException("No checkpoints available to resume from.");
                 }
@@ -156,6 +165,11 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 
     private ExternalResponse? CheckAndUnqualifyResponse([DisallowNull] ExternalResponse response)
     {
+        if (this._pendingResponsePorts.TryRemove(response.RequestId, out RequestPortInfo? originalPort))
+        {
+            return response with { PortInfo = originalPort };
+        }
+
         if (!Throw.IfNull(response).PortInfo.PortId.StartsWith($"{this.Id}.", StringComparison.Ordinal))
         {
             return null;
@@ -186,6 +200,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
                     break;
                 case RequestInfoEvent requestInfoEvt:
                     ExternalRequest request = requestInfoEvt.Request;
+                    this._pendingResponsePorts[request.RequestId] = request.PortInfo;
                     resultTask = this._joinContext?.SendMessageAsync(this.Id, this.QualifyRequestPortId(request)).AsTask() ?? Task.CompletedTask;
                     break;
                 case WorkflowErrorEvent errorEvent:
@@ -239,9 +254,13 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     }
 
     private const string CheckpointManagerStateKey = nameof(CheckpointManager);
+    private const string PendingResponsePortsStateKey = nameof(PendingResponsePortsStateKey);
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await context.QueueStateUpdateAsync(CheckpointManagerStateKey, this._checkpointManager, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(PendingResponsePortsStateKey,
+                                            new Dictionary<string, RequestPortInfo>(this._pendingResponsePorts, StringComparer.Ordinal),
+                                            cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
     }
@@ -262,6 +281,15 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
             await this.ResetAsync().ConfigureAwait(false);
         }
 
+        this._pendingResponsePorts.Clear();
+        Dictionary<string, RequestPortInfo> pendingResponsePorts =
+            await context.ReadStateAsync<Dictionary<string, RequestPortInfo>>(PendingResponsePortsStateKey, cancellationToken: cancellationToken)
+                         .ConfigureAwait(false) ?? [];
+        foreach (KeyValuePair<string, RequestPortInfo> pendingResponsePort in pendingResponsePorts)
+        {
+            this._pendingResponsePorts[pendingResponsePort.Key] = pendingResponsePort.Value;
+        }
+
         await this.EnsureRunSendMessageAsync(resume: true, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
@@ -272,6 +300,8 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
             await this._run.DisposeAsync().ConfigureAwait(false);
             this._run = null;
         }
+
+        this._pendingResponsePorts.Clear();
 
         if (this._activeRunner != null)
         {

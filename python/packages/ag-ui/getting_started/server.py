@@ -2,12 +2,14 @@
 
 """AG-UI server example with server-side tools."""
 
+from __future__ import annotations
+
 import logging
 import os
 
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
@@ -24,12 +26,12 @@ logger = logging.getLogger(__name__)
 
 # Read required configuration
 endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-deployment_name = os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
+model = os.environ.get("AZURE_OPENAI_MODEL")
 
 if not endpoint:
     raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required")
-if not deployment_name:
-    raise ValueError("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME environment variable is required")
+if not model:
+    raise ValueError("AZURE_OPENAI_MODEL environment variable is required")
 
 
 # ============================================================================
@@ -112,14 +114,14 @@ def get_time_zone(location: str) -> str:
 # - get_time_zone: SERVER-ONLY tool (only server has this)
 # - get_weather: CLIENT-ONLY tool (client provides this, server should NOT include it)
 # The client will send get_weather tool metadata so the LLM knows about it,
-# and @use_function_invocation on AGUIChatClient will execute it client-side.
+# and the function invocation mixin on AGUIChatClient will execute it client-side.
 # This matches the .NET AG-UI hybrid execution pattern.
-agent = ChatAgent(
+agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant. Use get_weather for weather and get_time_zone for time zones.",
-    chat_client=AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name=deployment_name,
+    client=OpenAIChatCompletionClient(
+        azure_endpoint=endpoint,
+        model=model,
     ),
     tools=[get_time_zone],  # ONLY server-side tools
 )

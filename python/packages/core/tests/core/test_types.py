@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import base64
-from collections.abc import AsyncIterable
+import json
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -14,54 +15,55 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     Annotation,
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
+    Message,
+    ResponseStream,
     TextSpanRegion,
     ToolMode,
-    ToolProtocol,
     UsageDetails,
     detect_media_type_from_base64,
     merge_chat_options,
-    prepare_function_call_results,
     tool,
+)
+from agent_framework._compaction import (
+    GROUP_ANNOTATION_KEY,
+    GROUP_HAS_REASONING_KEY,
+    GROUP_ID_KEY,
+    GROUP_TOKEN_COUNT_KEY,
 )
 from agent_framework._types import (
     _get_data_bytes,
     _get_data_bytes_as_str,
     _parse_content_list,
+    _parse_structured_response_value,
+    _process_update,
     _validate_uri,
     add_usage_details,
-    normalize_messages,
-    prepare_messages,
+    map_chat_to_agent_update,
     validate_tool_mode,
 )
-from agent_framework.exceptions import ContentError
+from agent_framework.exceptions import AdditionItemMismatch, ContentError
 
 
 @fixture
-def ai_tool() -> ToolProtocol:
-    """Returns a generic ToolProtocol."""
+def ai_tool() -> FunctionTool:
+    """Returns a generic FunctionTool."""
 
-    class GenericTool(BaseModel):
-        name: str
-        description: str | None = None
-        additional_properties: dict[str, Any] | None = None
+    @tool
+    def generic_tool(name: str) -> str:
+        """A generic tool that echoes the name."""
+        return f"Hello, {name}"
 
-        def parameters(self) -> dict[str, Any]:
-            """Return the parameters of the tool as a JSON schema."""
-            return {
-                "name": {"type": "string"},
-            }
-
-    return GenericTool(name="generic_tool", description="A generic tool")
+    return generic_tool
 
 
 @fixture
-def tool_tool() -> ToolProtocol:
-    """Returns a executable ToolProtocol."""
+def tool_tool() -> FunctionTool:
+    """Returns a executable FunctionTool."""
 
     @tool
     def simple_function(x: int, y: int) -> int:
@@ -340,6 +342,120 @@ def test_mcp_server_tool_call_and_result():
     assert call2.call_id == ""
 
 
+# region: Shell tool content
+
+
+def test_shell_tool_call_content_creation():
+    call = Content.from_shell_tool_call(
+        call_id="shell-1",
+        commands=["ls -la", "pwd"],
+        timeout_ms=60000,
+        max_output_length=4096,
+        status="completed",
+    )
+
+    assert call.type == "shell_tool_call"
+    assert call.call_id == "shell-1"
+    assert call.commands == ["ls -la", "pwd"]
+    assert call.timeout_ms == 60000
+    assert call.max_output_length == 4096
+    assert call.status == "completed"
+
+
+def test_shell_tool_call_content_minimal():
+    call = Content.from_shell_tool_call(call_id="shell-2")
+
+    assert call.type == "shell_tool_call"
+    assert call.call_id == "shell-2"
+    assert call.commands is None
+    assert call.timeout_ms is None
+    assert call.max_output_length is None
+    assert call.status is None
+
+
+def test_shell_tool_result_content_creation():
+    result = Content.from_shell_tool_result(
+        call_id="shell-1",
+        outputs=[
+            Content.from_shell_command_output(stdout="hello world\n", stderr=None, exit_code=0, timed_out=False),
+            Content.from_shell_command_output(stderr="error msg", exit_code=1, timed_out=False),
+        ],
+        max_output_length=4096,
+    )
+
+    assert result.type == "shell_tool_result"
+    assert result.call_id == "shell-1"
+    assert result.outputs is not None
+    assert len(result.outputs) == 2
+    assert result.outputs[0].type == "shell_command_output"
+    assert result.outputs[0].stdout == "hello world\n"
+    assert result.outputs[0].exit_code == 0
+    assert result.outputs[0].timed_out is False
+    assert result.outputs[1].type == "shell_command_output"
+    assert result.outputs[1].stderr == "error msg"
+    assert result.outputs[1].exit_code == 1
+    assert result.max_output_length == 4096
+
+
+def test_shell_tool_result_with_timeout():
+    result = Content.from_shell_tool_result(
+        call_id="shell-t",
+        outputs=[Content.from_shell_command_output(stdout="partial", timed_out=True)],
+    )
+
+    assert result.type == "shell_tool_result"
+    assert result.outputs is not None
+    assert result.outputs[0].timed_out is True
+    assert result.outputs[0].exit_code is None
+
+
+def test_shell_command_output_content_creation():
+    output = Content.from_shell_command_output(
+        stdout="hello\n",
+        stderr="warn\n",
+        exit_code=0,
+        timed_out=False,
+    )
+
+    assert output.type == "shell_command_output"
+    assert output.stdout == "hello\n"
+    assert output.stderr == "warn\n"
+    assert output.exit_code == 0
+    assert output.timed_out is False
+
+
+def test_shell_content_serialization_roundtrip():
+    call = Content.from_shell_tool_call(
+        call_id="shell-r",
+        commands=["echo hello"],
+        timeout_ms=30000,
+        status="completed",
+    )
+    call_dict = call.to_dict()
+    restored_call = Content.from_dict(call_dict)
+    assert restored_call.type == "shell_tool_call"
+    assert restored_call.call_id == "shell-r"
+    assert restored_call.commands == ["echo hello"]
+    assert restored_call.timeout_ms == 30000
+    assert restored_call.status == "completed"
+
+    result = Content.from_shell_tool_result(
+        call_id="shell-r",
+        outputs=[Content.from_shell_command_output(stdout="hello\n", exit_code=0, timed_out=False)],
+        max_output_length=4096,
+    )
+    result_dict = result.to_dict()
+    restored_result = Content.from_dict(result_dict)
+    assert restored_result.type == "shell_tool_result"
+    assert restored_result.call_id == "shell-r"
+    assert restored_result.outputs is not None
+    assert len(restored_result.outputs) == 1
+    assert restored_result.outputs[0].type == "shell_command_output"
+    assert restored_result.outputs[0].stdout == "hello\n"
+    assert restored_result.outputs[0].exit_code == 0
+    assert restored_result.max_output_length == 4096
+
+
 # region: HostedVectorStoreContent
 
 
@@ -430,7 +546,12 @@ def test_function_result_content():
 
     # Check the type and content
     assert content.type == "function_result"
-    assert content.result == {"param1": "value1"}
+    # Dict results are stringified and stored as text items
+    assert "param1" in content.result
+    assert "value1" in content.result
+    assert content.items is not None
+    assert len(content.items) == 1
+    assert content.items[0].type == "text"
 
     # Ensure the instance is of type BaseContent
     assert isinstance(content, Content)
@@ -444,7 +565,6 @@ def test_usage_details():
     assert usage["input_token_count"] == 5
     assert usage["output_token_count"] == 10
     assert usage["total_token_count"] == 15
-    assert usage.get("additional_counts", {}) == {}
 
 
 def test_usage_details_addition():
@@ -475,8 +595,8 @@ def test_usage_details_addition():
 def test_usage_details_fail():
     # TypedDict doesn't validate types at runtime, so this test no longer applies
     # Creating UsageDetails with wrong types won't raise ValueError
-    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, wrong_type="42.923")  # type: ignore[typeddict-item]
-    assert usage["wrong_type"] == "42.923"  # type: ignore[typeddict-item]
+    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, wrong_type="42.923")
+    assert usage["wrong_type"] == "42.923"
 
 
 def test_usage_details_additional_counts():
@@ -493,6 +613,15 @@ def test_usage_details_add_with_none_and_type_errors():
     v2 = add_usage_details(None, u)
     assert v2 == u
     # TypedDict doesn't support + operator, use add_usage_details
+
+
+def test_usage_details_add_skips_non_int():
+    u1 = UsageDetails(input_token_count=10, other="test")
+    u2 = UsageDetails(input_token_count=10, another="test")
+    u3 = add_usage_details(u1, u2)
+    assert len(u3.keys()) == 1
+    assert "input_token_count" in u3
+    assert u3["input_token_count"] == 20
 
 
 # region UserInputRequest and Response
@@ -535,6 +664,21 @@ def test_function_approval_serialization_roundtrip():
     # The Content union will need to be handled differently when we fully migrate
 
 
+def test_function_approval_request_function_call_none_guard():
+    """Test that accessing function_call attributes is safe when function_call is None."""
+    # Construct a Content with type "function_approval_request" but no function_call.
+    # This verifies the None-guard pattern used in samples to prevent AttributeError.
+    content = Content("function_approval_request", id="req-none")
+    assert content.function_call is None
+
+    # A proper approval request always has function_call set
+    fc = Content.from_function_call(call_id="call-1", name="do_something", arguments={"a": 1})
+    req = Content.from_function_approval_request(id="req-1", function_call=fc)
+    assert req.function_call is not None
+    assert req.function_call.name == "do_something"
+    assert req.function_call.arguments == {"a": 1}
+
+
 def test_function_approval_accepts_mcp_call():
     """Ensure FunctionApprovalRequestContent supports MCP server tool calls."""
     mcp_call = Content.from_mcp_server_tool_call(
@@ -567,13 +711,13 @@ def test_ai_content_serialization(args: dict):
     assert content == deserialized
 
 
-# region ChatMessage
+# region Message
 
 
 def test_chat_message_text():
-    """Test the ChatMessage class to ensure it initializes correctly with text content."""
-    # Create a ChatMessage with a role and text content
-    message = ChatMessage("user", ["Hello, how are you?"])
+    """Test the Message class to ensure it initializes correctly with text content."""
+    # Create a Message with a role and text content
+    message = Message(role="user", contents=["Hello, how are you?"])
 
     # Check the type and content
     assert message.role == "user"
@@ -587,11 +731,11 @@ def test_chat_message_text():
 
 
 def test_chat_message_contents():
-    """Test the ChatMessage class to ensure it initializes correctly with contents."""
-    # Create a ChatMessage with a role and multiple contents
+    """Test the Message class to ensure it initializes correctly with contents."""
+    # Create a Message with a role and multiple contents
     content1 = Content.from_text("Hello, how are you?")
     content2 = Content.from_text("I'm fine, thank you!")
-    message = ChatMessage("user", [content1, content2])
+    message = Message(role="user", contents=[content1, content2])
 
     # Check the type and content
     assert message.role == "user"
@@ -604,7 +748,7 @@ def test_chat_message_contents():
 
 
 def test_chat_message_with_chatrole_instance():
-    m = ChatMessage("user", ["hi"])
+    m = Message(role="user", contents=["hi"])
     assert m.role == "user"
     assert m.text == "hi"
 
@@ -614,8 +758,8 @@ def test_chat_message_with_chatrole_instance():
 
 def test_chat_response():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
-    # Create a ChatMessage
-    message = ChatMessage("assistant", ["I'm doing well, thank you!"])
+    # Create a Message
+    message = Message(role="assistant", contents=["I'm doing well, thank you!"])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message)
@@ -623,9 +767,17 @@ def test_chat_response():
     # Check the type and content
     assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "I'm doing well, thank you!"
-    assert isinstance(response.messages[0], ChatMessage)
+    assert isinstance(response.messages[0], Message)
     # __str__ returns text
     assert str(response) == response.text
+
+
+def test_chat_response_accepts_model_alias() -> None:
+    """Test ChatResponse accepts model and exposes it through model alias."""
+    response = ChatResponse(messages=Message(role="assistant", contents=["Hello"]), model="claude-test")
+
+    assert response.model == "claude-test"
+    assert response.model == "claude-test"
 
 
 class OutputModel(BaseModel):
@@ -634,25 +786,8 @@ class OutputModel(BaseModel):
 
 def test_chat_response_with_format():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
-    # Create a ChatMessage
-    message = ChatMessage("assistant", ['{"response": "Hello"}'])
-
-    # Create a ChatResponse with the message
-    response = ChatResponse(messages=message)
-
-    # Check the type and content
-    assert response.messages[0].role == "assistant"
-    assert response.messages[0].text == '{"response": "Hello"}'
-    assert isinstance(response.messages[0], ChatMessage)
-    assert response.text == '{"response": "Hello"}'
-    # Since no response_format was provided, value is None and accessing it returns None
-    assert response.value is None
-
-
-def test_chat_response_with_format_init():
-    """Test the ChatResponse class to ensure it initializes correctly with a message."""
-    # Create a ChatMessage
-    message = ChatMessage("assistant", ['{"response": "Hello"}'])
+    # Create a Message
+    message = Message(role="assistant", contents=['{"response": "Hello"}'])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message, response_format=OutputModel)
@@ -660,10 +795,66 @@ def test_chat_response_with_format_init():
     # Check the type and content
     assert response.messages[0].role == "assistant"
     assert response.messages[0].text == '{"response": "Hello"}'
-    assert isinstance(response.messages[0], ChatMessage)
+    assert isinstance(response.messages[0], Message)
     assert response.text == '{"response": "Hello"}'
     assert response.value is not None
     assert response.value.response == "Hello"
+
+
+def test_chat_response_with_format_init():
+    """Test the ChatResponse class to ensure it initializes correctly with a message."""
+    # Create a Message
+    message = Message(role="assistant", contents=['{"response": "Hello"}'])
+
+    # Create a ChatResponse with the message
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    # Check the type and content
+    assert response.messages[0].role == "assistant"
+    assert response.messages[0].text == '{"response": "Hello"}'
+    assert isinstance(response.messages[0], Message)
+    assert response.text == '{"response": "Hello"}'
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_chat_response_with_mapping_response_format() -> None:
+    """ChatResponse.value should parse JSON when response_format is a mapping."""
+    message = Message(role="assistant", contents=['{"response": "Hello"}'])
+    response = ChatResponse(
+        messages=message,
+        response_format={"type": "object", "properties": {"response": {"type": "string"}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["response"] == "Hello"
+
+
+def test_parse_structured_response_value_empty_text_with_pydantic_model() -> None:
+    """Empty text should return None instead of raising when response_format is a Pydantic model."""
+    result = _parse_structured_response_value("", OutputModel)
+    assert result is None
+
+
+def test_parse_structured_response_value_empty_text_with_mapping() -> None:
+    """Empty text should return None instead of raising when response_format is a mapping."""
+    result = _parse_structured_response_value("", {"type": "object"})
+    assert result is None
+
+
+def test_chat_response_value_with_empty_text_and_response_format() -> None:
+    """ChatResponse.value should return None when text is empty and response_format is set."""
+    message = Message(role="assistant", contents=[""])
+    response = ChatResponse(messages=message, response_format=OutputModel)
+    assert response.value is None
+
+
+def test_agent_response_value_with_empty_text_and_response_format() -> None:
+    """AgentResponse.value should return None when text is empty and response_format is set."""
+    message = Message(role="assistant", contents=[""])
+    response = AgentResponse(messages=message, response_format=OutputModel)
+    assert response.value is None
 
 
 def test_chat_response_value_raises_on_invalid_schema():
@@ -674,7 +865,7 @@ def test_chat_response_value_raises_on_invalid_schema():
         name: str = Field(min_length=10)
         score: int = Field(gt=0, le=100)
 
-    message = ChatMessage("assistant", ['{"id": 1, "name": "test", "score": -5}'])
+    message = Message(role="assistant", contents=['{"id": 1, "name": "test", "score": -5}'])
     response = ChatResponse(messages=message, response_format=StrictSchema)
 
     with raises(ValidationError) as exc_info:
@@ -687,22 +878,6 @@ def test_chat_response_value_raises_on_invalid_schema():
     assert "score" in error_fields, "Expected 'score' gt constraint error"
 
 
-def test_chat_response_value_with_valid_schema():
-    """Test that value property returns parsed value when all constraints pass."""
-
-    class MySchema(BaseModel):
-        name: str = Field(min_length=3)
-        score: int = Field(ge=0, le=100)
-
-    message = ChatMessage("assistant", ['{"name": "test", "score": 85}'])
-    response = ChatResponse(messages=message, response_format=MySchema)
-
-    result = response.value
-    assert result is not None
-    assert result.name == "test"
-    assert result.score == 85
-
-
 def test_agent_response_value_raises_on_invalid_schema():
     """Test that AgentResponse.value property raises ValidationError with field constraint details."""
 
@@ -711,7 +886,7 @@ def test_agent_response_value_raises_on_invalid_schema():
         name: str = Field(min_length=10)
         score: int = Field(gt=0, le=100)
 
-    message = ChatMessage("assistant", ['{"id": 1, "name": "test", "score": -5}'])
+    message = Message(role="assistant", contents=['{"id": 1, "name": "test", "score": -5}'])
     response = AgentResponse(messages=message, response_format=StrictSchema)
 
     with raises(ValidationError) as exc_info:
@@ -724,28 +899,12 @@ def test_agent_response_value_raises_on_invalid_schema():
     assert "score" in error_fields, "Expected 'score' gt constraint error"
 
 
-def test_agent_response_value_with_valid_schema():
-    """Test that AgentResponse.value property returns parsed value when all constraints pass."""
-
-    class MySchema(BaseModel):
-        name: str = Field(min_length=3)
-        score: int = Field(ge=0, le=100)
-
-    message = ChatMessage("assistant", ['{"name": "test", "score": 85}'])
-    response = AgentResponse(messages=message, response_format=MySchema)
-
-    result = response.value
-    assert result is not None
-    assert result.name == "test"
-    assert result.score == 85
-
-
 # region ChatResponseUpdate
 
 
 def test_chat_response_update():
     """Test the ChatResponseUpdate class to ensure it initializes correctly with a message."""
-    # Create a ChatMessage
+    # Create a Message
     message = Content.from_text(text="I'm doing well, thank you!")
 
     # Create a ChatResponseUpdate with the message
@@ -757,9 +916,17 @@ def test_chat_response_update():
     assert response_update.text == "I'm doing well, thank you!"
 
 
+def test_chat_response_update_accepts_model_alias() -> None:
+    """Test ChatResponseUpdate accepts model and exposes it through model alias."""
+    response_update = ChatResponseUpdate(contents=[Content.from_text("Hello")], model="claude-test")
+
+    assert response_update.model == "claude-test"
+    assert response_update.model == "claude-test"
+
+
 def test_chat_response_updates_to_chat_response_one():
     """Test converting ChatResponseUpdate to ChatResponse."""
-    # Create a ChatMessage
+    # Create a Message
     message1 = Content.from_text("I'm doing well, ")
     message2 = Content.from_text("thank you!")
 
@@ -775,14 +942,14 @@ def test_chat_response_updates_to_chat_response_one():
     # Check the type and content
     assert len(chat_response.messages) == 1
     assert chat_response.text == "I'm doing well, thank you!"
-    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert isinstance(chat_response.messages[0], Message)
     assert len(chat_response.messages[0].contents) == 1
     assert chat_response.messages[0].message_id == "1"
 
 
 def test_chat_response_updates_to_chat_response_two():
     """Test converting ChatResponseUpdate to ChatResponse."""
-    # Create a ChatMessage
+    # Create a Message
     message1 = Content.from_text("I'm doing well, ")
     message2 = Content.from_text("thank you!")
 
@@ -798,15 +965,15 @@ def test_chat_response_updates_to_chat_response_two():
     # Check the type and content
     assert len(chat_response.messages) == 2
     assert chat_response.text == "I'm doing well, \nthank you!"
-    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert isinstance(chat_response.messages[0], Message)
     assert chat_response.messages[0].message_id == "1"
-    assert isinstance(chat_response.messages[1], ChatMessage)
+    assert isinstance(chat_response.messages[1], Message)
     assert chat_response.messages[1].message_id == "2"
 
 
 def test_chat_response_updates_to_chat_response_multiple():
     """Test converting ChatResponseUpdate to ChatResponse."""
-    # Create a ChatMessage
+    # Create a Message
     message1 = Content.from_text("I'm doing well, ")
     message2 = Content.from_text("thank you!")
 
@@ -823,14 +990,14 @@ def test_chat_response_updates_to_chat_response_multiple():
     # Check the type and content
     assert len(chat_response.messages) == 1
     assert chat_response.text == "I'm doing well,  thank you!"
-    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert isinstance(chat_response.messages[0], Message)
     assert len(chat_response.messages[0].contents) == 3
     assert chat_response.messages[0].message_id == "1"
 
 
 def test_chat_response_updates_to_chat_response_multiple_multiple():
     """Test converting ChatResponseUpdate to ChatResponse."""
-    # Create a ChatMessage
+    # Create a Message
     message1 = Content.from_text("I'm doing well, ", raw_representation="I'm doing well, ")
     message2 = Content.from_text("thank you!")
 
@@ -840,7 +1007,7 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
         ChatResponseUpdate(contents=[message2], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text_reasoning(text="Additional context")], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text(text="More context")], message_id="1"),
-        ChatResponseUpdate(contents=[Content.from_text(text="Final part")], message_id="1"),
+        ChatResponseUpdate(contents=[Content.from_text("Final part")], message_id="1"),
     ]
 
     # Convert to ChatResponse
@@ -848,7 +1015,7 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
 
     # Check the type and content
     assert len(chat_response.messages) == 1
-    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert isinstance(chat_response.messages[0], Message)
     assert chat_response.messages[0].message_id == "1"
     assert chat_response.messages[0].contents[0].raw_representation is not None
 
@@ -865,8 +1032,8 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
 
 async def test_chat_response_from_async_generator():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(contents=[Content.from_text(text="Hello")], message_id="1")
-        yield ChatResponseUpdate(contents=[Content.from_text(text=" world")], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text("Hello")], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text(" world")], message_id="1")
 
     resp = await ChatResponse.from_update_generator(gen())
     assert resp.text == "Hello world"
@@ -874,24 +1041,40 @@ async def test_chat_response_from_async_generator():
 
 async def test_chat_response_from_async_generator_output_format():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(contents=[Content.from_text(text='{ "respon')], message_id="1")
-        yield ChatResponseUpdate(contents=[Content.from_text(text='se": "Hello" }')], message_id="1")
-
-    # Note: Without output_format_type, value is None and we cannot parse
-    resp = await ChatResponse.from_update_generator(gen())
-    assert resp.text == '{ "response": "Hello" }'
-    assert resp.value is None
-
-
-async def test_chat_response_from_async_generator_output_format_in_method():
-    async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(contents=[Content.from_text(text='{ "respon')], message_id="1")
-        yield ChatResponseUpdate(contents=[Content.from_text(text='se": "Hello" }')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('se": "Hello" }')], message_id="1")
 
     resp = await ChatResponse.from_update_generator(gen(), output_format_type=OutputModel)
     assert resp.text == '{ "response": "Hello" }'
     assert resp.value is not None
     assert resp.value.response == "Hello"
+
+
+async def test_chat_response_from_async_generator_output_format_in_method():
+    async def gen() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text('{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('se": "Hello" }')], message_id="1")
+
+    resp = await ChatResponse.from_update_generator(gen(), output_format_type=OutputModel)
+    assert resp.text == '{ "response": "Hello" }'
+    assert resp.value is not None
+    assert resp.value.response == "Hello"
+
+
+async def test_chat_response_from_async_generator_mapping_response_format() -> None:
+    async def gen() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text('{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('se": "Hello" }')], message_id="1")
+
+    resp = await ChatResponse.from_update_generator(
+        gen(),
+        output_format_type={"type": "object", "properties": {"response": {"type": "string"}}},
+    )
+
+    assert resp.text == '{ "response": "Hello" }'
+    assert resp.value is not None
+    assert isinstance(resp.value, dict)
+    assert resp.value["response"] == "Hello"
 
 
 # region ToolMode
@@ -937,11 +1120,11 @@ def test_chat_tool_mode_from_dict():
 def test_chat_options_init() -> None:
     """Test that ChatOptions can be created as a TypedDict."""
     options: ChatOptions = {}
-    assert options.get("model_id") is None
+    assert options.get("model") is None
 
     # With values
-    options_with_model: ChatOptions = {"model_id": "gpt-4o", "temperature": 0.7}
-    assert options_with_model.get("model_id") == "gpt-4o"
+    options_with_model: ChatOptions = {"model": "gpt-4o", "temperature": 0.7}
+    assert options_with_model.get("model") == "gpt-4o"
     assert options_with_model.get("temperature") == 0.7
 
 
@@ -961,8 +1144,8 @@ def test_chat_options_tool_choice_validation():
     }
     assert validate_tool_mode({"mode": "none"}) == {"mode": "none"}
 
-    # None should return mode==none
-    assert validate_tool_mode(None) == {"mode": "none"}
+    # None should remain unset
+    assert validate_tool_mode(None) is None
 
     with raises(ContentError):
         validate_tool_mode("invalid_mode")
@@ -975,18 +1158,18 @@ def test_chat_options_tool_choice_validation():
 def test_chat_options_merge(tool_tool, ai_tool) -> None:
     """Test merge_chat_options utility function."""
     options1: ChatOptions = {
-        "model_id": "gpt-4o",
+        "model": "gpt-4o",
         "tools": [tool_tool],
         "logit_bias": {"x": 1},
         "metadata": {"a": "b"},
     }
-    options2: ChatOptions = {"model_id": "gpt-4.1", "tools": [ai_tool]}
+    options2: ChatOptions = {"model": "gpt-4.1", "tools": [ai_tool]}
     assert options1 != options2
 
     # Merge options - override takes precedence for non-collection fields
     options3 = merge_chat_options(options1, options2)
 
-    assert options3.get("model_id") == "gpt-4.1"
+    assert options3.get("model") == "gpt-4.1"
     assert options3.get("tools") == [tool_tool, ai_tool]  # tools are combined
     assert options3.get("logit_bias") == {"x": 1}  # base value preserved
     assert options3.get("metadata") == {"a": "b"}  # base value preserved
@@ -995,7 +1178,7 @@ def test_chat_options_merge(tool_tool, ai_tool) -> None:
 def test_chat_options_and_tool_choice_override() -> None:
     """Test that tool_choice from other takes precedence in ChatOptions merge."""
     # Agent-level defaults to "auto"
-    agent_options: ChatOptions = {"model_id": "gpt-4o", "tool_choice": "auto"}
+    agent_options: ChatOptions = {"model": "gpt-4o", "tool_choice": "auto"}
     # Run-level specifies "required"
     run_options: ChatOptions = {"tool_choice": "required"}
 
@@ -1003,19 +1186,19 @@ def test_chat_options_and_tool_choice_override() -> None:
 
     # Run-level should override agent-level
     assert merged.get("tool_choice") == "required"
-    assert merged.get("model_id") == "gpt-4o"  # Other fields preserved
+    assert merged.get("model") == "gpt-4o"  # Other fields preserved
 
 
 def test_chat_options_and_tool_choice_none_in_other_uses_self() -> None:
     """Test that when other.tool_choice is None, self.tool_choice is used."""
     agent_options: ChatOptions = {"tool_choice": "auto"}
-    run_options: ChatOptions = {"model_id": "gpt-4.1"}  # tool_choice is None
+    run_options: ChatOptions = {"model": "gpt-4.1"}  # tool_choice is None
 
     merged = merge_chat_options(agent_options, run_options)
 
     # Should keep agent-level tool_choice since run-level is None
     assert merged.get("tool_choice") == "auto"
-    assert merged.get("model_id") == "gpt-4.1"
+    assert merged.get("model") == "gpt-4.1"
 
 
 def test_chat_options_and_tool_choice_with_tool_mode() -> None:
@@ -1045,8 +1228,8 @@ def test_chat_options_and_tool_choice_required_specific_function() -> None:
 
 
 @fixture
-def chat_message() -> ChatMessage:
-    return ChatMessage("user", ["Hello"])
+def chat_message() -> Message:
+    return Message(role="user", contents=["Hello"])
 
 
 @fixture
@@ -1055,7 +1238,7 @@ def text_content() -> Content:
 
 
 @fixture
-def agent_response(chat_message: ChatMessage) -> AgentResponse:
+def agent_response(chat_message: Message) -> AgentResponse:
     return AgentResponse(messages=chat_message)
 
 
@@ -1067,12 +1250,12 @@ def agent_response_update(text_content: Content) -> AgentResponseUpdate:
 # region AgentResponse
 
 
-def test_agent_run_response_init_single_message(chat_message: ChatMessage) -> None:
+def test_agent_run_response_init_single_message(chat_message: Message) -> None:
     response = AgentResponse(messages=chat_message)
     assert response.messages == [chat_message]
 
 
-def test_agent_run_response_init_list_messages(chat_message: ChatMessage) -> None:
+def test_agent_run_response_init_list_messages(chat_message: Message) -> None:
     response = AgentResponse(messages=[chat_message, chat_message])
     assert len(response.messages) == 2
     assert response.messages[0] == chat_message
@@ -1083,7 +1266,7 @@ def test_agent_run_response_init_none_messages() -> None:
     assert response.messages == []
 
 
-def test_agent_run_response_text_property(chat_message: ChatMessage) -> None:
+def test_agent_run_response_text_property(chat_message: Message) -> None:
     response = AgentResponse(messages=[chat_message, chat_message])
     assert response.text == "HelloHello"
 
@@ -1100,7 +1283,7 @@ def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpd
     assert response.text == "Test contentTest content"
 
 
-def test_agent_run_response_str_method(chat_message: ChatMessage) -> None:
+def test_agent_run_response_str_method(chat_message: Message) -> None:
     response = AgentResponse(messages=chat_message)
     assert str(response) == "Hello"
 
@@ -1163,7 +1346,7 @@ def test_agent_run_response_created_at() -> None:
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     response = AgentResponse(
-        messages=[ChatMessage("assistant", ["Hello"])],
+        messages=[Message(role="assistant", contents=["Hello"])],
         created_at=utc_timestamp,
     )
     assert response.created_at == utc_timestamp
@@ -1173,7 +1356,7 @@ def test_agent_run_response_created_at() -> None:
     now_utc = datetime.now(tz=timezone.utc)
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     response_with_now = AgentResponse(
-        messages=[ChatMessage("assistant", ["Hello"])],
+        messages=[Message(role="assistant", contents=["Hello"])],
         created_at=formatted_utc,
     )
     assert response_with_now.created_at == formatted_utc
@@ -1261,29 +1444,26 @@ def test_function_call_incompatible_ids_are_not_merged():
 # region Role & FinishReason basics
 
 
-def test_chat_role_is_string():
-    """Role is now a NewType of str, so roles are just strings."""
-    role = "user"
-    assert role == "user"
-    assert isinstance(role, str)
+def test_chat_role_str_and_repr():
+    # Role is now a NewType of str, so it's just a plain string
+    assert "user" == "user"
+    assert repr("user") == "'user'"
 
 
-def test_chat_finish_reason_is_string():
-    """FinishReason is now a NewType of str, so finish reasons are just strings."""
-    finish_reason = "stop"
-    assert finish_reason == "stop"
-    assert isinstance(finish_reason, str)
+def test_chat_finish_reason_constants():
+    # FinishReason is now a NewType of str, so it's just a plain string
+    assert "stop" == "stop"
 
 
 def test_response_update_propagates_fields_and_metadata():
     upd = ChatResponseUpdate(
-        contents=[Content.from_text(text="hello")],
+        contents=[Content.from_text("hello")],
         role="assistant",
         author_name="bot",
         response_id="rid",
         message_id="mid",
         conversation_id="cid",
-        model_id="model-x",
+        model="model-x",
         created_at="t0",
         finish_reason="stop",
         additional_properties={"k": "v"},
@@ -1292,7 +1472,7 @@ def test_response_update_propagates_fields_and_metadata():
     assert resp.response_id == "rid"
     assert resp.created_at == "t0"
     assert resp.conversation_id == "cid"
-    assert resp.model_id == "model-x"
+    assert resp.model == "model-x"
     assert resp.finish_reason == "stop"
     assert resp.additional_properties and resp.additional_properties["k"] == "v"
     assert resp.messages[0].role == "assistant"
@@ -1330,7 +1510,7 @@ def test_chat_tool_mode_eq_with_string():
 
 @fixture
 def agent_run_response_async() -> AgentResponse:
-    return AgentResponse(messages=[ChatMessage("user", ["Hello"])])
+    return AgentResponse(messages=[Message(role="user", contents=["Hello"])])
 
 
 async def test_agent_run_response_from_async_generator():
@@ -1338,7 +1518,7 @@ async def test_agent_run_response_from_async_generator():
         yield AgentResponseUpdate(contents=[Content.from_text("A")])
         yield AgentResponseUpdate(contents=[Content.from_text("B")])
 
-    r = await AgentResponse.from_agent_response_generator(gen())
+    r = await AgentResponse.from_update_generator(gen())
     assert r.text == "AB"
 
 
@@ -1435,6 +1615,88 @@ def test_text_reasoning_content_iadd_coverage():
     assert t1.text == "Thinking 1 Thinking 2"
 
 
+def test_text_reasoning_content_add_preserves_id():
+    """Test that coalescing text_reasoning Content preserves the id field."""
+
+    t1 = Content.from_text_reasoning(id="rs_abc123", text="Thinking part 1")
+    t2 = Content.from_text_reasoning(id="rs_abc123", text=" part 2")
+
+    result = t1 + t2
+    assert result.text == "Thinking part 1 part 2"
+    assert result.id == "rs_abc123"
+
+
+def test_text_reasoning_content_add_id_fallback_to_other():
+    """Test that coalescing falls back to other's id when self has no id."""
+
+    t1 = Content.from_text_reasoning(text="Thinking part 1")
+    t2 = Content.from_text_reasoning(id="rs_abc123", text=" part 2")
+
+    result = t1 + t2
+    assert result.id == "rs_abc123"
+
+
+def test_text_reasoning_content_add_preserves_id_with_encrypted_content():
+    """Test that id and encrypted_content both survive coalescing for round-trip."""
+
+    t1 = Content.from_text_reasoning(
+        id="rs_abc123",
+        text="Thinking",
+        additional_properties={"encrypted_content": "enc_blob_data"},
+    )
+    t2 = Content.from_text_reasoning(id="rs_abc123", text=" more")
+
+    result = t1 + t2
+    assert result.text == "Thinking more"
+    assert result.id == "rs_abc123"
+    assert result.additional_properties.get("encrypted_content") == "enc_blob_data"
+
+
+def test_text_reasoning_content_add_conflicting_ids_raises():
+    """Test that coalescing text_reasoning Content with different ids raises AdditionItemMismatch."""
+
+    t1 = Content.from_text_reasoning(id="rs_abc123", text="Thinking part 1")
+    t2 = Content.from_text_reasoning(id="rs_xyz789", text=" part 2")
+
+    with pytest.raises(AdditionItemMismatch, match="different ids"):
+        t1 + t2
+
+
+def test_text_reasoning_content_add_neither_has_id():
+    """Test that coalescing text_reasoning Content when neither has an id results in None id."""
+
+    t1 = Content.from_text_reasoning(text="Thinking part 1")
+    t2 = Content.from_text_reasoning(text=" part 2")
+
+    result = t1 + t2
+    assert result.text == "Thinking part 1 part 2"
+    assert result.id is None
+
+
+def test_coalesce_text_reasoning_with_different_ids():
+    """Test that _coalesce_text_content keeps separate text_reasoning items when IDs differ.
+
+    Regression test: streaming responses can produce multiple text_reasoning
+    segments with distinct IDs. These must not be merged into one.
+    """
+    from agent_framework._types import _coalesce_text_content
+
+    contents = [
+        Content.from_text_reasoning(id="rs_aaa", text="Thinking A1"),
+        Content.from_text_reasoning(id="rs_aaa", text=" A2"),
+        Content.from_text_reasoning(id="rs_bbb", text="Thinking B1"),
+        Content.from_text_reasoning(id="rs_bbb", text=" B2"),
+    ]
+
+    _coalesce_text_content(contents, "text_reasoning")
+
+    assert len(contents) == 2
+    assert contents[0].id == "rs_aaa"
+    assert contents[0].text == "Thinking A1 A2"
+    assert contents[1].id == "rs_bbb"
+    assert contents[1].text == "Thinking B1 B2"
+
+
 def test_comprehensive_to_dict_exclude_options():
     """Test to_dict methods with various exclude options for better coverage."""
 
@@ -1480,7 +1742,7 @@ def test_usage_details_iadd_edge_cases():
 
 
 def test_chat_message_from_dict_with_mixed_content():
-    """Test ChatMessage from_dict with mixed content types for better coverage."""
+    """Test Message from_dict with mixed content types for better coverage."""
 
     message_data = {
         "role": "assistant",
@@ -1491,7 +1753,7 @@ def test_chat_message_from_dict_with_mixed_content():
         ],
     }
 
-    message = ChatMessage.from_dict(message_data)
+    message = Message.from_dict(message_data)
     assert len(message.contents) == 3  # Unknown type is ignored
     assert message.contents[0].type == "text"
     assert message.contents[1].type == "function_call"
@@ -1549,7 +1811,7 @@ def test_comprehensive_serialization_methods():
 
 
 def test_chat_message_complex_content_serialization():
-    """Test ChatMessage serialization with various content types."""
+    """Test Message serialization with various content types."""
 
     # Create a message with multiple content types
     contents = [
@@ -1558,7 +1820,7 @@ def test_chat_message_complex_content_serialization():
         Content.from_function_result(call_id="call1", result="success"),
     ]
 
-    message = ChatMessage("assistant", contents)
+    message = Message(role="assistant", contents=contents)
 
     # Test to_dict
     message_dict = message.to_dict()
@@ -1568,11 +1830,124 @@ def test_chat_message_complex_content_serialization():
     assert message_dict["contents"][2]["type"] == "function_result"
 
     # Test from_dict round-trip
-    reconstructed = ChatMessage.from_dict(message_dict)
+    reconstructed = Message.from_dict(message_dict)
     assert len(reconstructed.contents) == 3
     assert reconstructed.contents[0].type == "text"
     assert reconstructed.contents[1].type == "function_call"
     assert reconstructed.contents[2].type == "function_result"
+
+
+def test_message_roundtrip_preserves_compaction_annotation_dict() -> None:
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text("Hello")],
+        additional_properties={
+            GROUP_ANNOTATION_KEY: {
+                "id": "group_1",
+                "kind": "assistant_text",
+                "index": 1,
+                "has_reasoning": False,
+                "token_count": 42,
+            }
+        },
+    )
+
+    restored = Message.from_dict(message.to_dict())
+    annotation = restored.additional_properties.get(GROUP_ANNOTATION_KEY)
+
+    assert isinstance(annotation, dict)
+    assert annotation[GROUP_ID_KEY] == "group_1"
+    assert annotation[GROUP_TOKEN_COUNT_KEY] == 42
+
+
+def test_content_roundtrip_preserves_compaction_annotation_dict() -> None:
+    content = Content.from_text(
+        text="Hello",
+        additional_properties={
+            GROUP_ANNOTATION_KEY: {
+                "id": "group_2",
+                "kind": "assistant_text",
+                "index": 2,
+                "has_reasoning": False,
+                "token_count": None,
+            }
+        },
+    )
+
+    restored = Content.from_dict(content.to_dict())
+    annotation = restored.additional_properties.get(GROUP_ANNOTATION_KEY)
+
+    assert isinstance(annotation, dict)
+    assert annotation[GROUP_ID_KEY] == "group_2"
+    assert annotation[GROUP_TOKEN_COUNT_KEY] is None
+
+
+def test_content_from_dict_via_json() -> None:
+    """Test Content.from_dict with data parsed from a JSON string."""
+    data = json.loads(json.dumps({"type": "text", "text": "Hello world"}))
+    content = Content.from_dict(data)
+    assert content.type == "text"
+    assert content.text == "Hello world"
+
+
+def test_content_from_dict_roundtrip_via_json() -> None:
+    """Test Content.from_dict roundtrip via to_dict and json.dumps."""
+    original = Content.from_function_call(call_id="call1", name="my_func", arguments={"key": "value"})
+    data = json.loads(json.dumps(original.to_dict()))
+    restored = Content.from_dict(data)
+    assert restored.type == "function_call"
+    assert restored.call_id == "call1"
+    assert restored.name == "my_func"
+    assert restored.arguments == {"key": "value"}
+
+
+def test_content_to_dict_exclude_none() -> None:
+    """Test Content.to_dict excludes None fields by default."""
+    content = Content.from_text("Hello")
+    d = content.to_dict()
+    parsed = json.loads(json.dumps(d))
+    assert "uri" not in parsed
+
+    d_with_none = content.to_dict(exclude_none=False)
+    parsed_with_none = json.loads(json.dumps(d_with_none))
+    assert "uri" in parsed_with_none
+    assert parsed_with_none["uri"] is None
+
+
+def test_content_to_dict_exclude_fields() -> None:
+    """Test Content.to_dict with explicit field exclusion."""
+    content = Content.from_text("Hello")
+    d = content.to_dict(exclude={"text"})
+    parsed = json.loads(json.dumps(d))
+    assert "text" not in parsed
+    assert parsed["type"] == "text"
+
+
+def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[Content.from_text("Hello")],
+                additional_properties={
+                    GROUP_ANNOTATION_KEY: {
+                        "id": "group_3",
+                        "kind": "assistant_text",
+                        "index": 3,
+                        "has_reasoning": True,
+                        "token_count": 15,
+                    }
+                },
+            )
+        ]
+    )
+
+    restored = ChatResponse.from_dict(response.to_dict())
+    annotation = restored.messages[0].additional_properties.get(GROUP_ANNOTATION_KEY)
+
+    assert isinstance(annotation, dict)
+    assert annotation[GROUP_ID_KEY] == "group_3"
+    assert annotation[GROUP_HAS_REASONING_KEY] is True
 
 
 def test_usage_content_serialization_with_details():
@@ -1641,23 +2016,23 @@ def test_chat_response_complex_serialization():
             "output_token_count": 8,
             "total_token_count": 13,
         },
-        "model_id": "gpt-4",  # Test alias handling
+        "model": "gpt-4",  # Test alias handling
     }
 
     response = ChatResponse.from_dict(response_data)
     assert len(response.messages) == 2
-    assert isinstance(response.messages[0], ChatMessage)
-    assert isinstance(response.finish_reason, str)
+    assert isinstance(response.messages[0], Message)
+    assert isinstance(response.finish_reason, str)  # FinishReason is now a NewType of str
     assert isinstance(response.usage_details, dict)
-    assert response.model_id == "gpt-4"  # Should be stored as model_id
+    assert response.model == "gpt-4"  # Should be stored as model
 
     # Test to_dict with complex objects
     response_dict = response.to_dict()
     assert len(response_dict["messages"]) == 2
     assert isinstance(response_dict["messages"][0], dict)
-    assert isinstance(response_dict["finish_reason"], str)
+    assert isinstance(response_dict["finish_reason"], str)  # FinishReason serializes to string
     assert isinstance(response_dict["usage_details"], dict)
-    assert response_dict["model_id"] == "gpt-4"  # Should serialize as model_id
+    assert response_dict["model"] == "gpt-4"  # Should serialize as model
 
 
 def test_chat_response_update_all_content_types():
@@ -1723,7 +2098,7 @@ def test_agent_run_response_complex_serialization():
 
     response = AgentResponse.from_dict(response_data)
     assert len(response.messages) == 2
-    assert isinstance(response.messages[0], ChatMessage)
+    assert isinstance(response.messages[0], Message)
     assert isinstance(response.usage_details, dict)
 
     # Test to_dict
@@ -1760,25 +2135,189 @@ def test_agent_run_response_update_all_content_types():
             },
             {"type": "text_reasoning", "text": "reasoning"},
         ],
-        "role": {"value": "assistant"},  # Test role as dict
+        "role": "assistant",  # Test role as dict
     }
 
     update = AgentResponseUpdate.from_dict(update_data)
     assert len(update.contents) == 12  # unknown_type is logged and ignored
-    assert isinstance(update.role, str)
+    assert isinstance(update.role, str)  # Role is now a NewType of str
     assert update.role == "assistant"
 
     # Test to_dict with role conversion
     update_dict = update.to_dict()
     assert len(update_dict["contents"]) == 12  # unknown_type was ignored during from_dict
-    assert isinstance(update_dict["role"], str)
+    assert isinstance(update_dict["role"], str)  # Role serializes to string
 
     # Test role as string conversion
     update_data_str_role = update_data.copy()
     update_data_str_role["role"] = "user"
     update_str = AgentResponseUpdate.from_dict(update_data_str_role)
-    assert isinstance(update_str.role, str)
+    assert isinstance(update_str.role, str)  # Role is now a NewType of str
     assert update_str.role == "user"
+
+
+# region DeepCopy
+
+
+class _NonCopyableRaw:
+    """Simulates an LLM SDK response object that cannot be deep-copied (e.g., proto/gRPC)."""
+
+    def __deepcopy__(self, memo: dict) -> Any:
+        raise TypeError("Cannot deepcopy this object")
+
+
+def test_content_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of Content keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    content = Content.from_text("hello", raw_representation=raw)
+
+    cloned = copy.deepcopy(content)
+
+    assert cloned.text == "hello"
+    assert cloned.raw_representation is raw
+    assert cloned.additional_properties is not content.additional_properties
+
+
+def test_message_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of Message keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    msg = Message("assistant", ["hello"], raw_representation=raw)
+
+    cloned = copy.deepcopy(msg)
+
+    assert cloned.text == "hello"
+    assert cloned.raw_representation is raw
+    assert cloned.contents is not msg.contents
+
+
+def test_agent_response_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of AgentResponse keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    response = AgentResponse(
+        messages=[Message("assistant", ["test"])],
+        raw_representation=raw,
+    )
+
+    cloned = copy.deepcopy(response)
+
+    assert cloned.text == "test"
+    assert cloned.raw_representation is raw
+    assert cloned.messages is not response.messages
+
+
+def test_chat_response_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of ChatResponse keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    response = ChatResponse(
+        messages=[Message("assistant", ["test"])],
+        raw_representation=raw,
+    )
+
+    cloned = copy.deepcopy(response)
+
+    assert cloned.text == "test"
+    assert cloned.raw_representation is raw
+    assert cloned.messages is not response.messages
+
+
+def test_chat_response_update_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of ChatResponseUpdate keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    update = ChatResponseUpdate(
+        contents=[Content.from_text("hello")],
+        role="assistant",
+        raw_representation=raw,
+    )
+
+    cloned = copy.deepcopy(update)
+
+    assert cloned.text == "hello"
+    assert cloned.raw_representation is raw
+    assert cloned.contents is not update.contents
+
+
+def test_agent_response_update_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of AgentResponseUpdate keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    update = AgentResponseUpdate(
+        contents=[Content.from_text("hello")],
+        role="assistant",
+        raw_representation=raw,
+    )
+
+    cloned = copy.deepcopy(update)
+
+    assert cloned.text == "hello"
+    assert cloned.raw_representation is raw
+    assert cloned.contents is not update.contents
+
+
+def test_nested_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of an AgentResponse with nested Message raw_representations works."""
+    import copy
+
+    raw_msg = _NonCopyableRaw()
+    raw_response = _NonCopyableRaw()
+    response = AgentResponse(
+        messages=[Message("assistant", ["hello"], raw_representation=raw_msg)],
+        raw_representation=raw_response,
+    )
+
+    cloned = copy.deepcopy(response)
+
+    assert cloned.raw_representation is raw_response
+    assert cloned.messages[0].raw_representation is raw_msg
+    assert cloned.messages is not response.messages
+    assert cloned.text == "hello"
+
+
+def test_content_deepcopy_shallow_copy_fields_identity():
+    """Test that Content._SHALLOW_COPY_FIELDS fields are identity-preserved while others are deep-copied."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    content = Content.from_text("hello", raw_representation=raw)
+    content.additional_properties["key"] = "value"
+
+    cloned = copy.deepcopy(content)
+
+    # _SHALLOW_COPY_FIELDS (raw_representation) should be same object
+    assert cloned.raw_representation is raw
+    # Non-shallow fields should be independent deep copies
+    assert cloned.additional_properties is not content.additional_properties
+    assert cloned.additional_properties == {"key": "value"}
+
+
+def test_chat_response_deepcopy_deep_copies_additional_properties():
+    """Test that ChatResponse deepcopy deep-copies additional_properties despite it being in DEFAULT_EXCLUDE."""
+    import copy
+
+    response = ChatResponse(
+        messages=[Message("assistant", ["test"])],
+        additional_properties={"key": [1, 2, 3]},
+    )
+
+    cloned = copy.deepcopy(response)
+
+    # additional_properties is in DEFAULT_EXCLUDE for serialization but not in _SHALLOW_COPY_FIELDS,
+    # so it should be deep-copied (independent copy)
+    assert cloned.additional_properties is not response.additional_properties
+    assert cloned.additional_properties == {"key": [1, 2, 3]}
+
+
+# endregion
 
 
 # region Serialization
@@ -1905,9 +2444,9 @@ def test_agent_run_response_update_all_content_types():
             id="function_approval_response",
         ),
         pytest.param(
-            ChatMessage,
+            Message,
             {
-                "role": "user",
+                "role": "\1",
                 "contents": [
                     {"type": "text", "text": "Hello"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
@@ -1923,17 +2462,17 @@ def test_agent_run_response_update_all_content_types():
                 "type": "chat_response",
                 "messages": [
                     {
-                        "type": "chat_message",
-                        "role": "user",
+                        "type": "message",
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Hello"}],
                     },
                     {
-                        "type": "chat_message",
-                        "role": "assistant",
+                        "type": "message",
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Hi there"}],
                     },
                 ],
-                "finish_reason": "stop",
+                "finish_reason": "\1",
                 "usage_details": {
                     "type": "usage_details",
                     "input_token_count": 10,
@@ -1941,7 +2480,7 @@ def test_agent_run_response_update_all_content_types():
                     "total_token_count": 30,
                 },
                 "response_id": "resp-123",
-                "model_id": "gpt-4",
+                "model": "gpt-4",
             },
             id="chat_response",
         ),
@@ -1952,8 +2491,8 @@ def test_agent_run_response_update_all_content_types():
                     {"type": "text", "text": "Hello"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
                 ],
-                "role": "assistant",
-                "finish_reason": "stop",
+                "role": "\1",
+                "finish_reason": "\1",
                 "message_id": "msg-123",
                 "response_id": "resp-123",
             },
@@ -1964,11 +2503,11 @@ def test_agent_run_response_update_all_content_types():
             {
                 "messages": [
                     {
-                        "role": "user",
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Question"}],
                     },
                     {
-                        "role": "assistant",
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Answer"}],
                     },
                 ],
@@ -1989,7 +2528,7 @@ def test_agent_run_response_update_all_content_types():
                     {"type": "text", "text": "Streaming"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
                 ],
-                "role": "assistant",
+                "role": "\1",
                 "message_id": "msg-123",
                 "response_id": "run-123",
                 "author_name": "Agent",
@@ -2114,7 +2653,7 @@ def test_text_content_with_annotations_serialization():
     assert all(isinstance(ann["annotated_regions"][0], dict) for ann in reconstructed.annotations)
 
 
-# region prepare_function_call_results with Pydantic models
+# region FunctionTool.parse_result with Pydantic models
 
 
 class WeatherResult(BaseModel):
@@ -2131,65 +2670,68 @@ class NestedModel(BaseModel):
     weather: WeatherResult
 
 
-def test_prepare_function_call_results_pydantic_model():
+def test_parse_result_pydantic_model():
     """Test that Pydantic BaseModel subclasses are properly serialized using model_dump()."""
     result = WeatherResult(temperature=22.5, condition="sunny")
-    json_result = prepare_function_call_results(result)
+    parsed = FunctionTool.parse_result(result)
 
-    # The result should be a valid JSON string
-    assert isinstance(json_result, str)
-    assert '"temperature": 22.5' in json_result or '"temperature":22.5' in json_result
-    assert '"condition": "sunny"' in json_result or '"condition":"sunny"' in json_result
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+    assert '"temperature": 22.5' in parsed[0].text or '"temperature":22.5' in parsed[0].text
+    assert '"condition": "sunny"' in parsed[0].text or '"condition":"sunny"' in parsed[0].text
 
 
-def test_prepare_function_call_results_pydantic_model_in_list():
+def test_parse_result_pydantic_model_in_list():
     """Test that lists containing Pydantic models are properly serialized."""
     results = [
         WeatherResult(temperature=20.0, condition="cloudy"),
         WeatherResult(temperature=25.0, condition="sunny"),
     ]
-    json_result = prepare_function_call_results(results)
+    parsed = FunctionTool.parse_result(results)
 
-    # The result should be a valid JSON string representing a list
-    assert isinstance(json_result, str)
-    assert json_result.startswith("[")
-    assert json_result.endswith("]")
-    assert "cloudy" in json_result
-    assert "sunny" in json_result
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+    assert parsed[0].text.startswith("[")
+    assert "cloudy" in parsed[0].text
+    assert "sunny" in parsed[0].text
 
 
-def test_prepare_function_call_results_pydantic_model_in_dict():
+def test_parse_result_pydantic_model_in_dict():
     """Test that dicts containing Pydantic models are properly serialized."""
     results = {
         "current": WeatherResult(temperature=22.0, condition="partly cloudy"),
         "forecast": WeatherResult(temperature=24.0, condition="sunny"),
     }
-    json_result = prepare_function_call_results(results)
+    parsed = FunctionTool.parse_result(results)
 
-    # The result should be a valid JSON string representing a dict
-    assert isinstance(json_result, str)
-    assert "current" in json_result
-    assert "forecast" in json_result
-    assert "partly cloudy" in json_result
-    assert "sunny" in json_result
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+    assert "current" in parsed[0].text
+    assert "forecast" in parsed[0].text
+    assert "partly cloudy" in parsed[0].text
+    assert "sunny" in parsed[0].text
 
 
-def test_prepare_function_call_results_nested_pydantic_model():
+def test_parse_result_nested_pydantic_model():
     """Test that nested Pydantic models are properly serialized."""
     result = NestedModel(name="Seattle", weather=WeatherResult(temperature=18.0, condition="rainy"))
-    json_result = prepare_function_call_results(result)
+    parsed = FunctionTool.parse_result(result)
 
-    # The result should be a valid JSON string
-    assert isinstance(json_result, str)
-    assert "Seattle" in json_result
-    assert "rainy" in json_result
-    assert "18.0" in json_result or "18" in json_result
-
-
-# region prepare_function_call_results with MCP TextContent-like objects
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+    assert "Seattle" in parsed[0].text
+    assert "rainy" in parsed[0].text
+    assert "18.0" in parsed[0].text or "18" in parsed[0].text
 
 
-def test_prepare_function_call_results_text_content_single():
+# region FunctionTool.parse_result with MCP TextContent-like objects
+
+
+def test_parse_result_text_content_single():
     """Test that objects with text attribute (like MCP TextContent) are properly handled."""
 
     @dataclass
@@ -2197,14 +2739,15 @@ def test_prepare_function_call_results_text_content_single():
         text: str
 
     result = [MockTextContent("Hello from MCP tool!")]
-    json_result = prepare_function_call_results(result)
+    parsed = FunctionTool.parse_result(result)
 
-    # Should extract text and serialize as JSON array of strings
-    assert isinstance(json_result, str)
-    assert json_result == '["Hello from MCP tool!"]'
+    # Non-Content list items are serialized via _make_dumpable
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
 
 
-def test_prepare_function_call_results_text_content_multiple():
+def test_parse_result_text_content_multiple():
     """Test that multiple TextContent-like objects are serialized correctly."""
 
     @dataclass
@@ -2212,14 +2755,15 @@ def test_prepare_function_call_results_text_content_multiple():
         text: str
 
     result = [MockTextContent("First result"), MockTextContent("Second result")]
-    json_result = prepare_function_call_results(result)
+    parsed = FunctionTool.parse_result(result)
 
-    # Should extract text from each and serialize as JSON array
-    assert isinstance(json_result, str)
-    assert json_result == '["First result", "Second result"]'
+    # Non-Content list items are serialized via _make_dumpable
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
 
 
-def test_prepare_function_call_results_text_content_with_non_string_text():
+def test_parse_result_text_content_with_non_string_text():
     """Test that objects with non-string text attribute are not treated as TextContent."""
 
     class BadTextContent:
@@ -2227,10 +2771,174 @@ def test_prepare_function_call_results_text_content_with_non_string_text():
             self.text = 12345  # Not a string!
 
     result = [BadTextContent()]
-    json_result = prepare_function_call_results(result)
+    parsed = FunctionTool.parse_result(result)
 
     # Should not extract text since it's not a string, will serialize the object
-    assert isinstance(json_result, str)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+
+
+def test_parse_result_none_returns_empty_string():
+    """Test that None returns a list with empty text Content."""
+    parsed = FunctionTool.parse_result(None)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+    assert parsed[0].text == ""
+
+
+def test_parse_result_string_passthrough():
+    """Test that strings are wrapped in Content."""
+    parsed = FunctionTool.parse_result("hello world")
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].text == "hello world"
+
+    parsed2 = FunctionTool.parse_result('{"key": "value"}')
+    assert isinstance(parsed2, list)
+    assert len(parsed2) == 1
+    assert parsed2[0].text == '{"key": "value"}'
+
+
+def test_parse_result_content_object():
+    """Test that text Content objects are wrapped in a list."""
+    content = Content.from_text("hello")
+    result = FunctionTool.parse_result(content)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "hello"
+
+
+def test_parse_result_list_of_content():
+    """Test that list[Content] with text-only items is returned as list[Content]."""
+    contents = [Content.from_text("hello"), Content.from_text("world")]
+    result = FunctionTool.parse_result(contents)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].text == "hello"
+    assert result[1].text == "world"
+
+
+def test_parse_result_single_image_content():
+    """Test that a single image Content is preserved as list[Content]."""
+    image_content = Content.from_data(data=b"fake_png_bytes", media_type="image/png")
+    result = FunctionTool.parse_result(image_content)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "data"
+    assert result[0].media_type == "image/png"
+
+
+def test_parse_result_single_text_content():
+    """Test that a single text Content returns a list with one text Content."""
+    text_content = Content.from_text("just text")
+    result = FunctionTool.parse_result(text_content)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "just text"
+
+
+def test_parse_result_mixed_content_list():
+    """Test that list with text and image Content is preserved."""
+    contents = [
+        Content.from_text("Chart rendered."),
+        Content.from_data(data=b"image_bytes", media_type="image/png"),
+    ]
+    result = FunctionTool.parse_result(contents)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].type == "text"
+    assert result[1].type == "data"
+
+
+def test_from_function_result_with_content_list():
+    """Test Content.from_function_result stores all items uniformly."""
+    content_list = [
+        Content.from_text("Chart rendered."),
+        Content.from_data(data=b"image_bytes", media_type="image/png"),
+    ]
+    result = Content.from_function_result(call_id="test-123", result=content_list)
+    assert result.type == "function_result"
+    assert result.call_id == "test-123"
+    assert result.result == "Chart rendered."
+    assert result.items is not None
+    assert len(result.items) == 2
+    assert result.items[0].type == "text"
+    assert result.items[0].text == "Chart rendered."
+    assert result.items[1].type == "data"
+    assert result.items[1].media_type == "image/png"
+
+
+def test_from_function_result_with_string():
+    """Test Content.from_function_result with plain string result."""
+    result = Content.from_function_result(call_id="test-123", result="just text")
+    assert result.type == "function_result"
+    assert result.call_id == "test-123"
+    assert result.result == "just text"
+    assert result.items is not None
+    assert len(result.items) == 1
+    assert result.items[0].type == "text"
+    assert result.items[0].text == "just text"
+
+
+def test_content_from_function_result_items_in_to_dict():
+    """Test that items are included in to_dict serialization."""
+    content_list = [
+        Content.from_text("done"),
+        Content.from_data(data=b"png_data", media_type="image/png"),
+    ]
+    result = Content.from_function_result(
+        call_id="call-1",
+        result=content_list,
+    )
+    d = result.to_dict()
+    assert "items" in d
+    assert len(d["items"]) == 2
+    assert d["items"][0]["type"] == "text"
+    assert d["items"][1]["type"] == "data"
+
+
+def test_from_function_result_with_only_rich_content_list():
+    """Test Content.from_function_result with only image items and no text."""
+    content_list = [
+        Content.from_data(data=b"image_bytes", media_type="image/png"),
+    ]
+    result = Content.from_function_result(call_id="test-456", result=content_list)
+    assert result.type == "function_result"
+    assert result.result == ""
+    assert result.items is not None
+    assert len(result.items) == 1
+    assert result.items[0].type == "data"
+
+
+def test_function_result_items_roundtrip_via_dict():
+    """Test that items survive a to_dict/from_dict round-trip as Content objects."""
+    content_list = [
+        Content.from_text("done"),
+        Content.from_data(data=b"png_data", media_type="image/png"),
+    ]
+    original = Content.from_function_result(call_id="call-rt", result=content_list)
+    restored = Content.from_dict(original.to_dict())
+    assert restored.items is not None
+    assert len(restored.items) == 2
+    assert isinstance(restored.items[0], Content)
+    assert restored.items[0].type == "text"
+    assert restored.items[0].text == "done"
+    assert isinstance(restored.items[1], Content)
+    assert restored.items[1].type == "data"
+
+
+def test_from_function_result_with_non_content_list():
+    """Test Content.from_function_result with a list of non-Content objects falls back to str."""
+    result = Content.from_function_result(call_id="test-789", result=["hello", "world"])
+    assert result.type == "function_result"
+    assert result.result == "['hello', 'world']"
+    assert result.items is not None
+    assert len(result.items) == 1
+    assert result.items[0].type == "text"
 
 
 # endregion
@@ -2295,7 +3003,7 @@ def test_content_add_usage_content_non_integer_values():
     result = usage1 + usage2
 
     # Non-integer "model" should take first non-None value
-    assert result.usage_details["model"] == "gpt-4"
+    assert "model" not in result.usage_details
     # Integer "count" should be summed
     assert result.usage_details["count"] == 30
 
@@ -2492,1044 +3200,1097 @@ def test_validate_uri_data_uri():
 # endregion
 
 
-# region Test normalize_messages and prepare_messages with Content
+# region ResponseStream
 
 
-def test_normalize_messages_with_string():
-    """Test normalize_messages converts a string to a user message."""
-    result = normalize_messages("hello")
-    assert len(result) == 1
-    assert result[0].role == "user"
-    assert result[0].text == "hello"
+async def _generate_updates(count: int = 5) -> AsyncIterable[ChatResponseUpdate]:
+    """Helper to generate test updates."""
+    for i in range(count):
+        yield ChatResponseUpdate(contents=[Content.from_text(f"update_{i}")], role="assistant")
 
 
-def test_normalize_messages_with_content():
-    """Test normalize_messages converts a Content object to a user message."""
-    content = Content.from_text("hello")
-    result = normalize_messages(content)
-    assert len(result) == 1
-    assert result[0].role == "user"
-    assert len(result[0].contents) == 1
-    assert result[0].contents[0].text == "hello"
+def _combine_updates(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+    """Helper finalizer that combines updates into a response."""
+    return ChatResponse.from_updates(updates)
 
 
-def test_normalize_messages_with_sequence_including_content():
-    """Test normalize_messages handles a sequence with Content objects."""
-    content = Content.from_text("image caption")
-    msg = ChatMessage("assistant", ["response"])
-    result = normalize_messages(["query", content, msg])
-    assert len(result) == 3
-    assert result[0].role == "user"
-    assert result[0].text == "query"
-    assert result[1].role == "user"
-    assert result[1].contents[0].text == "image caption"
-    assert result[2].role == "assistant"
-    assert result[2].text == "response"
+class TestResponseStreamBasicIteration:
+    """Tests for basic ResponseStream iteration."""
+
+    async def test_iterate_collects_updates(self) -> None:
+        """Iterating through stream collects all updates."""
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1", "update_2"]
+        assert len(stream.updates) == 3
+
+    async def test_stream_consumed_after_iteration(self) -> None:
+        """Stream is marked consumed after full iteration."""
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        assert stream._consumed is True
+
+    async def test_get_final_response_after_iteration(self) -> None:
+        """Can get final response after iterating."""
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        final = await stream.get_final_response()
+        assert final.text == "update_0update_1update_2"
+
+    async def test_get_final_response_without_iteration(self) -> None:
+        """get_final_response auto-iterates if not consumed."""
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        final = await stream.get_final_response()
+
+        assert final.text == "update_0update_1update_2"
+        assert stream._consumed is True
+
+    async def test_updates_property_returns_collected(self) -> None:
+        """updates property returns collected updates."""
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        assert len(stream.updates) == 2
+        assert stream.updates[0].text == "update_0"
+        assert stream.updates[1].text == "update_1"
+
+    async def test_auto_finalize_on_iteration_completion(self) -> None:
+        """Stream auto-finalizes when async iteration completes."""
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        assert stream._finalized is True
+        assert stream._final_result is not None
+        assert stream._final_result.text == "update_0update_1"
+
+    async def test_auto_finalize_runs_result_hooks(self) -> None:
+        """Result hooks run automatically when iteration completes."""
+        hook_called = {"value": False}
+
+        def tracking_hook(response: ChatResponse) -> ChatResponse:
+            hook_called["value"] = True
+            response.additional_properties["auto_finalized"] = True
+            return response
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[tracking_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert hook_called["value"] is True
+        final = await stream.get_final_response()
+        assert final.additional_properties["auto_finalized"] is True
+
+    async def test_get_final_response_idempotent_after_auto_finalize(self) -> None:
+        """get_final_response returns cached result after auto-finalization."""
+        call_count = {"value": 0}
+
+        def counting_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            call_count["value"] += 1
+            return _combine_updates(updates)
+
+        stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)
+
+        async for _ in stream:
+            pass
+
+        final1 = await stream.get_final_response()
+        final2 = await stream.get_final_response()
+
+        assert call_count["value"] == 1
+        assert final1.text == final2.text
 
 
-def test_prepare_messages_with_content():
-    """Test prepare_messages converts a Content object to a user message."""
-    content = Content.from_text("hello")
-    result = prepare_messages(content)
-    assert len(result) == 1
-    assert result[0].role == "user"
-    assert result[0].contents[0].text == "hello"
+class TestResponseStreamTransformHooks:
+    """Tests for transform hooks (per-update processing)."""
+
+    async def test_transform_hook_called_for_each_update(self) -> None:
+        """Transform hook is called for each update during iteration."""
+        call_count = {"value": 0}
+
+        def counting_hook(update: ChatResponseUpdate) -> None:
+            call_count["value"] += 1
+
+        stream = ResponseStream(
+            _generate_updates(3),
+            finalizer=_combine_updates,
+            transform_hooks=[counting_hook],
+        )
+
+        await stream.get_final_response()
+
+        assert call_count["value"] == 3
+
+    async def test_transform_hook_can_modify_update(self) -> None:
+        """Transform hook can modify the update."""
+
+        def uppercase_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text((update.text or "").upper())],
+                role=update.role,
+            )
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[uppercase_hook],
+        )
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["UPDATE_0", "UPDATE_1"]
+
+    async def test_multiple_transform_hooks_chained(self) -> None:
+        """Multiple transform hooks are called in order."""
+        order: list[str] = []
+
+        def hook_a(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            order.append("a")
+            return update
+
+        def hook_b(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            order.append("b")
+            return update
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[hook_a, hook_b],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert order == ["a", "b", "a", "b"]
+
+    async def test_transform_hook_returning_none_keeps_previous(self) -> None:
+        """Transform hook returning None keeps the previous value."""
+
+        def none_hook(update: ChatResponseUpdate) -> None:
+            return None
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[none_hook],
+        )
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+    async def test_with_transform_hook_fluent_api(self) -> None:
+        """with_transform_hook adds hook via fluent API."""
+        call_count = {"value": 0}
+
+        def counting_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            call_count["value"] += 1
+            return update
+
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates).with_transform_hook(counting_hook)
+
+        async for _ in stream:
+            pass
+
+        assert call_count["value"] == 3
+
+    async def test_async_transform_hook(self) -> None:
+        """Async transform hooks are awaited."""
+
+        async def async_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"async_{update.text}")],
+                role=update.role,
+            )
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[async_hook],
+        )
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["async_update_0", "async_update_1"]
 
 
-def test_prepare_messages_with_content_and_system_instructions():
-    """Test prepare_messages handles Content with system instructions."""
-    content = Content.from_text("hello")
-    result = prepare_messages(content, system_instructions="Be helpful")
+class TestResponseStreamCleanupHooks:
+    """Tests for cleanup hooks (after stream consumption, before finalizer)."""
+
+    async def test_cleanup_hook_called_after_iteration(self) -> None:
+        """Cleanup hook is called after iteration completes."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_cleanup_hook_called_only_once(self) -> None:
+        """Cleanup hook is called only once even if get_final_response called."""
+        call_count = {"value": 0}
+
+        def cleanup_hook() -> None:
+            call_count["value"] += 1
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        async for _ in stream:
+            pass
+        await stream.get_final_response()
+
+        assert call_count["value"] == 1
+
+    async def test_multiple_cleanup_hooks(self) -> None:
+        """Multiple cleanup hooks are called in order."""
+        order: list[str] = []
+
+        def hook_a() -> None:
+            order.append("a")
+
+        def hook_b() -> None:
+            order.append("b")
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=_combine_updates,
+            cleanup_hooks=[hook_a, hook_b],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert order == ["a", "b"]
+
+    async def test_with_cleanup_hook_fluent_api(self) -> None:
+        """with_cleanup_hook adds hook via fluent API."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates).with_cleanup_hook(cleanup_hook)
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_async_cleanup_hook(self) -> None:
+        """Async cleanup hooks are awaited."""
+        cleanup_called = {"value": False}
+
+        async def async_cleanup() -> None:
+            cleanup_called["value"] = True
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            cleanup_hooks=[async_cleanup],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+
+class TestResponseStreamResultHooks:
+    """Tests for result hooks (after finalizer)."""
+
+    async def test_result_hook_called_after_finalizer(self) -> None:
+        """Result hook is called after finalizer produces result."""
+
+        def add_metadata(response: ChatResponse) -> ChatResponse:
+            response.additional_properties["processed"] = True
+            return response
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[add_metadata],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.additional_properties["processed"] is True
+
+    async def test_result_hook_can_transform_result(self) -> None:
+        """Result hook can transform the final result."""
+
+        def wrap_text(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", [f"[{response.text}]"]))
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[wrap_text],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.text == "[update_0update_1]"
+
+    async def test_multiple_result_hooks_chained(self) -> None:
+        """Multiple result hooks are called in order."""
+
+        def add_prefix(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", [f"prefix_{response.text}"]))
+
+        def add_suffix(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", [f"{response.text}_suffix"]))
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=_combine_updates,
+            result_hooks=[add_prefix, add_suffix],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.text == "prefix_update_0_suffix"
+
+    async def test_result_hook_returning_none_keeps_previous(self) -> None:
+        """Result hook returning None keeps the previous value."""
+        hook_called = {"value": False}
+
+        def none_hook(response: ChatResponse) -> None:
+            hook_called["value"] = True
+            return
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[none_hook],
+        )
+
+        final = await stream.get_final_response()
+
+        assert hook_called["value"] is True
+        assert final.text == "update_0update_1"
+
+    async def test_with_result_hook_fluent_api(self) -> None:
+        """with_result_hook adds hook via fluent API."""
+
+        def add_metadata(response: ChatResponse) -> ChatResponse:
+            response.additional_properties["via_fluent"] = True
+            return response
+
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates).with_result_hook(add_metadata)
+
+        final = await stream.get_final_response()
+
+        assert final.additional_properties["via_fluent"] is True
+
+    async def test_async_result_hook(self) -> None:
+        """Async result hooks are awaited."""
+
+        async def async_hook(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", [f"async_{response.text}"]))
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[async_hook],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.text == "async_update_0update_1"
+
+
+class TestResponseStreamFinalizer:
+    """Tests for the finalizer."""
+
+    async def test_finalizer_receives_all_updates(self) -> None:
+        """Finalizer receives all collected updates."""
+        received_updates: list[ChatResponseUpdate] = []
+
+        def capturing_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            received_updates.extend(updates)
+            return ChatResponse(messages=Message("assistant", ["done"]))
+
+        stream = ResponseStream(_generate_updates(3), finalizer=capturing_finalizer)
+
+        await stream.get_final_response()
+
+        assert len(received_updates) == 3
+        assert received_updates[0].text == "update_0"
+        assert received_updates[2].text == "update_2"
+
+    async def test_no_finalizer_returns_updates(self) -> None:
+        """get_final_response returns collected updates if no finalizer configured."""
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(_generate_updates(2))
+
+        final = await stream.get_final_response()
+
+        assert len(final) == 2
+        assert final[0].text == "update_0"
+        assert final[1].text == "update_1"
+
+    async def test_async_finalizer(self) -> None:
+        """Async finalizer is awaited."""
+
+        async def async_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            text = "".join(u.text or "" for u in updates)
+            return ChatResponse(messages=Message("assistant", [f"async_{text}"]))
+
+        stream = ResponseStream(_generate_updates(2), finalizer=async_finalizer)
+
+        final = await stream.get_final_response()
+
+        assert final.text == "async_update_0update_1"
+
+    async def test_finalized_only_once(self) -> None:
+        """Finalizer is only called once even with multiple get_final_response calls."""
+        call_count = {"value": 0}
+
+        def counting_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            call_count["value"] += 1
+            return ChatResponse(messages=Message("assistant", ["done"]))
+
+        stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)
+
+        await stream.get_final_response()
+        await stream.get_final_response()
+
+        assert call_count["value"] == 1
+
+
+class TestResponseStreamMapAndWithFinalizer:
+    """Tests for ResponseStream.map() and .with_finalizer() functionality."""
+
+    async def test_map_delegates_iteration(self) -> None:
+        """Mapped stream delegates iteration to inner stream."""
+        inner = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1", "update_2"]
+        assert inner._consumed is True
+
+    async def test_map_transforms_updates(self) -> None:
+        """map() transforms each update."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def add_prefix(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"mapped_{update.text}")],
+                role=update.role,
+            )
+
+        outer = inner.map(add_prefix, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["mapped_update_0", "mapped_update_1"]
+
+    async def test_map_requires_finalizer(self) -> None:
+        """map() requires a finalizer since inner's won't work with new type."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        # map() now requires a finalizer parameter
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        final = await outer.get_final_response()
+        assert final.text == "update_0update_1"
+
+    async def test_map_calls_inner_result_hooks(self) -> None:
+        """map() calls inner's result hooks when get_final_response() is called."""
+        inner_result_hook_called = {"value": False}
+
+        def inner_result_hook(response: ChatResponse) -> ChatResponse:
+            inner_result_hook_called["value"] = True
+            return ChatResponse(messages=Message("assistant", [f"hooked_{response.text}"]))
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[inner_result_hook],
+        )
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        await outer.get_final_response()
+
+        # Inner's result_hooks ARE called when get_final_response() is invoked
+        assert inner_result_hook_called["value"] is True
+
+    async def test_with_finalizer_calls_inner_finalizer(self) -> None:
+        """with_finalizer() still calls inner's finalizer first."""
+        inner_finalizer_called = {"value": False}
+
+        def inner_finalizer(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            inner_finalizer_called["value"] = True
+            return ChatResponse(messages=Message("assistant", ["inner_result"]))
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=inner_finalizer,
+        )
+        outer = inner.with_finalizer(_combine_updates)
+
+        final = await outer.get_final_response()
+
+        # Inner's finalizer IS called first
+        assert inner_finalizer_called["value"] is True
+        # But the outer result is from outer's finalizer (working on outer's updates)
+        assert final.text == "update_0update_1"
+
+    async def test_with_finalizer_plus_result_hooks(self) -> None:
+        """with_finalizer() works with result hooks."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def outer_hook(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", [f"outer_{response.text}"]))
+
+        outer = inner.with_finalizer(_combine_updates).with_result_hook(outer_hook)
+
+        final = await outer.get_final_response()
+
+        assert final.text == "outer_update_0update_1"
+
+    async def test_map_with_finalizer(self) -> None:
+        """map() takes a finalizer and transforms updates."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def add_prefix(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"mapped_{update.text}")],
+                role=update.role,
+            )
+
+        outer = inner.map(add_prefix, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["mapped_update_0", "mapped_update_1"]
+
+        final = await outer.get_final_response()
+        assert final.text == "mapped_update_0mapped_update_1"
+
+    async def test_outer_transform_hooks_independent(self) -> None:
+        """Outer stream has its own independent transform hooks."""
+        inner_hook_calls = {"value": 0}
+        outer_hook_calls = {"value": 0}
+
+        def inner_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            inner_hook_calls["value"] += 1
+            return update
+
+        def outer_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            outer_hook_calls["value"] += 1
+            return update
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[inner_hook],
+        )
+        outer = inner.map(lambda u: u, _combine_updates).with_transform_hook(outer_hook)
+
+        async for _ in outer:
+            pass
+
+        assert inner_hook_calls["value"] == 2
+        assert outer_hook_calls["value"] == 2
+
+    async def test_preserves_single_consumption(self) -> None:
+        """Inner stream is only consumed once."""
+        consumption_count = {"value": 0}
+
+        async def counting_generator() -> AsyncIterable[ChatResponseUpdate]:
+            consumption_count["value"] += 1
+            for i in range(2):
+                yield ChatResponseUpdate(contents=[Content.from_text(f"u{i}")], role="assistant")
+
+        inner = ResponseStream(counting_generator(), finalizer=_combine_updates)
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        async for _ in outer:
+            pass
+        await outer.get_final_response()
+
+        assert consumption_count["value"] == 1
+
+    async def test_async_map_transform(self) -> None:
+        """map() supports async transform function."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async def async_map(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"async_{update.text}")],
+                role=update.role,
+            )
+
+        outer = inner.map(async_map, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["async_update_0", "async_update_1"]
+
+    async def test_from_awaitable(self) -> None:
+        """from_awaitable() wraps an awaitable ResponseStream."""
+
+        async def get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            return ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        outer = ResponseStream.from_awaitable(get_stream())
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+        final = await outer.get_final_response()
+        assert final.text == "update_0update_1"
+
+
+class TestResponseStreamExecutionOrder:
+    """Tests verifying the correct execution order of hooks."""
+
+    async def test_execution_order_iteration_then_finalize(self) -> None:
+        """Verify execution order: transform -> cleanup -> finalizer -> result."""
+        order: list[str] = []
+
+        def transform_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            order.append(f"transform_{update.text}")
+            return update
+
+        def cleanup_hook() -> None:
+            order.append("cleanup")
+
+        def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            order.append("finalizer")
+            return ChatResponse(messages=Message("assistant", ["done"]))
+
+        def result_hook(response: ChatResponse) -> ChatResponse:
+            order.append("result")
+            return response
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=finalizer,
+            transform_hooks=[transform_hook],
+            cleanup_hooks=[cleanup_hook],
+            result_hooks=[result_hook],
+        )
+
+        async for _ in stream:
+            pass
+        await stream.get_final_response()
+
+        assert order == [
+            "transform_update_0",
+            "transform_update_1",
+            "cleanup",
+            "finalizer",
+            "result",
+        ]
+
+    async def test_cleanup_runs_before_finalizer_on_direct_finalize(self) -> None:
+        """Cleanup hooks run before finalizer even when not iterating manually."""
+        order: list[str] = []
+
+        def cleanup_hook() -> None:
+            order.append("cleanup")
+
+        def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            order.append("finalizer")
+            return ChatResponse(messages=Message("assistant", ["done"]))
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=finalizer,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        await stream.get_final_response()
+
+        assert order == ["cleanup", "finalizer"]
+
+
+class TestResponseStreamAwaitableSource:
+    """Tests for ResponseStream with awaitable stream sources."""
+
+    async def test_awaitable_stream_source(self) -> None:
+        """ResponseStream can accept an awaitable that resolves to an async iterable."""
+
+        async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
+            return _generate_updates(2)
+
+        stream = ResponseStream(get_stream(), finalizer=_combine_updates)
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+    async def test_await_stream(self) -> None:
+        """ResponseStream can be awaited to resolve stream source."""
+
+        async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
+            return _generate_updates(2)
+
+        stream = await ResponseStream(get_stream(), finalizer=_combine_updates)
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+
+class TestResponseStreamEdgeCases:
+    """Tests for edge cases and error handling."""
+
+    async def test_empty_stream(self) -> None:
+        """Empty stream produces empty result."""
+
+        async def empty_gen() -> AsyncIterable[ChatResponseUpdate]:
+            return
+            yield  # type: ignore[misc]  # Make it a generator
+
+        stream = ResponseStream(empty_gen(), finalizer=_combine_updates)
+
+        final = await stream.get_final_response()
+
+        assert final.text == ""
+        assert len(stream.updates) == 0
+
+    async def test_hooks_not_called_on_empty_stream_iteration(self) -> None:
+        """Transform hooks not called when stream is empty."""
+        hook_calls = {"value": 0}
+
+        def transform_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            hook_calls["value"] += 1
+            return update
+
+        async def empty_gen() -> AsyncIterable[ChatResponseUpdate]:
+            return
+            yield  # type: ignore[misc]
+
+        stream = ResponseStream(
+            empty_gen(),
+            finalizer=_combine_updates,
+            transform_hooks=[transform_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert hook_calls["value"] == 0
+
+    async def test_cleanup_called_even_on_empty_stream(self) -> None:
+        """Cleanup hooks are called even when stream is empty."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        async def empty_gen() -> AsyncIterable[ChatResponseUpdate]:
+            return
+            yield  # type: ignore[misc]
+
+        stream = ResponseStream(
+            empty_gen(),
+            finalizer=_combine_updates,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_all_constructor_parameters(self) -> None:
+        """All constructor parameters work together."""
+        events: list[str] = []
+
+        def transform(u: ChatResponseUpdate) -> ChatResponseUpdate:
+            events.append("transform")
+            return u
+
+        def cleanup() -> None:
+            events.append("cleanup")
+
+        def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            events.append("finalizer")
+            return ChatResponse(messages=Message("assistant", ["done"]))
+
+        def result(r: ChatResponse) -> ChatResponse:
+            events.append("result")
+            return r
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=finalizer,
+            transform_hooks=[transform],
+            cleanup_hooks=[cleanup],
+            result_hooks=[result],
+        )
+
+        await stream.get_final_response()
+
+        assert events == ["transform", "cleanup", "finalizer", "result"]
+
+
+# endregion
+
+
+# region OAuth Consent Content
+
+
+def test_oauth_consent_request_creation():
+    """Test Content.from_oauth_consent_request creates the correct content."""
+    content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/common/oauth2/authorize?client_id=abc",
+    )
+    assert content.type == "oauth_consent_request"
+    assert content.consent_link == "https://login.microsoftonline.com/common/oauth2/authorize?client_id=abc"
+    assert content.user_input_request is True
+
+
+def test_oauth_consent_request_serialization_roundtrip():
+    """Test that oauth_consent_request content serializes and includes consent_link."""
+    content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/consent",
+    )
+    d = content.to_dict()
+    assert d["type"] == "oauth_consent_request"
+    assert d["consent_link"] == "https://login.microsoftonline.com/consent"
+    assert d["user_input_request"] is True
+
+
+# endregion
+
+
+# region prepend_instructions_to_messages tests
+
+
+def test_prepend_instructions_basic():
+    """Test that instructions are prepended as system message."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [Message("user", ["Hello"])]
+    result = prepend_instructions_to_messages(messages, "You are helpful.")
     assert len(result) == 2
     assert result[0].role == "system"
-    assert result[0].text == "Be helpful"
+    assert result[0].text == "You are helpful."
     assert result[1].role == "user"
-    assert result[1].contents[0].text == "hello"
-
-
-def test_parse_content_list_with_strings():
-    """Test _parse_content_list converts strings to TextContent."""
-    result = _parse_content_list(["hello", "world"])
-    assert len(result) == 2
-    assert result[0].type == "text"
-    assert result[0].text == "hello"
-    assert result[1].type == "text"
-    assert result[1].text == "world"
-
-
-def test_parse_content_list_with_none_values():
-    """Test _parse_content_list skips None values."""
-    result = _parse_content_list(["hello", None, "world", None])
-    assert len(result) == 2
-    assert result[0].text == "hello"
-    assert result[1].text == "world"
-
-
-def test_parse_content_list_with_invalid_dict():
-    """Test _parse_content_list raises on invalid content dict missing type."""
-    # Invalid dict without type raises ValueError
-    with pytest.raises(ValueError, match="requires 'type'"):
-        _parse_content_list([{"invalid": "data"}])
-
-
-# region detect_media_type_from_base64 additional formats
-
-
-def test_detect_media_type_gif87a():
-    """Test detecting GIF87a format."""
-    gif_data = b"GIF87a" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=gif_data) == "image/gif"
-
-
-def test_detect_media_type_bmp():
-    """Test detecting BMP format."""
-    bmp_data = b"BM" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=bmp_data) == "image/bmp"
-
-
-def test_detect_media_type_svg():
-    """Test detecting SVG format."""
-    svg_data = b"<svg" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=svg_data) == "image/svg+xml"
-    xml_svg_data = b"<?xml" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=xml_svg_data) == "image/svg+xml"
-
-
-def test_detect_media_type_pdf():
-    """Test detecting PDF format."""
-    pdf_data = b"%PDF-" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=pdf_data) == "application/pdf"
-
-
-def test_detect_media_type_wav():
-    """Test detecting WAV format."""
-    wav_data = b"RIFF" + b"1234" + b"WAVE" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=wav_data) == "audio/wav"
-
-
-def test_detect_media_type_mp3():
-    """Test detecting MP3 format."""
-    # Test ID3 header
-    mp3_data_id3 = b"ID3" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=mp3_data_id3) == "audio/mpeg"
-    # Test MPEG sync bytes
-    mp3_data_sync = b"\xff\xfb" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=mp3_data_sync) == "audio/mpeg"
-    mp3_data_sync2 = b"\xff\xf3" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=mp3_data_sync2) == "audio/mpeg"
-
-
-def test_detect_media_type_ogg():
-    """Test detecting OGG format."""
-    ogg_data = b"OggS" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=ogg_data) == "audio/ogg"
-
-
-def test_detect_media_type_flac():
-    """Test detecting FLAC format."""
-    flac_data = b"fLaC" + b"fake_data"
-    assert detect_media_type_from_base64(data_bytes=flac_data) == "audio/flac"
-
-
-def test_detect_media_type_multiple_args_error():
-    """Test detect_media_type_from_base64 raises with multiple arguments."""
-    with pytest.raises(ValueError, match="Provide exactly one"):
-        detect_media_type_from_base64(data_bytes=b"test", data_str="test")
-
-
-# region _validate_uri edge cases
-
-
-def test_validate_uri_data_uri_no_encoding():
-    """Test _validate_uri with data URI without encoding specifier."""
-    result = _validate_uri("data:text/plain;,hello", None)
-    assert result["type"] == "data"
-
-
-def test_validate_uri_data_uri_invalid_encoding():
-    """Test _validate_uri with unsupported encoding."""
-    with pytest.raises(ContentError, match="Unsupported data URI encoding"):
-        _validate_uri("data:text/plain;utf8,hello", None)
-
-
-def test_validate_uri_data_uri_no_comma():
-    """Test _validate_uri with data URI missing comma."""
-    with pytest.raises(ContentError, match="must contain a comma"):
-        _validate_uri("data:text/plainbase64test", None)
-
-
-def test_validate_uri_unknown_scheme():
-    """Test _validate_uri with unknown scheme logs info."""
-    result = _validate_uri("custom://example.com", "text/plain")
-    assert result["type"] == "uri"
-
-
-def test_validate_uri_no_scheme():
-    """Test _validate_uri without scheme raises error."""
-    with pytest.raises(ContentError, match="must contain a scheme"):
-        _validate_uri("example.com/path", None)
-
-
-def test_validate_uri_empty():
-    """Test _validate_uri with empty URI."""
-    with pytest.raises(ContentError, match="cannot be empty"):
-        _validate_uri("", None)
-
-
-def test_validate_uri_data_uri_invalid_format():
-    """Test _validate_uri with data URI missing comma."""
-    with pytest.raises(ContentError, match="must contain a comma"):
-        _validate_uri("data:;", None)
-
-
-# region Content equality and string representation
-
-
-def test_content_equality_with_non_content():
-    """Test Content.__eq__ returns False for non-Content objects."""
-    content = Content.from_text("hello")
-    assert content != "hello"
-    assert content != {"type": "text", "text": "hello"}
-    assert content != 42
-
-
-def test_content_str_error_with_code():
-    """Test Content.__str__ for error content with code."""
-    content = Content.from_error(message="Not found", error_code="404")
-    assert str(content) == "Error 404: Not found"
-
-
-def test_content_str_error_without_code():
-    """Test Content.__str__ for error content without code."""
-    content = Content.from_error(message="Something went wrong")
-    assert str(content) == "Something went wrong"
-
-
-def test_content_str_error_empty():
-    """Test Content.__str__ for error content with no message."""
-    content = Content(type="error")
-    assert str(content) == "Unknown error"
-
-
-def test_content_str_text():
-    """Test Content.__str__ for text content."""
-    content = Content.from_text("Hello world")
-    assert str(content) == "Hello world"
-
-
-def test_content_str_other_type():
-    """Test Content.__str__ for other content types."""
-    content = Content.from_function_call(call_id="1", name="test", arguments={})
-    assert str(content) == "Content(type=function_call)"
-
-
-# region Content.from_dict edge cases
-
-
-def test_content_from_dict_missing_type():
-    """Test Content.from_dict raises error when type is missing."""
-    with pytest.raises(ValueError, match="requires 'type'"):
-        Content.from_dict({"text": "hello"})
-
-
-def test_content_from_dict_with_nested_inputs():
-    """Test Content.from_dict handles nested inputs list."""
-    data = {
-        "type": "code_interpreter_tool_call",
-        "call_id": "call-1",
-        "inputs": [{"type": "text", "text": "print('hi')"}],
-    }
-    content = Content.from_dict(data)
-    assert content.inputs[0].type == "text"
-    assert content.inputs[0].text == "print('hi')"
-
-
-def test_content_from_dict_with_nested_outputs():
-    """Test Content.from_dict handles nested outputs list."""
-    data = {
-        "type": "code_interpreter_tool_result",
-        "call_id": "call-1",
-        "outputs": [{"type": "text", "text": "result"}],
-    }
-    content = Content.from_dict(data)
-    assert content.outputs[0].type == "text"
-
-
-def test_content_from_dict_with_data_and_media_type():
-    """Test Content.from_dict with data and media_type uses from_data."""
-    data = {
-        "type": "data",
-        "data": b"test",
-        "media_type": "application/octet-stream",
-    }
-    content = Content.from_dict(data)
-    assert content.type == "data"
-    assert content.media_type == "application/octet-stream"
-
-
-# region convert_to_approval_response
-
-
-def test_convert_to_approval_response_wrong_type():
-    """Test to_function_approval_response raises for wrong content type."""
-    content = Content.from_text("hello")
-    with pytest.raises(ContentError, match="Can only convert"):
-        content.to_function_approval_response(approved=True)
-
-
-# region prepare_function_call_results edge cases
-
-
-def test_prepare_function_call_results_with_content():
-    """Test prepare_function_call_results with Content object."""
-    content = Content.from_text("hello")
-    result = prepare_function_call_results(content)
-    assert '"type": "text"' in result
-    assert '"text": "hello"' in result
-
-
-def test_prepare_function_call_results_with_string():
-    """Test prepare_function_call_results with plain string."""
-    result = prepare_function_call_results("hello")
-    assert result == "hello"
-
-
-def test_prepare_function_call_results_with_dict():
-    """Test prepare_function_call_results with dict."""
-    result = prepare_function_call_results({"key": "value"})
-    assert '"key": "value"' in result
-
-
-def test_prepare_function_call_results_with_datetime():
-    """Test prepare_function_call_results handles datetime."""
-    dt = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
-    result = prepare_function_call_results({"date": dt})
-    assert "2024-01-15" in result
-
-
-def test_prepare_function_call_results_with_pydantic_model():
-    """Test prepare_function_call_results with Pydantic model."""
-
-    class TestModel(BaseModel):
-        name: str
-        value: int
-
-    model = TestModel(name="test", value=42)
-    result = prepare_function_call_results(model)
-    assert '"name": "test"' in result
-    assert '"value": 42' in result
-
-
-def test_prepare_function_call_results_with_to_dict_object():
-    """Test prepare_function_call_results with object having to_dict method."""
-
-    class CustomObj:
-        def to_dict(self, **kwargs):
-            return {"custom": "data"}
-
-    obj = CustomObj()
-    result = prepare_function_call_results(obj)
-    assert '"custom": "data"' in result
-
-
-def test_prepare_function_call_results_with_text_attribute():
-    """Test prepare_function_call_results with object having text attribute."""
-
-    class TextObj:
-        def __init__(self):
-            self.text = "text content"
-
-    obj = TextObj()
-    result = prepare_function_call_results(obj)
-    assert result == "text content"
-
-
-# region normalize_messages with Content
-
-
-def test_normalize_messages_with_mixed_sequence():
-    """Test normalize_messages with mixed sequence."""
-    content = Content.from_text("content msg")
-    message = ChatMessage("assistant", ["assistant msg"])
-    result = normalize_messages(["user msg", content, message])
-    assert len(result) == 3
-    assert result[0].role == "user"
-    assert result[0].text == "user msg"
-    assert result[1].role == "user"
-    assert result[1].contents[0].text == "content msg"
-    assert result[2].role == "assistant"
-
-
-# region prepare_messages with Content
-
-
-def test_prepare_messages_with_content_in_sequence():
-    """Test prepare_messages with Content in sequence."""
-    content = Content.from_text("content msg")
-    result = prepare_messages(["hello", content])
-    assert len(result) == 2
-    assert result[0].text == "hello"
-    assert result[1].contents[0].text == "content msg"
-
-
-# region validate_chat_options
-
-
-async def test_validate_chat_options_frequency_penalty_valid():
-    """Test validate_chat_options with valid frequency_penalty."""
-    from agent_framework._types import validate_chat_options
-
-    result = await validate_chat_options({"frequency_penalty": 1.0})
-    assert result["frequency_penalty"] == 1.0
-
-
-async def test_validate_chat_options_frequency_penalty_invalid():
-    """Test validate_chat_options with invalid frequency_penalty."""
-    from agent_framework._types import validate_chat_options
-
-    with pytest.raises(ValueError, match="frequency_penalty must be between"):
-        await validate_chat_options({"frequency_penalty": 3.0})
-
-
-async def test_validate_chat_options_presence_penalty_valid():
-    """Test validate_chat_options with valid presence_penalty."""
-    from agent_framework._types import validate_chat_options
-
-    result = await validate_chat_options({"presence_penalty": -1.5})
-    assert result["presence_penalty"] == -1.5
-
-
-async def test_validate_chat_options_presence_penalty_invalid():
-    """Test validate_chat_options with invalid presence_penalty."""
-    from agent_framework._types import validate_chat_options
-
-    with pytest.raises(ValueError, match="presence_penalty must be between"):
-        await validate_chat_options({"presence_penalty": -3.0})
-
-
-async def test_validate_chat_options_temperature_valid():
-    """Test validate_chat_options with valid temperature."""
-    from agent_framework._types import validate_chat_options
-
-    result = await validate_chat_options({"temperature": 0.7})
-    assert result["temperature"] == 0.7
-
-
-async def test_validate_chat_options_temperature_invalid():
-    """Test validate_chat_options with invalid temperature."""
-    from agent_framework._types import validate_chat_options
-
-    with pytest.raises(ValueError, match="temperature must be between"):
-        await validate_chat_options({"temperature": 2.5})
-
-
-async def test_validate_chat_options_top_p_valid():
-    """Test validate_chat_options with valid top_p."""
-    from agent_framework._types import validate_chat_options
-
-    result = await validate_chat_options({"top_p": 0.9})
-    assert result["top_p"] == 0.9
-
-
-async def test_validate_chat_options_top_p_invalid():
-    """Test validate_chat_options with invalid top_p."""
-    from agent_framework._types import validate_chat_options
-
-    with pytest.raises(ValueError, match="top_p must be between"):
-        await validate_chat_options({"top_p": 1.5})
-
-
-async def test_validate_chat_options_max_tokens_valid():
-    """Test validate_chat_options with valid max_tokens."""
-    from agent_framework._types import validate_chat_options
-
-    result = await validate_chat_options({"max_tokens": 100})
-    assert result["max_tokens"] == 100
-
-
-async def test_validate_chat_options_max_tokens_invalid():
-    """Test validate_chat_options with invalid max_tokens."""
-    from agent_framework._types import validate_chat_options
-
-    with pytest.raises(ValueError, match="max_tokens must be greater than 0"):
-        await validate_chat_options({"max_tokens": 0})
-
-
-# region normalize_tools
-
-
-def test_normalize_tools_empty():
-    """Test normalize_tools with empty input."""
-    from agent_framework._types import normalize_tools
-
-    result = normalize_tools(None)
-    assert result == []
-    result = normalize_tools([])
-    assert result == []
-
-
-def test_normalize_tools_single_callable():
-    """Test normalize_tools with single callable."""
-    from agent_framework._types import normalize_tools
-
-    def my_func(x: int) -> int:
-        """A simple function."""
-        return x * 2
-
-    result = normalize_tools(my_func)
-    assert len(result) == 1
-    assert hasattr(result[0], "name")
-
-
-def test_normalize_tools_list_of_callables():
-    """Test normalize_tools with list of callables."""
-    from agent_framework._types import normalize_tools
-
-    def func1(x: int) -> int:
-        """Function 1."""
-        return x
-
-    def func2(y: str) -> str:
-        """Function 2."""
-        return y
-
-    result = normalize_tools([func1, func2])
-    assert len(result) == 2
-
-
-def test_normalize_tools_single_mapping():
-    """Test normalize_tools with single mapping (not treated as sequence)."""
-    from agent_framework._types import normalize_tools
-
-    tool_dict = {"name": "test_tool", "description": "A test tool"}
-    result = normalize_tools(tool_dict)
-    assert len(result) == 1
-    assert result[0] == tool_dict
-
-
-# region validate_tool_mode edge cases
-
-
-def test_validate_tool_mode_dict_missing_mode():
-    """Test validate_tool_mode with dict missing mode key."""
-    with pytest.raises(ContentError, match="must contain 'mode' key"):
-        validate_tool_mode({"required_function_name": "test"})
-
-
-def test_validate_tool_mode_dict_invalid_mode():
-    """Test validate_tool_mode with dict having invalid mode."""
-    with pytest.raises(ContentError, match="Invalid tool choice"):
-        validate_tool_mode({"mode": "invalid"})
-
-
-def test_validate_tool_mode_dict_required_function_with_wrong_mode():
-    """Test validate_tool_mode with required_function_name but wrong mode."""
-    with pytest.raises(ContentError, match="cannot have 'required_function_name'"):
-        validate_tool_mode({"mode": "auto", "required_function_name": "test"})
-
-
-def test_validate_tool_mode_dict_valid_required():
-    """Test validate_tool_mode with valid required mode and function name."""
-    result = validate_tool_mode({"mode": "required", "required_function_name": "test"})
-    assert result["mode"] == "required"
-    assert result["required_function_name"] == "test"
-
-
-# region merge_chat_options edge cases
-
-
-def test_merge_chat_options_instructions_concatenation():
-    """Test merge_chat_options concatenates instructions."""
-    base: ChatOptions = {"instructions": "Base instructions"}
-    override: ChatOptions = {"instructions": "Override instructions"}
-    result = merge_chat_options(base, override)
-    assert "Base instructions" in result["instructions"]
-    assert "Override instructions" in result["instructions"]
-
-
-def test_merge_chat_options_tools_merge():
-    """Test merge_chat_options merges tools lists."""
-
-    @tool
-    def tool1(x: int) -> int:
-        """Tool 1."""
-        return x
-
-    @tool
-    def tool2(y: int) -> int:
-        """Tool 2."""
-        return y
-
-    base: ChatOptions = {"tools": [tool1]}
-    override: ChatOptions = {"tools": [tool2]}
-    result = merge_chat_options(base, override)
-    assert len(result["tools"]) == 2
-
-
-def test_merge_chat_options_metadata_merge():
-    """Test merge_chat_options merges metadata dicts."""
-    base: ChatOptions = {"metadata": {"key1": "value1"}}
-    override: ChatOptions = {"metadata": {"key2": "value2"}}
-    result = merge_chat_options(base, override)
-    assert result["metadata"]["key1"] == "value1"
-    assert result["metadata"]["key2"] == "value2"
-
-
-def test_merge_chat_options_tool_choice_override():
-    """Test merge_chat_options overrides tool_choice."""
-    base: ChatOptions = {"tool_choice": {"mode": "auto"}}
-    override: ChatOptions = {"tool_choice": {"mode": "required"}}
-    result = merge_chat_options(base, override)
-    assert result["tool_choice"]["mode"] == "required"
-
-
-def test_merge_chat_options_response_format_override():
-    """Test merge_chat_options overrides response_format."""
-
-    class Format1(BaseModel):
-        field1: str
-
-    class Format2(BaseModel):
-        field2: str
-
-    base: ChatOptions = {"response_format": Format1}
-    override: ChatOptions = {"response_format": Format2}
-    result = merge_chat_options(base, override)
-    assert result["response_format"] == Format2
-
-
-def test_merge_chat_options_skip_none_values():
-    """Test merge_chat_options skips None values in override."""
-    base: ChatOptions = {"temperature": 0.5}
-    override: ChatOptions = {"temperature": None}  # type: ignore[typeddict-item]
-    result = merge_chat_options(base, override)
-    assert result["temperature"] == 0.5
-
-
-def test_merge_chat_options_logit_bias_merge():
-    """Test merge_chat_options merges logit_bias dicts."""
-    base: ChatOptions = {"logit_bias": {"token1": 1.0}}
-    override: ChatOptions = {"logit_bias": {"token2": -1.0}}
-    result = merge_chat_options(base, override)
-    assert result["logit_bias"]["token1"] == 1.0
-    assert result["logit_bias"]["token2"] == -1.0
-
-
-def test_merge_chat_options_additional_properties_merge():
-    """Test merge_chat_options merges additional_properties."""
-    base: ChatOptions = {"additional_properties": {"prop1": "val1"}}
-    override: ChatOptions = {"additional_properties": {"prop2": "val2"}}
-    result = merge_chat_options(base, override)
-    assert result["additional_properties"]["prop1"] == "val1"
-    assert result["additional_properties"]["prop2"] == "val2"
-
-
-# region ChatMessage with legacy role format
-
-
-def test_chat_message_with_legacy_role_dict():
-    """Test ChatMessage handles legacy role dict format."""
-    message = ChatMessage({"value": "user"}, ["hello"])  # type: ignore[arg-type]
-    assert message.role == "user"
-
-
-# region _get_data_bytes edge cases
-
-
-def test_get_data_bytes_non_data_uri():
-    """Test _get_data_bytes with non-data URI returns None."""
-    content = Content.from_uri("https://example.com/image.png", media_type="image/png")
-    result = _get_data_bytes(content)
-    assert result is None
-
-
-def test_get_data_bytes_invalid_encoding():
-    """Test _get_data_bytes with invalid encoding raises error."""
-    content = Content(type="data", uri="data:text/plain;utf8,hello")
-    with pytest.raises(ContentError, match="must use base64 encoding"):
-        _get_data_bytes(content)
-
-
-# region Content addition edge cases
-
-
-def test_content_add_different_types():
-    """Test Content addition raises error for different types."""
-    text_content = Content.from_text("hello")
-    function_call = Content.from_function_call(call_id="1", name="test", arguments={})
-    with pytest.raises(TypeError, match="Cannot add Content of type"):
-        text_content + function_call
-
-
-def test_content_add_unsupported_type():
-    """Test Content addition raises error for unsupported types."""
-    content1 = Content.from_uri("https://example.com/a.png", media_type="image/png")
-    content2 = Content.from_uri("https://example.com/b.png", media_type="image/png")
-    with pytest.raises(ContentError, match="Addition not supported"):
-        content1 + content2
-
-
-def test_content_add_text_with_annotations():
-    """Test Content addition merges annotations."""
-    ann1 = [Annotation(type="citation", text="ref1", start_char_index=0, end_char_index=5)]
-    ann2 = [Annotation(type="citation", text="ref2", start_char_index=0, end_char_index=5)]
-    content1 = Content.from_text("hello", annotations=ann1)
-    content2 = Content.from_text(" world", annotations=ann2)
-    result = content1 + content2
-    assert result.text == "hello world"
-    assert len(result.annotations) == 2
-
-
-def test_content_add_text_reasoning_with_annotations():
-    """Test text_reasoning Content addition merges annotations."""
-    ann1 = [Annotation(type="citation", text="ref1", start_char_index=0, end_char_index=5)]
-    ann2 = [Annotation(type="citation", text="ref2", start_char_index=0, end_char_index=5)]
-    content1 = Content.from_text_reasoning(text="step 1", annotations=ann1)
-    content2 = Content.from_text_reasoning(text=" step 2", annotations=ann2)
-    result = content1 + content2
-    assert result.text == "step 1 step 2"
-    assert len(result.annotations) == 2
-
-
-def test_content_add_text_with_raw_representation():
-    """Test Content addition merges raw representations."""
-    content1 = Content.from_text("hello", raw_representation={"raw": 1})
-    content2 = Content.from_text(" world", raw_representation={"raw": 2})
-    result = content1 + content2
-    assert isinstance(result.raw_representation, list)
-    assert len(result.raw_representation) == 2
-
-
-def test_content_add_function_call_empty_arguments():
-    """Test function_call Content addition with empty arguments."""
-    content1 = Content.from_function_call(call_id="1", name="func", arguments="")
-    content2 = Content.from_function_call(call_id="1", name="func", arguments='{"x": 1}')
-    result = content1 + content2
-    assert result.arguments == '{"x": 1}'
-
-
-def test_content_add_function_call_raw_representation():
-    """Test function_call Content addition merges raw representations."""
-    content1 = Content.from_function_call(call_id="1", name="func", arguments='{"a": 1}', raw_representation={"r": 1})
-    content2 = Content.from_function_call(call_id="1", name="func", arguments='{"b": 2}', raw_representation={"r": 2})
-    result = content1 + content2
-    assert isinstance(result.raw_representation, list)
-
-
-# region ChatResponse and ChatResponseUpdate edge cases
-
-
-def test_chat_response_from_dict_messages():
-    """Test ChatResponse handles dict messages."""
-    response = ChatResponse(messages=[{"role": "user", "contents": [{"type": "text", "text": "hello"}]}])
-    assert len(response.messages) == 1
-    assert response.messages[0].role == "user"
-
-
-def test_chat_response_update_with_dict_contents():
-    """Test ChatResponseUpdate handles dict contents."""
-    update = ChatResponseUpdate(
-        contents=[{"type": "text", "text": "hello"}],
-        role="assistant",
-    )
-    assert len(update.contents) == 1
-    assert update.contents[0].type == "text"
-
-
-def test_chat_response_update_legacy_role_dict():
-    """Test ChatResponseUpdate handles legacy role dict format."""
-    update = ChatResponseUpdate(
-        contents=[Content.from_text("hello")],
-        role={"value": "assistant"},  # type: ignore[arg-type]
-    )
-    assert update.role == "assistant"
-
-
-def test_chat_response_update_legacy_finish_reason_dict():
-    """Test ChatResponseUpdate handles legacy finish_reason dict format."""
-    update = ChatResponseUpdate(
-        contents=[Content.from_text("hello")],
-        finish_reason={"value": "stop"},  # type: ignore[arg-type]
-    )
-    assert update.finish_reason == "stop"
-
-
-def test_chat_response_update_str():
-    """Test ChatResponseUpdate.__str__ returns text."""
-    update = ChatResponseUpdate(contents=[Content.from_text("hello")])
-    assert str(update) == "hello"
-
-
-# region prepend_instructions_to_messages
 
 
 def test_prepend_instructions_none():
-    """Test prepend_instructions_to_messages with None instructions."""
+    """Test that None instructions returns messages unchanged."""
     from agent_framework._types import prepend_instructions_to_messages
 
-    messages = [ChatMessage("user", ["hello"])]
+    messages = [Message("user", ["Hello"])]
     result = prepend_instructions_to_messages(messages, None)
     assert result is messages
 
 
-def test_prepend_instructions_string():
-    """Test prepend_instructions_to_messages with string instructions."""
+def test_prepend_instructions_skips_duplicate():
+    """Test that duplicate system instructions are not prepended again."""
     from agent_framework._types import prepend_instructions_to_messages
 
-    messages = [ChatMessage("user", ["hello"])]
-    result = prepend_instructions_to_messages(messages, "Be helpful")
+    messages = [
+        Message("system", ["You are helpful."]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, "You are helpful.")
     assert len(result) == 2
     assert result[0].role == "system"
-    assert result[0].text == "Be helpful"
+    assert result[0].text == "You are helpful."
+    assert result[1].role == "user"
 
 
-def test_prepend_instructions_list():
-    """Test prepend_instructions_to_messages with list instructions."""
+def test_prepend_instructions_skips_duplicate_list():
+    """Test deduplication with a list of instructions."""
     from agent_framework._types import prepend_instructions_to_messages
 
-    messages = [ChatMessage("user", ["hello"])]
-    result = prepend_instructions_to_messages(messages, ["First", "Second"])
+    messages = [
+        Message("system", ["First instruction"]),
+        Message("system", ["Second instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
     assert len(result) == 3
-    assert result[0].text == "First"
-    assert result[1].text == "Second"
+    assert result[0].text == "First instruction"
+    assert result[1].text == "Second instruction"
+    assert result[2].text == "Hello"
 
 
-# region Process update edge cases
+def test_prepend_instructions_adds_when_different():
+    """Test that different instructions are still prepended."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["Old instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, "New instruction")
+    assert len(result) == 3
+    assert result[0].role == "system"
+    assert result[0].text == "New instruction"
+    assert result[1].text == "Old instruction"
+    assert result[2].text == "Hello"
 
 
-def test_process_update_dict_content():
-    """Test _process_update handles dict content."""
-    from agent_framework._types import _process_update
+def test_prepend_instructions_custom_role():
+    """Test prepending with a custom role."""
+    from agent_framework._types import prepend_instructions_to_messages
 
-    response = ChatResponse(messages=[])
-    update = ChatResponseUpdate(
-        contents=[{"type": "text", "text": "hello"}],  # type: ignore[list-item]
-        role="assistant",
-        message_id="1",
+    messages = [Message("user", ["Hello"])]
+    result = prepend_instructions_to_messages(messages, "Be concise.", role="developer")
+    assert len(result) == 2
+    assert result[0].role == "developer"
+
+
+# endregion
+
+
+# region finish_reason
+
+
+def test_agent_response_init_with_finish_reason() -> None:
+    """Test that AgentResponse correctly initializes and stores finish_reason."""
+    response = AgentResponse(
+        messages=[Message("assistant", [Content.from_text("test")])],
+        finish_reason="stop",
     )
-    _process_update(response, update)
-    assert len(response.messages) == 1
-    assert response.messages[0].text == "hello"
+    assert response.finish_reason == "stop"
 
 
-def test_process_update_with_additional_properties():
-    """Test _process_update merges additional properties."""
-    from agent_framework._types import _process_update
-
-    response = ChatResponse(messages=[ChatMessage("assistant", ["hi"], message_id="1")])
-    update = ChatResponseUpdate(
-        contents=[],
-        message_id="1",
-        additional_properties={"key": "value"},
-    )
-    _process_update(response, update)
-    assert response.additional_properties["key"] == "value"
-
-
-def test_process_update_raw_representation_not_list():
-    """Test _process_update converts raw_representation to list."""
-    from agent_framework._types import _process_update
-
-    response = ChatResponse(messages=[], raw_representation="initial")
-    update = ChatResponseUpdate(
-        contents=[Content.from_text("hi")],
-        role="assistant",
-        raw_representation="update",
-    )
-    _process_update(response, update)
-    assert isinstance(response.raw_representation, list)
-
-
-# region validate_tools async edge case
-
-
-async def test_validate_tools_with_callable():
-    """Test validate_tools with callable."""
-    from agent_framework._types import validate_tools
-
-    def my_func(x: int) -> int:
-        """A function."""
-        return x
-
-    result = await validate_tools(my_func)
-    assert len(result) == 1
-
-
-# region _get_data_bytes returns None for non-data types
-
-
-def test_get_data_bytes_non_data_type():
-    """Test _get_data_bytes returns None for non-data/uri type."""
-    content = Content.from_text("hello")
-    result = _get_data_bytes(content)
-    assert result is None
-
-
-def test_get_data_bytes_uri_type_no_data():
-    """Test _get_data_bytes returns None for uri type (not data URI)."""
-    content = Content.from_uri("https://example.com/img.png", media_type="image/png")
-    result = _get_data_bytes(content)
-    assert result is None
-
-
-def test_get_data_bytes_uri_without_uri_attr():
-    """Test _get_data_bytes returns None when uri attribute is None."""
-    content = Content(type="data")  # No uri attribute
-    result = _get_data_bytes(content)
-    assert result is None
-
-
-# region validate_uri edge cases for media_type without scheme
-
-
-def test_validate_uri_with_scheme_no_media_type():
-    """Test _validate_uri with http scheme but no media type logs warning."""
-    result = _validate_uri("http://example.com/image.png", None)
-    assert result["type"] == "uri"
-    assert result["media_type"] is None
-
-
-# region AgentResponse and AgentResponseUpdate edge cases
-
-
-def test_agent_response_from_dict_messages():
-    """Test AgentResponse handles dict messages."""
-    response = AgentResponse(messages=[{"role": "user", "contents": [{"type": "text", "text": "hello"}]}])
-    assert len(response.messages) == 1
-    assert response.messages[0].role == "user"
-
-
-def test_agent_response_update_with_dict_contents():
-    """Test AgentResponseUpdate handles dict contents."""
+def test_agent_response_update_init_with_finish_reason() -> None:
+    """Test that AgentResponseUpdate correctly initializes and stores finish_reason."""
     update = AgentResponseUpdate(
-        contents=[{"type": "text", "text": "hello"}],  # type: ignore[list-item]
+        contents=[Content.from_text("test")],
         role="assistant",
+        finish_reason="stop",
     )
-    assert len(update.contents) == 1
-    assert update.contents[0].type == "text"
+    assert update.finish_reason == "stop"
 
 
-def test_agent_response_update_legacy_role_dict():
-    """Test AgentResponseUpdate handles legacy role dict format."""
+def test_map_chat_to_agent_update_forwards_finish_reason() -> None:
+    """Test that mapping a ChatResponseUpdate with finish_reason forwards it."""
+    chat_update = ChatResponseUpdate(
+        contents=[Content.from_text("test")],
+        finish_reason="length",
+    )
+    agent_update = map_chat_to_agent_update(chat_update, agent_name="test_agent")
+
+    assert agent_update.finish_reason == "length"
+    assert agent_update.author_name == "test_agent"
+
+
+def test_process_update_propagates_finish_reason_to_agent_response() -> None:
+    """Test that _process_update correctly updates an AgentResponse from an AgentResponseUpdate."""
+    response = AgentResponse(messages=[Message("assistant", [Content.from_text("test")])])
     update = AgentResponseUpdate(
-        contents=[Content.from_text("hello")],
-        role={"value": "assistant"},  # type: ignore[arg-type]
+        contents=[Content.from_text("more text")],
+        role="assistant",
+        finish_reason="stop",
     )
-    assert update.role == "assistant"
 
-
-def test_agent_response_update_user_input_requests():
-    """Test AgentResponseUpdate.user_input_requests property."""
-    fc = Content.from_function_call(call_id="1", name="test", arguments={})
-    req = Content.from_function_approval_request(id="req-1", function_call=fc)
-    update = AgentResponseUpdate(contents=[req, Content.from_text("hello")])
-    requests = update.user_input_requests
-    assert len(requests) == 1
-    assert requests[0].type == "function_approval_request"
-
-
-def test_agent_response_user_input_requests():
-    """Test AgentResponse.user_input_requests property."""
-    fc = Content.from_function_call(call_id="1", name="test", arguments={})
-    req = Content.from_function_approval_request(id="req-1", function_call=fc)
-    message = ChatMessage("assistant", [req, Content.from_text("hello")])
-    response = AgentResponse(messages=[message])
-    requests = response.user_input_requests
-    assert len(requests) == 1
-
-
-# region detect_media_type_from_base64 error for multiple arguments
-
-
-def test_detect_media_type_from_base64_data_uri_and_bytes():
-    """Test detect_media_type_from_base64 raises error for data_uri and data_bytes."""
-    with pytest.raises(ValueError, match="Provide exactly one"):
-        detect_media_type_from_base64(data_bytes=b"test", data_uri="data:text/plain;base64,dGVzdA==")
-
-
-# region Content.from_data type error
-
-
-def test_content_from_data_type_error():
-    """Test Content.from_data raises TypeError for non-bytes data."""
-    with pytest.raises(TypeError, match="Could not encode data"):
-        Content.from_data("not bytes", "text/plain")  # type: ignore[arg-type]
-
-
-# region normalize_tools with single tool protocol
-
-
-def test_normalize_tools_with_single_tool_protocol(ai_tool):
-    """Test normalize_tools with single ToolProtocol."""
-    from agent_framework._types import normalize_tools
-
-    result = normalize_tools(ai_tool)
-    assert len(result) == 1
-    assert result[0] is ai_tool
-
-
-# region text_reasoning content addition with None annotations
-
-
-def test_content_add_text_reasoning_one_none_annotation():
-    """Test text_reasoning Content addition with one None annotations."""
-    content1 = Content.from_text_reasoning(text="step 1", annotations=None)
-    ann2 = [Annotation(type="citation", text="ref", start_char_index=0, end_char_index=3)]
-    content2 = Content.from_text_reasoning(text=" step 2", annotations=ann2)
-    result = content1 + content2
-    assert result.text == "step 1 step 2"
-    assert result.annotations == ann2
-
-
-def test_content_add_text_reasoning_both_none_annotations():
-    """Test text_reasoning Content addition with both None annotations."""
-    content1 = Content.from_text_reasoning(text="step 1", annotations=None)
-    content2 = Content.from_text_reasoning(text=" step 2", annotations=None)
-    result = content1 + content2
-    assert result.text == "step 1 step 2"
-    assert result.annotations is None
-
-
-# region text content addition with one None annotation
-
-
-def test_content_add_text_one_none_annotation():
-    """Test text Content addition with one None annotations."""
-    content1 = Content.from_text("hello", annotations=None)
-    ann2 = [Annotation(type="citation", text="ref", start_char_index=0, end_char_index=3)]
-    content2 = Content.from_text(" world", annotations=ann2)
-    result = content1 + content2
-    assert result.text == "hello world"
-    assert result.annotations == ann2
-
-
-# region function_call content addition - both empty arguments
-
-
-def test_content_add_function_call_both_empty():
-    """Test function_call Content addition with both empty arguments."""
-    content1 = Content.from_function_call(call_id="1", name="func", arguments=None)
-    content2 = Content.from_function_call(call_id="1", name="func", arguments=None)
-    result = content1 + content2
-    assert result.arguments is None
-
-
-# region process_update with invalid content dict
-
-
-def test_process_update_with_invalid_content_dict():
-    """Test _process_update logs warning for invalid content dicts."""
-    from agent_framework._types import _process_update
-
-    response = ChatResponse(messages=[ChatMessage("assistant", ["hi"], message_id="1")])
-    # Create update with content that doesn't have a type attribute (None)
-    # The code checks getattr(content, "type", None) first
-    update = ChatResponseUpdate(
-        contents=[],  # Empty contents to avoid the issue
-        message_id="1",
-    )
-    # Just verify it doesn't crash
+    # Process the update
     _process_update(response, update)
+
+    assert response.finish_reason == "stop"
+
+
+def test_process_update_does_not_overwrite_with_none() -> None:
+    """Test that _process_update does not overwrite an existing finish_reason with None."""
+    response = AgentResponse(
+        messages=[Message("assistant", [Content.from_text("test")])],
+        finish_reason="length",
+    )
+    update = AgentResponseUpdate(
+        contents=[Content.from_text("more text")],
+        role="assistant",
+        finish_reason=None,
+    )
+
+    # Process the update
+    _process_update(response, update)
+
+    assert response.finish_reason == "length"
+
+
+def test_agent_response_serialization_includes_finish_reason() -> None:
+    """Test that AgentResponse serializes correctly, including finish_reason."""
+    response = AgentResponse(
+        messages=[Message("assistant", [Content.from_text("test")])],
+        response_id="test_123",
+        finish_reason="stop",
+    )
+
+    # Serialize using the framework's API and verify finish_reason is included.
+    data = response.to_dict()
+    assert "finish_reason" in data
+    assert data["finish_reason"] == "stop"
+
+
+def test_agent_response_update_serialization_includes_finish_reason() -> None:
+    """Test that AgentResponseUpdate serializes correctly, including finish_reason."""
+    update = AgentResponseUpdate(
+        contents=[Content.from_text("test")],
+        role="assistant",
+        response_id="test_456",
+        finish_reason="tool_calls",
+    )
+
+    data = update.to_dict()
+    assert "finish_reason" in data
+    assert data["finish_reason"] == "tool_calls"
 
 
 # endregion

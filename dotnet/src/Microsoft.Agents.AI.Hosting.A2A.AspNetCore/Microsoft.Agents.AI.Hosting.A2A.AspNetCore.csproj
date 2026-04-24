@@ -1,12 +1,21 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI.Hosting.A2A.AspNetCore</RootNamespace>
     <VersionSuffix>preview</VersionSuffix>
+    <!-- RT0002: Microsoft.Agents.AI.Hosting.A2A is intentionally referenced as a transitive dependency
+         so that consumers of this package automatically get the AddA2AServer registration extensions. -->
+    <NoWarn>$(NoWarn);RT0002</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
+  </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="A2A.AspNetCore" />
@@ -15,7 +24,7 @@
   <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible($(TargetFramework), 'net10.0'))">
     <PackageReference Include="System.Linq.AsyncEnumerable" />
   </ItemGroup>
-  
+
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Hosting.A2A\Microsoft.Agents.AI.Hosting.A2A.csproj" />
   </ItemGroup>

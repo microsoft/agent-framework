@@ -17,7 +17,8 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
+[SendsMessage(typeof(ExternalInputRequest))]
+internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<InvokeAzureAgent>(model, state)
 {
     public static class Steps
@@ -26,9 +27,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         public static string Resume(string id) => $"{id}_{nameof(Resume)}";
     }
 
-    public static bool RequiresInput(object? message) => message is ExternalInputRequest;
+    public static bool RequiresInput(object? message) =>
+        message is ExternalInputRequest || (message is PortableValue pv && pv.IsType(out ExternalInputRequest? _));
 
-    public static bool RequiresNothing(object? message) => message is ActionExecutorResult;
+    public static bool RequiresNothing(object? message) =>
+        message is ActionExecutorResult || (message is PortableValue pv && pv.IsType(out ActionExecutorResult? _));
 
     private AzureAgentUsage AgentUsage => Throw.IfNull(this.Model.Agent, $"{nameof(this.Model)}.{nameof(this.Model.Agent)}");
     private AzureAgentInput? AgentInput => this.Model.Input;
@@ -46,7 +49,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
     public async ValueTask ResumeAsync(IWorkflowContext context, ExternalInputResponse response, CancellationToken cancellationToken)
     {
-        await context.SetLastMessageAsync(response.Messages.Last()).ConfigureAwait(false);
+        ChatMessage? lastMessage = response.Messages.LastOrDefault();
+        if (lastMessage is not null)
+        {
+            await context.SetLastMessageAsync(lastMessage).ConfigureAwait(false);
+        }
         await this.InvokeAgentAsync(context, response.Messages, cancellationToken).ConfigureAwait(false);
     }
 
@@ -82,15 +89,19 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
 
         // Attempt to parse the last message as JSON and assign to the response object variable.
-        try
+        string? lastMessageText = agentResponse.Messages.LastOrDefault()?.Text;
+        if (!string.IsNullOrEmpty(lastMessageText))
         {
-            JsonDocument jsonDocument = JsonDocument.Parse(agentResponse.Messages.Last().Text);
-            Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
-            await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Not valid json, skip assignment.
+            try
+            {
+                using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
+                Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
+                await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
+            }
+            catch (JsonException)
+            {
+                // Not valid json, skip assignment.
+            }
         }
 
         if (this.Model.Input?.ExternalLoop?.When is not null)
@@ -149,7 +160,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         foreach (ChatMessage responseMessage in agentResponse.Messages)
         {
-            if (responseMessage.Contents.Any(content => content is UserInputRequestContent))
+            if (responseMessage.Contents.Any(content => content is ToolApprovalRequestContent))
             {
                 yield return responseMessage;
                 continue;

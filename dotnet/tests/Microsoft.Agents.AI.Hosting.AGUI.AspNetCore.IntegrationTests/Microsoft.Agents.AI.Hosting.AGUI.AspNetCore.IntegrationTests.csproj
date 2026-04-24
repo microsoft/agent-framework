@@ -6,7 +6,6 @@
 
   <PropertyGroup>
     <InjectSharedIntegrationTestCode>true</InjectSharedIntegrationTestCode>
-    <InjectSharedBuildTestCode>true</InjectSharedBuildTestCode>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.AGUI\Microsoft.Agents.AI.AGUI.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />

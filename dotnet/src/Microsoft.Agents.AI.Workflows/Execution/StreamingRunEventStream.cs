@@ -17,16 +17,14 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 /// </summary>
 internal sealed class StreamingRunEventStream : IRunEventStream
 {
-    private static readonly string s_namespace = typeof(StreamingRunEventStream).Namespace!;
-    private static readonly ActivitySource s_activitySource = new(s_namespace);
-
     private readonly Channel<WorkflowEvent> _eventChannel;
     private readonly ISuperStepRunner _stepRunner;
     private readonly InputWaiter _inputWaiter;
     private readonly CancellationTokenSource _runLoopCancellation;
     private readonly bool _disableRunLoop;
     private Task? _runLoopTask;
-    private RunStatus _runStatus = RunStatus.NotStarted;
+    private volatile RunStatus _runStatus = RunStatus.NotStarted;
+
     private int _completionEpoch; // Tracks which completion signal belongs to which consumer iteration
 
     public StreamingRunEventStream(ISuperStepRunner stepRunner, bool disableRunLoop = false)
@@ -58,30 +56,61 @@ internal sealed class StreamingRunEventStream : IRunEventStream
     private async Task RunLoopAsync(CancellationToken cancellationToken)
     {
         using CancellationTokenSource errorSource = new();
-        CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(errorSource.Token, cancellationToken);
+        using CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(errorSource.Token, cancellationToken);
 
         // Subscribe to events - they will flow directly to the channel as they're raised
         this._stepRunner.OutgoingEvents.EventRaised += OnEventRaisedAsync;
 
-        using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowRun);
-        activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.RunId, this._stepRunner.RunId);
+        // Re-emit any pending external requests that were restored from a checkpoint
+        // before this subscription was active. For non-resume starts this is a no-op.
+        await this._stepRunner.RepublishPendingEventsAsync(linkedSource.Token).ConfigureAwait(false);
+
+        // Start the session-level activity that spans the entire run loop lifetime.
+        // Individual run-stage activities are nested within this session activity.
+        Activity? sessionActivity = this._stepRunner.TelemetryContext.StartWorkflowSessionActivity();
+        sessionActivity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId)
+                        .SetTag(Tags.SessionId, this._stepRunner.SessionId);
+
+        Activity? runActivity = null;
+
+        sessionActivity?.AddEvent(new ActivityEvent(EventNames.SessionStarted));
 
         try
         {
-            // Wait for the first input before starting
-            // The consumer will call EnqueueMessageAsync which signals the run loop
+            // Wait for the first input before starting.
+            // The consumer will call EnqueueMessageAsync which signals the run loop.
+            // Note: AsyncRunHandle also signals here on checkpoint resume when there are
+            // already pending requests, so the first iteration can emit a PendingRequests
+            // halt signal even without unprocessed messages.
             await this._inputWaiter.WaitForInputAsync(cancellationToken: linkedSource.Token).ConfigureAwait(false);
-
-            this._runStatus = RunStatus.Running;
-            activity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
 
             while (!linkedSource.Token.IsCancellationRequested)
             {
+                // Start a new run-stage activity for this input→processing→halt cycle
+                runActivity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
+                runActivity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId)
+                            .SetTag(Tags.SessionId, this._stepRunner.SessionId);
+                runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
+
                 // Run all available supersteps continuously
                 // Events are streamed out in real-time as they happen via the event handler
-                while (this._stepRunner.HasUnprocessedMessages && !linkedSource.Token.IsCancellationRequested)
+                if (this._stepRunner.HasUnprocessedMessages)
                 {
-                    await this._stepRunner.RunSuperStepAsync(linkedSource.Token).ConfigureAwait(false);
+                    // Flip to Running only when there's actual work to process.
+                    // This is intentionally inside the HasUnprocessedMessages branch so
+                    // that stale input signals cannot transiently flip status back to
+                    // Running after a prior halt has already been observed by callers
+                    // (e.g. Run.ResumeAsync returning after reading an Idle halt signal).
+                    this._runStatus = RunStatus.Running;
+
+                    // Emit WorkflowStartedEvent only when there's actual work to process
+                    // This avoids spurious events on timeout-only loop iterations
+                    await this._eventChannel.Writer.WriteAsync(new WorkflowStartedEvent(), linkedSource.Token).ConfigureAwait(false);
+
+                    while (this._stepRunner.HasUnprocessedMessages && !linkedSource.Token.IsCancellationRequested)
+                    {
+                        await this._stepRunner.RunSuperStepAsync(linkedSource.Token).ConfigureAwait(false);
+                    }
                 }
 
                 // Update status based on what's waiting
@@ -96,12 +125,18 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 RunStatus capturedStatus = this._runStatus;
                 await this._eventChannel.Writer.WriteAsync(new InternalHaltSignal(currentEpoch, capturedStatus), linkedSource.Token).ConfigureAwait(false);
 
+                // Close the run-stage activity when processing halts.
+                // A new run activity will be created when the next input arrives.
+                if (runActivity is not null)
+                {
+                    runActivity.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+                    runActivity.Dispose();
+                    runActivity = null;
+                }
+
                 // Wait for next input from the consumer
                 // Works for both Idle (no work) and PendingRequests (waiting for responses)
-                await this._inputWaiter.WaitForInputAsync(TimeSpan.FromSeconds(1), linkedSource.Token).ConfigureAwait(false);
-
-                // When signaled, resume running
-                this._runStatus = RunStatus.Running;
+                await this._inputWaiter.WaitForInputAsync(linkedSource.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -110,14 +145,26 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         }
         catch (Exception ex)
         {
-            if (activity != null)
+            // Record error on the run-stage activity if one is active
+            if (runActivity is not null)
             {
-                activity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
+                runActivity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
                              { Tags.ErrorType, ex.GetType().FullName },
-                             { Tags.BuildErrorMessage, ex.Message },
+                             { Tags.ErrorMessage, ex.Message },
                         }));
-                activity.CaptureException(ex);
+                runActivity.CaptureException(ex);
             }
+
+            // Record error on the session activity
+            if (sessionActivity is not null)
+            {
+                sessionActivity.AddEvent(new ActivityEvent(EventNames.SessionError, tags: new() {
+                             { Tags.ErrorType, ex.GetType().FullName },
+                             { Tags.ErrorMessage, ex.Message },
+                        }));
+                sessionActivity.CaptureException(ex);
+            }
+
             await this._eventChannel.Writer.WriteAsync(new WorkflowErrorEvent(ex), linkedSource.Token).ConfigureAwait(false);
         }
         finally
@@ -127,7 +174,20 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
             // Mark as ended when run loop exits
             this._runStatus = RunStatus.Ended;
-            activity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+
+            // Stop the run-stage activity if not already stopped (e.g. on cancellation or error)
+            if (runActivity is not null)
+            {
+                runActivity.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+                runActivity.Dispose();
+            }
+
+            // Stop the session activity — the session always ends when the run loop exits
+            if (sessionActivity is not null)
+            {
+                sessionActivity.AddEvent(new ActivityEvent(EventNames.SessionCompleted));
+                sessionActivity.Dispose();
+            }
         }
 
         async ValueTask OnEventRaisedAsync(object? sender, WorkflowEvent e)
@@ -155,7 +215,10 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Get the current epoch - we'll only respond to completion signals from this epoch or later
-        int myEpoch = Volatile.Read(ref this._completionEpoch) + 1;
+        int currentEpoch = Volatile.Read(ref this._completionEpoch);
+
+        bool expectingFreshWork = this._stepRunner.HasUnprocessedMessages || this._runStatus == RunStatus.Running;
+        int myEpoch = expectingFreshWork ? currentEpoch + 1 : currentEpoch;
 
         // Use custom async enumerable to avoid exceptions on cancellation.
         NonThrowingChannelReaderAsyncEnumerable<WorkflowEvent> eventStream = new(this._eventChannel.Reader);
@@ -229,10 +292,6 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         {
             // Discard each event (including InternalCompletionSignals)
         }
-
-        // After clearing, signal the run loop to continue if needed
-        // The run loop will send a new completion signal when it finishes processing from the restored state
-        this.SignalInput();
     }
 
     public async ValueTask StopAsync()

@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/orchestrations/group_chat.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Side-by-side group chat orchestrations for Agent Framework and Semantic Kernel."""
@@ -7,10 +16,12 @@ import sys
 from collections.abc import Sequence
 from typing import Any, cast
 
-from agent_framework import ChatAgent, ChatMessage, GroupChatBuilder, WorkflowOutputEvent
-from agent_framework.azure import AzureOpenAIChatClient, AzureOpenAIResponsesClient
+from agent_framework import Agent, AgentResponseUpdate, Message
+from agent_framework.openai import OpenAIChatCompletionClient
+from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
-from semantic_kernel.agents import Agent, ChatCompletionAgent, GroupChatOrchestration
+from dotenv import load_dotenv
+from semantic_kernel.agents import ChatCompletionAgent, GroupChatOrchestration
 from semantic_kernel.agents.orchestration.group_chat import (
     BooleanResult,
     GroupChatManager,
@@ -31,6 +42,9 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
+# Load environment variables from .env file
+load_dotenv()
+
 
 DISCUSSION_TOPIC = "What are the essential steps for launching a community hackathon?"
 
@@ -40,7 +54,7 @@ DISCUSSION_TOPIC = "What are the essential steps for launching a community hacka
 ######################################################################
 
 
-def build_semantic_kernel_agents() -> list[Agent]:
+def build_semantic_kernel_agents() -> list[ChatCompletionAgent]:
     credential = AzureCliCredential()
 
     researcher = ChatCompletionAgent(
@@ -68,30 +82,30 @@ def build_semantic_kernel_agents() -> list[Agent]:
 class ChatCompletionGroupChatManager(GroupChatManager):
     """Group chat manager that delegates orchestration decisions to an Azure OpenAI deployment."""
 
-    service: ChatCompletionClientBase
-    topic: str
-
     termination_prompt: str = (
-        "You are coordinating a conversation about '{{topic}}'. "
+        "You are coordinating a conversation about '{{$topic}}'. "
         "Decide if the discussion has produced a solid answer. "
         'Respond using JSON: {"result": true|false, "reason": "..."}.'
     )
 
     selection_prompt: str = (
-        "You are coordinating a conversation about '{{topic}}'. "
+        "You are coordinating a conversation about '{{$topic}}'. "
         "Choose the next participant by returning JSON with keys (result, reason). "
-        "The result must match one of: {{participants}}."
+        "The result must match one of: {{$participants}}."
     )
 
     summary_prompt: str = (
-        "You have just finished a discussion about '{{topic}}'. "
+        "You have just finished a discussion about '{{$topic}}'. "
         "Summarize the plan and highlight key takeaways. Return JSON with keys (result, reason) where "
         "result is the final response text."
     )
 
-    def __init__(self, *, topic: str, service: ChatCompletionClientBase) -> None:
-        super().__init__(topic=topic, service=service)
+    def __init__(self, *, topic: str, service: ChatCompletionClientBase, max_rounds: int | None = None) -> None:
+        super().__init__(max_rounds=max_rounds)
+
         self._round_robin_index = 0
+        self._topic = topic
+        self._service = service
 
     async def _render_prompt(self, template: str, **kwargs: Any) -> str:
         prompt_template = KernelPromptTemplate(prompt_template_config=PromptTemplateConfig(template=template))
@@ -103,7 +117,7 @@ class ChatCompletionGroupChatManager(GroupChatManager):
 
     @override
     async def should_terminate(self, chat_history: ChatHistory) -> BooleanResult:
-        rendered_prompt = await self._render_prompt(self.termination_prompt, topic=self.topic)
+        rendered_prompt = await self._render_prompt(self.termination_prompt, topic=self._topic)
         chat_history.messages.insert(
             0,
             ChatMessageContent(role=AuthorRole.SYSTEM, content=rendered_prompt),
@@ -112,12 +126,11 @@ class ChatCompletionGroupChatManager(GroupChatManager):
             ChatMessageContent(role=AuthorRole.USER, content="Decide if the discussion is complete."),
         )
 
-        response = await self.service.get_chat_message_content(
+        response = await self._service.get_chat_message_content(
             chat_history,
             settings=PromptExecutionSettings(response_format=BooleanResult),
         )
-        result = BooleanResult.model_validate_json(response.content)
-        return result
+        return BooleanResult.model_validate_json(response.content)  # type: ignore
 
     @override
     async def select_next_agent(
@@ -127,7 +140,7 @@ class ChatCompletionGroupChatManager(GroupChatManager):
     ) -> StringResult:
         rendered_prompt = await self._render_prompt(
             self.selection_prompt,
-            topic=self.topic,
+            topic=self._topic,
             participants=", ".join(participant_descriptions.keys()),
         )
         chat_history.messages.insert(
@@ -138,18 +151,18 @@ class ChatCompletionGroupChatManager(GroupChatManager):
             ChatMessageContent(role=AuthorRole.USER, content="Pick the next participant to speak."),
         )
 
-        response = await self.service.get_chat_message_content(
+        response = await self._service.get_chat_message_content(
             chat_history,
             settings=PromptExecutionSettings(response_format=StringResult),
         )
-        result = StringResult.model_validate_json(response.content)
+        result = StringResult.model_validate_json(response.content)  # type: ignore
         if result.result not in participant_descriptions:
             raise RuntimeError(f"Unknown participant selected: {result.result}")
         return result
 
     @override
     async def filter_results(self, chat_history: ChatHistory) -> MessageResult:
-        rendered_prompt = await self._render_prompt(self.summary_prompt, topic=self.topic)
+        rendered_prompt = await self._render_prompt(self.summary_prompt, topic=self._topic)
         chat_history.messages.insert(
             0,
             ChatMessageContent(role=AuthorRole.SYSTEM, content=rendered_prompt),
@@ -158,11 +171,11 @@ class ChatCompletionGroupChatManager(GroupChatManager):
             ChatMessageContent(role=AuthorRole.USER, content="Summarize the plan."),
         )
 
-        response = await self.service.get_chat_message_content(
+        response = await self._service.get_chat_message_content(
             chat_history,
             settings=PromptExecutionSettings(response_format=StringResult),
         )
-        string_result = StringResult.model_validate_json(response.content)
+        string_result = StringResult.model_validate_json(response.content)  # type: ignore
         return MessageResult(
             result=ChatMessageContent(role=AuthorRole.ASSISTANT, content=string_result.result),
             reason=string_result.reason,
@@ -184,7 +197,7 @@ async def sk_agent_response_callback(message: ChatMessageContent | Sequence[Chat
 async def run_semantic_kernel_example(task: str) -> str:
     credential = AzureCliCredential()
     orchestration = GroupChatOrchestration(
-        members=build_semantic_kernel_agents(),
+        members=build_semantic_kernel_agents(),  # type: ignore
         manager=ChatCompletionGroupChatManager(
             topic=DISCUSSION_TOPIC,
             service=AzureChatCompletion(credential=credential),
@@ -212,43 +225,51 @@ async def run_semantic_kernel_example(task: str) -> str:
 
 
 async def run_agent_framework_example(task: str) -> str:
-    credential = AzureCliCredential()
+    client = OpenAIChatCompletionClient(credential=AzureCliCredential())
 
-    researcher = ChatAgent(
+    researcher = Agent(
         name="Researcher",
         description="Collects background information and potential resources.",
         instructions=(
             "Gather concise facts or considerations that help plan a community hackathon. "
             "Keep your responses factual and scannable."
         ),
-        chat_client=AzureOpenAIChatClient(credential=credential),
+        client=client,
     )
 
-    planner = ChatAgent(
+    planner = Agent(
         name="Planner",
         description="Turns the collected notes into a concrete action plan.",
         instructions=("Propose a structured action plan that accounts for logistics, roles, and timeline."),
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+        client=client,
     )
 
-    workflow = (
-        GroupChatBuilder()
-        .with_orchestrator(agent=AzureOpenAIChatClient(credential=credential).as_agent())
-        .participants([researcher, planner])
-        .build()
-    )
+    workflow = GroupChatBuilder(
+        participants=[researcher, planner],
+        orchestrator_agent=Agent(client=client),
+        max_rounds=8,
+        intermediate_outputs=True,
+    ).build()
 
-    final_response = ""
-    async for event in workflow.run_stream(task):
-        if isinstance(event, WorkflowOutputEvent):
-            data = event.data
-            if isinstance(data, list) and len(data) > 0:
-                # Get the final message from the conversation
-                final_message = data[-1]
-                final_response = final_message.text or "" if isinstance(final_message, ChatMessage) else str(data)
+    output_messages: list[Message] = []
+    last_message_id: str | None = None
+    async for event in workflow.run(task, stream=True):
+        if event.type == "output":
+            if isinstance(event.data, AgentResponseUpdate):
+                if event.data.message_id != last_message_id:
+                    last_message_id = event.data.message_id
+                    print(f"{event.data.author_name}: {event.data.text}", end="")
+                else:
+                    print(event.data.text, end="")
             else:
-                final_response = str(data)
-    return final_response
+                output_messages.extend(cast(list[Message], event.data))
+                for message in output_messages:
+                    print(f"[{message.author_name}] {message.text}")
+
+    if output_messages:
+        return output_messages[-1].text
+
+    return ""
 
 
 async def main() -> None:

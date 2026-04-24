@@ -1,5 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Compliance.Redaction;
+
 namespace Microsoft.Agents.AI;
 
 /// <summary>
@@ -42,8 +47,59 @@ public sealed class ChatHistoryMemoryProviderOptions
     /// Gets or sets a value indicating whether sensitive data such as user ids and user messages may appear in logs.
     /// </summary>
     /// <value>Defaults to <see langword="false"/>.</value>
+    /// <remarks>
+    /// When set to <see langword="true"/>, sensitive data is passed through to logs unchanged and any
+    /// configured <see cref="Redactor"/> is ignored. This property takes precedence over <see cref="Redactor"/>.
+    /// </remarks>
     public bool EnableSensitiveTelemetryData { get; set; }
 
+    /// <summary>
+    /// Gets or sets a custom <see cref="Redactor"/> used to redact sensitive data in log output.
+    /// </summary>
+    /// <value>
+    /// When <see langword="null"/> (the default), sensitive data is replaced with a placeholder.
+    /// When set, this redactor is used to transform sensitive values before they are logged.
+    /// Ignored when <see cref="EnableSensitiveTelemetryData"/> is <see langword="true"/>.
+    /// </value>
+    public Redactor? Redactor { get; set; }
+
+    /// <summary>
+    /// Gets or sets the key used to store provider state in the <see cref="AgentSession.StateBag"/>.
+    /// </summary>
+    /// <value>
+    /// Defaults to the provider's type name. Override this if you need multiple
+    /// <see cref="ChatHistoryMemoryProvider"/> instances with separate state in the same session.
+    /// </value>
+    public string? StateKey { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional filter function applied to request messages when constructing the search text to use
+    /// to search for relevant chat history during <see cref="AIContextProvider.InvokingAsync"/>.
+    /// </summary>
+    /// <value>
+    /// When <see langword="null"/>, the provider defaults to including only
+    /// <see cref="AgentRequestMessageSourceType.External"/> messages.
+    /// </value>
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? SearchInputMessageFilter { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional filter function applied to request messages when storing recent chat history
+    /// during <see cref="AIContextProvider.InvokedAsync"/>.
+    /// </summary>
+    /// <value>
+    /// When <see langword="null"/>, the provider defaults to including only
+    /// <see cref="AgentRequestMessageSourceType.External"/> messages.
+    /// </value>
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputRequestMessageFilter { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional filter function applied to response messages when storing recent chat history
+    /// during <see cref="AIContextProvider.InvokedAsync"/>.
+    /// </summary>
+    /// <value>
+    /// When <see langword="null"/>, the provider does not apply any filtering and includes all response messages.
+    /// </value>
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputResponseMessageFilter { get; set; }
     /// <summary>
     /// Behavior choices for the provider.
     /// </summary>

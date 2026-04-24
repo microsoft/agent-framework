@@ -7,11 +7,19 @@ import json
 import logging
 from dataclasses import fields, is_dataclass
 from types import UnionType
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import Any, Union, cast, get_args, get_origin, get_type_hints
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 
 logger = logging.getLogger(__name__)
+
+
+def _string_key_dict(value: object) -> dict[str, Any] | None:
+    """Cast value to a dict."""
+    if not isinstance(value, dict):
+        return None
+    return cast(dict[str, Any], value)
+
 
 # ============================================================================
 # Agent Metadata Extraction
@@ -39,30 +47,29 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
     # Try to get instructions
     if hasattr(entity_object, "default_options"):
         chat_opts = entity_object.default_options
-        if isinstance(chat_opts, dict):
-            if "instructions" in chat_opts:
-                metadata["instructions"] = chat_opts.get("instructions")
+        chat_opts_dict = _string_key_dict(chat_opts)
+        if chat_opts_dict is not None:
+            if "instructions" in chat_opts_dict:
+                metadata["instructions"] = chat_opts_dict.get("instructions")
         elif hasattr(chat_opts, "instructions"):
             metadata["instructions"] = chat_opts.instructions
 
-    # Try to get model - check both default_options and chat_client
+    # Try to get model - check both default_options and client
     if hasattr(entity_object, "default_options"):
         chat_opts = entity_object.default_options
-        if isinstance(chat_opts, dict):
-            if chat_opts.get("model_id"):
-                metadata["model"] = chat_opts.get("model_id")
-        elif hasattr(chat_opts, "model_id") and chat_opts.model_id:
-            metadata["model"] = chat_opts.model_id
-    if (
-        metadata["model"] is None
-        and hasattr(entity_object, "chat_client")
-        and hasattr(entity_object.chat_client, "model_id")
-    ):
-        metadata["model"] = entity_object.chat_client.model_id
+        chat_opts_dict = _string_key_dict(chat_opts)
+        if chat_opts_dict is not None:
+            model = chat_opts_dict.get("model")
+            if model:
+                metadata["model"] = model
+        elif hasattr(chat_opts, "model") and chat_opts.model:
+            metadata["model"] = chat_opts.model
+    if metadata["model"] is None and hasattr(entity_object, "client") and hasattr(entity_object.client, "model"):
+        metadata["model"] = entity_object.client.model
 
     # Try to get chat client type
-    if hasattr(entity_object, "chat_client"):
-        metadata["chat_client_type"] = entity_object.chat_client.__class__.__name__
+    if hasattr(entity_object, "client"):
+        metadata["chat_client_type"] = entity_object.client.__class__.__name__
 
     # Try to get context providers
     if (
@@ -116,7 +123,7 @@ def extract_executor_message_types(executor: Any) -> list[Any]:
         try:
             handlers = executor._handlers
             if isinstance(handlers, dict):
-                message_types = list(handlers.keys())
+                message_types = list(handlers.keys())  # type: ignore[arg-type]  # pyright: ignore[reportUnknownArgumentType]
         except Exception as exc:  # pragma: no cover - defensive logging path
             logger.debug(f"Failed to read executor handlers: {exc}")
 
@@ -124,8 +131,8 @@ def extract_executor_message_types(executor: Any) -> list[Any]:
 
 
 def _contains_chat_message(type_hint: Any) -> bool:
-    """Check whether the provided type hint directly or indirectly references ChatMessage."""
-    if type_hint is ChatMessage:
+    """Check whether the provided type hint directly or indirectly references Message."""
+    if type_hint is Message:
         return True
 
     origin = get_origin(type_hint)
@@ -141,7 +148,7 @@ def _contains_chat_message(type_hint: Any) -> bool:
 def select_primary_input_type(message_types: list[Any]) -> Any | None:
     """Choose the most user-friendly input type for workflow inputs.
 
-    Prefers ChatMessage (or containers thereof) and then falls back to primitives.
+    Prefers Message (or containers thereof) and then falls back to primitives.
 
     Args:
         message_types: List of possible message types
@@ -154,7 +161,7 @@ def select_primary_input_type(message_types: list[Any]) -> Any | None:
 
     for message_type in message_types:
         if _contains_chat_message(message_type):
-            return ChatMessage
+            return Message
 
     preferred = (str, dict)
 
@@ -370,11 +377,10 @@ def extract_response_type_from_executor(executor: Any, request_type: type) -> ty
                     _, second_param_type = param_items[1] if len(param_items) > 1 else (None, None)
 
                     # Check if first param matches request_type
-                    first_matches_request = first_param_type == request_type or (
-                        hasattr(first_param_type, "__name__")
-                        and hasattr(request_type, "__name__")
-                        and first_param_type.__name__ == request_type.__name__
-                    )
+                    first_matches_request = first_param_type == request_type
+                    if not first_matches_request and isinstance(first_param_type, type):
+                        request_type_name = request_type.__name__
+                        first_matches_request = first_param_type.__name__ == request_type_name
 
                     # Verify we have a matching request type and valid response type (must be a type class)
                     if first_matches_request and second_param_type is not None and isinstance(second_param_type, type):
@@ -427,7 +433,7 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
     if hasattr(input_type, "model_json_schema"):
         return input_type.model_json_schema()  # type: ignore
 
-    # 3. SerializationMixin classes (ChatMessage, etc.)
+    # 3. SerializationMixin classes (Message, etc.)
     if is_serialization_mixin(input_type):
         return generate_schema_from_serialization_mixin(input_type)
 
@@ -436,7 +442,7 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
         return generate_schema_from_dataclass(input_type)
 
     # 5. Fallback to string
-    type_name = getattr(input_type, "__name__", str(input_type))
+    type_name = input_type.__name__ if isinstance(input_type, type) else str(cast(Any, input_type))
     return {"type": "string", "description": f"Input type: {type_name}"}
 
 
@@ -470,11 +476,49 @@ def parse_input_for_type(input_data: Any, target_type: type) -> Any:
         return _parse_string_input(input_data, target_type)
 
     # Handle dict input
-    if isinstance(input_data, dict):
-        return _parse_dict_input(input_data, target_type)
+    parsed_dict = _string_key_dict(input_data)
+    if parsed_dict is not None:
+        return _parse_dict_input(parsed_dict, target_type)
 
     # Fallback: return original
     return input_data
+
+
+def _build_message_from_legacy_payload(input_data: str | dict[str, Any]) -> Message:
+    """Convert raw DevUI input into a framework Message.
+
+    This preserves DevUI compatibility for older payloads that still send
+    ``{"role": "...", "text": "..."}`` instead of the framework-native
+    ``{"role": "...", "contents": [...]}`` shape.
+    """
+    if isinstance(input_data, str):
+        return Message(role="user", contents=[input_data])
+
+    role = input_data.get("role", "user")
+    role = role if isinstance(role, str) else str(role)
+
+    if "contents" in input_data:
+        contents = input_data["contents"]
+    else:
+        contents = None
+        for field in ("text", "message", "content", "input", "data"):
+            if field in input_data:
+                contents = input_data[field]
+                break
+
+    if contents is None:
+        contents_list: list[Any] = []
+    elif isinstance(contents, list):
+        contents_list = contents  # type: ignore[reportUnknownVariableType]
+    else:
+        contents_list = [contents]
+
+    kwargs: dict[str, Any] = {}
+    for field in ("author_name", "message_id", "additional_properties", "raw_representation"):
+        if field in input_data:
+            kwargs[field] = input_data[field]
+
+    return Message(role=role, contents=contents_list, **kwargs)
 
 
 def _parse_string_input(input_str: str, target_type: type) -> Any:
@@ -521,9 +565,17 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
         except Exception as e:
             logger.debug(f"Failed to parse string as Pydantic model: {e}")
 
-    # SerializationMixin (like ChatMessage)
+    # SerializationMixin (like Message)
     if is_serialization_mixin(target_type):
         try:
+            if target_type is Message:
+                if input_str.strip().startswith("{"):
+                    data = json.loads(input_str)
+                    parsed_dict = _string_key_dict(data)
+                    if parsed_dict is not None:
+                        return _build_message_from_legacy_payload(parsed_dict)
+                return _build_message_from_legacy_payload(input_str)
+
             # Try parsing as JSON dict first
             if input_str.strip().startswith("{"):
                 data = json.loads(input_str)
@@ -531,20 +583,10 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
                     return target_type.from_dict(data)  # type: ignore
                 return target_type(**data)  # type: ignore
 
-            # For ChatMessage specifically: create from text
-            # Try common field patterns
+            # Try other common fields
             common_fields = ["text", "message", "content"]
             sig = inspect.signature(target_type)
             params = list(sig.parameters.keys())
-
-            # If it has 'text' param, use it
-            if "text" in params:
-                try:
-                    return target_type(role="user", text=input_str)  # type: ignore
-                except Exception as e:
-                    logger.debug(f"Failed to create SerializationMixin with text field: {e}")
-
-            # Try other common fields
             for field in common_fields:
                 if field in params:
                     try:
@@ -624,6 +666,8 @@ def _parse_dict_input(input_dict: dict[str, Any], target_type: type) -> Any:
     # SerializationMixin
     if is_serialization_mixin(target_type):
         try:
+            if target_type is Message:
+                return _build_message_from_legacy_payload(input_dict)
             if hasattr(target_type, "from_dict"):
                 return target_type.from_dict(input_dict)  # type: ignore
             return target_type(**input_dict)  # type: ignore

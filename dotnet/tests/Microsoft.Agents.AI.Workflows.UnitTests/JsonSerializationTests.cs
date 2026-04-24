@@ -672,4 +672,153 @@ public class JsonSerializationTests
 
         ValidateCheckpoint(retrievedCheckpoint, prototype);
     }
+
+    [Fact]
+    public void Test_SessionState_JsonRoundtrip_WithPendingRequests()
+    {
+        // Arrange
+        Dictionary<string, ExternalRequest> pendingRequests = new()
+        {
+            ["call-1"] = TestExternalRequest,
+            ["call-2"] = ExternalRequest.Create(TestPort, "Request2", "OtherData"),
+        };
+
+        WorkflowSession.SessionState prototype = new(
+            sessionId: "test-session-123",
+            lastCheckpoint: TestParentCheckpointInfo,
+            pendingRequests: pendingRequests);
+
+        // Act
+        WorkflowSession.SessionState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.SessionId.Should().Be(prototype.SessionId);
+        result.LastCheckpoint.Should().Be(prototype.LastCheckpoint);
+        result.StateBag.Should().NotBeNull();
+        result.PendingRequests.Should().NotBeNull()
+            .And.HaveCount(pendingRequests.Count);
+
+        foreach (string key in pendingRequests.Keys)
+        {
+            result.PendingRequests.Should().ContainKey(key);
+            ValidateExternalRequest(result.PendingRequests![key], pendingRequests[key]);
+        }
+    }
+
+    [Fact]
+    public void Test_SessionState_JsonRoundtrip_WithoutPendingRequests()
+    {
+        // Arrange
+        WorkflowSession.SessionState prototype = new(
+            sessionId: "test-session-456",
+            lastCheckpoint: null);
+
+        // Act
+        WorkflowSession.SessionState result = RunJsonRoundtrip(prototype);
+
+        // Assert
+        result.SessionId.Should().Be(prototype.SessionId);
+        result.LastCheckpoint.Should().BeNull();
+        result.PendingRequests.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Verifies that the default behavior (without AllowOutOfOrderMetadataProperties) fails
+    /// when $type metadata is not the first property, demonstrating the PostgreSQL jsonb issue.
+    /// See: https://github.com/microsoft/agent-framework/issues/2962
+    /// </summary>
+    [Fact]
+    public void Test_OutOfOrderMetadataProperties_WithoutOption_Fails()
+    {
+        // Arrange
+        JsonMarshaller marshaller = new();
+        EdgeInfo edgeInfo = TestEdgeInfo_DirectNoCondition;
+
+        // Serialize to JSON
+        JsonElement serialized = marshaller.Marshal(edgeInfo);
+        string json = serialized.GetRawText();
+
+        // Simulate PostgreSQL jsonb behavior: reorder properties so $type is not first
+        string reorderedJson = ReorderJsonPropertiesToMoveTypeDiscriminatorLast(json);
+
+        // Act & Assert - Without the option, deserialization should fail
+        JsonElement reorderedElement = JsonDocument.Parse(reorderedJson).RootElement;
+        Action act = () => marshaller.Marshal<EdgeInfo>(reorderedElement);
+
+        act.Should().Throw<JsonException>();
+    }
+
+    /// <summary>
+    /// Simulates PostgreSQL jsonb behavior where property order is not preserved,
+    /// causing $type metadata to not be the first property.
+    /// This test verifies that deserialization works when AllowOutOfOrderMetadataProperties is enabled.
+    /// See: https://github.com/microsoft/agent-framework/issues/2962
+    /// </summary>
+    [Fact]
+    public void Test_OutOfOrderMetadataProperties_WithOptionEnabled_Succeeds()
+    {
+        // Arrange
+        EdgeInfo edgeInfo = TestEdgeInfo_DirectNoCondition;
+
+        // Serialize to JSON using standard marshaller
+        JsonMarshaller marshaller = new();
+        JsonElement serialized = marshaller.Marshal(edgeInfo);
+        string json = serialized.GetRawText();
+
+        // Simulate PostgreSQL jsonb behavior: reorder properties so $type is not first
+        string reorderedJson = ReorderJsonPropertiesToMoveTypeDiscriminatorLast(json);
+        JsonElement reorderedElement = JsonDocument.Parse(reorderedJson).RootElement;
+
+        // Act - Deserialize with AllowOutOfOrderMetadataProperties enabled via JsonSerializerOptions
+        JsonSerializerOptions options = new() { AllowOutOfOrderMetadataProperties = true };
+        JsonMarshaller marshallerWithOption = new(options);
+        EdgeInfo deserialized = marshallerWithOption.Marshal<EdgeInfo>(reorderedElement);
+
+        // Assert
+        deserialized.Should().Match(edgeInfo.CreatePolyValidator());
+    }
+
+    private static string ReorderJsonPropertiesToMoveTypeDiscriminatorLast(string json)
+    {
+        // Parse JSON, extract $type, rebuild with $type at end
+        using JsonDocument doc = JsonDocument.Parse(json);
+        JsonElement root = doc.RootElement;
+
+        Dictionary<string, JsonElement> properties = [];
+        JsonElement? typeValue = null;
+
+        foreach (JsonProperty prop in root.EnumerateObject())
+        {
+            if (prop.Name == "$type")
+            {
+                typeValue = prop.Value.Clone();
+            }
+            else
+            {
+                properties[prop.Name] = prop.Value.Clone();
+            }
+        }
+
+        // Rebuild JSON with $type last
+        using System.IO.MemoryStream ms = new();
+        using (Utf8JsonWriter writer = new(ms))
+        {
+            writer.WriteStartObject();
+            foreach (KeyValuePair<string, JsonElement> kvp in properties)
+            {
+                writer.WritePropertyName(kvp.Key);
+                kvp.Value.WriteTo(writer);
+            }
+
+            if (typeValue.HasValue)
+            {
+                writer.WritePropertyName("$type");
+                typeValue.Value.WriteTo(writer);
+            }
+
+            writer.WriteEndObject();
+        }
+
+        return System.Text.Encoding.UTF8.GetString(ms.ToArray());
+    }
 }

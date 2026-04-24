@@ -158,7 +158,7 @@ class TestRequestInfoMixin:
         ):
             DuplicateExecutor()
 
-    def test_response_handler_function_callable(self):
+    async def test_response_handler_function_callable(self):
         """Test that response handlers can actually be called."""
 
         class TestExecutor(Executor):
@@ -182,7 +182,7 @@ class TestRequestInfoMixin:
         response_handler_func = executor._response_handlers[(str, int)]  # type: ignore[reportAttributeAccessIssue]
 
         # Create a mock context - we'll just use None since the handler doesn't use it
-        asyncio.run(response_handler_func("test_request", 42, None))  # type: ignore[reportArgumentType]
+        await response_handler_func("test_request", 42, None)  # type: ignore[reportArgumentType]
 
         assert executor.handled_request == "test_request"
         assert executor.handled_response == 42
@@ -303,7 +303,7 @@ class TestRequestInfoMixin:
         assert len(response_handlers) == 1
         assert (str, int) in response_handlers
 
-    def test_same_request_type_different_response_types(self):
+    async def test_same_request_type_different_response_types(self):
         """Test that handlers with same request type but different response types are distinct."""
 
         class TestExecutor(Executor):
@@ -350,15 +350,15 @@ class TestRequestInfoMixin:
         assert str_dict_handler is not None
 
         # Test that handlers are called correctly
-        asyncio.run(str_int_handler(42, None))  # type: ignore[reportArgumentType]
-        asyncio.run(str_bool_handler(True, None))  # type: ignore[reportArgumentType]
-        asyncio.run(str_dict_handler({"key": "value"}, None))  # type: ignore[reportArgumentType]
+        await str_int_handler(42, None)  # type: ignore[reportArgumentType]
+        await str_bool_handler(True, None)  # type: ignore[reportArgumentType]
+        await str_dict_handler({"key": "value"}, None)  # type: ignore[reportArgumentType]
 
         assert executor.str_int_handler_called
         assert executor.str_bool_handler_called
         assert executor.str_dict_handler_called
 
-    def test_different_request_types_same_response_type(self):
+    async def test_different_request_types_same_response_type(self):
         """Test that handlers with different request types but same response type are distinct."""
 
         class TestExecutor(Executor):
@@ -407,9 +407,9 @@ class TestRequestInfoMixin:
         assert list_int_handler is not None
 
         # Test that handlers are called correctly
-        asyncio.run(str_int_handler(42, None))  # type: ignore[reportArgumentType]
-        asyncio.run(dict_int_handler(42, None))  # type: ignore[reportArgumentType]
-        asyncio.run(list_int_handler(42, None))  # type: ignore[reportArgumentType]
+        await str_int_handler(42, None)  # type: ignore[reportArgumentType]
+        await dict_int_handler(42, None)  # type: ignore[reportArgumentType]
+        await list_int_handler(42, None)  # type: ignore[reportArgumentType]
 
         assert executor.str_int_handler_called
         assert executor.dict_int_handler_called
@@ -794,7 +794,7 @@ class TestResponseHandlerExplicitTypes:
         """Test response_handler with explicit request and response types."""
 
         @response_handler(request=str, response=int)
-        async def test_handler(self, original_request, response, ctx) -> None:
+        async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
             pass
 
         spec = test_handler._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
@@ -806,7 +806,7 @@ class TestResponseHandlerExplicitTypes:
         """Test response_handler with explicit output and workflow_output types."""
 
         @response_handler(request=str, response=int, output=bool, workflow_output=float)
-        async def test_handler(self, original_request, response, ctx) -> None:
+        async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
             pass
 
         spec = test_handler._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
@@ -818,8 +818,8 @@ class TestResponseHandlerExplicitTypes:
     def test_response_handler_with_union_types(self):
         """Test response_handler with union types."""
 
-        @response_handler(request=str | int, response=bool | float)
-        async def test_handler(self, original_request, response, ctx) -> None:
+        @response_handler(request=str | int, response=bool | float)  # pyright: ignore[reportArgumentType]
+        async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
             pass
 
         spec = test_handler._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
@@ -830,7 +830,7 @@ class TestResponseHandlerExplicitTypes:
         """Test response_handler with string forward references."""
 
         @response_handler(request="str", response="int")
-        async def test_handler(self, original_request, response, ctx) -> None:
+        async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
             pass
 
         spec = test_handler._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
@@ -842,7 +842,7 @@ class TestResponseHandlerExplicitTypes:
         with pytest.raises(ValueError, match="must specify 'request' type"):
 
             @response_handler(response=int)
-            async def test_handler(self, original_request, response, ctx) -> None:
+            async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:  # pyright: ignore[reportUnusedFunction]
                 pass
 
     def test_response_handler_explicit_missing_response_raises_error(self):
@@ -850,7 +850,7 @@ class TestResponseHandlerExplicitTypes:
         with pytest.raises(ValueError, match="must specify 'response' type"):
 
             @response_handler(request=str)
-            async def test_handler(self, original_request, response, ctx) -> None:
+            async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:  # pyright: ignore[reportUnusedFunction]
                 pass
 
     def test_response_handler_explicit_only_output_raises_error(self):
@@ -858,7 +858,7 @@ class TestResponseHandlerExplicitTypes:
         with pytest.raises(ValueError, match="must specify 'request' type"):
 
             @response_handler(output=bool)
-            async def test_handler(self, original_request, response, ctx) -> None:
+            async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:  # pyright: ignore[reportUnusedFunction]
                 pass
 
     def test_executor_with_explicit_response_handlers(self):
@@ -873,7 +873,7 @@ class TestResponseHandlerExplicitTypes:
                 pass
 
             @response_handler(request=str, response=int, output=bool)
-            async def handle_explicit(self, original_request, response, ctx) -> None:
+            async def handle_explicit(self, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
                 pass
 
         executor = TestExecutor()
@@ -907,7 +907,7 @@ class TestResponseHandlerExplicitTypes:
                 pass
 
             @response_handler(request=str, response=int)
-            async def handle_response(self, original_request, response, ctx) -> None:
+            async def handle_response(self, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
                 self.handled_request = original_request
                 self.handled_response = response
 
@@ -942,7 +942,7 @@ class TestResponseHandlerExplicitTypes:
 
             # Explicit type handler
             @response_handler(request=dict, response=bool)
-            async def handle_explicit(self, original_request, response, ctx) -> None:
+            async def handle_explicit(self, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
                 pass
 
         executor = TestExecutor()

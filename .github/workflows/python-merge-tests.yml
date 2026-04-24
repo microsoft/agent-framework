@@ -1,4 +1,9 @@
 name: Python - Merge - Tests
+#
+# NOTE: This workflow and python-integration-tests.yml share the same set of
+# parallel test jobs. Keep them in sync — when adding, removing, or modifying a
+# job here, apply the same change to python-integration-tests.yml.
+#
 
 on:
   workflow_dispatch:
@@ -10,13 +15,13 @@ on:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
-  RUN_INTEGRATION_TESTS: "true"
+  UV_PYTHON: "3.13"
   RUN_SAMPLES_TESTS: ${{ vars.RUN_SAMPLES_TESTS }}
 
 jobs:
@@ -26,7 +31,14 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      pythonChanges: ${{ steps.filter.outputs.python}}
+      pythonChanges: ${{ steps.filter.outputs.python }}
+      coreChanged: ${{ steps.filter.outputs.core }}
+      openaiChanged: ${{ steps.filter.outputs.openai }}
+      azureChanged: ${{ steps.filter.outputs.azure }}
+      miscChanged: ${{ steps.filter.outputs.misc }}
+      functionsChanged: ${{ steps.filter.outputs.functions }}
+      foundryChanged: ${{ steps.filter.outputs.foundry }}
+      cosmosChanged: ${{ steps.filter.outputs.cosmos }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -35,6 +47,41 @@ jobs:
           filters: |
             python:
               - 'python/**'
+              - '.github/actions/setup-local-mcp-server/**'
+              - '.github/workflows/python-merge-tests.yml'
+              - '.github/workflows/python-integration-tests.yml'
+            core:
+              - 'python/packages/core/agent_framework/_*.py'
+              - 'python/packages/core/agent_framework/_workflows/**'
+              - 'python/packages/core/agent_framework/exceptions.py'
+              - 'python/packages/core/agent_framework/observability.py'
+            openai:
+              - 'python/packages/core/agent_framework/openai/**'
+              - 'python/packages/openai/**'
+              - 'python/samples/**/providers/openai/**'
+            azure:
+              - 'python/packages/openai/**'
+              - 'python/packages/core/agent_framework/azure/**'
+              - 'python/samples/**/providers/azure/**'
+            misc:
+              - 'python/packages/anthropic/**'
+              - 'python/packages/hyperlight/**'
+              - 'python/packages/ollama/**'
+              - 'python/packages/core/agent_framework/_mcp.py'
+              - 'python/packages/core/tests/core/test_mcp.py'
+              - 'python/scripts/local_mcp_streamable_http_server.py'
+              - '.github/actions/setup-local-mcp-server/**'
+              - '.github/workflows/python-merge-tests.yml'
+              - '.github/workflows/python-integration-tests.yml'
+            functions:
+              - 'python/packages/azurefunctions/**'
+              - 'python/packages/durabletask/**'
+            foundry:
+              - 'python/packages/foundry/**'
+              - 'python/samples/**/providers/foundry/**'
+              - 'python/samples/02-agents/embeddings/foundry_embeddings.py'
+            cosmos:
+              - 'python/packages/azure-cosmos/**'
       # run only if 'python' files were changed
       - name: python tests
         if: steps.filter.outputs.python == 'true'
@@ -43,34 +90,15 @@ jobs:
       - name: not python tests
         if: steps.filter.outputs.python != 'true'
         run: echo "NOT python file"
-  python-tests-core:
-    name: Python Tests - Core
+  # Unit tests: always run all non-integration tests across all packages
+  python-tests-unit:
+    name: Python Tests - Unit
     needs: paths-filter
-    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
-    runs-on: ${{ matrix.os }}
-    environment: ${{ matrix.environment }}
-    strategy:
-      fail-fast: true
-      matrix:
-        python-version: ["3.10"]
-        os: [ubuntu-latest]
-        environment: ["integration"]
-    env:
-      UV_PYTHON: ${{ matrix.python-version }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ANTHROPIC_CHAT_MODEL_ID: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
-      # For Azure Functions integration tests
-      FUNCTIONS_WORKER_RUNTIME: "python"
-      DURABLE_TASK_SCHEDULER_CONNECTION_STRING: "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None"
-      AzureWebJobsStorage: "UseDevelopmentStorage=true"
-
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true'
+    runs-on: ubuntu-latest
+    environment: integration
     defaults:
       run:
         working-directory: python
@@ -80,11 +108,280 @@ jobs:
         id: python-setup
         uses: ./.github/actions/python-setup
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
-        env:
-          # Configure a constant location for the uv cache
-          UV_CACHE_DIR: /tmp/.uv-cache
+      - name: Test with pytest (unit tests only)
+        run: >
+          uv run poe test -A
+          -m "not integration"
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+        working-directory: ./python
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/pytest.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: Unit test results
+
+  # OpenAI integration tests
+  python-tests-openai:
+    name: Python Tests - OpenAI Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.openaiChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test with pytest (OpenAI integration)
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/openai/tests
+          -m "integration and not azure"
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+        working-directory: ./python
+      - name: Test OpenAI samples
+        timeout-minutes: 10
+        if: env.RUN_SAMPLES_TESTS == 'true'
+        run: uv run pytest tests/samples/ -m "openai"
+        working-directory: ./python
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/pytest.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: OpenAI integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-openai
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
+  # Azure OpenAI integration tests
+  python-tests-azure-openai:
+    name: Python Tests - Azure OpenAI Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.azureChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_EMBEDDING_MODEL: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Azure CLI Login
+        if: github.event_name != 'pull_request'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Test with pytest (Azure OpenAI integration)
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/openai/tests/openai/test_openai_chat_completion_client_azure.py
+          packages/openai/tests/openai/test_openai_chat_client_azure.py
+          packages/openai/tests/openai/test_openai_embedding_client_azure.py
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+        working-directory: ./python
+      - name: Test Azure samples
+        timeout-minutes: 10
+        if: env.RUN_SAMPLES_TESTS == 'true'
+        run: uv run pytest tests/samples/ -m "azure"
+        working-directory: ./python
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/pytest.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: Azure OpenAI integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-azure-openai
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
+  # Misc integration tests (Anthropic, Ollama, MCP)
+  python-tests-misc-integration:
+    name: Python Tests - Misc Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.miscChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
+      LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Start local MCP server
+        id: local-mcp
+        uses: ./.github/actions/setup-local-mcp-server
+        with:
+          fallback_url: ${{ env.LOCAL_MCP_URL }}
+      - name: Prefer local MCP URL when available
+        run: echo "LOCAL_MCP_URL=${{ steps.local-mcp.outputs.effective_url }}" >> "$GITHUB_ENV"
+      - name: Test with pytest (Anthropic, Hyperlight, Ollama, MCP integration)
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/anthropic/tests
+          packages/hyperlight/tests
+          packages/ollama/tests
+          packages/core/tests/core/test_mcp.py
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 30
+          --junitxml=pytest.xml
+        working-directory: ./python
+      - name: Stop local MCP server
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          server_pid="${{ steps.local-mcp.outputs.pid }}"
+          if [[ -z "$server_pid" ]]; then
+            exit 0
+          fi
+          if ! kill -0 "$server_pid" 2>/dev/null; then
+            exit 0
+          fi
+          kill -TERM -- "-$server_pid" 2>/dev/null || kill -TERM "$server_pid" 2>/dev/null || true
+          for _ in $(seq 1 10); do
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          kill -KILL -- "-$server_pid" 2>/dev/null || kill -KILL "$server_pid" 2>/dev/null || true
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/pytest.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: Misc integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-misc
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
+  # Azure Functions + Durable Task integration tests
+  python-tests-functions:
+    name: Python Tests - Functions Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.functionsChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      UV_PYTHON: "3.11"
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+      FUNCTIONS_WORKER_RUNTIME: "python"
+      DURABLE_TASK_SCHEDULER_CONNECTION_STRING: "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None"
+      AzureWebJobsStorage: "UseDevelopmentStorage=true"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
         uses: azure/login@v2
@@ -95,41 +392,55 @@ jobs:
       - name: Set up Azure Functions Integration Test Emulators
         uses: ./.github/actions/azure-functions-integration-setup
         id: azure-functions-setup
-      - name: Test with pytest
-        timeout-minutes: 10
-        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 900 --retries 3 --retry-delay 10
-        working-directory: ./python
-      - name: Test core samples
-        timeout-minutes: 10
-        if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "openai" -m "azure"
+      - name: Test with pytest (Functions + Durable Task integration)
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/azurefunctions/tests/integration_tests
+          packages/durabletask/tests/integration_tests
+          -m integration
+          -n logical --dist worksteal
+          -x
+          --timeout=360 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
         working-directory: ./python
       - name: Surface failing tests
         if: always()
         uses: pmeier/pytest-results-action@v0.7.2
         with:
-          path: ./python/**.xml
+          path: ./python/pytest.xml
           summary: true
           display-options: fEX
           fail-on-empty: false
-          title: Test results
+          title: Functions integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-functions
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
-  python-tests-azure-ai:
-    name: Python Tests - Azure AI
+  python-tests-foundry:
+    name: Python Integration Tests - Foundry
     needs: paths-filter
-    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
-    runs-on: ${{ matrix.os }}
-    environment: ${{ matrix.environment }}
-    strategy:
-      fail-fast: true
-      matrix:
-        python-version: ["3.10"]
-        os: [ubuntu-latest]
-        environment: ["integration"]
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.foundryChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    environment: integration
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
-      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+      FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_AGENT_NAME }}
+      FOUNDRY_AGENT_VERSION: ${{ vars.FOUNDRY_AGENT_VERSION }}
+      FOUNDRY_MODELS_ENDPOINT: ${{ vars.FOUNDRY_MODELS_ENDPOINT || '' }}
+      FOUNDRY_MODELS_API_KEY: ${{ secrets.FOUNDRY_MODELS_API_KEY || '' }}
+      FOUNDRY_EMBEDDING_MODEL: ${{ vars.FOUNDRY_EMBEDDING_MODEL || '' }}
+      FOUNDRY_IMAGE_EMBEDDING_MODEL: ${{ vars.FOUNDRY_IMAGE_EMBEDDING_MODEL || '' }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
     defaults:
       run:
@@ -140,11 +451,8 @@ jobs:
         id: python-setup
         uses: ./.github/actions/python-setup
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
-        env:
-          # Configure a constant location for the uv cache
-          UV_CACHE_DIR: /tmp/.uv-cache
       - name: Azure CLI Login
         if: github.event_name != 'pull_request'
         uses: azure/login@v2
@@ -153,36 +461,177 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
-        timeout-minutes: 10
-        run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
-        working-directory: ./python
-      - name: Test Azure AI samples
-        timeout-minutes: 10
-        if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "azure-ai"
+        timeout-minutes: 15
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/foundry/tests
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
         working-directory: ./python
       - name: Surface failing tests
         if: always()
         uses: pmeier/pytest-results-action@v0.7.2
         with:
-          path: ./python/**.xml
+          path: ./python/pytest.xml
           summary: true
           display-options: fEX
           fail-on-empty: false
           title: Test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-foundry
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
   # TODO: Add python-tests-lab
+
+  # Azure Cosmos integration tests
+  python-tests-cosmos:
+    name: Python Tests - Cosmos Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.cosmosChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    environment: integration
+    services:
+      cosmosdb:
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+        ports:
+          - 8081:8081
+    env:
+      AZURE_COSMOS_ENDPOINT: "http://localhost:8081/"
+      # Static Azure Cosmos DB emulator key (documented): https://learn.microsoft.com/en-us/azure/cosmos-db/emulator
+      AZURE_COSMOS_KEY: "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+      AZURE_COSMOS_DATABASE_NAME: "agent-framework-cosmos-it-db"
+      AZURE_COSMOS_CONTAINER_NAME: "agent-framework-cosmos-it-container"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Wait for Cosmos DB emulator
+        run: |
+          for i in {1..60}; do
+            if curl --silent --show-error http://localhost:8081/ > /dev/null; then
+              echo "Cosmos DB emulator is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Cosmos DB emulator did not become ready in time." >&2
+          exit 1
+      - name: Test with pytest (Cosmos integration)
+        run: uv run --directory packages/azure-cosmos poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5 --junitxml=${{ github.workspace }}/python/pytest.xml
+        working-directory: ./python
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/pytest.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: Cosmos integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-cosmos
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
+  # Flaky test trend report (aggregates per-job JUnit XML results)
+  python-flaky-test-report:
+    name: Flaky Test Report
+    if: >
+      always() &&
+      (contains(join(needs.*.result, ','), 'success') ||
+       contains(join(needs.*.result, ','), 'failure'))
+    needs:
+      [
+        python-tests-openai,
+        python-tests-azure-openai,
+        python-tests-misc-integration,
+        python-tests-functions,
+        python-tests-foundry,
+        python-tests-cosmos,
+      ]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Download all test results from current run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          path: test-results/
+      - name: Restore flaky report history cache
+        uses: actions/cache/restore@v4
+        with:
+          path: python/flaky-report-history.json
+          key: flaky-report-history-merge-${{ github.run_id }}
+          restore-keys: |
+            flaky-report-history-merge-
+      - name: Generate trend report
+        run: >
+          uv run python scripts/flaky_report/aggregate.py
+          ../test-results/
+          flaky-report-history.json
+          flaky-test-report.md
+      - name: Post to Job Summary
+        if: always()
+        run: cat flaky-test-report.md >> $GITHUB_STEP_SUMMARY
+      - name: Save flaky report history cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: python/flaky-report-history.json
+          key: flaky-report-history-merge-${{ github.run_id }}
+      - name: Upload unified trend report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flaky-test-report
+          path: |
+            python/flaky-test-report.md
+            python/flaky-report-history.json
 
   python-integration-tests-check:
     if: always()
     runs-on: ubuntu-latest
     needs:
       [
-        python-tests-core,
-        python-tests-azure-ai
+        python-tests-unit,
+        python-tests-openai,
+        python-tests-azure-openai,
+        python-tests-misc-integration,
+        python-tests-functions,
+        python-tests-foundry,
+        python-tests-cosmos,
       ]
     steps:
-
       - name: Fail workflow if tests failed
         id: check_tests_failed
         if: contains(join(needs.*.result, ','), 'failure')

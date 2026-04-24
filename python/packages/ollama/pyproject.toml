@@ -4,7 +4,7 @@ description = "Ollama integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260130"
+version = "1.0.0b260423"
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/agent-framework/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,8 +23,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core",
-    "ollama >= 0.5.3",
+    "agent-framework-core>=1.1.1,<2",
+    "ollama>=0.5.3,<0.5.4",
 ]
 
 [tool.uv]
@@ -37,12 +37,16 @@ environments = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
+
 [tool.pytest.ini_options]
 testpaths = 'tests'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 timeout = 120
 
 [tool.ruff]
@@ -58,6 +62,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_ollama"]
 exclude = ['tests']
 
 [tool.mypy]
@@ -82,9 +87,14 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
-[tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_ollama"
-test = "pytest --cov=agent_framework_ollama --cov-report=term-missing:skip-covered tests"
+
+[tool.poe.tasks.mypy]
+help = "Run MyPy for this package."
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_ollama"
+
+[tool.poe.tasks.test]
+help = "Run the default unit test suite for this package."
+cmd = 'pytest -m "not integration" --cov=agent_framework_ollama --cov-report=term-missing:skip-covered tests'
 
 [tool.uv.build-backend]
 module-name = "agent_framework_ollama"

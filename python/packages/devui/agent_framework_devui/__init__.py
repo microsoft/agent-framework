@@ -41,7 +41,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
         Single cleanup hook:
         >>> from agent_framework.devui import serve, register_cleanup
         >>> credential = DefaultAzureCredential()
-        >>> agent = ChatAgent(...)
+        >>> agent = Agent(...)
         >>> register_cleanup(agent, credential.close)
         >>> serve(entities=[agent])
 
@@ -52,7 +52,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
         >>> # In agents/my_agent/agent.py
         >>> from agent_framework.devui import register_cleanup
         >>> credential = DefaultAzureCredential()
-        >>> agent = ChatAgent(...)
+        >>> agent = Agent(...)
         >>> register_cleanup(agent, credential.close)
         >>> # Run: devui ./agents
     """
@@ -73,7 +73,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
     )
 
 
-def _get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:
+def _get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:  # type: ignore[reportUnusedFunction]
     """Get cleanup hooks registered for an entity (internal use).
 
     Args:
@@ -193,7 +193,7 @@ def serve(
     if entities:
         logger.info(f"Registering {len(entities)} in-memory entities")
         # Store entities for later registration during server startup
-        server._pending_entities = entities
+        server.set_pending_entities(entities)
 
     app = server.get_app()
 

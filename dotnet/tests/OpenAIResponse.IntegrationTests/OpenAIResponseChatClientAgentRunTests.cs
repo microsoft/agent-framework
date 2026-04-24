@@ -9,16 +9,20 @@ public class OpenAIResponseStoreTrueChatClientAgentRunTests() : ChatClientAgentR
 {
     private const string SkipReason = "ResponseResult does not support empty messages";
 
-    [Fact(Skip = SkipReason)]
-    public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync() =>
-        Task.CompletedTask;
+    public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync()
+    {
+        Assert.Skip(SkipReason);
+        return base.RunWithInstructionsAndNoMessageReturnsExpectedResultAsync();
+    }
 }
 
 public class OpenAIResponseStoreFalseChatClientAgentRunTests() : ChatClientAgentRunTests<OpenAIResponseFixture>(() => new(store: false))
 {
     private const string SkipReason = "ResponseResult does not support empty messages";
 
-    [Fact(Skip = SkipReason)]
-    public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync() =>
-        Task.CompletedTask;
+    public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync()
+    {
+        Assert.Skip(SkipReason);
+        return base.RunWithInstructionsAndNoMessageReturnsExpectedResultAsync();
+    }
 }

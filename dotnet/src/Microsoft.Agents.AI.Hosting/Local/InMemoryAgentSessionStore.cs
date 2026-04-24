@@ -30,11 +30,10 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
     private readonly ConcurrentDictionary<string, JsonElement> _threads = new();
 
     /// <inheritdoc/>
-    public override ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
+    public override async ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId, agent.Id);
-        this._threads[key] = agent.SerializeSession(session);
-        return default;
+        this._threads[key] = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>

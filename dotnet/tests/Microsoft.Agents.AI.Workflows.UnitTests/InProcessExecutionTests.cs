@@ -59,7 +59,7 @@ public class InProcessExecutionTests
         var inputMessage = new ChatMessage(ChatRole.User, "Hello");
 
         // Act: Execute using streaming version with TurnToken
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, new List<ChatMessage> { inputMessage });
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, new List<ChatMessage> { inputMessage });
 
         // Send TurnToken to actually trigger execution (this is the key step)
         bool messageSent = await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
@@ -108,7 +108,7 @@ public class InProcessExecutionTests
         var nonStreamingEvents = nonStreamingRun.OutgoingEvents.ToList();
 
         // Act 2: Execute using StreamAsync (streaming) with TurnToken
-        await using StreamingRun streamingRun = await InProcessExecution.StreamAsync(workflow2, new List<ChatMessage> { inputMessage });
+        await using StreamingRun streamingRun = await InProcessExecution.RunStreamingAsync(workflow2, new List<ChatMessage> { inputMessage });
         await streamingRun.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         List<WorkflowEvent> streamingEvents = [];
@@ -133,6 +133,53 @@ public class InProcessExecutionTests
     }
 
     /// <summary>
+    /// This test checks that the logic around waiting for input and halting appropriately works right when the
+    /// workflow runs to halting before the EventStream is watched by the user.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsyncWaitToTakeStreamAsync()
+    {
+        // Arrange: Create a simple agent that responds to messages
+        var agent = new SimpleTestAgent("test-agent");
+        var workflow = AgentWorkflowBuilder.BuildSequential(agent);
+        var inputMessage = new ChatMessage(ChatRole.User, "Hello");
+
+        // Act: Execute using streaming version with TurnToken
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, new List<ChatMessage> { inputMessage });
+
+        // Send TurnToken to actually trigger execution (this is the key step)
+        bool messageSent = await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
+        messageSent.Should().BeTrue("TurnToken should be accepted");
+
+        while (await run.GetStatusAsync() != RunStatus.Idle)
+        {
+            await Task.Delay(200);
+        }
+
+        // Collect events
+        List<WorkflowEvent> events = [];
+
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert: The workflow should have executed and produced events
+        RunStatus status = await run.GetStatusAsync();
+        status.Should().Be(RunStatus.Idle, "workflow should complete execution");
+
+        events.Should().NotBeEmpty("workflow should produce events during execution");
+
+        // Check that we have agent execution events
+        var agentEvents = events.OfType<AgentResponseUpdateEvent>().ToList();
+        agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
+
+        // Check that we have output events
+        var outputEvents = events.OfType<WorkflowOutputEvent>().ToList();
+        outputEvents.Should().NotBeEmpty("workflow should produce output events");
+    }
+
+    /// <summary>
     /// Simple test agent that echoes back the input message.
     /// </summary>
     private sealed class SimpleTestAgent : AIAgent
@@ -144,12 +191,12 @@ public class InProcessExecutionTests
 
         public override string Name { get; }
 
-        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(System.Text.Json.JsonElement serializedState,
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(System.Text.Json.JsonElement serializedState,
             System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
 
-        public override System.Text.Json.JsonElement SerializeSession(AgentSession session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override ValueTask<System.Text.Json.JsonElement> SerializeSessionCoreAsync(AgentSession session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => default;
 
         protected override Task<AgentResponse> RunCoreAsync(
@@ -195,5 +242,5 @@ public class InProcessExecutionTests
     /// <summary>
     /// Simple session implementation for SimpleTestAgent.
     /// </summary>
-    private sealed class SimpleTestAgentSession : InMemoryAgentSession;
+    private sealed class SimpleTestAgentSession : AgentSession;
 }

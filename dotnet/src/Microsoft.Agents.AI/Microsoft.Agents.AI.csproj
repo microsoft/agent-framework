@@ -1,13 +1,16 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <VersionSuffix>preview</VersionSuffix>
-    <NoWarn>$(NoWarn);MEAI001</NoWarn>
+    <IsReleased>true</IsReleased>
+    <NoWarn>$(NoWarn);MEAI001;MAAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+    <InjectSharedRedaction>true</InjectSharedRedaction>
     <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
   </PropertyGroup>
@@ -16,11 +19,24 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+  </ItemGroup>
+  
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Extensions.Compliance.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.ML.Tokenizers" />
     <PackageReference Include="System.Diagnostics.DiagnosticSource" />
+  </ItemGroup>
+
+  <!-- Evaluation support requires net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->
+  <ItemGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <PackageReference Include="Microsoft.Extensions.AI.Evaluation" />
+  </ItemGroup>
+  <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <Compile Remove="Evaluation\**\*.cs" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -34,7 +50,7 @@
 
     <InternalsVisibleTo Include="Microsoft.Agents.AI.UnitTests" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Declarative.UnitTests" />
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.UnitTests"/>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.UnitTests" />
   </ItemGroup>
 
 </Project>

@@ -29,23 +29,23 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
     protected override string? IdCore => id;
     public override string? Name => name;
 
-    public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken)
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken)
         => new(requestType switch
         {
             TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
-            TestAgentRequestType.UserInputRequest => new TestRequestAgentSession<UserInputRequestContent, UserInputResponseContent>(),
+            TestAgentRequestType.UserInputRequest => new TestRequestAgentSession<ToolApprovalRequestContent, ToolApprovalResponseContent>(),
             _ => throw new NotSupportedException(),
         });
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(requestType switch
         {
             TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
-            TestAgentRequestType.UserInputRequest => new TestRequestAgentSession<UserInputRequestContent, UserInputResponseContent>(),
+            TestAgentRequestType.UserInputRequest => new TestRequestAgentSession<ToolApprovalRequestContent, ToolApprovalResponseContent>(),
             _ => throw new NotSupportedException(),
         });
 
-    public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => default;
 
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -179,58 +179,43 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         }
     }
 
-    private sealed class FunctionApprovalStrategy : IRequestResponseStrategy<UserInputRequestContent, UserInputResponseContent>
+    private sealed class FunctionApprovalStrategy : IRequestResponseStrategy<ToolApprovalRequestContent, ToolApprovalResponseContent>
     {
-        public UserInputResponseContent CreatePairedResponse(UserInputRequestContent request)
+        public ToolApprovalResponseContent CreatePairedResponse(ToolApprovalRequestContent request)
         {
-            if (request is not FunctionApprovalRequestContent approvalRequest)
-            {
-                throw new InvalidOperationException($"Invalid request: Expecting {typeof(FunctionApprovalResponseContent)}, got {request.GetType()}");
-            }
-
-            return new FunctionApprovalResponseContent(approvalRequest.Id, true, approvalRequest.FunctionCall);
+            return new ToolApprovalResponseContent(request.RequestId, true, request.ToolCall);
         }
 
-        public IEnumerable<(string, UserInputRequestContent)> CreateRequests(int count)
+        public IEnumerable<(string, ToolApprovalRequestContent)> CreateRequests(int count)
         {
             for (int i = 0; i < count; i++)
             {
                 string id = Guid.NewGuid().ToString("N");
-                UserInputRequestContent request = new FunctionApprovalRequestContent(id, new(id, "TestFunction"));
+                ToolApprovalRequestContent request = new(id, new FunctionCallContent(id, "TestFunction"));
                 yield return (id, request);
             }
         }
 
-        public void ProcessResponse(UserInputResponseContent response, TestRequestAgentSession<UserInputRequestContent, UserInputResponseContent> session)
+        public void ProcessResponse(ToolApprovalResponseContent response, TestRequestAgentSession<ToolApprovalRequestContent, ToolApprovalResponseContent> session)
         {
-            if (session.UnservicedRequests.TryGetValue(response.Id, out UserInputRequestContent? request))
+            if (session.UnservicedRequests.TryGetValue(response.RequestId, out ToolApprovalRequestContent? request))
             {
-                if (request is not FunctionApprovalRequestContent approvalRequest)
-                {
-                    throw new InvalidOperationException($"Invalid request: Expecting {typeof(FunctionApprovalResponseContent)}, got {request.GetType()}");
-                }
-
-                if (response is not FunctionApprovalResponseContent approvalResponse)
-                {
-                    throw new InvalidOperationException($"Invalid response: Expecting {typeof(FunctionApprovalResponseContent)}, got {response.GetType()}");
-                }
-
-                approvalResponse.Approved.Should().BeTrue();
-                approvalResponse.FunctionCall.As<FunctionCallContent>().Should().Be(approvalRequest.FunctionCall);
-                session.ServicedRequests.Add(response.Id);
-                session.UnservicedRequests.Remove(response.Id);
+                response.Approved.Should().BeTrue();
+                ((FunctionCallContent)response.ToolCall).Should().Be((FunctionCallContent)request.ToolCall);
+                session.ServicedRequests.Add(response.RequestId);
+                session.UnservicedRequests.Remove(response.RequestId);
             }
-            else if (session.ServicedRequests.Contains(response.Id))
+            else if (session.ServicedRequests.Contains(response.RequestId))
             {
-                throw new InvalidOperationException($"Seeing duplicate response with id {response.Id}");
+                throw new InvalidOperationException($"Seeing duplicate response with id {response.RequestId}");
             }
-            else if (session.PairedRequests.Contains(response.Id))
+            else if (session.PairedRequests.Contains(response.RequestId))
             {
-                throw new InvalidOperationException($"Seeing explicit response to initially paired request with id {response.Id}");
+                throw new InvalidOperationException($"Seeing explicit response to initially paired request with id {response.RequestId}");
             }
             else
             {
-                throw new InvalidOperationException($"Seeing response to nonexistent request with id {response.Id}");
+                throw new InvalidOperationException($"Seeing response to nonexistent request with id {response.RequestId}");
             }
         }
     }
@@ -261,7 +246,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         return request switch
         {
             FunctionCallContent functionCall => functionCall.CallId,
-            UserInputRequestContent userInputRequest => userInputRequest.Id,
+            ToolApprovalRequestContent userInputRequest => userInputRequest.RequestId,
             _ => throw new NotSupportedException($"Unknown request type {typeof(TRequest)}"),
         };
     }
@@ -295,12 +280,12 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
 
                 return this.ValidateUnpairedRequests((IEnumerable<FunctionCallContent>)requests, new FunctionCallStrategy());
             case TestAgentRequestType.UserInputRequest:
-                if (!typeof(UserInputRequestContent).IsAssignableFrom(typeof(TRequest)))
+                if (!typeof(ToolApprovalRequestContent).IsAssignableFrom(typeof(TRequest)))
                 {
-                    throw new ArgumentException($"Invalid request type: Expected {typeof(UserInputRequestContent)}, got {typeof(TRequest)}", nameof(requests));
+                    throw new ArgumentException($"Invalid request type: Expected {typeof(ToolApprovalRequestContent)}, got {typeof(TRequest)}", nameof(requests));
                 }
 
-                return this.ValidateUnpairedRequests((IEnumerable<UserInputRequestContent>)requests, new FunctionApprovalStrategy());
+                return this.ValidateUnpairedRequests((IEnumerable<ToolApprovalRequestContent>)requests, new FunctionApprovalStrategy());
             default:
                 throw new NotSupportedException($"Unknown AgentRequestType {requestType}");
         }
@@ -315,7 +300,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
                 responses = this.ValidateUnpairedRequests(requests.Select(AssertAndExtractRequestContent<FunctionCallContent>)).ToList();
                 break;
             case TestAgentRequestType.UserInputRequest:
-                responses = this.ValidateUnpairedRequests(requests.Select(AssertAndExtractRequestContent<UserInputRequestContent>)).ToList();
+                responses = this.ValidateUnpairedRequests(requests.Select(AssertAndExtractRequestContent<ToolApprovalRequestContent>)).ToList();
                 break;
             default:
                 throw new NotSupportedException($"Unknown AgentRequestType {requestType}");
@@ -325,12 +310,12 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
 
         static TRequest AssertAndExtractRequestContent<TRequest>(ExternalRequest request)
         {
-            request.DataIs(out TRequest? content).Should().BeTrue();
+            request.TryGetDataAs(out TRequest? content).Should().BeTrue();
             return content!;
         }
     }
 
-    private sealed class TestRequestAgentSession<TRequest, TResponse> : InMemoryAgentSession
+    private sealed class TestRequestAgentSession<TRequest, TResponse> : AgentSession
         where TRequest : AIContent
         where TResponse : AIContent
     {
@@ -343,19 +328,13 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         public HashSet<string> ServicedRequests { get; } = new();
         public HashSet<string> PairedRequests { get; } = new();
 
-        private static JsonElement DeserializeAndExtractState(JsonElement serializedState,
-                                                              out TestRequestAgentSessionState state,
-                                                              JsonSerializerOptions? jsonSerializerOptions = null)
+        public TestRequestAgentSession(JsonElement element, JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            state = JsonSerializer.Deserialize<TestRequestAgentSessionState>(serializedState, jsonSerializerOptions)
+            var state = JsonSerializer.Deserialize<TestRequestAgentSessionState>(element, jsonSerializerOptions)
                  ?? throw new ArgumentException("Unable to deserialize session state.");
 
-            return state.SessionState;
-        }
+            this.StateBag = AgentSessionStateBag.Deserialize(state.SessionState);
 
-        public TestRequestAgentSession(JsonElement element, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(DeserializeAndExtractState(element, out TestRequestAgentSessionState state, jsonSerializerOptions))
-        {
             this.UnservicedRequests = state.UnservicedRequests.ToDictionary(
                 keySelector: item => item.Key,
                 elementSelector: item => item.Value.As<TRequest>()!);
@@ -364,9 +343,9 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             this.PairedRequests = state.PairedRequests;
         }
 
-        protected override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            JsonElement sessionState = base.Serialize(jsonSerializerOptions);
+            JsonElement sessionState = this.StateBag.Serialize();
 
             Dictionary<string, PortableValue> portableUnservicedRequests =
                 this.UnservicedRequests.ToDictionary(

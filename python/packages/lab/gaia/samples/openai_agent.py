@@ -7,7 +7,7 @@ configured for GAIA benchmark tasks using the OpenAI Responses API.
 
 Required Environment Variables:
     OPENAI_API_KEY: Your OpenAI API key
-    OPENAI_RESPONSES_MODEL_ID: Model to use with Responses API (e.g., gpt-4o, gpt-4o-mini)
+    OPENAI_CHAT_MODEL: Model to use with Responses API (e.g., gpt-4o, gpt-4o-mini)
 
 Optional Environment Variables:
     OPENAI_BASE_URL: Custom API base URL if using a proxy or compatible service
@@ -19,18 +19,18 @@ Authentication:
 
 Example:
     export OPENAI_API_KEY="sk-..."
-    export OPENAI_RESPONSES_MODEL_ID="gpt-4o"
+    export OPENAI_CHAT_MODEL="gpt-4o"
 """
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool, HostedWebSearchTool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
 
 
 @asynccontextmanager
-async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
+async def create_gaia_agent() -> AsyncIterator[Agent]:
     """Create an OpenAI agent configured for GAIA benchmark tasks.
 
     Uses OpenAI Responses API for enhanced capabilities.
@@ -40,25 +40,22 @@ async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
     - Code Interpreter tool for calculations and data analysis
 
     Yields:
-        ChatAgent: A configured agent ready to run GAIA tasks.
+        Agent: A configured agent ready to run GAIA tasks.
 
     Example:
         async with create_gaia_agent() as agent:
             result = await agent.run("What is the capital of France?")
             print(result.text)
     """
-    chat_client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
 
-    async with chat_client.as_agent(
+    async with client.as_agent(
         name="GaiaAgent",
         instructions="Solve tasks to your best ability. Use Web Search to find "
         "information and Code Interpreter to perform calculations and data analysis.",
         tools=[
-            HostedWebSearchTool(
-                name="Web Search",
-                description="Search the web for current information",
-            ),
-            HostedCodeInterpreterTool(),
+            OpenAIChatClient.get_web_search_tool(),
+            OpenAIChatClient.get_code_interpreter_tool(),
         ],
     ) as agent:
         yield agent

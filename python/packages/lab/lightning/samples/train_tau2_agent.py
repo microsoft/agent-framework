@@ -12,6 +12,8 @@ Builds on concepts from train_math_agent.py with additional complexity.
 Requires one GPU of at least 80GB of memory.
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
@@ -104,14 +106,14 @@ class Tau2Agent(LitAgent):
         assistant_chat_client = OpenAIChatClient(
             base_url=llm.endpoint,  # vLLM endpoint for the model being trained
             api_key=openai_api_key,
-            model_id=llm.model,  # Model ID being trained
+            model=llm.model,  # Model ID being trained
         )
 
         # User simulator: uses a fixed, capable model for consistent simulation
         user_simulator_chat_client = OpenAIChatClient(
             base_url=openai_base_url,  # External API endpoint
             api_key=openai_api_key,
-            model_id="gpt-4.1",  # Fixed model for user simulator
+            model="gpt-4.1",  # Fixed model for user simulator
         )
 
         try:

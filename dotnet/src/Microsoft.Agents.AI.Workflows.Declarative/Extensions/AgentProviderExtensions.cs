@@ -10,7 +10,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 internal static class AgentProviderExtensions
 {
     public static async ValueTask<AgentResponse> InvokeAgentAsync(
-        this WorkflowAgentProvider agentProvider,
+        this ResponseAgentProvider agentProvider,
         string executorId,
         IWorkflowContext context,
         string agentName,

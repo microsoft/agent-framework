@@ -8,6 +8,8 @@ using an MCP calculator tool.
 One GPU with 40GB of memory is sufficient for this sample.
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
@@ -18,7 +20,7 @@ import string
 from typing import TypedDict, cast
 
 import sympy  # type: ignore[import-untyped,reportMissingImports]
-from agent_framework import AgentResponse, ChatAgent, MCPStdioTool
+from agent_framework import Agent, AgentResponse, MCPStdioTool
 from agent_framework.lab.lightning import AgentFrameworkTracer
 from agent_framework.openai import OpenAIChatClient
 from agentlightning import LLM, Dataset, Trainer, rollout
@@ -138,8 +140,9 @@ def evaluate(result: AgentResponse, ground_truth: str) -> float:
 AGENT_INSTRUCTION = """
 Solve the following math problem. Use the calculator tool to help you calculate math expressions.
 
-Output the answer when you are ready. The answer should be after three sharps (`###`), with no extra punctuations or texts. For example: ### 123
-""".strip()  # noqa: E501
+Output the answer when you are ready. The answer should be after three sharps (`###`),
+with no extra punctuations or texts. For example: ### 123
+""".strip()
 
 
 # The @rollout decorator is the key integration point with agent-lightning.
@@ -164,9 +167,9 @@ async def math_agent(task: MathProblem, llm: LLM) -> float:
     # MCPStdioTool provides calculator functionality via MCP protocol
     async with (
         MCPStdioTool(name="calculator", command="uvx", args=["mcp-server-calculator"]) as mcp_server,
-        ChatAgent(
-            chat_client=OpenAIChatClient(
-                model_id=llm.model,  # This is the model being trained
+        Agent(
+            client=OpenAIChatClient(
+                model=llm.model,  # This is the model being trained
                 api_key=os.getenv("OPENAI_API_KEY") or "dummy",  # Can be dummy when connecting to training LLM
                 base_url=llm.endpoint,  # vLLM server endpoint provided by agent-lightning
             ),

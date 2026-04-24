@@ -14,6 +14,7 @@ internal sealed class RequestPortOptions;
 
 internal sealed class RequestInfoExecutor : Executor
 {
+    private const string WrappedRequestsStateKey = nameof(WrappedRequestsStateKey);
     private readonly Dictionary<string, ExternalRequest> _wrappedRequests = [];
     private RequestPort Port { get; }
     private IExternalRequestSink? RequestSink { get; set; }
@@ -34,22 +35,29 @@ internal sealed class RequestInfoExecutor : Executor
         this._allowWrapped = allowWrapped;
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        routeBuilder = routeBuilder
-            // Handle incoming requests (as raw request payloads)
-            .AddHandlerUntyped(this.Port.Request, this.HandleAsync)
-            .AddCatchAll(this.HandleCatchAllAsync);
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes)
+                              .SendsMessage<ExternalRequest>()
+                              .SendsMessageType(this.Port.Response);
 
-        if (this._allowWrapped)
+        void ConfigureRoutes(RouteBuilder routeBuilder)
         {
             routeBuilder = routeBuilder
-                .AddHandler<ExternalRequest, ExternalRequest>(this.HandleAsync);
-        }
+                // Handle incoming requests (as raw request payloads)
+                .AddHandlerUntyped(this.Port.Request, this.HandleAsync)
+                .AddCatchAll(this.HandleCatchAllAsync);
 
-        return routeBuilder
-            // Handle incoming responses (as wrapped Response object)
-            .AddHandler<ExternalResponse, ExternalResponse?>(this.HandleAsync);
+            if (this._allowWrapped)
+            {
+                routeBuilder = routeBuilder
+                    .AddHandler<ExternalRequest, ExternalRequest>(this.HandleAsync);
+            }
+
+            routeBuilder
+                // Handle incoming responses (as wrapped Response object)
+                .AddHandler<ExternalResponse, ExternalResponse?>(this.HandleAsync);
+        }
     }
 
     internal void AttachRequestSink(IExternalRequestSink requestSink) => this.RequestSink = Throw.IfNull(requestSink);
@@ -117,22 +125,46 @@ internal sealed class RequestInfoExecutor : Executor
             return null;
         }
 
-        if (this._allowWrapped && this._wrappedRequests.TryGetValue(message.RequestId, out ExternalRequest? originalRequest))
-        {
-            await context.SendMessageAsync(originalRequest.RewrapResponse(message), cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            await context.SendMessageAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-
         if (!message.Data.IsType(this.Port.Response, out object? data))
         {
             throw this.Port.CreateExceptionForType(message);
         }
 
-        await context.SendMessageAsync(data, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (this._allowWrapped && this._wrappedRequests.TryGetValue(message.RequestId, out ExternalRequest? originalRequest))
+        {
+            await context.SendMessageAsync(originalRequest.RewrapResponse(message), cancellationToken: cancellationToken).ConfigureAwait(false);
+            this._wrappedRequests.Remove(message.RequestId);
+        }
+        else
+        {
+            await context.SendMessageAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(data, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
 
         return message;
+    }
+
+    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        await context.QueueStateUpdateAsync(WrappedRequestsStateKey,
+                                            new Dictionary<string, ExternalRequest>(this._wrappedRequests, StringComparer.Ordinal),
+                                            cancellationToken: cancellationToken).ConfigureAwait(false);
+        await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
+    }
+
+    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+
+        this._wrappedRequests.Clear();
+
+        Dictionary<string, ExternalRequest> wrappedRequests =
+            await context.ReadStateAsync<Dictionary<string, ExternalRequest>>(WrappedRequestsStateKey, cancellationToken: cancellationToken)
+                         .ConfigureAwait(false) ?? [];
+
+        foreach (KeyValuePair<string, ExternalRequest> wrappedRequest in wrappedRequests)
+        {
+            this._wrappedRequests[wrappedRequest.Key] = wrappedRequest.Value;
+        }
     }
 }

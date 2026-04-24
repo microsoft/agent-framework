@@ -7,13 +7,18 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Agents.AI.DurableTask;
 
 /// <summary>
-/// An agent thread implementation for durable agents.
+/// An <see cref="AgentSession"/> implementation for durable agents.
 /// </summary>
-[DebuggerDisplay("{SessionId}")]
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public sealed class DurableAgentSession : AgentSession
 {
-    [JsonConstructor]
     internal DurableAgentSession(AgentSessionId sessionId)
+    {
+        this.SessionId = sessionId;
+    }
+
+    [JsonConstructor]
+    internal DurableAgentSession(AgentSessionId sessionId, AgentSessionStateBag stateBag) : base(stateBag)
     {
         this.SessionId = sessionId;
     }
@@ -28,9 +33,8 @@ public sealed class DurableAgentSession : AgentSession
     /// <inheritdoc/>
     internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        return JsonSerializer.SerializeToElement(
-            this,
-            DurableAgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(DurableAgentSession)));
+        var jso = jsonSerializerOptions ?? DurableAgentJsonUtilities.DefaultOptions;
+        return JsonSerializer.SerializeToElement(this, jso.GetTypeInfo(typeof(DurableAgentSession)));
     }
 
     /// <summary>
@@ -49,7 +53,11 @@ public sealed class DurableAgentSession : AgentSession
 
         string sessionIdString = sessionIdElement.GetString() ?? throw new JsonException("sessionId property is null.");
         AgentSessionId sessionId = AgentSessionId.Parse(sessionIdString);
-        return new DurableAgentSession(sessionId);
+        AgentSessionStateBag stateBag = serializedSession.TryGetProperty("stateBag", out JsonElement stateBagElement)
+            ? AgentSessionStateBag.Deserialize(stateBagElement)
+            : new AgentSessionStateBag();
+
+        return new DurableAgentSession(sessionId, stateBag);
     }
 
     /// <inheritdoc/>
@@ -68,4 +76,8 @@ public sealed class DurableAgentSession : AgentSession
     {
         return this.SessionId.ToString();
     }
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private string DebuggerDisplay =>
+        $"SessionId = {this.SessionId}, StateBag Count = {this.StateBag.Count}";
 }

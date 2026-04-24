@@ -106,7 +106,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         Assert.Contains("Paris", response1Text);
         Assert.Contains("Vienna", response2Text);
 
-        var chatHistory = await this.Fixture.GetChatHistoryAsync(session);
+        var chatHistory = await this.Fixture.GetChatHistoryAsync(agent, session);
         Assert.Equal(4, chatHistory.Count);
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.User));
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.Assistant));

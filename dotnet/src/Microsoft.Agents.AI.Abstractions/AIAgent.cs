@@ -3,6 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,10 +20,25 @@ namespace Microsoft.Agents.AI;
 /// <see cref="AIAgent"/> serves as the foundational class for implementing AI agents that can participate in conversations
 /// and process user requests. An agent instance may participate in multiple concurrent conversations, and each conversation
 /// may involve multiple agents working together.
+/// <para>
+/// <strong>Security considerations:</strong> An <see cref="AIAgent"/> orchestrates data flow across trust boundaries —
+/// messages are sent to external AI services, context providers, chat history stores, and function tools. Agent Framework
+/// passes messages through as-is without validation or sanitization. Developers must be aware that:
+/// <list type="bullet">
+/// <item><description>User-supplied messages may contain prompt injection attempts designed to manipulate LLM behavior.</description></item>
+/// <item><description>LLM responses should be treated as untrusted output — they may contain hallucinations, malicious payloads (e.g., scripts, SQL),
+/// or content influenced by indirect prompt injection. Always validate and sanitize LLM output before rendering in HTML, executing as code,
+/// or using in database queries.</description></item>
+/// <item><description>Messages with different roles carry different trust levels: <c>system</c> messages have the highest trust and must be developer-controlled;
+/// <c>user</c>, <c>assistant</c>, and <c>tool</c> messages should be treated as untrusted.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
-public abstract class AIAgent
+public abstract partial class AIAgent
 {
+    private static readonly AsyncLocal<AgentRunContext?> s_currentContext = new();
+
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay =>
         this.Name is { } name ? $"Id = {this.Id}, Name = {name}" : $"Id = {this.Id}";
@@ -76,6 +93,18 @@ public abstract class AIAgent
     /// </remarks>
     public virtual string? Description { get; }
 
+    /// <summary>
+    /// Gets or sets the <see cref="AgentRunContext"/> for the current agent run.
+    /// </summary>
+    /// <remarks>
+    /// This value flows across async calls.
+    /// </remarks>
+    public static AgentRunContext? CurrentRunContext
+    {
+        get => s_currentContext.Value;
+        protected set => s_currentContext.Value = value;
+    }
+
     /// <summary>Asks the <see cref="AIAgent"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
     /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
@@ -123,22 +152,52 @@ public abstract class AIAgent
     /// may be deferred until first use to optimize performance.
     /// </para>
     /// </remarks>
-    public abstract ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default);
+    public ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default)
+        => this.CreateSessionCoreAsync(cancellationToken);
+
+    /// <summary>
+    /// Core implementation of session creation logic.
+    /// </summary>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance ready for use with this agent.</returns>
+    /// <remarks>
+    /// This is the primary session creation method that implementations must override.
+    /// </remarks>
+    protected abstract ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Serializes an agent session to its JSON representation.
     /// </summary>
     /// <param name="session">The <see cref="AgentSession"/> to serialize.</param>
     /// <param name="jsonSerializerOptions">Optional settings to customize the serialization process.</param>
-    /// <returns>A <see cref="JsonElement"/> containing the serialized session state.</returns>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a <see cref="JsonElement"/> with the serialized session state.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="session"/> is <see langword="null"/>.</exception>
     /// <exception cref="InvalidOperationException">The type of <paramref name="session"/> is not supported by this agent.</exception>
     /// <remarks>
     /// This method enables saving conversation sessions to persistent storage,
     /// allowing conversations to resume across application restarts or be migrated between
     /// different agent instances. Use <see cref="DeserializeSessionAsync"/> to restore the session.
+    /// <para>
+    /// <strong>Security consideration:</strong> Serialized sessions may contain conversation content, session identifiers,
+    /// and other potentially sensitive data including PII. Ensure that serialized session data is stored securely with
+    /// appropriate access controls and encryption at rest.
+    /// </para>
     /// </remarks>
-    public abstract JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null);
+    public ValueTask<JsonElement> SerializeSessionAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => this.SerializeSessionCoreAsync(session, jsonSerializerOptions, cancellationToken);
+
+    /// <summary>
+    /// Core implementation of session serialization logic.
+    /// </summary>
+    /// <param name="session">The <see cref="AgentSession"/> to serialize.</param>
+    /// <param name="jsonSerializerOptions">Optional settings to customize the serialization process.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a <see cref="JsonElement"/> with the serialized session state.</returns>
+    /// <remarks>
+    /// This is the primary session serialization method that implementations must override.
+    /// </remarks>
+    protected abstract ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Deserializes an agent session from its JSON serialized representation.
@@ -153,8 +212,27 @@ public abstract class AIAgent
     /// This method enables restoration of conversation sessions from previously saved state,
     /// allowing conversations to resume across application restarts or be migrated between
     /// different agent instances.
+    /// <para>
+    /// <strong>Security consideration:</strong> Restoring a session from an untrusted source is equivalent to accepting untrusted input.
+    /// Serialized sessions may contain conversation content, session identifiers, and potentially sensitive data. A compromised
+    /// storage backend could alter message roles to escalate trust, or inject adversarial content that influences LLM behavior.
+    /// Treat serialized session data as sensitive and ensure it is stored and transmitted securely.
+    /// </para>
     /// </remarks>
-    public abstract ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
+    public ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => this.DeserializeSessionCoreAsync(serializedState, jsonSerializerOptions, cancellationToken);
+
+    /// <summary>
+    /// Core implementation of session deserialization logic.
+    /// </summary>
+    /// <param name="serializedState">A <see cref="JsonElement"/> containing the serialized session state.</param>
+    /// <param name="jsonSerializerOptions">Optional settings to customize the deserialization process.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A value task that represents the asynchronous operation. The task result contains a restored <see cref="AgentSession"/> instance with the state from <paramref name="serializedState"/>.</returns>
+    /// <remarks>
+    /// This is the primary session deserialization method that implementations must override.
+    /// </remarks>
+    protected abstract ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the session.
@@ -247,13 +325,21 @@ public abstract class AIAgent
     /// The messages are processed in the order provided and become part of the conversation history.
     /// The agent's response will also be added to <paramref name="session"/> if one is provided.
     /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Agent Framework does not validate or sanitize message content — it is passed through
+    /// to the underlying AI service as-is. If input messages include untrusted user content, developers should be aware of prompt injection risks.
+    /// System-role messages must be developer-controlled and should never contain end-user input.
+    /// </para>
     /// </remarks>
     public Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentSession? session = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default) =>
-        this.RunCoreAsync(messages, session, options, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        CurrentRunContext = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
+        return this.RunCoreAsync(messages, session, options, cancellationToken);
+    }
 
     /// <summary>
     /// Core implementation of the agent invocation logic with a collection of chat messages.
@@ -369,13 +455,28 @@ public abstract class AIAgent
     /// Each <see cref="AgentResponseUpdate"/> represents a portion of the complete response, allowing consumers
     /// to display partial results, implement progressive loading, or provide immediate feedback to users.
     /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Agent Framework does not validate or sanitize message content — it is passed through
+    /// to the underlying AI service as-is. If input messages include untrusted user content, developers should be aware of prompt injection risks.
+    /// System-role messages must be developer-controlled and should never contain end-user input.
+    /// </para>
     /// </remarks>
-    public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
+    public async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentSession? session = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default) =>
-        this.RunCoreStreamingAsync(messages, session, options, cancellationToken);
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        AgentRunContext context = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
+        CurrentRunContext = context;
+        await foreach (var update in this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+        {
+            yield return update;
+
+            // Restore context again when resuming after the caller code executes.
+            CurrentRunContext = context;
+        }
+    }
 
     /// <summary>
     /// Core implementation of the agent streaming invocation logic with a collection of chat messages.

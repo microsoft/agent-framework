@@ -26,7 +26,7 @@ public static class ChatProtocolExtensions
     /// langword="false"/>.</returns>
     public static bool IsChatProtocol(this ProtocolDescriptor descriptor, bool allowCatchAll = false)
     {
-        bool foundListChatMessageInput = false;
+        bool foundIEnumerableChatMessageInput = false;
         bool foundTurnTokenInput = false;
 
         if (allowCatchAll && descriptor.AcceptsAll)
@@ -40,9 +40,9 @@ public static class ChatProtocolExtensions
         // output type.
         foreach (Type inputType in descriptor.Accepts)
         {
-            if (inputType == typeof(List<ChatMessage>))
+            if (inputType == typeof(IEnumerable<ChatMessage>))
             {
-                foundListChatMessageInput = true;
+                foundIEnumerableChatMessageInput = true;
             }
             else if (inputType == typeof(TurnToken))
             {
@@ -50,7 +50,7 @@ public static class ChatProtocolExtensions
             }
         }
 
-        return foundListChatMessageInput && foundTurnTokenInput;
+        return foundIEnumerableChatMessageInput && foundTurnTokenInput;
     }
 
     /// <summary>

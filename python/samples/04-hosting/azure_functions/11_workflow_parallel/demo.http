@@ -1,0 +1,29 @@
+### Analyze a document (triggers parallel workflow)
+POST http://localhost:7071/api/workflow/run
+Content-Type: application/json
+
+{
+    "document_id": "doc-001",
+    "content": "The quarterly earnings report shows strong growth in our cloud services division. Revenue increased by 25% compared to last year, driven by enterprise adoption. Customer satisfaction remains high at 92%. However, we face challenges in the mobile segment where competition is intense. Overall, the outlook is positive with expected continued growth in the coming quarters."
+}
+
+###
+
+### Short document test
+POST http://localhost:7071/api/workflow/run
+Content-Type: application/json
+
+{
+    "document_id": "doc-002",
+    "content": "Quick update: Project completed successfully. Team performance exceeded expectations."
+}
+
+###
+
+### Check workflow status
+GET http://localhost:7071/api/workflow/status/{{instanceId}}
+
+###
+
+### Health check
+GET http://localhost:7071/api/health

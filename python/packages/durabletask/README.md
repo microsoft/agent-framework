@@ -15,17 +15,18 @@ The durable task integration lets you host Microsoft Agent Framework agents usin
 ### Basic Usage Example
 
 ```python
-from durabletask import TaskHubGrpcWorker
-from agent_framework.azure import DurableAIAgentWorker
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatCompletionClient
+from agent_framework_durabletask import DurableAIAgentWorker
+from durabletask.worker import TaskHubGrpcWorker
 
 # Create the worker
-with TaskHubGrpcWorker(...) as worker:
-    
-    # Register the agent worker wrapper
-    agent_worker = DurableAIAgentWorker(worker)
-    
-    # Register the agent
-    agent_worker.add_agent(my_agent)
+worker = TaskHubGrpcWorker(host_address="localhost:4001")
+agent_worker = DurableAIAgentWorker(worker)
+
+chat_client = OpenAIChatCompletionClient()
+my_agent = Agent(client=chat_client, name="assistant")
+agent_worker.add_agent(my_agent)
 ```
 
 For more details, review the Python [README](https://github.com/microsoft/agent-framework/tree/main/python/README.md) and the samples directory.

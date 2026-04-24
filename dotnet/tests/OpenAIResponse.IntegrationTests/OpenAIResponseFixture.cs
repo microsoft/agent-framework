@@ -16,16 +16,15 @@ namespace ResponseResult.IntegrationTests;
 
 public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 {
-    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
-
     private ResponsesClient _openAIResponseClient = null!;
+    private string _modelName = null!;
     private ChatClientAgent _agent = null!;
 
     public AIAgent Agent => this._agent;
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentSession session)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
         var typedSession = (ChatClientAgentSession)session;
 
@@ -50,12 +49,14 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        if (typedSession.ChatHistoryProvider is null)
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
+
+        if (chatHistoryProvider is null)
         {
             return [];
         }
 
-        return (await typedSession.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)
@@ -74,7 +75,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null) =>
             new(
-                this._openAIResponseClient.AsIChatClient(),
+                this._openAIResponseClient.AsIChatClient(this._modelName),
                 options: new()
                 {
                     Name = name,
@@ -94,13 +95,18 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
-        this._openAIResponseClient = new OpenAIClient(s_config.ApiKey)
-            .GetResponsesClient(s_config.ChatModelId);
+        this._modelName = TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName);
+        this._openAIResponseClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey))
+            .GetResponsesClient();
 
         this._agent = await this.CreateChatClientAgentAsync();
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 }

@@ -3,7 +3,6 @@
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.ObjectModel;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.CodeGen;
 
@@ -34,11 +33,11 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
     {
         if (expected)
         {
-            Assert.Contains(", WorkflowAgentProvider agentProvider", workflowCode);
+            Assert.Contains($", {nameof(ResponseAgentProvider)} agentProvider", workflowCode);
         }
         else
         {
-            Assert.DoesNotContain(", WorkflowAgentProvider agentProvider", workflowCode);
+            Assert.DoesNotContain($", {nameof(ResponseAgentProvider)} agentProvider", workflowCode);
         }
     }
 

@@ -9,15 +9,16 @@ and enables registration of agents as durable entities.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
-from agent_framework import AgentProtocol, get_logger
+from agent_framework import SupportsAgentRun
 from durabletask.worker import TaskHubGrpcWorker
 
 from ._callbacks import AgentResponseCallbackProtocol
 from ._entities import AgentEntity, DurableTaskEntityStateProvider
 
-logger = get_logger("agent_framework.durabletask.worker")
+logger = logging.getLogger("agent_framework.durabletask")
 
 
 class DurableAIAgentWorker:
@@ -28,9 +29,10 @@ class DurableAIAgentWorker:
 
     Example:
         ```python
-        from durabletask import TaskHubGrpcWorker
-        from agent_framework import ChatAgent
-        from agent_framework.azure import DurableAIAgentWorker
+        from durabletask.worker import TaskHubGrpcWorker
+        from agent_framework import Agent
+        from agent_framework.openai import OpenAIChatCompletionClient
+        from agent_framework_durabletask import DurableAIAgentWorker
 
         # Create the underlying worker
         worker = TaskHubGrpcWorker(host_address="localhost:4001")
@@ -39,7 +41,8 @@ class DurableAIAgentWorker:
         agent_worker = DurableAIAgentWorker(worker)
 
         # Register agents
-        my_agent = ChatAgent(chat_client=client, name="assistant")
+        client = OpenAIChatCompletionClient()
+        my_agent = Agent(client=client, name="assistant")
         agent_worker.add_agent(my_agent)
 
         # Start the worker
@@ -60,12 +63,12 @@ class DurableAIAgentWorker:
         """
         self._worker = worker
         self._callback = callback
-        self._registered_agents: dict[str, AgentProtocol] = {}
+        self._registered_agents: dict[str, SupportsAgentRun] = {}
         logger.debug("[DurableAIAgentWorker] Initialized with worker type: %s", type(worker).__name__)
 
     def add_agent(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         callback: AgentResponseCallbackProtocol | None = None,
     ) -> None:
         """Register an agent with the worker.
@@ -139,7 +142,7 @@ class DurableAIAgentWorker:
 
     def __create_agent_entity(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         callback: AgentResponseCallbackProtocol | None = None,
     ) -> type[DurableTaskEntityStateProvider]:
         """Factory function to create a DurableEntity class configured with an agent.

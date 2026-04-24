@@ -334,6 +334,7 @@ public class AgentResponseUpdateExtensionsTests
         {
             ResponseId = "test-response-id",
             CreatedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero),
+            FinishReason = ChatFinishReason.ContentFilter,
             Usage = new UsageDetails { TotalTokenCount = 50 },
             AdditionalProperties = new() { ["key"] = "value" },
             ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
@@ -346,6 +347,7 @@ public class AgentResponseUpdateExtensionsTests
         Assert.NotNull(result);
         Assert.Equal("test-response-id", result.ResponseId);
         Assert.Equal(new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero), result.CreatedAt);
+        Assert.Equal(ChatFinishReason.ContentFilter, result.FinishReason);
         Assert.Same(agentResponse.Messages, result.Messages);
         Assert.Same(agentResponse, result.RawRepresentation);
         Assert.Same(agentResponse.Usage, result.Usage);
@@ -383,6 +385,45 @@ public class AgentResponseUpdateExtensionsTests
     }
 
     [Fact]
+    public void AsChatResponseUpdate_WithRawRepresentationNullMessageId_ReturnsRawDirectly()
+    {
+        // Arrange - RawRepresentation has null MessageId
+        ChatResponseUpdate originalChatResponseUpdate = new()
+        {
+            ResponseId = "original-update",
+            Contents = [new TextContent("Hello")]
+        };
+        AgentResponseUpdate agentResponseUpdate = new(originalChatResponseUpdate);
+
+        // Act
+        ChatResponseUpdate result = agentResponseUpdate.AsChatResponseUpdate();
+
+        // Assert - Returns the raw representation directly without mutation
+        Assert.Same(originalChatResponseUpdate, result);
+        Assert.Null(result.MessageId);
+    }
+
+    [Fact]
+    public void AsChatResponseUpdate_WithRawRepresentationExistingMessageId_PreservesOriginal()
+    {
+        // Arrange - RawRepresentation already has MessageId set by provider
+        ChatResponseUpdate originalChatResponseUpdate = new()
+        {
+            ResponseId = "original-update",
+            MessageId = "provider-message-id",
+            Contents = [new TextContent("Hello")]
+        };
+        AgentResponseUpdate agentResponseUpdate = new(originalChatResponseUpdate);
+
+        // Act
+        ChatResponseUpdate result = agentResponseUpdate.AsChatResponseUpdate();
+
+        // Assert - Provider's original MessageId should be preserved
+        Assert.Same(originalChatResponseUpdate, result);
+        Assert.Equal("provider-message-id", result.MessageId);
+    }
+
+    [Fact]
     public void AsChatResponseUpdate_WithoutRawRepresentation_CreatesNewChatResponseUpdate()
     {
         // Arrange
@@ -392,6 +433,7 @@ public class AgentResponseUpdateExtensionsTests
             ResponseId = "update-id",
             MessageId = "message-id",
             CreatedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero),
+            FinishReason = ChatFinishReason.ToolCalls,
             AdditionalProperties = new() { ["key"] = "value" },
             ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
         };
@@ -405,6 +447,7 @@ public class AgentResponseUpdateExtensionsTests
         Assert.Equal("update-id", result.ResponseId);
         Assert.Equal("message-id", result.MessageId);
         Assert.Equal(new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero), result.CreatedAt);
+        Assert.Equal(ChatFinishReason.ToolCalls, result.FinishReason);
         Assert.Equal(ChatRole.Assistant, result.Role);
         Assert.Same(agentResponseUpdate.Contents, result.Contents);
         Assert.Same(agentResponseUpdate, result.RawRepresentation);

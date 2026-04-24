@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Observability;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -26,7 +27,10 @@ public class TestRunContext : IRunnerContext
 
     internal TestRunContext ConfigureExecutor(Executor executor, EdgeMap? map = null)
     {
-        executor.Configure(new TestExternalRequestContext(this, executor.Id, map));
+        // Ensure that we have run the ProtocolBuilder
+        _ = executor.Protocol.Describe();
+
+        executor.AttachRequestContext(new TestExternalRequestContext(this, executor.Id, map));
         this.Executors.Add(executor.Id, executor);
         return this;
     }
@@ -41,6 +45,7 @@ public class TestRunContext : IRunnerContext
         return this;
     }
 
+    internal StateManager StateManager { get; } = new();
     private sealed class BoundContext(
         string executorId,
         TestRunContext runnerContext,
@@ -50,22 +55,35 @@ public class TestRunContext : IRunnerContext
             => runnerContext.AddEventAsync(workflowEvent, cancellationToken);
 
         public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)
-            => this.AddEventAsync(new WorkflowOutputEvent(output, executorId), cancellationToken);
+        {
+            // Special-case AgentResponse and AgentResponseUpdate to create their specific event types
+            // (consistent with InProcessRunnerContext.YieldOutputAsync)
+            if (output is AgentResponseUpdate update)
+            {
+                return this.AddEventAsync(new AgentResponseUpdateEvent(executorId, update), cancellationToken);
+            }
+            else if (output is AgentResponse response)
+            {
+                return this.AddEventAsync(new AgentResponseEvent(executorId, response), cancellationToken);
+            }
+
+            return this.AddEventAsync(new WorkflowOutputEvent(output, executorId), cancellationToken);
+        }
 
         public ValueTask RequestHaltAsync()
             => this.AddEventAsync(new RequestHaltEvent());
 
         public ValueTask QueueClearScopeAsync(string? scopeName = null, CancellationToken cancellationToken = default)
-            => default;
+            => runnerContext.StateManager.ClearStateAsync(executorId, scopeName);
 
         public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null, CancellationToken cancellationToken = default)
-            => default;
+            => runnerContext.StateManager.WriteStateAsync(new ScopeId(executorId, scopeName), key, value);
 
         public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null, CancellationToken cancellationToken = default)
-            => new(default(T?));
+            => runnerContext.StateManager.ReadStateAsync<T>(new ScopeId(executorId, scopeName), key);
 
         public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default)
-            => new([]);
+            => runnerContext.StateManager.ReadKeysAsync(new ScopeId(executorId, scopeName));
 
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
             => runnerContext.SendMessageAsync(executorId, message, targetId, cancellationToken);
@@ -130,8 +148,10 @@ public class TestRunContext : IRunnerContext
     public Dictionary<string, Executor> Executors { get; set; } = [];
     public string StartingExecutorId { get; set; } = string.Empty;
 
-    public bool WithCheckpointing => false;
+    public bool IsCheckpointingEnabled => false;
     public bool ConcurrentRunsEnabled => false;
+
+    WorkflowTelemetryContext IRunnerContext.TelemetryContext => WorkflowTelemetryContext.Disabled;
 
     ValueTask<Executor> IRunnerContext.EnsureExecutorAsync(string executorId, IStepTracer? tracer, CancellationToken cancellationToken) =>
         new(this.Executors[executorId]);

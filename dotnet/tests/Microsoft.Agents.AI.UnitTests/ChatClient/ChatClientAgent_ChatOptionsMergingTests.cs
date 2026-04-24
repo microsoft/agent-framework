@@ -176,10 +176,11 @@ public class ChatClientAgent_ChatOptionsMergingTests
     }
 
     /// <summary>
-    /// Verify that ChatOptions merging returns null when both agent and request have no ChatOptions.
+    /// Verify that when both agent and request have no ChatOptions, the inner client
+    /// receives null options.
     /// </summary>
     [Fact]
-    public async Task ChatOptionsMergingReturnsNullWhenBothAgentAndRequestHaveNoneAsync()
+    public async Task ChatOptionsMergingReturnsNullChatOptionsWhenBothAgentAndRequestHaveNoneAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -189,7 +190,7 @@ public class ChatClientAgent_ChatOptionsMergingTests
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>()))
-            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((msgs, opts, ct) =>
                 capturedChatOptions = opts)
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 

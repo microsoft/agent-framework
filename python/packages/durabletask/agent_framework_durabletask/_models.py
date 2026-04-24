@@ -10,13 +10,12 @@ from __future__ import annotations
 import inspect
 import json
 import uuid
-from collections.abc import MutableMapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
-from agent_framework import AgentThread
+from agent_framework import AgentSession
 
 from ._constants import REQUEST_RESPONSE_FORMAT_TEXT
 
@@ -274,65 +273,59 @@ class AgentSessionId:
         raise ValueError(f"Invalid agent session ID format: {session_id_string}")
 
 
-class DurableAgentThread(AgentThread):
-    """Durable agent thread that tracks the owning :class:`AgentSessionId`."""
+class DurableAgentSession(AgentSession):
+    """Durable agent session that tracks the owning :class:`AgentSessionId`."""
 
     _SERIALIZED_SESSION_ID_KEY = "durable_session_id"
 
     def __init__(
         self,
         *,
-        session_id: AgentSessionId | None = None,
-        **kwargs: Any,
+        durable_session_id: AgentSessionId | None = None,
+        session_id: str | None = None,
+        service_session_id: str | None = None,
     ) -> None:
-        super().__init__(**kwargs)
-        self._session_id: AgentSessionId | None = session_id
+        super().__init__(session_id=session_id, service_session_id=service_session_id)
+        self.durable_session_id: AgentSessionId | None = durable_session_id
 
-    @property
-    def session_id(self) -> AgentSessionId | None:
-        return self._session_id
-
-    @session_id.setter
-    def session_id(self, value: AgentSessionId | None) -> None:
-        self._session_id = value
+    def to_dict(self) -> dict[str, Any]:
+        state = super().to_dict()
+        if self.durable_session_id is not None:
+            state[self._SERIALIZED_SESSION_ID_KEY] = str(self.durable_session_id)
+        return state
 
     @classmethod
     def from_session_id(
         cls,
-        session_id: AgentSessionId,
-        **kwargs: Any,
-    ) -> DurableAgentThread:
-        return cls(session_id=session_id, **kwargs)
-
-    async def serialize(self, **kwargs: Any) -> dict[str, Any]:
-        state = await super().serialize(**kwargs)
-        if self._session_id is not None:
-            state[self._SERIALIZED_SESSION_ID_KEY] = str(self._session_id)
-        return state
+        durable_session_id: AgentSessionId,
+        *,
+        session_id: str | None = None,
+        service_session_id: str | None = None,
+    ) -> DurableAgentSession:
+        """Create a DurableAgentSession from an AgentSessionId."""
+        return cls(
+            durable_session_id=durable_session_id,
+            session_id=session_id,
+            service_session_id=service_session_id,
+        )
 
     @classmethod
-    async def deserialize(
-        cls,
-        serialized_thread_state: MutableMapping[str, Any],
-        *,
-        message_store: Any = None,
-        **kwargs: Any,
-    ) -> DurableAgentThread:
-        state_payload = dict(serialized_thread_state)
-        session_id_value = state_payload.pop(cls._SERIALIZED_SESSION_ID_KEY, None)
-        thread = await super().deserialize(
-            state_payload,
-            message_store=message_store,
-            **kwargs,
+    def from_dict(cls, data: dict[str, Any]) -> DurableAgentSession:
+        """Create a DurableAgentSession from a state dict."""
+        data = dict(data)  # defensive copy — avoid mutating caller's dict
+        session_id_value = data.pop(cls._SERIALIZED_SESSION_ID_KEY, None)
+        session = super().from_dict(data)
+        durable_session_id: AgentSessionId | None = None
+        # We need to create a DurableAgentSession from the base AgentSession
+        if session_id_value is not None:
+            if not isinstance(session_id_value, str):
+                raise ValueError("durable_session_id must be a string when present in serialized state")
+            durable_session_id = AgentSessionId.parse(session_id_value)
+
+        durable_session = cls(
+            durable_session_id=durable_session_id,
+            session_id=session.session_id,
+            service_session_id=session.service_session_id,
         )
-        if not isinstance(thread, DurableAgentThread):
-            raise TypeError("Deserialized thread is not a DurableAgentThread instance")
-
-        if session_id_value is None:
-            return thread
-
-        if not isinstance(session_id_value, str):
-            raise ValueError("durable_session_id must be a string when present in serialized state")
-
-        thread.session_id = AgentSessionId.parse(session_id_value)
-        return thread
+        durable_session.state.update(session.state)
+        return durable_session

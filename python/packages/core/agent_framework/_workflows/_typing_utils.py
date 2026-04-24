@@ -1,9 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from types import UnionType
-from typing import Any, TypeVar, Union, cast, get_args, get_origin
+from typing import Any, TypeGuard, Union, cast, get_args, get_origin
 
-T = TypeVar("T")
+from .._agents import Agent
+
+
+def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
+    """Check if the given agent is a Agent.
+
+    Args:
+        agent (Any): The agent to check.
+
+    Returns:
+        TypeGuard[Agent]: True if the agent is a Agent, False otherwise.
+    """
+    return isinstance(agent, Agent)
 
 
 def resolve_type_annotation(
@@ -165,6 +177,58 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     return isinstance(data, target_type)
 
 
+def try_coerce_to_type(data: Any, target_type: type | UnionType | Any) -> Any:
+    """Try to coerce data to the target type.
+
+    Attempts lightweight type coercion for common cases where raw data
+    (e.g., from JSON deserialization) needs to be converted to the expected type.
+
+    Returns the coerced value if successful, or the original value if coercion
+    is not needed or not possible.
+
+    Args:
+        data: The data to coerce.
+        target_type: The type to coerce to.
+
+    Returns:
+        The coerced value, or the original value if coercion fails.
+    """
+    original_data = data
+
+    # If already the right type, return as-is
+    if is_instance_of(data, target_type):
+        return data
+
+    # Can't coerce to non-concrete targets (Union, generic, etc.)
+    if not isinstance(target_type, type):
+        return original_data
+
+    target_cls: type[Any] = target_type
+
+    # int -> float (JSON integers for float fields)
+    if isinstance(data, int) and target_cls is float:
+        return float(data)
+
+    # dict -> dataclass or pydantic model
+    if isinstance(data, dict):
+        from dataclasses import is_dataclass
+
+        if is_dataclass(target_cls):
+            try:
+                return target_cls(**data)
+            except (TypeError, ValueError):
+                return original_data
+
+        model_validate = getattr(target_cls, "model_validate", None)
+        if callable(model_validate):
+            try:
+                return model_validate(data)
+            except Exception:
+                return original_data
+
+    return original_data
+
+
 def serialize_type(t: type) -> str:
     """Serialize a type to a string.
 
@@ -195,7 +259,7 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
 
     A type is compatible if values of source_type can be assigned to variables of target_type.
     For example:
-    - list[ChatMessage] is compatible with list[str | ChatMessage]
+    - list[Message] is compatible with list[str | Message]
     - str is compatible with str | int
     - int is compatible with Any
 

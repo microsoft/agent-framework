@@ -243,11 +243,11 @@ services:
     environment:
       # OpenAI
       - OPENAI_API_KEY=\${OPENAI_API_KEY}
-      - OPENAI_CHAT_MODEL_ID=\${OPENAI_CHAT_MODEL_ID:-gpt-4o-mini}
+      - OPENAI_CHAT_COMPLETION_MODEL=\${OPENAI_CHAT_COMPLETION_MODEL:-gpt-4o-mini}
       # Or Azure OpenAI
       - AZURE_OPENAI_API_KEY=\${AZURE_OPENAI_API_KEY}
       - AZURE_OPENAI_ENDPOINT=\${AZURE_OPENAI_ENDPOINT}
-      - AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=\${AZURE_OPENAI_CHAT_DEPLOYMENT_NAME}
+      - AZURE_OPENAI_MODEL=\${AZURE_OPENAI_MODEL}
       # Optional: Enable instrumentation
       - ENABLE_INSTRUMENTATION=\${ENABLE_INSTRUMENTATION:-false}
     ports:
@@ -802,7 +802,7 @@ az acr build --registry myregistry \\
   --target-port 8080 \\
   --ingress 'external' \\
   --registry-server myregistry.azurecr.io \\
-  --env-vars OPENAI_API_KEY=secretref:openai-key OPENAI_CHAT_MODEL_ID=gpt-4o-mini`}
+  --env-vars OPENAI_API_KEY=secretref:openai-key OPENAI_CHAT_COMPLETION_MODEL=gpt-4o-mini`}
                             </pre>
                           </div>
 

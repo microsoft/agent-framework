@@ -1,15 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+from typing import Any
+
+from agent_framework import Agent, AgentResponseUpdate, WorkflowEvent
+from dotenv import load_dotenv
+
 """AutoGen Swarm pattern vs Agent Framework HandoffBuilder.
 
 Demonstrates agent handoff coordination where agents can transfer control
 to other specialized agents based on the task requirements.
 """
 
-import asyncio
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def run_autogen() -> None:
     """AutoGen's Swarm pattern with human-in-the-loop handoffs."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.conditions import HandoffTermination, TextMentionTermination
     from autogen_agentchat.messages import HandoffMessage
@@ -96,19 +105,15 @@ async def run_autogen() -> None:
 async def run_agent_framework() -> None:
     """Agent Framework's HandoffBuilder for agent coordination."""
     from agent_framework import (
-        AgentRunUpdateEvent,
-        HandoffBuilder,
-        HandoffUserInputRequest,
-        RequestInfoEvent,
         WorkflowRunState,
-        WorkflowStatusEvent,
     )
     from agent_framework.openai import OpenAIChatClient
+    from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create triage agent
-    triage_agent = client.as_agent(
+    triage_agent = Agent(client=client,
         name="triage",
         instructions=(
             "You are a triage agent. Analyze the user's request and route to the appropriate specialist:\n"
@@ -116,20 +121,23 @@ async def run_agent_framework() -> None:
             "- For technical issues: call handoff_to_technical_support"
         ),
         description="Routes requests to appropriate specialists",
+        require_per_service_call_history_persistence=True,
     )
 
     # Create billing specialist
-    billing_agent = client.as_agent(
+    billing_agent = Agent(client=client,
         name="billing_agent",
         instructions="You are a billing specialist. Help with payment and billing questions. Provide clear assistance.",
         description="Handles billing and payment questions",
+        require_per_service_call_history_persistence=True,
     )
 
     # Create technical support specialist
-    tech_support = client.as_agent(
+    tech_support = Agent(client=client,
         name="technical_support",
         instructions="You are technical support. Help with technical issues. Provide clear assistance.",
         description="Handles technical support questions",
+        require_per_service_call_history_persistence=True,
     )
 
     # Create handoff workflow - simpler configuration
@@ -138,10 +146,10 @@ async def run_agent_framework() -> None:
         HandoffBuilder(
             name="support_handoff",
             participants=[triage_agent, billing_agent, tech_support],
+            termination_condition=lambda conv: sum(1 for msg in conv if msg.role == "user") > 3,
         )
-        .set_coordinator(triage_agent)
+        .with_start_agent(triage_agent)
         .add_handoff(triage_agent, [billing_agent, tech_support])
-        .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role == "user") > 3)
         .build()
     )
 
@@ -159,10 +167,10 @@ async def run_agent_framework() -> None:
 
     current_executor = None
     stream_line_open = False
-    pending_requests: list[RequestInfoEvent] = []
+    pending_requests: list[WorkflowEvent] = []
 
-    async for event in workflow.run_stream(scripted_responses[0]):
-        if isinstance(event, AgentRunUpdateEvent):
+    async for event in workflow.run(scripted_responses[0], stream=True):
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
             # Print executor name header when switching to a new agent
             if current_executor != event.executor_id:
                 if stream_line_open:
@@ -173,10 +181,10 @@ async def run_agent_framework() -> None:
                 stream_line_open = True
             if event.data:
                 print(event.data.text, end="", flush=True)
-        elif isinstance(event, RequestInfoEvent):
-            if isinstance(event.data, HandoffUserInputRequest):
+        elif event.type == "request_info":
+            if isinstance(event.data, HandoffAgentUserRequest):
                 pending_requests.append(event)
-        elif isinstance(event, WorkflowStatusEvent):
+        elif event.type == "status":
             if event.state in {WorkflowRunState.IDLE_WITH_PENDING_REQUESTS} and stream_line_open:
                 print()
                 stream_line_open = False
@@ -188,13 +196,15 @@ async def run_agent_framework() -> None:
         print("---------- user ----------")
         print(user_response)
 
-        responses = {req.request_id: user_response for req in pending_requests}
+        responses: dict[str, Any] = {
+            req.request_id: HandoffAgentUserRequest.create_response(user_response) for req in pending_requests
+        }  # type: ignore
         pending_requests = []
         current_executor = None
         stream_line_open = False
 
-        async for event in workflow.send_responses_streaming(responses):
-            if isinstance(event, AgentRunUpdateEvent):
+        async for event in workflow.run(stream=True, responses=responses):
+            if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
                 # Print executor name header when switching to a new agent
                 if current_executor != event.executor_id:
                     if stream_line_open:
@@ -205,10 +215,10 @@ async def run_agent_framework() -> None:
                     stream_line_open = True
                 if event.data:
                     print(event.data.text, end="", flush=True)
-            elif isinstance(event, RequestInfoEvent):
-                if isinstance(event.data, HandoffUserInputRequest):
+            elif event.type == "request_info":
+                if isinstance(event.data, HandoffAgentUserRequest):
                     pending_requests.append(event)
-            elif isinstance(event, WorkflowStatusEvent):
+            elif event.type == "status":
                 if (
                     event.state in {WorkflowRunState.IDLE_WITH_PENDING_REQUESTS, WorkflowRunState.IDLE}
                     and stream_line_open

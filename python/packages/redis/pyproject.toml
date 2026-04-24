@@ -4,7 +4,7 @@ description = "Redis integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260130"
+version = "1.0.0b260423"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,10 +23,10 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core",
-    "redis>=6.4.0",
-    "redisvl>=0.8.2",
-    "numpy>=2.2.6"
+    "agent-framework-core>=1.1.1,<2",
+    "redis>=6.4.0,<7.2.1",
+    "redisvl>=0.11.0,<0.16",
+    "numpy>=2.2.6,<3"
 ]
 
 [tool.uv]
@@ -39,6 +39,7 @@ environments = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
+
 [tool.pytest.ini_options]
 testpaths = 'tests'
 addopts = "-ra -q -r fEX"
@@ -48,6 +49,9 @@ filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
 ]
 timeout = 120
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 
 [tool.ruff]
 extend = "../../pyproject.toml"
@@ -59,6 +63,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_redis"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -81,9 +86,14 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
-[tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_redis"
-test = "pytest --cov=agent_framework_redis --cov-report=term-missing:skip-covered tests"
+
+[tool.poe.tasks.mypy]
+help = "Run MyPy for this package."
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_redis"
+
+[tool.poe.tasks.test]
+help = "Run the default unit test suite for this package."
+cmd = 'pytest -m "not integration" --cov=agent_framework_redis --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

@@ -18,6 +18,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.GitHub.Copilot.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="GitHub.Copilot.SDK" />
   </ItemGroup>
 

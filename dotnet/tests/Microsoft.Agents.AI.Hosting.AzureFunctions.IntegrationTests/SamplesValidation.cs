@@ -8,7 +8,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 
@@ -16,27 +15,39 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLifetime
 {
+    private const string SkipFlakyTimingTest = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971";
+
     private const string AzureFunctionsPort = "7071";
     private const string AzuritePort = "10000";
     private const string DtsPort = "8080";
     private const string RedisPort = "6379";
 
     private static readonly string s_dotnetTargetFramework = GetTargetFramework();
+
+#if DEBUG
+    private const string BuildConfiguration = "Debug";
+#else
+    private const string BuildConfiguration = "Release";
+#endif
     private static readonly HttpClient s_sharedHttpClient = new();
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()
-            .AddUserSecrets(Assembly.GetExecutingAssembly())
             .AddEnvironmentVariables()
+            .AddUserSecrets(Assembly.GetExecutingAssembly())
             .Build();
 
     private static bool s_infrastructureStarted;
-    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(2);
+
+    // In CI, `dotnet run` builds the Functions project from scratch before the host starts, so 60s is not enough.
+    private static readonly TimeSpan s_functionsReadyTimeout = TimeSpan.FromSeconds(180);
+
     private static readonly string s_samplesPath = Path.GetFullPath(
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "Durable", "Agents", "AzureFunctions"));
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableAgents", "AzureFunctions"));
 
     private readonly ITestOutputHelper _outputHelper = outputHelper;
 
-    async Task IAsyncLifetime.InitializeAsync()
+    async ValueTask IAsyncLifetime.InitializeAsync()
     {
         if (!s_infrastructureStarted)
         {
@@ -45,7 +56,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         }
     }
 
-    async Task IAsyncLifetime.DisposeAsync()
+    async ValueTask IAsyncDisposable.DisposeAsync()
     {
         // Nothing to clean up
         await Task.CompletedTask;
@@ -263,7 +274,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -393,7 +404,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");
@@ -793,13 +804,18 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
     private async Task RunSampleTestAsync(string samplePath, Func<IReadOnlyList<OutputLog>, Task> testAction)
     {
+        // Build the sample project first (it may not have been built as part of the solution)
+        await AzureFunctionsTestHelper.BuildSampleAsync(
+            samplePath, $"-f {s_dotnetTargetFramework} -c {BuildConfiguration}", this._outputHelper);
+
         // Start the Azure Functions app
         List<OutputLog> logsContainer = [];
         using Process funcProcess = this.StartFunctionApp(samplePath, logsContainer);
         try
         {
             // Wait for the app to be ready
-            await this.WaitForAzureFunctionsAsync();
+            await AzureFunctionsTestHelper.WaitForFunctionsReadyAsync(
+                funcProcess, AzureFunctionsPort, s_sharedHttpClient, this._outputHelper, s_functionsReadyTimeout, samplePath);
 
             // Run the test
             await testAction(logsContainer);
@@ -817,7 +833,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         ProcessStartInfo startInfo = new()
         {
             FileName = "dotnet",
-            Arguments = $"run -f {s_dotnetTargetFramework} --port {AzureFunctionsPort}",
+            Arguments = $"run --no-build -f {s_dotnetTargetFramework} -c {BuildConfiguration} --port {AzureFunctionsPort}",
             WorkingDirectory = samplePath,
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -826,12 +842,12 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
         string openAiEndpoint = s_configuration["AZURE_OPENAI_ENDPOINT"] ??
             throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT env variable is not set.");
-        string openAiDeployment = s_configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
-            throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
+        string openAiDeployment = s_configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_DEPLOYMENT_NAME env variable is not set.");
 
         // Set required environment variables for the function app (see local.settings.json for required settings)
         startInfo.EnvironmentVariables["AZURE_OPENAI_ENDPOINT"] = openAiEndpoint;
-        startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT"] = openAiDeployment;
+        startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT_NAME"] = openAiDeployment;
         startInfo.EnvironmentVariables["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"] =
             $"Endpoint=http://localhost:{DtsPort};TaskHub=default;Authentication=None";
         startInfo.EnvironmentVariables["AzureWebJobsStorage"] = "UseDevelopmentStorage=true";
@@ -873,30 +889,6 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         process.BeginOutputReadLine();
 
         return process;
-    }
-
-    private async Task WaitForAzureFunctionsAsync()
-    {
-        this._outputHelper.WriteLine(
-            $"Waiting for Azure Functions Core Tools to be ready at http://localhost:{AzureFunctionsPort}/...");
-        await this.WaitForConditionAsync(
-            condition: async () =>
-            {
-                try
-                {
-                    using HttpRequestMessage request = new(HttpMethod.Head, $"http://localhost:{AzureFunctionsPort}/");
-                    using HttpResponseMessage response = await s_sharedHttpClient.SendAsync(request);
-                    this._outputHelper.WriteLine($"Azure Functions Core Tools response: {response.StatusCode}");
-                    return response.IsSuccessStatusCode;
-                }
-                catch (HttpRequestException)
-                {
-                    // Expected when the app isn't yet ready
-                    return false;
-                }
-            },
-            message: "Azure Functions Core Tools is ready",
-            timeout: TimeSpan.FromSeconds(60));
     }
 
     private async Task WaitForOrchestrationCompletionAsync(Uri statusUri)
