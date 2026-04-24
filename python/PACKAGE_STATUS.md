@@ -37,6 +37,7 @@ Status is grouped into these buckets:
 | `agent-framework-hyperlight` | `python/packages/hyperlight` | `alpha` |
 | `agent-framework-lab` | `python/packages/lab` | `beta` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` |
+| `agent-framework-mistral` | `python/packages/mistral` | `alpha` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
 | `agent-framework-openai` | `python/packages/openai` | `released` |
 | `agent-framework-orchestrations` | `python/packages/orchestrations` | `beta` |
