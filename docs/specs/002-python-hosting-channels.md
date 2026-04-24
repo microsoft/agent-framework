@@ -16,7 +16,8 @@ This consolidates the protocol-specific hosting layers that exist today (`agent-
 - a host owns the ASGI app and channels own protocol shape,
 - session identity is **channel-neutral** — the host resolves a session from a channel-supplied `isolation_key` (e.g. a stable user identity) so two channels mounted on the same host can resolve to the **same** `AgentSession` for the same end user, and a future pluggable session store extends that continuity across hosts and processes, and
 - channel-native identity is **mapped, not assumed** — the host owns a first-class `IdentityResolver` seam (channel-native id → `isolation_key`) and an `IdentityLinker` seam (well-known connect ceremony — OAuth, MFA, signed one-time code — to associate a new channel-native id with an existing `isolation_key`), so cross-channel continuity does not depend on each channel's user namespace happening to align, and
-- response delivery is **decoupled from request origin** — every `ChannelRequest` carries a `ResponseTarget` (`originating` (default), `active` for the user's most recently used channel, a specific channel id, all linked channels, or `none` for background-only). Background/asynchronous runs are first-class via a `RunHandle` returned by `host.run_in_background(...)` so a user can submit a long-running request on one channel and receive the result on another (or poll by run id).
+- response delivery is **decoupled from request origin** — every `ChannelRequest` carries a `ResponseTarget` (`originating` (default), `active` for the user's most recently used channel, a specific channel id, all linked channels, or `none` for background-only). Background/asynchronous runs are first-class via a `RunHandle` returned by `host.run_in_background(...)` so a user can submit a long-running request on one channel and receive the result on another (or poll by run id), and
+- channels can be assigned different **trust tiers** so two channels on one host can share an agent without sharing a session — e.g. Teams (corporate, allowed to access internal resources) and Telegram (public) can run against the same target while remaining session-isolated, with a host-level `LinkPolicy` that decides which trust tiers may be linked (and includes an explicit "deny all" variant for hosts that want no cross-channel continuity at all). Running two separate hosts is always a valid alternative; the per-tier policy exists for cases where one shared host with two policy-isolated tiers is preferred.
 
 We know we're successful when:
 
@@ -126,14 +127,15 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
 18. **Author new channels** — implement the `Channel` protocol, return a `ChannelContribution` with routes/middleware/commands/lifecycle hooks, and call `context.run(...)` or `context.stream(...)` to invoke the agent.
 19. **Target any `SupportsAgentRun` or `Workflow`** — host an `Agent`, `A2AAgent`, or a `Workflow`; the `invocation_hook` is the seam for adapting the channel's default `ChannelRequest` into the target-specific input shape (free-form messages for agents, typed inputs for workflows).
 20. **Contribute WebSocket endpoints from a channel** — `ChannelContribution.routes` accepts both `Route` (HTTP) and `WebSocketRoute` (WS); the channel codec is responsible for framing and the same `invocation_hook` / default mapping pipeline applies. Built-in `ResponsesChannel` exposes a WebSocket transport (default `/responses/ws`, controlled by `transports=("http", "websocket")`) alongside its HTTP+SSE transport, anticipating the OpenAI Responses WebSocket transport. The host requires an ASGI server with WebSocket scope support (Uvicorn, Hypercorn, Daphne, Granian).
+21. **Mix channels of different trust tiers on one host** — every `Channel` may declare an opaque `trust_level: str | None` (e.g. `"corp"`, `"public"`); the host accepts a `LinkPolicy` that decides which `(source_trust, target_trust)` link attempts are allowed. Built-in policies: `AllowAllLinks()` (default), `SameTrustLevelOnly()`, `ExplicitAllowList(allowed_pairs={...})`, `DenyAllLinks()`. Cross-tier link attempts (e.g. linking Telegram public-tier identity into a Teams corp-tier `isolation_key`) are refused by the linker with a typed error and never partition data across tiers. The same policy filters `ResponseTarget.all_linked` / `.active` / `.channel("...")` so a corp-tier response is never pushed to a public-tier channel even via direct addressing. Two channels with different trust tiers can therefore share **an agent target** on one host while remaining strictly session-isolated. Running two separate hosts is always a valid alternative — the per-tier policy is for cases where one shared host with policy-enforced isolation is preferred (e.g. shared middleware, shared deployment pipeline).
 
 ### v1 Fast Follow
-21. **Generic auth helpers** — shared middleware for common channel auth patterns (HMAC signature, bearer token).
-22. **Pluggable session and run-handle store** — interface for cross-channel, cross-host session persistence; same store persists `RunHandle`s and identity-link grants beyond process lifetime. Extends cross-channel chat continuity (req #9) and background runs (req #14) beyond a single host/process.
-23. **First-party identity linker helpers** — concrete `OAuthIdentityLinker` (with provider presets), `OneTimeCodeIdentityLinker` (cross-channel code exchange), and an `MfaIdentityLinker` shipped as opt-in helpers on top of the `IdentityLinker` contract.
+22. **Generic auth helpers** — shared middleware for common channel auth patterns (HMAC signature, bearer token).
+23. **Pluggable session and run-handle store** — interface for cross-channel, cross-host session persistence; same store persists `RunHandle`s and identity-link grants beyond process lifetime. Extends cross-channel chat continuity (req #9) and background runs (req #14) beyond a single host/process.
+24. **First-party identity linker helpers** — concrete `OAuthIdentityLinker` (with provider presets), `OneTimeCodeIdentityLinker` (cross-channel code exchange), and an `MfaIdentityLinker` shipped as opt-in helpers on top of the `IdentityLinker` contract.
 
 ### Stretch
-24. **WhatsApp and Teams channel packages** — using the same `Channel` + `ChannelCommand` model, designed so they participate in cross-channel continuity (req #9) and can serve as `ChannelPush` destinations (req #13) when paired with a stable per-user `isolation_key`.
+25. **WhatsApp and Teams channel packages** — using the same `Channel` + `ChannelCommand` model, designed so they participate in cross-channel continuity (req #9) and can serve as `ChannelPush` destinations (req #13) when paired with a stable per-user `isolation_key`.
 
 ## API Surface
 
@@ -190,6 +192,7 @@ TelegramChannel(path="/bots/telegram", bot_token=token)  # -> /bots/telegram/web
 | Field | Type | Description |
 |---|---|---|
 | `name` | `str` | Channel name used for routing, telemetry, and `ChannelRequest.channel`. |
+| `trust_level` | `str?` | Optional opaque trust tier (e.g. `"corp"`, `"public"`). Consumed by the host's `LinkPolicy` to decide which channels may be linked into the same `isolation_key` and which may be `ResponseTarget` destinations for a given originating request. `None` = single-tier (no policy filtering). See `LinkPolicy`. |
 | `contribute(context: ChannelContext) -> ChannelContribution` | method | Called once at host construction; returns routes/middleware/commands/lifecycle. |
 
 **`ChannelContext`** — host-owned bridge channels use to invoke the agent.
@@ -281,6 +284,23 @@ Apps that already own an identity namespace (corporate user id, tenant-scoped ac
 
 A built-in `link` (or `connect`) `ChannelCommand` is exposed automatically when an `IdentityLinker` is configured. Its `handle` invokes `linker.begin(...)` and replies with the `LinkChallenge` payload (URL, code, instructions) projected through the channel's native rendering. Channels may opt out (`expose_in_ui=False`) or override the command's name per channel.
 
+**`LinkPolicy`** — host-level decision over which channels may share an `isolation_key` and which channels may be a `ResponseTarget` for one another. Consumed by both the `IdentityLinker` (to refuse incompatible link attempts) and the host's response-routing layer (to filter `all_linked` / `active` / specific destinations).
+
+```python
+LinkPolicy = Callable[[LinkPolicyContext], bool]
+```
+
+`LinkPolicyContext` carries the originating `Channel` (and its `trust_level`), the prospective destination `Channel` (and its `trust_level`), and the operation kind (`"link"` or `"deliver"`). Returns `True` to allow, `False` to refuse. Refusal during `link` raises a typed error to the user; refusal during `deliver` excludes that destination from the route set (and falls back to `originating` if the route set becomes empty).
+
+| Built-in policy | Behavior |
+|---|---|
+| `AllowAllLinks()` | Default. Any pair allowed; preserves today's single-tier behavior. |
+| `SameTrustLevelOnly()` | Only allows pairs whose `trust_level` matches (including both `None`). Most common multi-tier setup. |
+| `ExplicitAllowList(allowed_pairs={("public", "corp"), ...})` | Allows only the listed `(source, target)` pairs. Useful for one-directional escalation flows. |
+| `DenyAllLinks()` | Refuses every link attempt and excludes every non-`originating` destination — channels share an agent target on the host but never share sessions. Equivalent to running each channel on its own host minus the deployment overhead. |
+
+Trust tiers are **opaque labels** — the host does not interpret them; the policy decides what they mean. Setting `trust_level=None` on every channel preserves single-tier behavior. Two separate hosts is always a valid alternative to using `LinkPolicy`; the policy exists for cases where shared deployment, shared middleware, or a shared target object are preferred over running multiple hosts.
+
 **`ResponseTarget`** — directs **where** the host delivers the agent response. Independent of `session_mode`.
 
 | Variant | Constructor | Behavior |
@@ -292,7 +312,7 @@ A built-in `link` (or `connect`) `ChannelCommand` is exposed automatically when 
 | All linked | `ResponseTarget.all_linked` | Delivered to every channel where the resolved `isolation_key` is known. |
 | None | `ResponseTarget.none` | Background-only — caller must poll the `RunHandle`. Forces `background=True`. |
 
-When `response_target` is anything other than `originating`, the originating channel's protocol response is the **`RunHandle`** (e.g. an Invocations 202 with the run id), and the actual agent response is delivered out-of-band via the destination channel(s)' `ChannelPush`. If the destination channel doesn't implement `ChannelPush`, the host falls back per the configured policy (default: deliver to `originating`; surfaces a warning in telemetry).
+When `response_target` is anything other than `originating`, the originating channel's protocol response is the **`RunHandle`** (e.g. an Invocations 202 with the run id), and the actual agent response is delivered out-of-band via the destination channel(s)' `ChannelPush`. If the destination channel doesn't implement `ChannelPush`, the host falls back per the configured policy (default: deliver to `originating`; surfaces a warning in telemetry). The configured `LinkPolicy` is consulted for every destination — destinations that fail the policy (e.g. a corp-tier channel addressed from a public-tier originating request) are dropped, and if every destination is dropped the host falls back to `originating`.
 
 **`ChannelPush`** (Protocol) — optional capability for channels that can deliver outbound messages without a prior request.
 
@@ -313,7 +333,7 @@ When `response_target` is anything other than `originating`, the originating cha
 | `error` | `str?` | Populated on `failed`. |
 | `response_target` | `ResponseTarget` | The configured delivery target (recorded for diagnostics). |
 
-The host stores `RunHandle`s; v1 uses an in-memory store, v1 fast follow (req #22) makes it pluggable. Built-in channels expose poll routes that surface the handle in their native shape (`/responses/v1/{run_id}` returns a Responses-shaped object; `/invocations/{run_id}` returns the Invocations status envelope).
+The host stores `RunHandle`s; v1 uses an in-memory store, v1 fast follow (req #23) makes it pluggable. Built-in channels expose poll routes that surface the handle in their native shape (`/responses/v1/{run_id}` returns a Responses-shaped object; `/invocations/{run_id}` returns the Invocations status envelope).
 
 **`ChannelCommand` / `ChannelCommandContext` / `CommandHandler`** — cross-channel native command model (per PR #5393).
 
@@ -458,6 +478,8 @@ The packaging question for `uvicorn` (required dependency vs optional extra) is 
 - **`RunHandle`**: First-class artifact for background/asynchronous runs, returned immediately from `host.run_in_background(request)`. Carries `id`, `status`, `isolation_key`, `result`/`error`, and the configured `response_target`. Host pushes the result to the response target when ready and serves it via channel poll routes.
 - **Background run**: A `ChannelRequest` submitted via `host.run_in_background(request)` (or any request with `background=True`). The originating call returns a `RunHandle` immediately; the response is delivered later via the configured `ResponseTarget` and/or polled by run id.
 - **`session_mode`**: Per-request directive (`auto` | `required` | `disabled`) that controls whether the host resolves a session before invoking the target. Lets channels honor protocol semantics like Responses `store=False` and lets app authors enforce extra policy.
+- **`trust_level`** (channel-level): Opaque label (`"corp"`, `"public"`, `"internal"`, …) declared on a `Channel` and consumed by the host's `LinkPolicy`. Two channels with different trust tiers can share an agent target on one host while remaining session-isolated.
+- **`LinkPolicy`**: Host-level decision over which channel pairs may share an `isolation_key` (link) and which channel pairs may be `ResponseTarget` source/destination for one another (deliver). Built-in variants cover allow-all (default), same-tier-only, explicit allow-list, and deny-all (the explicit "no cross-channel continuity" mode). Running multiple hosts is always a valid alternative; `LinkPolicy` is for cases where one shared host with policy-enforced isolation is preferred.
 - **`ChannelContribution`**: What a channel returns from `contribute(...)` — routes, middleware, commands, and `on_startup`/`on_shutdown` hooks. The host aggregates contributions into one Starlette app.
 - **`ChannelCommand`**: A transport-neutral command descriptor (`name`, `description`, `handle`). Message channels project these into native command surfaces — Telegram bot commands, future Teams slash commands, WhatsApp menus.
 - **`ChannelInvocationHook`**: Per-request callable on built-in channels. Runs after the channel's default `ChannelRequest` is produced, before session resolution. The escape hatch for forcing or forbidding session use, requiring extra options, adapting to targets like `A2AAgent`, **and** reshaping a channel's free-form input into the typed inputs a `Workflow` target expects.
@@ -702,7 +724,7 @@ That's the entire setup. No `invocation_hook`, no per-channel `resolve_user_id_f
 Two notes:
 
 - **The `isolation_key` is opaque on purpose.** The default auto-issued key (`"hk_018f…a3"`) is just a stable handle the host uses to partition sessions; apps that own a real identity namespace (corporate user id, tenant-scoped account id) can supply a custom `identity_resolver` that returns those values directly and skip auto-issuance entirely.
-- **No app-supplied identity store is required for the single-host case.** The host's built-in identity store handles auto-issuance and atomic merge-on-link in process. Cross-host/cross-process continuity (and surviving restarts) needs the pluggable session/identity store (req #22).
+- **No app-supplied identity store is required for the single-host case.** The host's built-in identity store handles auto-issuance and atomic merge-on-link in process. Cross-host/cross-process continuity (and surviving restarts) needs the pluggable session/identity store (req #23).
 
 ### Scenario 7: Linking a new channel to an existing identity via OAuth
 
@@ -959,8 +981,9 @@ channel /link command
 | Session resolution | Host core | based on `ChannelSession` + `ChannelRequest.session_mode`; storage specifics deferred |
 | Channel-native identity extraction | Channel package | populates `ChannelIdentity(channel, native_id, attributes)` per request |
 | Identity resolution (`native_id` → `isolation_key`) | Host core via `IdentityResolver` | default **auto-issues and persists** a per-user `isolation_key` on first contact per `(channel, native_id)`; user-supplied resolver can return app-owned identities directly |
-| Identity store (`(channel, native_id) → isolation_key`) | Host core | in-memory in v1; pluggable in fast follow (req #22). Owns auto-issuance and atomic merge-on-link. |
+| Identity store (`(channel, native_id) → isolation_key`) | Host core | in-memory in v1; pluggable in fast follow (req #23). Owns auto-issuance and atomic merge-on-link. |
 | Identity link ceremony (OAuth / MFA / one-time code) | Host core via `IdentityLinker` | linker contributes its own routes + lifecycle; channels surface a built-in `link`/`connect` command |
+| Link & delivery policy across trust tiers | Host core via `LinkPolicy` | consulted at link time (refuse incompatible link attempts) and at delivery time (drop incompatible `ResponseTarget` destinations); built-in policies cover all-allow, same-tier, explicit allow-list, deny-all |
 | Active-channel tracking | Host core | updated on every successfully resolved request; consumed by `ResponseTarget.active` |
 | Response-target resolution | Host core | translates `ResponseTarget` (originating, active, specific, list, all_linked, none) into an ordered set of `(channel, ChannelIdentity)` deliveries |
 | Proactive outbound delivery | Channel package via optional `ChannelPush` capability | channels that can push (Telegram, Teams, webhook, SSE) implement `push(identity, result)`; channels that can't are only valid as `originating` targets |
@@ -978,7 +1001,7 @@ channel /link command
 3. If `session_mode == "auto"` and no key is supplied, the host may create an ephemeral session.
 4. If `session_mode == "required"`, the host must resolve or create a usable session before invoking the target.
 5. **Cross-channel resolution rule:** when two channels mounted on the same `AgentFrameworkHost` produce the same `isolation_key` (and either both omit `key` or both produce equivalent keys derived from `isolation_key`), the host resolves them to the **same** `AgentSession`. This is the v1 mechanism for cross-channel chat continuity (e.g. Telegram → Teams against the same conversation history). The **canonical** path for translating a channel's native per-channel identifier (Telegram `chat_id`, Teams AAD object id, …) into the stable `isolation_key` is the host-level `IdentityResolver` (per-channel `invocation_hook` mapping is supported as a lower-level alternative). When the channel-native identity is not yet linked, the `IdentityLinker` runs a connect ceremony (OAuth, MFA, signed one-time code) to associate it with an existing `isolation_key`.
-6. The first spec does **not** standardize a cross-package storage API; cross-host/cross-process continuity is deferred to the pluggable session store (req #22), which also persists identity-link grants beyond the host process lifetime.
+6. The first spec does **not** standardize a cross-package storage API; cross-host/cross-process continuity is deferred to the pluggable session store (req #23), which also persists identity-link grants beyond the host process lifetime.
 7. Responses and other conversation-aware channels may still own protocol-specific conversation/item storage above this layer.
 
 ## Reference and Parity Plan
@@ -1025,22 +1048,23 @@ The new core sits **below** the conceptual boundary of today's top-level Respons
 | 3 | Should `HostedRunResult` remain a host-specific wrapper, or is returning `AgentResponse` directly sufficient? | Eng | Wrapper currently carries `session: AgentSession?`; useful for channels that need to surface the resolved session back. |
 | 4 | Should generic auth helpers (HMAC signature, bearer token) live in core, in optional shared helpers, or per channel? | Eng | Current draft leaves it per channel + host middleware. |
 | 5 | How much of the Responses Conversations API should the Responses channel own vs a future shared conversation utility? | Eng / PM | Tied to whether session storage gets standardized. |
-| 6 | Should a later phase define a pluggable session store interface? | Eng | Listed as v1 fast follow / requirement #22. |
+| 6 | Should a later phase define a pluggable session store interface? | Eng | Listed as v1 fast follow / requirement #23. |
 | 7 | Should `ChannelInvocationContext.protocol_request` stay loosely typed (`Any`), or grow into channel-specific typed hook contexts? | Eng | Loosely typed in v1 to keep the surface minimal; typed contexts can be additive. |
 | 8 | Should command scopes / projection metadata become first-class — e.g. private-chat-only vs group-chat-visible commands, or per-locale descriptions? | Eng / PM | Telegram's `BotCommandScope` and `language_code` would need to be representable cross-channel. |
 | 9 | Should the channel `path` override allow nested routers (e.g. `path=""`) for cases where the channel is the app's root? | Eng | Edge case; not blocking. |
 | 10 | Is "Channel" the GA name? "Head" was used interchangeably during design discussions. | PM | "Channel" chosen for the spec; confirm before public docs. |
 | 11 | **Should the host support multiple targets** at all — one host fronting a router that dispatches across multiple `SupportsAgentRun` agents and/or `Workflow` targets? Open whether this is wanted: it broadens scope, complicates session/identity resolution per target, and may always be better solved a layer above (e.g. an external router that owns multiple single-target hosts). | PM / Eng | Removed from stretch requirements pending validation that the use case is real. |
 | 12 | Should `ChannelRequest.session_mode` grow additional values (e.g. `"shared"` for multi-channel session sharing) or stay closed at three? | Eng | Three values cover the known protocol semantics today. |
-| 13 | Which identity-linking mechanisms ship as first-party helpers in the first phase — `OAuthIdentityLinker` (which provider presets?), `OneTimeCodeIdentityLinker`, `MfaIdentityLinker`, or all three? | PM / Eng | Contract is generic; helper scope decided separately. Listed as fast follow #23. |
-| 14 | Where do issued link grants live — short-lived in-memory state on the host, the same pluggable session store (#22), or a separate identity store? | Eng | Likely shares the pluggable session/state store; finalize when that store contract lands. |
+| 13 | Which identity-linking mechanisms ship as first-party helpers in the first phase — `OAuthIdentityLinker` (which provider presets?), `OneTimeCodeIdentityLinker`, `MfaIdentityLinker`, or all three? | PM / Eng | Contract is generic; helper scope decided separately. Listed as fast follow #24. |
+| 14 | Where do issued link grants live — short-lived in-memory state on the host, the same pluggable session store (#23), or a separate identity store? | Eng | Likely shares the pluggable session/state store; finalize when that store contract lands. |
 | 15 | Should the resolver be invoked **once on the host** with a `ChannelIdentity(channel, native_id, ...)` (current draft) or pluggable **per channel**? | Eng | Host-level keeps cross-channel decisions in one place; per-channel could simplify channel-specific identity normalization. |
 | 16 | Should `IdentityLinker` and `Channel` share a base `Contributor` Protocol (both contribute routes/lifecycle), or stay distinct types with a shared `contribute(...)` shape? | Eng | Distinct types in current draft so the two roles stay clearly separated; consolidation can be additive. |
 | 17 | Should `ResponseTarget.active` honor a configurable **time window** (last seen within N minutes) and what is the fallback when the window has expired before the response is ready — `originating`, `all_linked`, drop with `RunHandle.failed`? | PM / Eng | Likely yes with sensible default (e.g. 24h fall back to `originating`); per-request override via the invocation hook. |
 | 18 | What is the contract for `ChannelPush` failures (destination offline, user opted out, push token expired) — fall back to `originating`, fall back to `all_linked`, mark the `RunHandle` failed, or surface a per-channel policy? | Eng | Default should be opinionated and observable in telemetry; per-request override via the invocation hook. |
 | 19 | Should `host.run_in_background(...)` accept a `notify` callback in addition to `ResponseTarget` (programmatic delivery target — e.g. enqueue onto a service bus — without going through a channel)? | Eng | Not blocking v1; can be additive on top of `ResponseTarget`. |
-| 20 | Storage and TTL of `RunHandle`s in v1 (in-memory) and after the pluggable store lands (#22) — are completed handles retained for poll-after-push, and for how long? | Eng | Affects the channel poll-route experience; default likely 24h then GC. |
+| 20 | Storage and TTL of `RunHandle`s in v1 (in-memory) and after the pluggable store lands (#23) — are completed handles retained for poll-after-push, and for how long? | Eng | Affects the channel poll-route experience; default likely 24h then GC. |
 | 21 | When `response_target=ResponseTarget.all_linked` returns multiple deliveries, how is partial failure surfaced on the `RunHandle` — single status, per-destination status array, or first-failure-wins? | Eng | Per-destination array is most expressive but enlarges the type; decide before background runs are GA. |
 | 22 | For the Responses WebSocket transport, what subprotocol identifier (if any) should be advertised on the `Upgrade` and how is auth conveyed — `Authorization` header on the upgrade, a `Sec-WebSocket-Protocol` token, or a query-string-bound short-lived token? | Eng / PM | Aligning with whatever OpenAI ships for Responses WS is preferable; keep the codec swappable so the channel can track upstream changes without breaking the host contract. |
-| 23 | Should `ResponsesHistoryProvider` (Responses-protocol output items keyed by `previous_response_id` / `conversation_id`) and core `HistoryProvider` (per-session `Message`s keyed by `source_id`, used by Invocations and other channels through the agent's normal session path) **share an underlying backing store** — same Cosmos / Redis / SQLite container — through a future common storage interface, or stay completely separate? | Eng | Today's foundry hosting forbids combining them on one agent and Invocations doesn't even use a protocol-shaped store. Keeping them disjoint is simplest for v1; convergence belongs with the pluggable session/identity store work (req #22). |
+| 23 | Should `ResponsesHistoryProvider` (Responses-protocol output items keyed by `previous_response_id` / `conversation_id`) and core `HistoryProvider` (per-session `Message`s keyed by `source_id`, used by Invocations and other channels through the agent's normal session path) **share an underlying backing store** — same Cosmos / Redis / SQLite container — through a future common storage interface, or stay completely separate? | Eng | Today's foundry hosting forbids combining them on one agent and Invocations doesn't even use a protocol-shaped store. Keeping them disjoint is simplest for v1; convergence belongs with the pluggable session/identity store work (req #23). |
 | 24 | Should the ported `FoundryResponsesHistoryProvider` live in `agent-framework-foundry` (keeps Foundry-related code together; adds a soft import dependency on `agent-framework-hosting-responses` for the Protocol) or in a new `agent-framework-foundry-hosting-responses` package (keeps `foundry` free of any hosting-protocol dependency)? | Eng | First option avoids a new package; second avoids any hosting coupling in the core Foundry connector. Decide alongside the Foundry package owners. |
+| 25 | Naming for the channel-tier concept — `trust_level` (current draft), `confidentiality_tier`, `security_tier`, or `category`? Should the value type stay opaque `str?` or become a small enum / hierarchy (e.g. ordered `public < internal < corp`) so policies can be expressed as comparisons? | PM / Eng | Opaque label is simplest and lets each app define its own taxonomy; ordered hierarchy is more expressive but tightly couples taxonomy to the host. Decide before public docs. |
