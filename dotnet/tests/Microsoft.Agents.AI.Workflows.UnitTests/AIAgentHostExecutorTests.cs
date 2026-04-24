@@ -425,7 +425,7 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
 
         TestRunContext testContext = new();
         MixedContentAgent agent = new(responseMessages, TestAgentId, TestAgentName);
-        AIAgentHostExecutor executor = new(agent, new());
+        AIAgentHostExecutor executor = new(agent, new() { ForwardIncomingMessages = false });
         testContext.ConfigureExecutor(executor);
 
         // Act
