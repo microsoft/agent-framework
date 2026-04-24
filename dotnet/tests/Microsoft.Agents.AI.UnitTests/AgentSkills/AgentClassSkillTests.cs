@@ -128,8 +128,9 @@ public sealed class AgentClassSkillTests
         // Act — script with custom type deserialization
         var script = skill.Scripts![0];
         var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "test", MaxResults = 5 }, jso);
-        var args = new AIFunctionArguments { ["request"] = inputJson };
-        var scriptResult = await script.RunAsync(skill, args, CancellationToken.None);
+        using var argsDoc = JsonDocument.Parse($$"""{ "request": {{inputJson.GetRawText()}} }""");
+        var args = argsDoc.RootElement;
+        var scriptResult = await script.RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert
         Assert.NotNull(scriptResult);
@@ -173,12 +174,14 @@ public sealed class AgentClassSkillTests
 
         // Act & Assert — static method
         var doWorkScript = skill.Scripts!.First(s => s.Name == "do-work");
-        var doWorkResult = await doWorkScript.RunAsync(skill, new AIFunctionArguments { ["input"] = "hello" }, CancellationToken.None);
+        using var doWorkDoc = JsonDocument.Parse("""{"input":"hello"}""");
+        var doWorkResult = await doWorkScript.RunAsync(skill, doWorkDoc.RootElement, null, CancellationToken.None);
         Assert.Equal("HELLO", doWorkResult?.ToString());
 
         // Act & Assert — instance method
         var appendScript = skill.Scripts!.First(s => s.Name == "append");
-        var appendResult = await appendScript.RunAsync(skill, new AIFunctionArguments { ["input"] = "test" }, CancellationToken.None);
+        using var appendDoc = JsonDocument.Parse("""{"input":"test"}""");
+        var appendResult = await appendScript.RunAsync(skill, appendDoc.RootElement, null, CancellationToken.None);
         Assert.Equal("test-suffix", appendResult?.ToString());
     }
 
@@ -367,7 +370,7 @@ public sealed class AgentClassSkillTests
         // Act & Assert — all scripts produce values
         foreach (var script in skill.Scripts!)
         {
-            var result = await script.RunAsync(skill, new AIFunctionArguments(), CancellationToken.None);
+            var result = await script.RunAsync(skill, null, null, CancellationToken.None);
             Assert.NotNull(result);
         }
     }
@@ -382,8 +385,9 @@ public sealed class AgentClassSkillTests
         // Act & Assert — script with custom JSO
         var script = skill.Scripts![0];
         var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "test", MaxResults = 3 }, jso);
-        var args = new AIFunctionArguments { ["request"] = inputJson };
-        var scriptResult = await script.RunAsync(skill, args, CancellationToken.None);
+        using var argsDoc = JsonDocument.Parse($$"""{ "request": {{inputJson.GetRawText()}} }""");
+        var args = argsDoc.RootElement;
+        var scriptResult = await script.RunAsync(skill, args, null, CancellationToken.None);
         Assert.NotNull(scriptResult);
         Assert.Contains("test", scriptResult!.ToString()!);
         Assert.Contains("3", scriptResult!.ToString()!);
@@ -497,8 +501,9 @@ public sealed class AgentClassSkillTests
         var script = skill.Scripts!.First(s => s.Name == "Lookup");
         var jso = SkillTestJsonContext.Default.Options;
         var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "fallback", MaxResults = 7 }, jso);
-        var args = new AIFunctionArguments { ["request"] = inputJson };
-        var result = await script.RunAsync(skill, args, CancellationToken.None);
+        using var argsDoc = JsonDocument.Parse($$"""{ "request": {{inputJson.GetRawText()}} }""");
+        var args = argsDoc.RootElement;
+        var result = await script.RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert
         Assert.NotNull(result);
@@ -531,8 +536,9 @@ public sealed class AgentClassSkillTests
         var script = skill.Scripts!.First(s => s.Name == "Lookup");
         var jso = SkillTestJsonContext.Default.Options;
         var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "explicit", MaxResults = 2 }, jso);
-        var args = new AIFunctionArguments { ["request"] = inputJson };
-        var result = await script.RunAsync(skill, args, CancellationToken.None);
+        using var argsDoc = JsonDocument.Parse($$"""{ "request": {{inputJson.GetRawText()}} }""");
+        var args = argsDoc.RootElement;
+        var result = await script.RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert
         Assert.NotNull(result);

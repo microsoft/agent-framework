@@ -59,32 +59,56 @@ internal static class AgentInlineSkillContentBuilder
 
         if (scripts is { Count: > 0 })
         {
-            sb.Append("\n\n<scripts>\n");
-            foreach (var script in scripts)
-            {
-                var parametersSchema = script.ParametersSchema;
-
-                if (script.Description is null && parametersSchema is null)
-                {
-                    sb.Append($"  <script name=\"{EscapeXmlString(script.Name)}\"/>\n");
-                }
-                else
-                {
-                    sb.Append(script.Description is not null
-                        ? $"  <script name=\"{EscapeXmlString(script.Name)}\" description=\"{EscapeXmlString(script.Description)}\">\n"
-                        : $"  <script name=\"{EscapeXmlString(script.Name)}\">\n");
-
-                    if (parametersSchema is not null)
-                    {
-                        sb.Append($"    <parameters_schema>{EscapeXmlString(parametersSchema.Value.GetRawText(), preserveQuotes: true)}</parameters_schema>\n");
-                    }
-
-                    sb.Append("  </script>\n");
-                }
-            }
-
-            sb.Append("</scripts>");
+            sb.Append('\n');
+            sb.Append(BuildScriptsBlock(scripts));
         }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds a <c>&lt;scripts&gt;...&lt;/scripts&gt;</c> XML block for the given scripts.
+    /// Each script is emitted as a <c>&lt;script name="..."&gt;</c> element with optional
+    /// <c>description</c> attribute and <c>&lt;parameters_schema&gt;</c> child element.
+    /// </summary>
+    /// <param name="scripts">The scripts to include in the block.</param>
+    /// <returns>An XML string starting with <c>\n&lt;scripts&gt;</c>, or an empty string if the list is empty.</returns>
+    public static string BuildScriptsBlock(IReadOnlyList<AgentSkillScript> scripts)
+    {
+        _ = Throw.IfNull(scripts);
+
+        if (scripts.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("\n<scripts>\n");
+
+        foreach (var script in scripts)
+        {
+            var parametersSchema = script.ParametersSchema;
+
+            if (script.Description is null && parametersSchema is null)
+            {
+                sb.Append($"  <script name=\"{EscapeXmlString(script.Name)}\"/>\n");
+            }
+            else
+            {
+                sb.Append(script.Description is not null
+                    ? $"  <script name=\"{EscapeXmlString(script.Name)}\" description=\"{EscapeXmlString(script.Description)}\">\n"
+                    : $"  <script name=\"{EscapeXmlString(script.Name)}\">\n");
+
+                if (parametersSchema is not null)
+                {
+                    sb.Append($"    <parameters_schema>{EscapeXmlString(parametersSchema.Value.GetRawText(), preserveQuotes: true)}</parameters_schema>\n");
+                }
+
+                sb.Append("  </script>\n");
+            }
+        }
+
+        sb.Append("</scripts>");
 
         return sb.ToString();
     }
