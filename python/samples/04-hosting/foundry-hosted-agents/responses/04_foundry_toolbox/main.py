@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import os
 
 from agent_framework import Agent
@@ -12,16 +13,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def main():
+async def main():
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=DefaultAzureCredential(),
     )
 
+    # Load the named toolbox from the Foundry project. Omitting `version`
+    # resolves the toolbox's current default version at runtime.
+    toolbox = await client.get_toolbox(os.environ["TOOLBOX_NAME"])
+
     agent = Agent(
         client=client,
         instructions="You are a friendly assistant. Keep your answers brief.",
+        tools=toolbox,
         # History will be managed by the hosting infrastructure, thus there
         # is no need to store history by the service. Learn more at:
         # https://developers.openai.com/api/reference/resources/responses/methods/create
@@ -29,8 +35,8 @@ def main():
     )
 
     server = ResponsesHostServer(agent)
-    server.run()
+    await server.run_async()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

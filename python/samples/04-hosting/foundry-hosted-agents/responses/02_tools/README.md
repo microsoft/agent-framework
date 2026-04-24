@@ -1,6 +1,6 @@
 # What this sample demonstrates
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent hosted using the **Responses protocol**.
+An [Agent Framework](https://github.com/microsoft/agent-framework) agent with **locally-defined Python tools** hosted using the **Responses protocol**. It shows how to define custom tools with the `@tool` decorator and register them with the agent so the model can call them during a conversation.
 
 ## How It Works
 
@@ -14,6 +14,10 @@ See [main.py](main.py) for the full implementation.
 
 The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
 
+## Running the Agent Host
+
+Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
+
 ## Interacting with the agent
 
 > Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../../README.md) for more details. Use this README for sample queries you can send to the agent.
@@ -21,17 +25,7 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 Send a POST request to the server with a JSON body containing a "message" field to interact with the agent. For example:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Hi"}'
-```
-
-The server will respond with a JSON object containing the response text and a response ID. You can use this response ID to continue the conversation in subsequent requests.
-
-### Multi-turn conversation
-
-To have a multi-turn conversation with the agent, include the previous response id in the request body. For example:
-
-```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "How are you?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "What is the weather in Seattle?"}'
 ```
 
 ## Deploying the Agent to Foundry
