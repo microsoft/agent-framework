@@ -125,6 +125,7 @@ from ._telemetry import (
     prepend_agent_framework_to_user_agent,
 )
 from ._tools import (
+    SKIP_PARSING,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -212,6 +213,15 @@ from ._workflows._executor import (
     handler,
 )
 from ._workflows._function_executor import FunctionExecutor, executor
+from ._workflows._functional import (
+    FunctionalWorkflow,
+    FunctionalWorkflowAgent,
+    RunContext,
+    StepWrapper,
+    get_run_context,
+    step,
+    workflow,
+)
 from ._workflows._request_info_mixin import response_handler
 from ._workflows._runner import Runner
 from ._workflows._runner_context import (
@@ -258,6 +268,7 @@ __all__ = [
     "GROUP_INDEX_KEY",
     "GROUP_KIND_KEY",
     "GROUP_TOKEN_COUNT_KEY",
+    "SKIP_PARSING",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
     "SUMMARY_OF_GROUP_IDS_KEY",
     "SUMMARY_OF_MESSAGE_IDS_KEY",
@@ -330,6 +341,8 @@ __all__ = [
     "FunctionMiddleware",
     "FunctionMiddlewareTypes",
     "FunctionTool",
+    "FunctionalWorkflow",
+    "FunctionalWorkflowAgent",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
     "HistoryProvider",
@@ -352,6 +365,7 @@ __all__ = [
     "ResponseStream",
     "Role",
     "RoleLiteral",
+    "RunContext",
     "Runner",
     "RunnerContext",
     "SecretString",
@@ -364,6 +378,7 @@ __all__ = [
     "SkillScriptRunner",
     "SkillsProvider",
     "SlidingWindowStrategy",
+    "StepWrapper",
     "SubWorkflowRequestMessage",
     "SubWorkflowResponseMessage",
     "SummarizationStrategy",
@@ -422,6 +437,7 @@ __all__ = [
     "evaluator",
     "executor",
     "function_middleware",
+    "get_run_context",
     "handler",
     "included_messages",
     "included_token_count",
@@ -437,6 +453,7 @@ __all__ = [
     "register_state_type",
     "resolve_agent_id",
     "response_handler",
+    "step",
     "tool",
     "tool_call_args_match",
     "tool_called_check",
@@ -445,4 +462,5 @@ __all__ = [
     "validate_tool_mode",
     "validate_tools",
     "validate_workflow_graph",
+    "workflow",
 ]

@@ -14,6 +14,9 @@ internal static class TestDataUtil
     private static readonly string s_agentResponseJson = File.ReadAllText("TestData/AgentResponse.json");
     private static readonly string s_agentVersionResponseJson = File.ReadAllText("TestData/AgentVersionResponse.json");
     private static readonly string s_openAIDefaultResponseJson = File.ReadAllText("TestData/OpenAIDefaultResponse.json");
+    private static readonly string s_toolboxRecordResponseJson = File.ReadAllText("TestData/ToolboxRecordResponse.json");
+    private static readonly string s_toolboxVersionResponseJson = File.ReadAllText("TestData/ToolboxVersionResponse.json");
+    private static readonly string s_toolboxVersionWithDecorationFieldsJson = File.ReadAllText("TestData/ToolboxVersionWithDecorationFields.json");
 
     private const string AgentDefinitionPlaceholder = "\"agent-definition-placeholder\"";
 
@@ -162,4 +165,19 @@ internal static class TestDataUtil
         }
         return json;
     }
+
+    /// <summary>
+    /// Gets the toolbox record response JSON.
+    /// </summary>
+    public static string GetToolboxRecordResponseJson() => s_toolboxRecordResponseJson;
+
+    /// <summary>
+    /// Gets the toolbox version response JSON.
+    /// </summary>
+    public static string GetToolboxVersionResponseJson() => s_toolboxVersionResponseJson;
+
+    /// <summary>
+    /// Gets the toolbox version response JSON with decoration fields on tools.
+    /// </summary>
+    public static string GetToolboxVersionWithDecorationFieldsJson() => s_toolboxVersionWithDecorationFieldsJson;
 }

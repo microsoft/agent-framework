@@ -790,9 +790,9 @@ async def run_agent_stream(
     # Create session (with service session support)
     if config.use_service_session:
         supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
-        session = AgentSession(service_session_id=supplied_thread_id)
+        session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
     else:
-        session = AgentSession()
+        session = AgentSession(session_id=thread_id)
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
     base_metadata: dict[str, Any] = {

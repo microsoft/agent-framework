@@ -9,6 +9,7 @@
       "src\\Microsoft.Agents.AI.GitHub.Copilot\\Microsoft.Agents.AI.GitHub.Copilot.csproj",
       "src\\Microsoft.Agents.AI.AzureAI.Persistent\\Microsoft.Agents.AI.AzureAI.Persistent.csproj",
       "src\\Microsoft.Agents.AI.Foundry\\Microsoft.Agents.AI.Foundry.csproj",
+      "src\\Microsoft.Agents.AI.Foundry.Hosting\\Microsoft.Agents.AI.Foundry.Hosting.csproj",
       "src\\Microsoft.Agents.AI.CopilotStudio\\Microsoft.Agents.AI.CopilotStudio.csproj",
       "src\\Microsoft.Agents.AI.CosmosNoSql\\Microsoft.Agents.AI.CosmosNoSql.csproj",
       "src\\Microsoft.Agents.AI.Declarative\\Microsoft.Agents.AI.Declarative.csproj",

@@ -2192,6 +2192,7 @@ def test_streaming_chunk_with_usage_only() -> None:
     mock_event.response.id = "resp_usage"
     mock_event.response.model = "test-model"
     mock_event.response.conversation = None
+    mock_event.response.created_at = 1000000000.0
     mock_event.response.usage = MagicMock()
     mock_event.response.usage.input_tokens = 50
     mock_event.response.usage.output_tokens = 25
@@ -2973,6 +2974,17 @@ def test_prepare_content_for_openai_image_content() -> None:
     result = client._prepare_content_for_openai("user", image_content_basic)
     assert result["type"] == "input_image"
     assert result["detail"] == "auto"
+    assert "file_id" not in result
+
+    # Test image content with additional_properties present but no file_id key
+    image_content_detail_only = Content.from_uri(
+        uri="https://example.com/basic.png",
+        media_type="image/png",
+        additional_properties={"detail": "high"},
+    )
+    result = client._prepare_content_for_openai("user", image_content_detail_only)
+    assert result["type"] == "input_image"
+    assert result["detail"] == "high"
     assert "file_id" not in result
 
 
@@ -4438,11 +4450,34 @@ def test_streaming_response_completed_no_continuation_token() -> None:
     mock_event.response.conversation = MagicMock()
     mock_event.response.conversation.id = "conv_done"
     mock_event.response.model = "test-model"
+    mock_event.response.created_at = 1000000000.0
     mock_event.response.usage = None
 
     update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
 
     assert update.continuation_token is None
+
+
+def test_streaming_response_completed_sets_created_at() -> None:
+    """Test that response.completed sets created_at on the ChatResponseUpdate."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.completed"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_created"
+    mock_event.response.conversation = MagicMock()
+    mock_event.response.conversation.id = "conv_created"
+    mock_event.response.model = "test-model"
+    mock_event.response.created_at = 1000000000.0
+    mock_event.response.usage = None
+
+    update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert update.created_at is not None
+    assert update.created_at == "2001-09-09T01:46:40.000000Z"
 
 
 def test_map_chat_to_agent_update_preserves_continuation_token() -> None:

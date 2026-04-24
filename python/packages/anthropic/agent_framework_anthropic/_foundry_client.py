@@ -6,13 +6,13 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropicFoundry
 
@@ -91,14 +91,14 @@ class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
                     base_url=base_url_setting,
                     api_key=api_key_value,
                     azure_ad_token_provider=azure_ad_token_provider,
-                    default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+                    default_headers={"User-Agent": get_user_agent()},
                 )
             else:
                 anthropic_client = AsyncAnthropicFoundry(
                     resource=resource_setting,
                     api_key=api_key_value,
                     azure_ad_token_provider=azure_ad_token_provider,
-                    default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+                    default_headers={"User-Agent": get_user_agent()},
                 )
 
         super().__init__(

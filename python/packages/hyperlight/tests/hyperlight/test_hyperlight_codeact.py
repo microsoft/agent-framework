@@ -937,3 +937,191 @@ async def test_run_code_does_not_block_event_loop() -> None:
 
     assert concurrent_ran, "Event loop was blocked during sandbox execution"
     assert result[0].type == "text"
+
+
+class _ThreadAffinityFakeSandbox(_FakeSandbox):
+    """Fake sandbox that records the OS thread of every method invocation.
+
+    Mirrors the PyO3 ``unsendable`` invariant of ``hyperlight_sandbox.WasmSandbox``:
+    if ``__init__``, ``register_tool``, ``allow_domain``, ``run``, ``snapshot`` or ``restore``
+    are ever called from more than one thread for a given instance, the test fails.
+    """
+
+    affinity_failures: list[str] = []
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._owner_thread = threading.get_ident()
+        self.thread_ids: set[int] = {self._owner_thread}
+
+    def _record(self, method: str) -> None:
+        ident = threading.get_ident()
+        self.thread_ids.add(ident)
+        if ident != self._owner_thread:
+            _ThreadAffinityFakeSandbox.affinity_failures.append(
+                f"{method} called from thread {ident}, expected {self._owner_thread}"
+            )
+
+    def register_tool(self, name_or_tool: Any, callback: Any | None = None) -> None:
+        self._record("register_tool")
+        super().register_tool(name_or_tool, callback)
+
+    def allow_domain(self, target: str, methods: list[str] | None = None) -> None:
+        self._record("allow_domain")
+        super().allow_domain(target, methods)
+
+    def run(self, code: str) -> _FakeResult:
+        self._record("run")
+        return super().run(code)
+
+    def snapshot(self) -> str:
+        self._record("snapshot")
+        return super().snapshot()
+
+    def restore(self, snapshot: Any) -> None:
+        self._record("restore")
+        super().restore(snapshot)
+
+
+async def test_sandbox_calls_are_pinned_to_owning_worker_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: WasmSandbox is unsendable; every sandbox call must run on its owner thread."""
+    _ThreadAffinityFakeSandbox.instances.clear()
+    _ThreadAffinityFakeSandbox.affinity_failures.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _ThreadAffinityFakeSandbox)
+
+    execute_code = HyperlightExecuteCodeTool()
+
+    # Invoke many times concurrently; asyncio.to_thread will spread these across the default
+    # executor's worker threads, which previously caused PyO3 to panic when a different thread
+    # touched the cached sandbox.
+    results = await asyncio.gather(*[execute_code.invoke(arguments={"code": "None"}) for _ in range(8)])
+    for result in results:
+        assert result[0].type == "text"
+
+    assert _ThreadAffinityFakeSandbox.affinity_failures == []
+    assert len(_ThreadAffinityFakeSandbox.instances) == 1
+    sandbox = _ThreadAffinityFakeSandbox.instances[0]
+    # All sandbox-touching calls must have stayed on a single owning thread, distinct from the
+    # caller thread that asyncio.to_thread used for dispatch.
+    assert sandbox.thread_ids == {sandbox._owner_thread}
+    assert sandbox._owner_thread != threading.get_ident()
+
+
+async def test_sandbox_owner_thread_persists_across_dispatch_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sequential calls landing on different dispatch threads still share one sandbox thread."""
+    _ThreadAffinityFakeSandbox.instances.clear()
+    _ThreadAffinityFakeSandbox.affinity_failures.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _ThreadAffinityFakeSandbox)
+
+    execute_code = HyperlightExecuteCodeTool()
+
+    for _ in range(5):
+        result = await execute_code.invoke(arguments={"code": "None"})
+        assert result[0].type == "text"
+
+    assert _ThreadAffinityFakeSandbox.affinity_failures == []
+    assert len(_ThreadAffinityFakeSandbox.instances) == 1
+
+
+def test_sandbox_registry_close_shuts_down_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+
+    registry = execute_code_module._SandboxRegistry()
+    execute_code = HyperlightExecuteCodeTool(_registry=registry)
+    asyncio.run(execute_code.invoke(arguments={"code": "None"}))
+
+    entries = list(registry._entries.values())
+    assert len(entries) == 1
+    worker = entries[0].worker
+
+    registry.close()
+
+    assert registry._entries == {}
+    # Submitting after shutdown must fail; this proves the executor was actually torn down.
+    with pytest.raises(RuntimeError):
+        worker.submit(lambda: None)
+
+
+def test_sandbox_registry_close_releases_per_entry_resources(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """close() must invoke any sandbox close hook and release temp directories."""
+
+    close_calls: list[int] = []
+
+    class _ClosableFakeSandbox(_FakeSandbox):
+        def close(self) -> None:
+            close_calls.append(1)
+
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _ClosableFakeSandbox)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    registry = execute_code_module._SandboxRegistry()
+    execute_code = HyperlightExecuteCodeTool(workspace_root=workspace, _registry=registry)
+    asyncio.run(execute_code.invoke(arguments={"code": "None"}))
+
+    entries = list(registry._entries.values())
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.input_dir is not None and entry.output_dir is not None
+    input_path = Path(entry.input_dir.name)
+    output_path = Path(entry.output_dir.name)
+    assert input_path.exists() and output_path.exists()
+
+    registry.close()
+
+    assert close_calls == [1]
+    assert not input_path.exists()
+    assert not output_path.exists()
+
+
+async def test_make_sandbox_callback_returns_native_dict() -> None:
+    """Host tool returning a dict must be forwarded as a native dict (no repr round-trip)."""
+
+    @tool
+    def get_weather(city: str) -> dict[str, Any]:
+        """Get weather."""
+        return {"city": city, "temp_c": 21.5}
+
+    callback = execute_code_module._make_sandbox_callback(get_weather)
+    result = callback(city="Seattle")
+
+    assert isinstance(result, dict)
+    assert result == {"city": "Seattle", "temp_c": 21.5}
+
+
+async def test_make_sandbox_callback_bypasses_user_result_parser() -> None:
+    """Documented behavior change: result_parser is bypassed in the sandbox path."""
+
+    parser_calls: list[Any] = []
+
+    def parser(value: Any) -> str:
+        parser_calls.append(value)
+        return "PARSED"
+
+    @tool(result_parser=parser)
+    def make_payload() -> dict[str, int]:
+        """Returns a dict."""
+        return {"a": 1, "b": 2}
+
+    callback = execute_code_module._make_sandbox_callback(make_payload)
+    result = callback()
+
+    assert result == {"a": 1, "b": 2}
+    assert parser_calls == [], "result_parser must not run on the sandbox path"
+
+
+async def test_make_sandbox_callback_propagates_exceptions() -> None:
+    @tool
+    def boom(x: int) -> int:
+        """Always fails."""
+        raise RuntimeError("nope")
+
+    callback = execute_code_module._make_sandbox_callback(boom)
+    with pytest.raises(RuntimeError, match="nope"):
+        callback(x=1)

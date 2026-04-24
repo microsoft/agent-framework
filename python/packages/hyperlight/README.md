@@ -130,3 +130,9 @@ codeact = HyperlightCodeActProvider(
 - `allowed_domains` accepts a single string target such as `"github.com"` to
   allow all backend-supported methods, an explicit `(target, method_or_methods)`
   tuple such as `("github.com", "GET")`, or an `AllowedDomain` named tuple.
+- Tools registered with the sandbox return their native Python value
+  (`dict`, `list`, primitives, or custom objects) directly to the guest via the
+  Hyperlight FFI. Any `result_parser` configured on a `FunctionTool` is
+  intended for LLM-facing consumers and does not run on the sandbox path —
+  apply formatting inside the tool function itself if you need it for
+  in-sandbox consumers.

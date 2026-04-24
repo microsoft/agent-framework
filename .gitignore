@@ -136,6 +136,10 @@ celerybeat.pid
 .venv
 env/
 venv/
+
+# Foundry agent CLI (contains secrets, auto-generated)
+.foundry-agent.json
+.foundry-agent-build.log
 ENV/
 env.bak/
 venv.bak/
