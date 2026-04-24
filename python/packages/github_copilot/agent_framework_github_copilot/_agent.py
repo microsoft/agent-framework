@@ -9,7 +9,13 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
 
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
+
 from agent_framework import (
+    AgentMiddlewareLayer,
     AgentMiddlewareTypes,
     AgentResponse,
     AgentResponseUpdate,
@@ -27,6 +33,7 @@ from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
+from agent_framework.observability import AgentTelemetryLayer
 
 try:
     from copilot import CopilotClient, CopilotSession, SubprocessConfig
@@ -135,8 +142,11 @@ OptionsT = TypeVar(
 )
 
 
-class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
-    """A GitHub Copilot Agent.
+class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
+    """A GitHub Copilot Agent without telemetry layers.
+
+    This is the core GitHub Copilot agent implementation without OpenTelemetry instrumentation.
+    For most use cases, prefer :class:`GitHubCopilotAgent` which includes telemetry support.
 
     This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities
     within the Agent Framework. It supports both streaming and non-streaming responses,
@@ -149,7 +159,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         .. code-block:: python
 
-            async with GitHubCopilotAgent() as agent:
+            async with RawGitHubCopilotAgent() as agent:
                 response = await agent.run("Hello, world!")
                 print(response)
 
@@ -157,22 +167,11 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         .. code-block:: python
 
-            from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
+            from agent_framework_github_copilot import RawGitHubCopilotAgent, GitHubCopilotOptions
 
-            agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            agent: RawGitHubCopilotAgent[GitHubCopilotOptions] = RawGitHubCopilotAgent(
                 default_options={"model": "claude-sonnet-4", "timeout": 120}
             )
-
-        With tools:
-
-        .. code-block:: python
-
-            def get_weather(city: str) -> str:
-                return f"Weather in {city} is sunny"
-
-
-            async with GitHubCopilotAgent(tools=[get_weather]) as agent:
-                response = await agent.run("What's the weather in Seattle?")
     """
 
     AGENT_PROVIDER_NAME: ClassVar[str] = "github.copilot"
@@ -200,9 +199,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             client: Optional pre-configured CopilotClient instance. If not provided,
                 a new client will be created using the other parameters.
-            id: ID of the GitHubCopilotAgent.
-            name: Name of the GitHubCopilotAgent.
-            description: Description of the GitHubCopilotAgent.
+            id: ID of the RawGitHubCopilotAgent.
+            name: Name of the RawGitHubCopilotAgent.
+            description: Description of the RawGitHubCopilotAgent.
             context_providers: Context Providers, to be used by the agent.
             middleware: Agent middleware used by the agent.
             tools: Tools to use for the agent. Can be functions
@@ -258,7 +257,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._default_options = opts
         self._started = False
 
-    async def __aenter__(self) -> GitHubCopilotAgent[OptionsT]:
+    async def __aenter__(self) -> Self:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -308,6 +307,20 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         self._started = False
 
+    @property
+    def default_options(self) -> dict[str, Any]:
+        """Expose default options including model from settings.
+
+        Returns a merged dict of ``_default_options`` with the resolved ``model``
+        from settings injected under the ``model`` key. This is read by
+        :class:`AgentTelemetryLayer` to include the model name in span attributes.
+        """
+        opts = dict(self._default_options)
+        model = self._settings.get("model")
+        if model:
+            opts["model"] = model
+        return opts
+
     @overload
     def run(
         self,
@@ -315,7 +328,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
+        **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
     @overload
@@ -325,7 +340,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
+        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
@@ -334,7 +351,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
+        **kwargs: Any,  # type: ignore[override]
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
@@ -348,7 +367,12 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
+            middleware: Not used by this agent directly. Accepted for interface
+                compatibility; pass middleware via :class:`GitHubCopilotAgent` which
+                forwards it through :class:`AgentTelemetryLayer`.
             options: Runtime options (model, timeout, etc.).
+            kwargs: Additional keyword arguments for compatibility with the shared agent
+                interface (e.g. compaction_strategy, tokenizer). Not used by this agent.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
@@ -357,6 +381,12 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Raises:
             AgentException: If the request fails.
         """
+        if middleware:
+            logger.warning(
+                "Per-run middleware is not supported by RawGitHubCopilotAgent: the GitHub Copilot SDK "
+                "handles tool execution internally, so chat/function middleware cannot be injected into "
+                "the tool call path. Use agent-level middleware via the GitHubCopilotAgent constructor instead."
+            )
         if stream:
             ctx_holder: dict[str, Any] = {}
 
@@ -766,4 +796,98 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             tools=tools or None,
             mcp_servers=self._mcp_servers or None,
             provider=self._provider or None,
+        )
+
+
+class GitHubCopilotAgent(  # type: ignore[misc]
+    AgentMiddlewareLayer,
+    AgentTelemetryLayer,
+    RawGitHubCopilotAgent[OptionsT],
+    Generic[OptionsT],
+):
+    """A GitHub Copilot Agent with full middleware and telemetry support.
+
+    This is the recommended agent class for most use cases. It includes
+    middleware support and OpenTelemetry-based telemetry for observability,
+    with middleware running outside the telemetry span so middleware execution
+    time is not captured in traces. For a minimal implementation without these
+    layers, use :class:`RawGitHubCopilotAgent`.
+
+    Examples:
+        Basic usage:
+
+        .. code-block:: python
+
+            async with GitHubCopilotAgent() as agent:
+                response = await agent.run("Hello, world!")
+                print(response)
+
+        With explicitly typed options:
+
+        .. code-block:: python
+
+            from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
+
+            agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+                default_options={"model": "claude-sonnet-4-5", "timeout": 120}
+            )
+
+        With observability:
+
+        .. code-block:: python
+
+            from agent_framework.observability import configure_otel_providers
+
+            configure_otel_providers()
+            async with GitHubCopilotAgent() as agent:
+                response = await agent.run("Hello, world!")
+    """
+
+    def __init__(
+        self,
+        instructions: str | None = None,
+        *,
+        client: CopilotClient | None = None,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        default_options: OptionsT | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize a GitHub Copilot Agent with full middleware and telemetry.
+
+        Args:
+            instructions: System message for the agent.
+
+        Keyword Args:
+            client: Optional pre-configured CopilotClient instance. If not provided,
+                a new client will be created using the other parameters.
+            id: ID of the agent.
+            name: Name of the agent.
+            description: Description of the agent.
+            context_providers: Context providers to be used by the agent.
+            middleware: Agent middleware used by the agent.
+            tools: Tools to use for the agent. Can be functions or tool definition dicts.
+                These are converted to Copilot SDK tools internally.
+            default_options: Default options for the agent. Can include cli_path, model,
+                timeout, log_level, etc.
+            env_file_path: Optional path to .env file for loading configuration.
+            env_file_encoding: Encoding of the .env file, defaults to 'utf-8'.
+        """
+        super().__init__(
+            instructions,
+            client=client,
+            id=id,
+            name=name,
+            description=description,
+            context_providers=context_providers,
+            middleware=middleware,
+            tools=tools,
+            default_options=default_options,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
         )

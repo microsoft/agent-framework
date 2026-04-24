@@ -549,6 +549,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                         chunk,
                                         options=validated_options,
                                         function_call_ids=function_call_ids,
+                                        seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
                                     )
                         else:
                             async for chunk in await client.responses.create(stream=True, **run_options):
@@ -556,6 +557,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                     chunk,
                                     options=validated_options,
                                     function_call_ids=function_call_ids,
+                                    seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
                                 )
                     except Exception as ex:
                         self._handle_request_error(ex)
@@ -1403,7 +1405,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         else "auto",
                     }
                     file_id = content.additional_properties.get("file_id") if content.additional_properties else None
-                    if file_id:
+                    if file_id is not None:
                         result["file_id"] = file_id
                     return result
                 if content.has_top_level_media_type("audio"):
@@ -1586,6 +1588,54 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     def _join_shell_commands(commands: Sequence[str]) -> str:
         """Join shell commands into a single executable command string."""
         return "\n".join(command for command in commands if command).strip()
+
+    @staticmethod
+    def _serialize_provider_payload(value: Any) -> Any:
+        """Convert OpenAI SDK objects into JSON-serializable Python values."""
+        if isinstance(value, BaseModel):
+            return value.model_dump(mode="json", exclude_none=True)
+        if isinstance(value, Mapping):
+            return {str(key): RawOpenAIChatClient._serialize_provider_payload(item) for key, item in value.items()}  # type: ignore[reportUnknownVariableType]
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            return [RawOpenAIChatClient._serialize_provider_payload(item) for item in value]  # type: ignore[reportUnknownVariableType]
+        return value
+
+    @staticmethod
+    def _get_search_tool_name(item_type: str) -> str:
+        """Map OpenAI search output item types to unified content tool names."""
+        return "web_search" if item_type == "web_search_call" else "file_search"
+
+    def _parse_search_tool_call_content(self, item: Any) -> Content:
+        """Create unified search tool call content from an OpenAI search output item."""
+        item_type = getattr(item, "type", "")
+        call_id = getattr(item, "id", None) or getattr(item, "call_id", None) or ""
+        if item_type == "web_search_call":
+            arguments = self._serialize_provider_payload(getattr(item, "action", None))
+        else:
+            arguments = {"queries": list(getattr(item, "queries", []) or [])}
+        return Content.from_search_tool_call(
+            call_id=call_id,
+            tool_name=self._get_search_tool_name(item_type),
+            arguments=arguments,
+            status=getattr(item, "status", None),
+            raw_representation=item,
+        )
+
+    def _parse_search_tool_result_content(self, item: Any) -> Content:
+        """Create unified search tool result content from an OpenAI search output item."""
+        item_type = getattr(item, "type", "")
+        call_id = getattr(item, "id", None) or getattr(item, "call_id", None) or ""
+        if item_type == "web_search_call":
+            result = {"action": self._serialize_provider_payload(getattr(item, "action", None))}
+        else:
+            result = {"results": self._serialize_provider_payload(getattr(item, "results", None))}
+        return Content.from_search_tool_result(
+            call_id=call_id,
+            tool_name=self._get_search_tool_name(item_type),
+            result=result,
+            status=getattr(item, "status", None),
+            raw_representation=item,
+        )
 
     # region Parse methods
     def _parse_response_from_openai(
@@ -1788,6 +1838,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             raw_representation=item,
                         )
                     )
+                case "web_search_call" | "file_search_call":
+                    contents.append(self._parse_search_tool_call_content(item))
+                    contents.append(self._parse_search_tool_result_content(item))
                 case "mcp_approval_request":  # ResponseOutputMcpApprovalRequest
                     contents.append(
                         Content.from_function_approval_request(
@@ -1975,6 +2028,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         local_shell_tool_name = self._get_local_shell_tool_name(options.get("tools"))
         conversation_id: str | None = None
         response_id: str | None = None
+        created_at: str | None = None
         continuation_token: OpenAIContinuationToken | None = None
         model = self.model
         match event.type:
@@ -2156,6 +2210,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 model = event.response.model
+                created_at = datetime.fromtimestamp(event.response.created_at, tz=timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%S.%fZ"
+                )
                 if event.response.usage:
                     usage = self._parse_usage_from_openai(event.response.usage)
                     if usage:
@@ -2377,8 +2434,19 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                     additional_properties=additional_properties_empty or None,
                                 )
                             )
+                    case "web_search_call" | "file_search_call":
+                        contents.append(self._parse_search_tool_call_content(event_item))
                     case _:
                         logger.debug("Unparsed event of type: %s: %s", event.type, event)
+            case (
+                "response.web_search_call.in_progress"
+                | "response.web_search_call.searching"
+                | "response.web_search_call.completed"
+                | "response.file_search_call.in_progress"
+                | "response.file_search_call.searching"
+                | "response.file_search_call.completed"
+            ):
+                pass
             case "response.function_call_arguments.delta":
                 call_id, name = function_call_ids.get(event.output_index, (None, None))
                 if call_id and name:
@@ -2514,6 +2582,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             raw_representation=done_item,
                         )
                     )
+                elif getattr(done_item, "type", None) in ("web_search_call", "file_search_call"):
+                    contents.append(self._parse_search_tool_result_content(done_item))
             case _:
                 logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
@@ -2523,6 +2593,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             response_id=response_id,
             role="assistant",
             model=model,
+            created_at=created_at,
             continuation_token=continuation_token,
             additional_properties=metadata,
             raw_representation=event,

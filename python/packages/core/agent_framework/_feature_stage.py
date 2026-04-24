@@ -48,7 +48,9 @@ class ExperimentalFeature(str, Enum):
 
     EVALS = "EVALS"
     FILE_HISTORY = "FILE_HISTORY"
+    FUNCTIONAL_WORKFLOWS = "FUNCTIONAL_WORKFLOWS"
     SKILLS = "SKILLS"
+    TOOLBOXES = "TOOLBOXES"
 
 
 class ReleaseCandidateFeature(str, Enum):
