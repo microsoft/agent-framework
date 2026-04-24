@@ -78,8 +78,47 @@ internal sealed class HttpRequestExecutor(
         // Also publish response headers for diagnostic purposes.
         await this.AssignResponseHeadersAsync(context, result.Headers).ConfigureAwait(false);
 
-        throw this.Exception(
-            $"HTTP request to '{url}' failed with status code {result.StatusCode}. Body: '{result.Body}'");
+        string bodyPreview = FormatBodyForDiagnostics(result.Body);
+        string message = bodyPreview.Length == 0
+            ? $"HTTP request to '{url}' failed with status code {result.StatusCode}."
+            : $"HTTP request to '{url}' failed with status code {result.StatusCode}. Body: '{bodyPreview}'";
+
+        throw this.Exception(message);
+    }
+
+    // Response bodies can echo secrets (tokens, PII) and may be very large (multi-MB HTML error pages).
+    // Exception messages are often logged and persisted, so we clip the body to bound both exposure
+    // and message size. Full bodies are still available via the success path (assigned to Response).
+    private const int MaxBodyDiagnosticLength = 256;
+    private const string BodyTruncationSuffix = " \u2026 [truncated]";
+
+    private static string FormatBodyForDiagnostics(string? body)
+    {
+        if (string.IsNullOrEmpty(body))
+        {
+            return string.Empty;
+        }
+
+        int sourceLen = body!.Length;
+        bool truncated = sourceLen > MaxBodyDiagnosticLength;
+        int copyLen = truncated ? MaxBodyDiagnosticLength : sourceLen;
+        int finalLen = copyLen + (truncated ? BodyTruncationSuffix.Length : 0);
+
+        // Size the buffer for the final string so we only allocate once for the chars
+        // and once for the string itself. For a 10 KB error body we touch 256 chars instead of 10,000.
+        char[] buffer = new char[finalLen];
+        for (int i = 0; i < copyLen; i++)
+        {
+            char c = body[i];
+            buffer[i] = c is '\r' or '\n' or '\t' ? ' ' : c;
+        }
+
+        if (truncated)
+        {
+            BodyTruncationSuffix.CopyTo(0, buffer, copyLen, BodyTruncationSuffix.Length);
+        }
+
+        return new string(buffer);
     }
 
     private async ValueTask AddResponseToConversationAsync(string? conversationId, string? responseBody, CancellationToken cancellationToken)

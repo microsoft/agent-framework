@@ -47,7 +47,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
 
     #region InvokeHttpRequest Tests
 
-    [Theory]
+    [RetryTheory(3, 5000)]
     [InlineData("HttpRequest.yaml", "visibility: public")]
     public Task ValidateHttpRequestAsync(string workflowFileName, string? expectedResultContains) =>
         this.RunHttpRequestTestAsync(workflowFileName, expectedResultContains);
@@ -270,7 +270,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
     {
         // Arrange
         string workflowPath = GetWorkflowPath(workflowFileName);
-        DefaultHttpRequestHandler httpRequestHandler = new();
+        await using DefaultHttpRequestHandler httpRequestHandler = new();
         DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(
             externalConversation: false,
             httpRequestHandler: httpRequestHandler);

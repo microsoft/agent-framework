@@ -217,6 +217,78 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
     }
 
     [Fact]
+    public async Task HttpRequestFailureExceptionTruncatesLongBodyAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        HttpRequestAction model = this.CreateModel(
+            displayName: nameof(HttpRequestFailureExceptionTruncatesLongBodyAsync),
+            url: TestUrl,
+            method: HttpMethodType.Get);
+
+        string longBody = new('x', 10_000);
+        MockHttpRequestHandler handler = new(HttpRequestResult(longBody, statusCode: 500, isSuccess: false));
+        HttpRequestExecutor action = new(model, handler.Object, this._agentProvider.Object, this.State);
+
+        // Act
+        DeclarativeActionException exception =
+            await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
+
+        // Assert - message contains status and truncation marker, bounded in length, never the full body.
+        Assert.Contains("500", exception.Message);
+        Assert.Contains("[truncated]", exception.Message);
+        Assert.DoesNotContain(longBody, exception.Message);
+        Assert.True(exception.Message.Length < 512, $"Exception message too long: {exception.Message.Length} chars.");
+    }
+
+    [Fact]
+    public async Task HttpRequestFailureExceptionOmitsEmptyBodyAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        HttpRequestAction model = this.CreateModel(
+            displayName: nameof(HttpRequestFailureExceptionOmitsEmptyBodyAsync),
+            url: TestUrl,
+            method: HttpMethodType.Get);
+
+        MockHttpRequestHandler handler = new(HttpRequestResult(body: null, statusCode: 404, isSuccess: false));
+        HttpRequestExecutor action = new(model, handler.Object, this._agentProvider.Object, this.State);
+
+        // Act
+        DeclarativeActionException exception =
+            await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
+
+        // Assert - status present, no stray "Body: ''" noise.
+        Assert.Contains("404", exception.Message);
+        Assert.DoesNotContain("Body:", exception.Message);
+    }
+
+    [Fact]
+    public async Task HttpRequestFailureExceptionSanitizesControlCharsAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        HttpRequestAction model = this.CreateModel(
+            displayName: nameof(HttpRequestFailureExceptionSanitizesControlCharsAsync),
+            url: TestUrl,
+            method: HttpMethodType.Get);
+
+        MockHttpRequestHandler handler = new(HttpRequestResult("line1\r\nline2\tend", statusCode: 400, isSuccess: false));
+        HttpRequestExecutor action = new(model, handler.Object, this._agentProvider.Object, this.State);
+
+        // Act
+        DeclarativeActionException exception =
+            await Assert.ThrowsAsync<DeclarativeActionException>(() => this.ExecuteAsync(action));
+
+        // Assert - CR/LF/TAB collapsed to spaces so the message stays on one line.
+        Assert.DoesNotContain("\r", exception.Message);
+        Assert.DoesNotContain("\n", exception.Message);
+        Assert.DoesNotContain("\t", exception.Message);
+        Assert.Contains("line1", exception.Message);
+        Assert.Contains("line2", exception.Message);
+    }
+
+    [Fact]
     public async Task HttpRequestPassesTimeoutToHandlerAsync()
     {
         // Arrange

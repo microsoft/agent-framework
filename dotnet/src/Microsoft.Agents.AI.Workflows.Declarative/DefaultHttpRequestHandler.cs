@@ -31,18 +31,66 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     private readonly Lazy<HttpClient> _ownedHttpClient;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class.
+    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that uses an
+    /// internally owned <see cref="HttpClient"/> for all requests. The internal client is disposed
+    /// when <see cref="DisposeAsync"/> is called.
+    /// </summary>
+    public DefaultHttpRequestHandler()
+        : this(httpClientProvider: null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that uses the
+    /// supplied <see cref="HttpClient"/> for all requests.
+    /// </summary>
+    /// <param name="httpClient">
+    /// The <see cref="HttpClient"/> to use for all requests. The caller retains ownership of this
+    /// instance; it is not disposed by <see cref="DisposeAsync"/>.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="httpClient"/> is <see langword="null"/>.</exception>
+    public DefaultHttpRequestHandler(HttpClient httpClient)
+        : this(CreateSingleClientProvider(httpClient))
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that selects
+    /// an <see cref="HttpClient"/> per request via a caller-supplied callback — for example, to route
+    /// different URLs through differently authenticated clients.
     /// </summary>
     /// <param name="httpClientProvider">
-    /// An optional callback that provides an <see cref="HttpClient"/> for each request.
-    /// The callback receives the <see cref="HttpRequestInfo"/> and should return an
-    /// <see cref="HttpClient"/> configured with any required authentication or transport.
-    /// Return <see langword="null"/> to fall back to the handler's shared internal <see cref="HttpClient"/>.
+    /// An optional callback invoked for each request. The callback receives the <see cref="HttpRequestInfo"/>
+    /// and should return a pre-configured <see cref="HttpClient"/> (e.g. with authentication or a custom
+    /// transport). Return <see langword="null"/> to fall back to the handler's shared internal
+    /// <see cref="HttpClient"/>.
     /// </param>
-    public DefaultHttpRequestHandler(Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider = null)
+    /// <remarks>
+    /// <para>
+    /// <b>Ownership</b>: the caller is solely responsible for the lifetime of clients returned by this
+    /// callback. <see cref="DefaultHttpRequestHandler"/> will <b>not</b> dispose provider-returned
+    /// clients; only the handler's internally owned fallback client is disposed by <see cref="DisposeAsync"/>.
+    /// </para>
+    /// <para>
+    /// <b>Reuse</b>: callers are expected to cache and reuse clients (for example, keyed by base URL or
+    /// auth scope) across requests. Returning a newly allocated <see cref="HttpClient"/> on every
+    /// invocation will leak sockets and handler resources.
+    /// </para>
+    /// </remarks>
+    public DefaultHttpRequestHandler(Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider)
     {
         this._httpClientProvider = httpClientProvider;
         this._ownedHttpClient = new Lazy<HttpClient>(() => new HttpClient(), LazyThreadSafetyMode.ExecutionAndPublication);
+    }
+
+    private static Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>> CreateSingleClientProvider(HttpClient httpClient)
+    {
+        if (httpClient is null)
+        {
+            throw new ArgumentNullException(nameof(httpClient));
+        }
+
+        return (_, _) => Task.FromResult<HttpClient?>(httpClient);
     }
 
     /// <inheritdoc/>
@@ -168,8 +216,10 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         return httpRequest;
     }
 
-    private static HttpMethod ResolveMethod(string method) =>
-        method.Trim().ToUpperInvariant() switch
+    private static HttpMethod ResolveMethod(string method)
+    {
+        string normalized = method.Trim().ToUpperInvariant();
+        return normalized switch
         {
             "GET" => HttpMethod.Get,
             "POST" => HttpMethod.Post,
@@ -180,8 +230,9 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 #else
             "PATCH" => new HttpMethod("PATCH"),
 #endif
-            _ => new HttpMethod(method),
+            _ => new HttpMethod(normalized),
         };
+    }
 
     private static string ResolveRequestUri(HttpRequestInfo request)
     {

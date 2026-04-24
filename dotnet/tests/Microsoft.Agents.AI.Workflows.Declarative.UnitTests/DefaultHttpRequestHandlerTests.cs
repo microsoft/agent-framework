@@ -42,6 +42,55 @@ public sealed class DefaultHttpRequestHandlerTests
         handler.Should().NotBeNull();
     }
 
+    [Fact]
+    public void ConstructorWithNullHttpClientThrows()
+    {
+        // Act
+        Action act = () => _ = new DefaultHttpRequestHandler((HttpClient)null!);
+
+        // Assert
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task ConstructorWithHttpClientUsesSuppliedClientForAllRequestsAsync()
+    {
+        // Arrange
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
+            }));
+        using HttpClient suppliedClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(suppliedClient);
+        HttpRequestInfo request = new() { Method = "GET", Url = TestUrl };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request);
+
+        // Assert - the supplied HttpClient's underlying handler saw the request
+        messageHandler.LastRequest.Should().NotBeNull();
+        messageHandler.LastRequest!.RequestUri!.ToString().Should().Be(TestUrl);
+        result.Body.Should().Be("ok");
+    }
+
+    [Fact]
+    public async Task DisposeAsyncDoesNotDisposeCallerSuppliedHttpClientAsync()
+    {
+        // Arrange
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        using HttpClient suppliedClient = new(messageHandler);
+
+        // Act
+        DefaultHttpRequestHandler handler = new(suppliedClient);
+        await handler.DisposeAsync();
+
+        // Assert - supplied client remains usable (not disposed)
+        Func<Task> act = async () => await suppliedClient.GetAsync(new Uri(TestUrl));
+        await act.Should().NotThrowAsync<ObjectDisposedException>();
+    }
+
     #endregion
 
     #region Argument Validation Tests
@@ -136,6 +185,22 @@ public sealed class DefaultHttpRequestHandlerTests
             // Assert
             messageHandler.LastRequest!.Method.Method.Should().Be(method);
         }
+    }
+
+    [Fact]
+    public async Task SendAsyncNormalizesWhitespaceAroundCustomMethodAsync()
+    {
+        // Arrange
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        HttpRequestInfo request = new() { Method = "  custom  ", Url = TestUrl };
+
+        // Act
+        await handler.SendAsync(request);
+
+        // Assert - fallback path should apply the same Trim/ToUpperInvariant normalization.
+        messageHandler.LastRequest!.Method.Method.Should().Be("CUSTOM");
     }
 
     [Fact]
