@@ -599,9 +599,10 @@ async def test_foundry_agent_configure_azure_monitor_import_error() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_foundry_agent_integration_tests_disabled
+@pytest.mark.skip(reason="Test agent seems to have disappeared from the test environment; needs investigation.")
 async def test_foundry_agent_basic_run() -> None:
     """Smoke-test FoundryAgent against a real configured agent."""
-    async with FoundryAgent(credential=AzureCliCredential()) as agent:
+    async with FoundryAgent(credential=AzureCliCredential(), allow_preview=True) as agent:
         response = await agent.run("Please respond with exactly: 'This is a response test.'")
 
     assert isinstance(response, AgentResponse)
@@ -612,6 +613,7 @@ async def test_foundry_agent_basic_run() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_foundry_agent_integration_tests_disabled
+@pytest.mark.skip(reason="Test agent seems to have disappeared from the test environment; needs investigation.")
 async def test_foundry_agent_custom_client_run() -> None:
     """Smoke-test FoundryAgent against a real configured agent."""
     async with FoundryAgent(credential=AzureCliCredential(), client_type=RawFoundryAgentChatClient) as agent:

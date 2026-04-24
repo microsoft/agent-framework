@@ -355,6 +355,7 @@ async def test_integration_web_search() -> None:
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
 @_with_azure_openai_debug()
+@pytest.mark.skip(reason="Azure OpenAI with files raises 500 error. Needs investigation.")
 async def test_integration_client_file_search() -> None:
     async with AzureCliCredential() as credential:
         client = OpenAIChatClient(credential=credential)
@@ -380,6 +381,7 @@ async def test_integration_client_file_search() -> None:
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
 @_with_azure_openai_debug()
+@pytest.mark.skip(reason="Azure OpenAI with files raises 500 error. Needs investigation.")
 async def test_integration_client_file_search_streaming() -> None:
     async with AzureCliCredential() as credential:
         client = OpenAIChatClient(credential=credential)
