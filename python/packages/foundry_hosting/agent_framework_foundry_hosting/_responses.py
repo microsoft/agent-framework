@@ -580,7 +580,10 @@ def _item_to_message(item: Item) -> Message:
         item: The Item to convert.
 
     Returns:
-        The converted Message, or None if the Item type is not supported.
+        The converted Message.
+
+    Raises:
+        ValueError: If the Item type is not supported.
     """
     if item.type == "message":
         msg = cast(ItemMessage, item)
