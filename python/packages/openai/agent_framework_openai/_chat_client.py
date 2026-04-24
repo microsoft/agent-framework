@@ -575,7 +575,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     response = await client.responses.retrieve(continuation_token["response_id"])
                 except Exception as ex:
                     self._handle_request_error(ex)
-                return self._parse_response_from_openai(response, options=validated_options)
+                chat_response = self._parse_response_from_openai(response, options=validated_options)
+                # Once the background response completes, drop the continuation_token from
+                # the caller's options dict. FunctionInvocationLayer reuses the same dict
+                # across tool-loop iterations, so leaving it in place makes the next iteration
+                # retrieve the same completed response again instead of POSTing tool results
+                # (issue #5394). Keep `background` so subsequent iterations still create
+                # background responses.
+                if chat_response.continuation_token is None and isinstance(options, dict):
+                    options.pop("continuation_token", None)
+                return chat_response
             client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
