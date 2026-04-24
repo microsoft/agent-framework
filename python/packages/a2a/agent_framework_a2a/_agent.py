@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, Final, Literal, TypeAlias, overload
@@ -49,7 +48,7 @@ from agent_framework.observability import AgentTelemetryLayer
 
 __all__ = ["A2AAgent", "A2AContinuationToken"]
 
-URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$")
+from agent_framework_a2a._utils import get_uri_data
 
 
 class A2AContinuationToken(ContinuationToken):
@@ -76,14 +75,6 @@ IN_PROGRESS_TASK_STATES = [
 
 A2AClientEvent: TypeAlias = tuple[Task, TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None]
 A2AStreamItem: TypeAlias = A2AMessage | A2AClientEvent
-
-
-def _get_uri_data(uri: str) -> str:
-    match = URI_PATTERN.match(uri)
-    if not match:
-        raise ValueError(f"Invalid data URI format: {uri}")
-
-    return match.group("base64_data")
 
 
 class A2AAgent(AgentTelemetryLayer, BaseAgent):
@@ -652,7 +643,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         A2APart(
                             root=FilePart(
                                 file=FileWithBytes(
-                                    bytes=_get_uri_data(content.uri),
+                                    bytes=get_uri_data(content.uri),
                                     mime_type=content.media_type,
                                 ),
                                 metadata=content.additional_properties,

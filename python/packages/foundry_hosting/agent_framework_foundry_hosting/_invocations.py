@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework import AgentSession, BaseAgent, SupportsAgentRun
-from agent_framework._telemetry import user_agent_prefix
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -10,8 +9,6 @@ from typing_extensions import Any, AsyncGenerator
 
 class InvocationsHostServer(InvocationAgentServerHost):
     """An invocations server host for an agent."""
-
-    USER_AGENT_PREFIX = "foundry-hosting"
 
     def __init__(
         self,
@@ -42,11 +39,6 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
     async def _handle_invoke(self, request: Request) -> Response:
         """Invoke the agent with the given request."""
-        with user_agent_prefix(self.USER_AGENT_PREFIX):
-            return await self._handle_invoke_inner(request)
-
-    async def _handle_invoke_inner(self, request: Request) -> Response:
-        """Core invoke handler logic."""
         data = await request.json()
         session_id: str = request.state.session_id
 
