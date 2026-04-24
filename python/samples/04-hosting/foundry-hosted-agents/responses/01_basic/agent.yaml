@@ -1,22 +1,8 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
-
 kind: hosted
 name: agent-framework-agent-basic
-description: |
-    A basic Agent Framework agent hosted by Foundry.
-metadata:
-    tags:
-        - Agent Framework
-        - AI Agent Hosting
-        - Azure AI AgentServer
-        - Responses Protocol
-        - Streaming
 protocols:
-    - protocol: responses
-      version: 1.0.0
+  - protocol: responses
+    version: 1.0.0
 resources:
-    cpu: "0.25"
-    memory: 0.5Gi
-environment_variables:
-    - name: MODEL_DEPLOYMENT_NAME
-      value: gpt-5.4-nano
+  cpu: "0.25"
+  memory: 0.5Gi

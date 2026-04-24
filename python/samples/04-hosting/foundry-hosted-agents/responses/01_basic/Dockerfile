@@ -1,15 +1,16 @@
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.7.3 /uv /uvx /bin/
-
 WORKDIR /app
+
+COPY . user_agent/
 WORKDIR /app/user_agent
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
-
-COPY . ./
+RUN if [ -f requirements.txt ]; then \
+        pip install -r requirements.txt; \
+    else \
+        echo "No requirements.txt found"; \
+    fi
 
 EXPOSE 8088
 
-CMD ["uv", "run", "main.py"]
+CMD ["python", "main.py"]

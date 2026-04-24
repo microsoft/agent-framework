@@ -1,23 +1,22 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from __future__ import annotations
-
 import os
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import ManagedIdentityCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
 load_dotenv()
 
 
-def main() -> None:
+def main():
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["MODEL_DEPLOYMENT_NAME"],
-        credential=ManagedIdentityCredential(),
+        credential=AzureCliCredential(),
     )
 
     agent = Agent(
