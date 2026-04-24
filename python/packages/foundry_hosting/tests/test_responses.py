@@ -29,7 +29,10 @@ from azure.ai.agentserver.responses import InMemoryResponseProvider
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
-from agent_framework_foundry_hosting._responses import _to_message  # pyright: ignore[reportPrivateUsage]
+from agent_framework_foundry_hosting._responses import (
+    _item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+)
 
 # region Helpers
 
@@ -525,11 +528,11 @@ class TestStreaming:
 # endregion
 
 
-# region _to_message conversion
+# region _output_item_to_message conversion
 
 
-class TestToMessage:
-    """Tests for _to_message covering all supported OutputItem types."""
+class TestOutputItemToMessage:
+    """Tests for _output_item_to_message covering all supported OutputItem types."""
 
     def test_output_message(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemOutputMessage, OutputMessageContentOutputTextContent
@@ -541,7 +544,7 @@ class TestToMessage:
             "status": "completed",
             "id": "msg-1",
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert len(msg.contents) == 1
         assert msg.contents[0].type == "text"
@@ -555,7 +558,7 @@ class TestToMessage:
             "role": "user",
             "content": [MessageContentInputTextContent({"type": "input_text", "text": "hi"})],
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "user"
         assert len(msg.contents) == 1
         assert msg.contents[0].text == "hi"
@@ -571,7 +574,7 @@ class TestToMessage:
             "status": "completed",
             "id": "fc-1",
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].call_id == "call_1"
@@ -581,7 +584,7 @@ class TestToMessage:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
 
         item = FunctionCallOutputItemParam({"type": "function_call_output", "call_id": "call_1", "output": "sunny"})
-        msg = _to_message(item)  # type: ignore[arg-type]
+        msg = _output_item_to_message(item)  # type: ignore[arg-type]
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].call_id == "call_1"
@@ -595,7 +598,7 @@ class TestToMessage:
             "id": "r-1",
             "summary": [SummaryTextContent({"type": "summary_text", "text": "thinking hard"})],
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert len(msg.contents) == 1
         assert msg.contents[0].text == "thinking hard"
@@ -604,7 +607,7 @@ class TestToMessage:
         from azure.ai.agentserver.responses.models import OutputItemReasoningItem
 
         item = OutputItemReasoningItem({"type": "reasoning", "id": "r-2"})
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents == []
 
@@ -618,7 +621,7 @@ class TestToMessage:
             "name": "search",
             "arguments": '{"q": "test"}',
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "mcp_server_tool_call"
         assert msg.contents[0].server_name == "my_server"
@@ -634,7 +637,7 @@ class TestToMessage:
             "name": "dangerous_tool",
             "arguments": "{}",
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_approval_request"
 
@@ -647,7 +650,7 @@ class TestToMessage:
             "approval_request_id": "apr-1",
             "approve": True,
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "user"
         assert msg.contents[0].type == "function_approval_response"
         assert msg.contents[0].approved is True
@@ -663,7 +666,7 @@ class TestToMessage:
             "code": "print('hi')",
             "outputs": [],
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "code_interpreter_tool_call"
 
@@ -671,7 +674,7 @@ class TestToMessage:
         from azure.ai.agentserver.responses.models import OutputItemImageGenToolCall
 
         item = OutputItemImageGenToolCall({"type": "image_generation_call", "id": "ig-1", "status": "completed"})
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "image_generation_tool_call"
 
@@ -690,7 +693,7 @@ class TestToMessage:
             "status": "completed",
             "environment": FunctionShellCallEnvironment({"type": "local"}),
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "shell_tool_call"
         assert msg.contents[0].commands == ["ls", "-la"]
@@ -717,7 +720,7 @@ class TestToMessage:
             ],
             "max_output_length": 1024,
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "tool"
         assert msg.contents[0].type == "shell_tool_result"
         assert msg.contents[0].call_id == "call_sc"
@@ -732,7 +735,7 @@ class TestToMessage:
             "action": LocalShellExecAction({"type": "exec", "command": ["echo", "hello"], "env": {}}),
             "status": "completed",
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "shell_tool_call"
         assert msg.contents[0].commands == ["echo", "hello"]
@@ -745,7 +748,7 @@ class TestToMessage:
             "id": "lsco-1",
             "output": "hello\n",
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "tool"
         assert msg.contents[0].type == "shell_tool_result"
 
@@ -758,7 +761,7 @@ class TestToMessage:
             "status": "completed",
             "queries": ["what is AI"],
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "file_search"
@@ -773,7 +776,7 @@ class TestToMessage:
             "status": "completed",
             "action": WebSearchActionSearch({"type": "search", "query": "test"}),
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
@@ -789,7 +792,7 @@ class TestToMessage:
             "pending_safety_checks": [],
             "status": "completed",
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "computer_use"
@@ -808,7 +811,7 @@ class TestToMessage:
                 "image_url": "data:image/png;base64,abc",
             }),
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].call_id == "call_cc"
@@ -822,7 +825,7 @@ class TestToMessage:
             "name": "my_tool",
             "input": '{"key": "value"}',
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "my_tool"
@@ -836,7 +839,7 @@ class TestToMessage:
             "call_id": "call_ct",
             "output": "result text",
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].result == "result text"
@@ -855,7 +858,7 @@ class TestToMessage:
                 "diff": "+ new line",
             }),
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "apply_patch"
@@ -870,7 +873,7 @@ class TestToMessage:
             "status": "completed",
             "output": "patch applied",
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].result == "patch applied"
@@ -884,7 +887,7 @@ class TestToMessage:
             "consent_link": "https://example.com/consent",
             "server_label": "my_server",
         })
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "oauth_consent_request"
         assert msg.contents[0].consent_link == "https://example.com/consent"
@@ -893,7 +896,7 @@ class TestToMessage:
         from azure.ai.agentserver.responses.models import StructuredOutputsOutputItem
 
         item = StructuredOutputsOutputItem({"type": "structured_outputs", "id": "so-1", "output": {"answer": 42}})
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "text"
         assert json.loads(msg.contents[0].text or "") == {"answer": 42}
@@ -902,7 +905,7 @@ class TestToMessage:
         from azure.ai.agentserver.responses.models import StructuredOutputsOutputItem
 
         item = StructuredOutputsOutputItem({"type": "structured_outputs", "id": "so-2", "output": "plain text"})
-        msg = _to_message(item)
+        msg = _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].text == "plain text"
 
@@ -911,7 +914,1161 @@ class TestToMessage:
 
         item = OutputItem({"type": "some_unknown_type"})
         with pytest.raises(ValueError, match="Unsupported OutputItem type: some_unknown_type"):
-            _to_message(item)
+            _output_item_to_message(item)
+
+
+# endregion
+
+
+# region _item_to_message conversion
+
+
+class TestItemToMessage:
+    """Tests for _item_to_message covering all supported Item types."""
+
+    def test_message_with_string_content(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemMessage
+
+        item = ItemMessage({"type": "message", "role": "user", "content": "hello"})
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "user"
+        assert len(msg.contents) == 1
+        assert msg.contents[0].type == "text"
+        assert msg.contents[0].text == "hello"
+
+    def test_message_with_input_text_content(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemMessage, MessageContentInputTextContent
+
+        item = ItemMessage({
+            "type": "message",
+            "role": "user",
+            "content": [MessageContentInputTextContent({"type": "input_text", "text": "hi there"})],
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "user"
+        assert len(msg.contents) == 1
+        assert msg.contents[0].text == "hi there"
+
+    def test_message_with_multiple_contents(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemMessage, MessageContentInputTextContent
+
+        item = ItemMessage({
+            "type": "message",
+            "role": "user",
+            "content": [
+                MessageContentInputTextContent({"type": "input_text", "text": "first"}),
+                MessageContentInputTextContent({"type": "input_text", "text": "second"}),
+            ],
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert len(msg.contents) == 2
+        assert msg.contents[0].text == "first"
+        assert msg.contents[1].text == "second"
+
+    def test_output_message(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemOutputMessage, OutputMessageContentOutputTextContent
+
+        item = ItemOutputMessage({
+            "type": "output_message",
+            "role": "assistant",
+            "content": [OutputMessageContentOutputTextContent({"type": "output_text", "text": "response"})],
+            "status": "completed",
+            "id": "msg-1",
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert len(msg.contents) == 1
+        assert msg.contents[0].type == "text"
+        assert msg.contents[0].text == "response"
+
+    def test_function_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemFunctionToolCall
+
+        item = ItemFunctionToolCall({
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "get_weather",
+            "arguments": '{"city": "NYC"}',
+            "status": "completed",
+            "id": "fc-1",
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].call_id == "call_1"
+        assert msg.contents[0].name == "get_weather"
+        assert msg.contents[0].arguments == '{"city": "NYC"}'
+
+    def test_function_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
+
+        item = FunctionCallOutputItemParam({"type": "function_call_output", "call_id": "call_1", "output": "sunny"})
+        msg = _item_to_message(item)  # type: ignore[arg-type]
+        assert msg is not None
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].call_id == "call_1"
+        assert msg.contents[0].result == "sunny"
+
+    def test_function_call_output_non_string(self) -> None:
+        from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
+
+        item = FunctionCallOutputItemParam({"type": "function_call_output", "call_id": "call_2", "output": 42})
+        msg = _item_to_message(item)  # type: ignore[arg-type]
+        assert msg is not None
+        assert msg.role == "tool"
+        assert msg.contents[0].result == "42"
+
+    def test_reasoning_with_summary(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemReasoningItem, SummaryTextContent
+
+        item = ItemReasoningItem({
+            "type": "reasoning",
+            "id": "r-1",
+            "summary": [SummaryTextContent({"type": "summary_text", "text": "thinking hard"})],
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert len(msg.contents) == 1
+        assert msg.contents[0].text == "thinking hard"
+
+    def test_reasoning_no_summary(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemReasoningItem
+
+        item = ItemReasoningItem({"type": "reasoning", "id": "r-2"})
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents == []
+
+    def test_mcp_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemMcpToolCall
+
+        item = ItemMcpToolCall({
+            "type": "mcp_call",
+            "id": "mcp-1",
+            "server_label": "my_server",
+            "name": "search",
+            "arguments": '{"q": "test"}',
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "mcp_server_tool_call"
+        assert msg.contents[0].server_name == "my_server"
+        assert msg.contents[0].tool_name == "search"
+
+    def test_mcp_approval_request(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
+
+        item = ItemMcpApprovalRequest({
+            "type": "mcp_approval_request",
+            "id": "apr-1",
+            "server_label": "srv",
+            "name": "dangerous_tool",
+            "arguments": "{}",
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_approval_request"
+
+    def test_mcp_approval_response(self) -> None:
+        from azure.ai.agentserver.responses.models import MCPApprovalResponse
+
+        item = MCPApprovalResponse({
+            "type": "mcp_approval_response",
+            "approval_request_id": "apr-1",
+            "approve": True,
+        })
+        msg = _item_to_message(item)  # type: ignore[arg-type]
+        assert msg is not None
+        assert msg.role == "user"
+        assert msg.contents[0].type == "function_approval_response"
+        assert msg.contents[0].approved is True
+
+    def test_code_interpreter_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemCodeInterpreterToolCall
+
+        item = ItemCodeInterpreterToolCall({
+            "type": "code_interpreter_call",
+            "id": "ci-1",
+            "status": "completed",
+            "container_id": "c-1",
+            "code": "print('hi')",
+            "outputs": [],
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "code_interpreter_tool_call"
+
+    def test_image_generation_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemImageGenToolCall
+
+        item = ItemImageGenToolCall({"type": "image_generation_call", "id": "ig-1", "status": "completed"})
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "image_generation_tool_call"
+
+    def test_shell_call(self) -> None:
+        from azure.ai.agentserver.responses.models import FunctionShellAction, FunctionShellCallItemParam
+
+        item = FunctionShellCallItemParam({
+            "type": "shell_call",
+            "call_id": "call_sc",
+            "action": FunctionShellAction({"commands": ["ls", "-la"], "timeout_ms": 5000, "max_output_length": 1024}),
+            "status": "in_progress",
+        })
+        msg = _item_to_message(item)  # type: ignore[arg-type]
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "shell_tool_call"
+        assert msg.contents[0].commands == ["ls", "-la"]
+        assert msg.contents[0].call_id == "call_sc"
+
+    def test_shell_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import (
+            FunctionShellCallOutputContent,
+            FunctionShellCallOutputExitOutcome,
+            FunctionShellCallOutputItemParam,
+        )
+
+        item = FunctionShellCallOutputItemParam({
+            "type": "shell_call_output",
+            "call_id": "call_sc",
+            "output": [
+                FunctionShellCallOutputContent({
+                    "stdout": "file.txt",
+                    "stderr": "",
+                    "outcome": FunctionShellCallOutputExitOutcome({"exit_code": 0}),
+                })
+            ],
+            "max_output_length": 1024,
+        })
+        msg = _item_to_message(item)  # type: ignore[arg-type]
+        assert msg is not None
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "shell_tool_result"
+        assert msg.contents[0].call_id == "call_sc"
+
+    def test_local_shell_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemLocalShellToolCall, LocalShellExecAction
+
+        item = ItemLocalShellToolCall({
+            "type": "local_shell_call",
+            "id": "lsc-1",
+            "call_id": "call_lsc",
+            "action": LocalShellExecAction({"type": "exec", "command": ["echo", "hello"], "env": {}}),
+            "status": "completed",
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "shell_tool_call"
+        assert msg.contents[0].commands == ["echo", "hello"]
+
+    def test_local_shell_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemLocalShellToolCallOutput
+
+        item = ItemLocalShellToolCallOutput({
+            "type": "local_shell_call_output",
+            "id": "lsco-1",
+            "output": "hello\n",
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "shell_tool_result"
+
+    def test_file_search_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemFileSearchToolCall
+
+        item = ItemFileSearchToolCall({
+            "type": "file_search_call",
+            "id": "fs-1",
+            "status": "completed",
+            "queries": ["what is AI"],
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].name == "file_search"
+        assert '"what is AI"' in (msg.contents[0].arguments or "")
+
+    def test_web_search_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemWebSearchToolCall
+
+        item = ItemWebSearchToolCall({
+            "type": "web_search_call",
+            "id": "ws-1",
+            "status": "completed",
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].name == "web_search"
+
+    def test_computer_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ComputerAction, ItemComputerToolCall
+
+        item = ItemComputerToolCall({
+            "type": "computer_call",
+            "id": "cc-1",
+            "call_id": "call_cc",
+            "action": ComputerAction({"type": "click"}),
+            "pending_safety_checks": [],
+            "status": "completed",
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].name == "computer_use"
+
+    def test_computer_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import ComputerCallOutputItemParam, ComputerScreenshotImage
+
+        item = ComputerCallOutputItemParam({
+            "type": "computer_call_output",
+            "call_id": "call_cc",
+            "output": ComputerScreenshotImage({
+                "type": "computer_screenshot",
+                "image_url": "data:image/png;base64,abc",
+            }),
+        })
+        msg = _item_to_message(item)  # type: ignore[arg-type]
+        assert msg is not None
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].call_id == "call_cc"
+
+    def test_custom_tool_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemCustomToolCall
+
+        item = ItemCustomToolCall({
+            "type": "custom_tool_call",
+            "call_id": "call_ct",
+            "name": "my_tool",
+            "input": '{"key": "value"}',
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].name == "my_tool"
+        assert msg.contents[0].arguments == '{"key": "value"}'
+
+    def test_custom_tool_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
+
+        item = ItemCustomToolCallOutput({
+            "type": "custom_tool_call_output",
+            "call_id": "call_ct",
+            "output": "result text",
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].result == "result text"
+
+    def test_custom_tool_call_output_non_string(self) -> None:
+        from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
+
+        item = ItemCustomToolCallOutput({
+            "type": "custom_tool_call_output",
+            "call_id": "call_ct2",
+            "output": 123,
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.contents[0].result == "123"
+
+    def test_apply_patch_call(self) -> None:
+        from azure.ai.agentserver.responses.models import ApplyPatchToolCallItemParam, ApplyPatchUpdateFileOperation
+
+        item = ApplyPatchToolCallItemParam({
+            "type": "apply_patch_call",
+            "call_id": "call_ap",
+            "operation": ApplyPatchUpdateFileOperation({
+                "type": "update_file",
+                "path": "file.py",
+                "diff": "+ new line",
+            }),
+        })
+        msg = _item_to_message(item)  # type: ignore[arg-type]
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.contents[0].type == "function_call"
+        assert msg.contents[0].name == "apply_patch"
+
+    def test_apply_patch_call_output(self) -> None:
+        from azure.ai.agentserver.responses.models import ApplyPatchToolCallOutputItemParam
+
+        item = ApplyPatchToolCallOutputItemParam({
+            "type": "apply_patch_call_output",
+            "call_id": "call_ap",
+            "output": "patch applied",
+        })
+        msg = _item_to_message(item)  # type: ignore[arg-type]
+        assert msg is not None
+        assert msg.role == "tool"
+        assert msg.contents[0].type == "function_result"
+        assert msg.contents[0].result == "patch applied"
+
+    def test_unsupported_type_raises(self) -> None:
+        from azure.ai.agentserver.responses.models import Item
+
+        item = Item({"type": "some_unknown_type"})
+        with pytest.raises(ValueError, match="Unsupported Item type: some_unknown_type"):
+            _item_to_message(item)
+
+
+# endregion
+
+
+# region Multi-turn with mixed content
+
+
+async def _post_json(
+    server: ResponsesHostServer,
+    payload: dict[str, Any],
+) -> httpx.Response:
+    """Send a POST /responses request with a raw JSON payload."""
+    transport = httpx.ASGITransport(app=server)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post("/responses", json=payload)
+
+
+def _make_multi_response_agent(
+    responses: list[AgentResponse],
+    stream_updates_list: list[list[AgentResponseUpdate]] | None = None,
+) -> MagicMock:
+    """Create a mock agent that returns different responses on successive calls."""
+    agent = MagicMock(spec=RawAgent)
+    agent.id = "test-agent"
+    agent.name = "Test Agent"
+    agent.description = "A mock agent for testing"
+    agent.context_providers = []
+
+    call_index = [0]
+
+    async def run_non_streaming(*args: Any, **kwargs: Any) -> AgentResponse:
+        idx = call_index[0]
+        call_index[0] += 1
+        return responses[idx]
+
+    async def _stream_gen(updates: list[AgentResponseUpdate]) -> AsyncIterator[AgentResponseUpdate]:
+        for update in updates:
+            yield update
+
+    def run_dispatch(*args: Any, **kwargs: Any) -> Any:
+        idx = call_index[0]
+        call_index[0] += 1
+        if kwargs.get("stream") and stream_updates_list is not None:
+            return ResponseStream(_stream_gen(stream_updates_list[idx]))  # type: ignore
+        if not kwargs.get("stream"):
+            # Need to return a coroutine for non-streaming
+            async def _ret() -> AgentResponse:
+                return responses[idx]
+
+            return _ret()
+        raise NotImplementedError("Streaming not configured for this call index")
+
+    if stream_updates_list is not None:
+        agent.run = MagicMock(side_effect=run_dispatch)
+    else:
+        agent.run = AsyncMock(side_effect=run_non_streaming)
+
+    return agent
+
+
+class TestMultiTurnMixedContent:
+    """End-to-end multi-turn tests with mixed text and non-text content types."""
+
+    async def test_text_and_image_input_single_turn(self) -> None:
+        """Agent receives a message with text and image content via URL."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("I see a cat!")])])
+        )
+        server = _make_server(agent)
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Describe this animal"},
+                            {"type": "input_image", "image_url": "https://example.com/cat.jpg"},
+                        ],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        # Verify agent received text + image
+        messages = agent.run.call_args.args[0]
+        assert len(messages) == 1
+        assert messages[0].role == "user"
+        assert len(messages[0].contents) == 2
+        assert messages[0].contents[0].type == "text"
+        assert messages[0].contents[0].text == "Describe this animal"
+        assert messages[0].contents[1].type == "uri"
+        assert messages[0].contents[1].uri == "https://example.com/cat.jpg"
+
+    async def test_text_and_file_input_single_turn(self) -> None:
+        """Agent receives a message with text and file content via URL."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("File received")])])
+        )
+        server = _make_server(agent)
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Summarize this document"},
+                            {"type": "input_file", "file_url": "https://example.com/doc.pdf", "filename": "doc.pdf"},
+                        ],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        messages = agent.run.call_args.args[0]
+        assert len(messages) == 1
+        assert len(messages[0].contents) == 2
+        assert messages[0].contents[0].type == "text"
+        assert messages[0].contents[0].text == "Summarize this document"
+        assert messages[0].contents[1].type == "uri"
+        assert messages[0].contents[1].uri == "https://example.com/doc.pdf"
+
+    async def test_mixed_text_and_image_input(self) -> None:
+        """Agent receives a single message with both text and image content."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Got it!")])])
+        )
+        server = _make_server(agent)
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "What's in this image?"},
+                            {"type": "input_image", "image_url": "https://example.com/photo.jpg"},
+                        ],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        messages = agent.run.call_args.args[0]
+        assert len(messages) == 1
+        assert len(messages[0].contents) == 2
+        assert messages[0].contents[0].type == "text"
+        assert messages[0].contents[0].text == "What's in this image?"
+        assert messages[0].contents[1].type == "uri"
+        assert messages[0].contents[1].uri == "https://example.com/photo.jpg"
+
+    async def test_function_call_items_in_input(self) -> None:
+        """Input contains function_call and function_call_output items."""
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("Weather is sunny!")])]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {"type": "message", "role": "user", "content": "What's the weather?"},
+                    {
+                        "type": "function_call",
+                        "id": "fc-1",
+                        "call_id": "call_1",
+                        "name": "get_weather",
+                        "arguments": '{"city": "NYC"}',
+                        "status": "completed",
+                    },
+                    {"type": "function_call_output", "call_id": "call_1", "output": "sunny, 72F"},
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        messages = agent.run.call_args.args[0]
+        assert len(messages) == 3
+        assert messages[0].role == "user"
+        assert messages[0].contents[0].type == "text"
+        assert messages[1].role == "assistant"
+        assert messages[1].contents[0].type == "function_call"
+        assert messages[1].contents[0].name == "get_weather"
+        assert messages[2].role == "tool"
+        assert messages[2].contents[0].type == "function_result"
+        assert messages[2].contents[0].result == "sunny, 72F"
+
+    async def test_multi_turn_text_then_text_with_image(self) -> None:
+        """First turn sends text, second turn sends text + image with previous_response_id."""
+        agent = _make_multi_response_agent([
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Send me an image")])]),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Nice cat!")])]),
+        ])
+        server = _make_server(agent)
+
+        # Turn 1: simple text
+        resp1 = await _post(server, input_text="Hello", stream=False)
+        assert resp1.status_code == 200
+        response_id = resp1.json()["id"]
+
+        # Turn 2: text + image input referencing turn 1
+        resp2 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Here is my cat photo"},
+                            {"type": "input_image", "image_url": "https://example.com/cat.jpg"},
+                        ],
+                    }
+                ],
+                "stream": False,
+                "previous_response_id": response_id,
+            },
+        )
+
+        assert resp2.status_code == 200
+        body2 = resp2.json()
+        assert body2["status"] == "completed"
+
+        # Verify second call receives history from turn 1 + text+image input
+        second_call_messages = agent.run.call_args_list[1].args[0]
+        # History: output message from turn 1 ("Send me an image")
+        # Input: message with text + image
+        assert len(second_call_messages) >= 2
+        # Last message should be the text+image input
+        last_msg = second_call_messages[-1]
+        assert last_msg.role == "user"
+        assert len(last_msg.contents) == 2
+        assert last_msg.contents[0].type == "text"
+        assert last_msg.contents[0].text == "Here is my cat photo"
+        assert last_msg.contents[1].type == "uri"
+        assert last_msg.contents[1].uri == "https://example.com/cat.jpg"
+        # History should include the assistant response from turn 1
+        history_msgs = second_call_messages[:-1]
+        assistant_texts = [
+            c.text for m in history_msgs if m.role == "assistant" for c in m.contents if c.type == "text"
+        ]
+        assert "Send me an image" in assistant_texts
+
+    async def test_multi_turn_function_call_in_history(self) -> None:
+        """Turn 1 produces function call + result, turn 2 sees them in history."""
+        agent = _make_multi_response_agent([
+            AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_function_call("call_1", "search", arguments='{"q": "cats"}')],
+                    ),
+                    Message(role="tool", contents=[Content.from_function_result("call_1", result="found 10 cats")]),
+                    Message(role="assistant", contents=[Content.from_text("I found 10 cats!")]),
+                ]
+            ),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Here are more details")])]),
+        ])
+        server = _make_server(agent)
+
+        # Turn 1
+        resp1 = await _post(server, input_text="Search for cats", stream=False)
+        assert resp1.status_code == 200
+        response_id = resp1.json()["id"]
+
+        # Verify turn 1 output has function_call, function_call_output, and message
+        types1 = [item["type"] for item in resp1.json()["output"]]
+        assert "function_call" in types1
+        assert "function_call_output" in types1
+        assert "message" in types1
+
+        # Turn 2
+        resp2 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": "Tell me more",
+                "stream": False,
+                "previous_response_id": response_id,
+            },
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "completed"
+
+        # Verify turn 2 received history including function call/result
+        second_call_messages = agent.run.call_args_list[1].args[0]
+        roles = [m.role for m in second_call_messages]
+        assert "assistant" in roles
+        assert "tool" in roles
+        # The function call should be in the history
+        fc_contents = [
+            c for m in second_call_messages if m.role == "assistant" for c in m.contents if c.type == "function_call"
+        ]
+        assert len(fc_contents) >= 1
+        assert fc_contents[0].name == "search"
+
+    async def test_multi_turn_reasoning_in_history(self) -> None:
+        """Turn 1 produces reasoning + text, turn 2 sees them in history."""
+        agent = _make_multi_response_agent([
+            AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_text_reasoning(text="Let me think about this..."),
+                            Content.from_text("The answer is 42"),
+                        ],
+                    ),
+                ]
+            ),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Indeed, it is 42")])]),
+        ])
+        server = _make_server(agent)
+
+        # Turn 1
+        resp1 = await _post(server, input_text="What is the answer?", stream=False)
+        assert resp1.status_code == 200
+        response_id = resp1.json()["id"]
+        types1 = [item["type"] for item in resp1.json()["output"]]
+        assert "reasoning" in types1
+        assert "message" in types1
+
+        # Turn 2
+        resp2 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": "Are you sure?",
+                "stream": False,
+                "previous_response_id": response_id,
+            },
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "completed"
+
+        # Verify history includes the reasoning and text from turn 1
+        second_call_messages = agent.run.call_args_list[1].args[0]
+        assert len(second_call_messages) >= 2  # history + new input
+
+    async def test_multi_turn_with_mixed_content_and_streaming(self) -> None:
+        """Turn 1 non-streaming, turn 2 streaming with image input."""
+        turn2_updates = [
+            AgentResponseUpdate(contents=[Content.from_text("I see ")], role="assistant"),
+            AgentResponseUpdate(contents=[Content.from_text("a cat!")], role="assistant"),
+        ]
+
+        agent = _make_multi_response_agent(
+            responses=[
+                AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Send me an image")])]),
+                AgentResponse(messages=[]),  # placeholder, not used for streaming
+            ],
+            stream_updates_list=[
+                [],  # placeholder for turn 1 (non-streaming)
+                turn2_updates,
+            ],
+        )
+        server = _make_server(agent)
+
+        # Turn 1: non-streaming text
+        resp1 = await _post(server, input_text="Hello", stream=False)
+        assert resp1.status_code == 200
+        response_id = resp1.json()["id"]
+
+        # Turn 2: streaming with image input
+        resp2 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Describe this:"},
+                            {"type": "input_image", "image_url": "https://example.com/cat.jpg"},
+                        ],
+                    }
+                ],
+                "stream": True,
+                "previous_response_id": response_id,
+            },
+        )
+
+        assert resp2.status_code == 200
+        assert "text/event-stream" in resp2.headers["content-type"]
+
+        events = _parse_sse_events(resp2.text)
+        types = _sse_event_types(events)
+        assert types[0] == "response.created"
+        assert types[-1] == "response.completed"
+        assert "response.output_text.delta" in types
+
+        # Verify accumulated text
+        text_done = [e for e in events if e["event"] == "response.output_text.done"]
+        assert len(text_done) == 1
+        assert text_done[0]["data"]["text"] == "I see a cat!"
+
+    async def test_text_with_mcp_call_items(self) -> None:
+        """Input contains text message + mcp_call item and the agent processes it."""
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("MCP result received")])]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {"type": "message", "role": "user", "content": "Search using MCP"},
+                    {
+                        "type": "mcp_call",
+                        "id": "mcp-1",
+                        "server_label": "my_server",
+                        "name": "search",
+                        "arguments": '{"query": "test"}',
+                    },
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        messages = agent.run.call_args.args[0]
+        assert len(messages) == 2
+        assert messages[0].role == "user"
+        assert messages[0].contents[0].type == "text"
+        assert messages[0].contents[0].text == "Search using MCP"
+        assert messages[1].role == "assistant"
+        assert messages[1].contents[0].type == "mcp_server_tool_call"
+        assert messages[1].contents[0].server_name == "my_server"
+        assert messages[1].contents[0].tool_name == "search"
+
+    async def test_three_turn_conversation_with_mixed_content(self) -> None:
+        """Three-turn conversation: text → function call → image input."""
+        agent = _make_multi_response_agent([
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Hello! How can I help?")])]),
+            AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_function_call("call_1", "analyze", arguments='{"mode": "deep"}')],
+                    ),
+                    Message(role="tool", contents=[Content.from_function_result("call_1", result="analysis complete")]),
+                    Message(role="assistant", contents=[Content.from_text("Analysis done!")]),
+                ]
+            ),
+            AgentResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("The image shows a chart")])]
+            ),
+        ])
+        server = _make_server(agent)
+
+        # Turn 1: text
+        resp1 = await _post(server, input_text="Hi", stream=False)
+        assert resp1.status_code == 200
+        id1 = resp1.json()["id"]
+
+        # Turn 2: text, referencing turn 1
+        resp2 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": "Analyze something",
+                "stream": False,
+                "previous_response_id": id1,
+            },
+        )
+        assert resp2.status_code == 200
+        id2 = resp2.json()["id"]
+
+        # Turn 3: image input, referencing turn 2
+        resp3 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "What about this image?"},
+                            {"type": "input_image", "image_url": "https://example.com/chart.png"},
+                        ],
+                    }
+                ],
+                "stream": False,
+                "previous_response_id": id2,
+            },
+        )
+
+        assert resp3.status_code == 200
+        assert resp3.json()["status"] == "completed"
+
+        # Verify turn 3 received full history from turns 1+2 plus new image input
+        third_call_messages = agent.run.call_args_list[2].args[0]
+        # Should have: history from turn 1 (assistant text) + history from turn 2
+        # (function_call, function_call_output, text) + new input (text + image)
+        assert len(third_call_messages) >= 5
+
+        # Last message should contain the image
+        last_msg = third_call_messages[-1]
+        assert last_msg.role == "user"
+        image_contents = [c for c in last_msg.contents if c.type == "uri"]
+        assert len(image_contents) == 1
+        assert image_contents[0].uri == "https://example.com/chart.png"
+
+        # History should include function call from turn 2
+        fc_contents = [
+            c
+            for m in third_call_messages[:-1]
+            if m.role == "assistant"
+            for c in m.contents
+            if c.type == "function_call"
+        ]
+        assert any(c.name == "analyze" for c in fc_contents)
+
+    async def test_input_with_hosted_file_image(self) -> None:
+        """Input contains an image referenced by file_id (hosted file)."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Image analyzed")])])
+        )
+        server = _make_server(agent)
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Analyze this image"},
+                            {"type": "input_image", "file_id": "file-abc123"},
+                        ],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        messages = agent.run.call_args.args[0]
+        assert len(messages) == 1
+        assert len(messages[0].contents) == 2
+        assert messages[0].contents[0].type == "text"
+        assert messages[0].contents[0].text == "Analyze this image"
+        assert messages[0].contents[1].type == "hosted_file"
+        assert messages[0].contents[1].file_id == "file-abc123"
+
+    async def test_multi_turn_text_and_image_then_text_and_file(self) -> None:
+        """Turn 1 sends text+image, turn 2 sends text+file, both in history."""
+        agent = _make_multi_response_agent([
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("I see a landscape")])]),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Document summarized")])]),
+        ])
+        server = _make_server(agent)
+
+        # Turn 1: text + image
+        resp1 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "What is in this photo?"},
+                            {"type": "input_image", "image_url": "https://example.com/landscape.jpg"},
+                        ],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+        assert resp1.status_code == 200
+        id1 = resp1.json()["id"]
+
+        # Turn 2: text + file, referencing turn 1
+        resp2 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Now summarize this report"},
+                            {
+                                "type": "input_file",
+                                "file_url": "https://example.com/report.pdf",
+                                "filename": "report.pdf",
+                            },
+                        ],
+                    }
+                ],
+                "stream": False,
+                "previous_response_id": id1,
+            },
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "completed"
+
+        # Verify turn 2 received history from turn 1 + new text+file input
+        second_call_messages = agent.run.call_args_list[1].args[0]
+        assert len(second_call_messages) >= 2
+
+        # History should include the assistant response from turn 1
+        assistant_texts = [
+            c.text for m in second_call_messages if m.role == "assistant" for c in m.contents if c.type == "text"
+        ]
+        assert "I see a landscape" in assistant_texts
+
+        # Last message should be text + file
+        last_msg = second_call_messages[-1]
+        assert last_msg.role == "user"
+        assert len(last_msg.contents) == 2
+        assert last_msg.contents[0].type == "text"
+        assert last_msg.contents[0].text == "Now summarize this report"
+        assert last_msg.contents[1].type == "uri"
+        assert last_msg.contents[1].uri == "https://example.com/report.pdf"
+
+    async def test_multi_turn_function_call_then_text_and_image(self) -> None:
+        """Turn 1: text + function call + result, turn 2: text + image."""
+        agent = _make_multi_response_agent([
+            AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_function_call("call_1", "get_info", arguments='{"id": 1}')],
+                    ),
+                    Message(role="tool", contents=[Content.from_function_result("call_1", result="info data")]),
+                    Message(role="assistant", contents=[Content.from_text("Here is the info")]),
+                ]
+            ),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Image matches the data")])]),
+        ])
+        server = _make_server(agent)
+
+        # Turn 1: text triggers function call
+        resp1 = await _post(server, input_text="Get info for item 1", stream=False)
+        assert resp1.status_code == 200
+        id1 = resp1.json()["id"]
+
+        types1 = [item["type"] for item in resp1.json()["output"]]
+        assert "function_call" in types1
+        assert "function_call_output" in types1
+        assert "message" in types1
+
+        # Turn 2: text + image referencing turn 1
+        resp2 = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Does this image match?"},
+                            {"type": "input_image", "image_url": "https://example.com/item1.jpg"},
+                        ],
+                    }
+                ],
+                "stream": False,
+                "previous_response_id": id1,
+            },
+        )
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "completed"
+
+        # Verify turn 2 received history with function call + new text+image
+        second_call_messages = agent.run.call_args_list[1].args[0]
+        # History should contain function_call and function_result from turn 1
+        fc_contents = [
+            c for m in second_call_messages if m.role == "assistant" for c in m.contents if c.type == "function_call"
+        ]
+        assert any(c.name == "get_info" for c in fc_contents)
+        tool_contents = [
+            c for m in second_call_messages if m.role == "tool" for c in m.contents if c.type == "function_result"
+        ]
+        assert any(c.result == "info data" for c in tool_contents)
+
+        # Last message should be text + image
+        last_msg = second_call_messages[-1]
+        assert last_msg.role == "user"
+        assert len(last_msg.contents) == 2
+        assert last_msg.contents[0].type == "text"
+        assert last_msg.contents[0].text == "Does this image match?"
+        assert last_msg.contents[1].type == "uri"
+        assert last_msg.contents[1].uri == "https://example.com/item1.jpg"
 
 
 # endregion

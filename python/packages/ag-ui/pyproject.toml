@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.1.1,<2",
-    "ag-ui-protocol==0.1.13",
+    "ag-ui-protocol>=0.1.16,<0.2",
     "fastapi>=0.115.0,<0.133.1",
     "uvicorn[standard]>=0.30.0,<0.42.0"
 ]

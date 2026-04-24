@@ -8,7 +8,6 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequenc
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     Annotation,
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
@@ -28,6 +27,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._telemetry import get_user_agent
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
@@ -332,7 +332,7 @@ class RawAnthropicClient(
 
             anthropic_client = AsyncAnthropic(
                 api_key=api_key_secret.get_secret_value(),
-                default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+                default_headers={"User-Agent": get_user_agent()},
             )
 
         # Initialize parent
@@ -604,7 +604,7 @@ class RawAnthropicClient(
         run_options["betas"] = self._prepare_betas(options)
 
         # extra headers
-        run_options["extra_headers"] = {"User-Agent": AGENT_FRAMEWORK_USER_AGENT}
+        run_options["extra_headers"] = {"User-Agent": get_user_agent()}
 
         # Handle user option -> metadata.user_id (Anthropic uses metadata.user_id instead of user)
         if user := run_options.pop("user", None):

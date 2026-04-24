@@ -20,7 +20,7 @@ public class OutputConverterTests
     private static (ResponseEventStream stream, Mock<ResponseContext> mockContext) CreateTestStream()
     {
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test-model");
+        var request = new CreateResponse { Model = "test-model" };
         var stream = new ResponseEventStream(mockContext.Object, request);
         return (stream, mockContext);
     }

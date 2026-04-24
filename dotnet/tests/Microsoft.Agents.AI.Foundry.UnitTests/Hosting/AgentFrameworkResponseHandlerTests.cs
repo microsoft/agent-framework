@@ -34,7 +34,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -72,9 +72,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(
-            model: "test",
-            agentReference: new AgentReference("my-agent"));
+        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("my-agent") };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -109,7 +107,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -158,7 +156,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "my-agent");
+        var request = new CreateResponse { Model = "my-agent" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -195,7 +193,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "");
+        var request = new CreateResponse { Model = "" };
         var metadata = new Metadata();
         metadata.AdditionalProperties["entity_id"] = "entity-agent";
         request.Metadata = metadata;
@@ -235,9 +233,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(
-            model: "test",
-            agentReference: new AgentReference("nonexistent-agent"));
+        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("nonexistent-agent") };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -272,9 +268,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(
-            model: "test",
-            agentReference: new AgentReference("missing-agent"));
+        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("missing-agent") };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -308,7 +302,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "");
+        var request = new CreateResponse { Model = "" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -342,7 +336,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -387,7 +381,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -435,7 +429,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -478,7 +472,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -517,9 +511,11 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(
-            model: "test",
-            instructions: "You are a helpful assistant.");
+        var request = new CreateResponse
+        {
+            Model = "test",
+            Instructions = "You are a helpful assistant.",
+        };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -557,7 +553,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -598,9 +594,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(
-            model: "test",
-            agentReference: new AgentReference("agent-2"));
+        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("agent-2") };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -637,7 +631,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -674,7 +668,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",

@@ -155,8 +155,7 @@ def _validate_hosted_tool_payload(sanitized: Mapping[str, Any]) -> None:
         )
 
 
-@experimental(feature_id=ExperimentalFeature.TOOLBOXES)
-def sanitize_foundry_response_tool(tool_item: Any) -> Any:
+def _sanitize_foundry_response_tool(tool_item: Any) -> Any:  # pyright: ignore[reportUnusedFunction]
     """Return a Responses-API-safe tool payload for Foundry hosted tools.
 
     Reconciles known mismatches between toolbox reads and the Responses API:

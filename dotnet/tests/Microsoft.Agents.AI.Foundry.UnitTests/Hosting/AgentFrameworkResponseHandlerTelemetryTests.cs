@@ -164,10 +164,8 @@ public class AgentFrameworkResponseHandlerTelemetryTests
     private static (CreateResponse request, ResponseContext context) BuildRequest(string? agentKey = null)
     {
         var request = agentKey is null
-            ? AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test")
-            : AzureAIAgentServerResponsesModelFactory.CreateResponse(
-                model: "test",
-                agentReference: new AgentReference(agentKey));
+            ? new CreateResponse { Model = "test" }
+            : new CreateResponse { Model = "test", AgentReference = new AgentReference(agentKey) };
 
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
