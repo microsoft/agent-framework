@@ -549,6 +549,7 @@ public sealed partial class ChatClientAgent : AIAgent
         requestChatOptions.ModelId ??= this._agentOptions.ChatOptions.ModelId;
         requestChatOptions.PresencePenalty ??= this._agentOptions.ChatOptions.PresencePenalty;
         requestChatOptions.ResponseFormat ??= this._agentOptions.ChatOptions.ResponseFormat;
+        requestChatOptions.Reasoning ??= this._agentOptions.ChatOptions.Reasoning;
         requestChatOptions.Seed ??= this._agentOptions.ChatOptions.Seed;
         requestChatOptions.Temperature ??= this._agentOptions.ChatOptions.Temperature;
         requestChatOptions.TopP ??= this._agentOptions.ChatOptions.TopP;
