@@ -285,8 +285,10 @@ def test_vertex_ai_requires_project_and_location_together(monkeypatch: pytest.Mo
         GeminiChatClient(model="gemini-2.5-flash")
 
 
-async def test_missing_model_raises_on_get_response() -> None:
+async def test_missing_model_raises_on_get_response(monkeypatch: pytest.MonkeyPatch) -> None:
     """Raises ValueError at call time when no model is set on the client or in options."""
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("GOOGLE_MODEL", raising=False)
     client, mock = _make_gemini_client(model=None)  # type: ignore[arg-type]
     mock.aio.models.generate_content = AsyncMock()
 

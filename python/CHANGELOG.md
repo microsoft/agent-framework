@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-24
+
+### Added
+- **agent-framework-core**: Add functional workflow API ([#4238](https://github.com/microsoft/agent-framework/pull/4238))
+- **agent-framework-core**, **agent-framework-github-copilot**: Add OpenTelemetry integration for `GitHubCopilotAgent` ([#5142](https://github.com/microsoft/agent-framework/pull/5142))
+- **agent-framework-a2a**: Add Agent Framework to A2A bridge support ([#2403](https://github.com/microsoft/agent-framework/pull/2403))
+- **agent-framework-foundry**: Surface `oauth_consent_request` events from Responses API in Foundry clients ([#5070](https://github.com/microsoft/agent-framework/pull/5070))
+
+### Changed
+- **agent-framework-core**, **agent-framework-foundry**: Update `FoundryAgent` for hosted agent sessions ([#5447](https://github.com/microsoft/agent-framework/pull/5447))
+- **agent-framework-foundry-hosting**: Upgrade hosting server dependency and add more type support ([#5459](https://github.com/microsoft/agent-framework/pull/5459))
+
+### Fixed
+- **agent-framework-ag-ui**: Fix reasoning role and multimodal media parsing to follow specification ([#5389](https://github.com/microsoft/agent-framework/pull/5389))
+- **agent-framework-foundry**: Stop emitting `[TOOLBOXES]` warning for every `FoundryChatClient` call ([#5440](https://github.com/microsoft/agent-framework/pull/5440))
+- **agent-framework-anthropic**, **agent-framework-azure-ai-search**, **agent-framework-azure-cosmos**: Fix user agent prefix ([#5455](https://github.com/microsoft/agent-framework/pull/5455))
+
 ## [1.1.1] - 2026-04-23
 
 ### Added
@@ -26,8 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-openai**: Exclude null `file_id` from `input_image` payload to prevent schema 400 errors ([#5125](https://github.com/microsoft/agent-framework/pull/5125))
 - **agent-framework-foundry**: Reconcile Toolbox hosted-tool payloads with the Responses API ([#5414](https://github.com/microsoft/agent-framework/pull/5414))
 - **agent-framework-ag-ui**: Pass client `thread_id` as `session_id` when constructing `AgentSession` ([#5384](https://github.com/microsoft/agent-framework/pull/5384))
-- **agent-framework-hyperlight**: Thread-confine `WasmSandbox` interactions via per-entry `ThreadPoolExecutor` to eliminate the PyO3 `unsendable` panic when touched from asyncio worker threads
-  ([#5424](https://github.com/microsoft/agent-framework/pull/5424))
+- **agent-framework-hyperlight**: Thread-confine `WasmSandbox` interactions via per-entry `ThreadPoolExecutor` to eliminate the PyO3 `unsendable` panic when touched from asyncio worker threads ([#5424](https://github.com/microsoft/agent-framework/pull/5424))
 
 ## [1.1.0] - 2026-04-21
 
@@ -961,7 +977,9 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.1.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.2.0...HEAD
+[1.2.0]: https://github.com/microsoft/agent-framework/compare/python-1.1.1...python-1.2.0
+[1.1.1]: https://github.com/microsoft/agent-framework/compare/python-1.1.0...python-1.1.1
 [1.1.0]: https://github.com/microsoft/agent-framework/compare/python-1.0.1...python-1.1.0
 [1.0.1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0...python-1.0.1
 [1.0.0]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc6...python-1.0.0

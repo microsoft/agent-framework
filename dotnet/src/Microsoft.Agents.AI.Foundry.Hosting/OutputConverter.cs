@@ -251,16 +251,25 @@ internal static class OutputConverter
         var outputTokens = details.OutputTokenCount ?? 0;
         var totalTokens = details.TotalTokenCount ?? 0;
 
+        var cachedTokens = details.AdditionalCounts?.TryGetValue("InputTokenDetails.CachedTokenCount", out var cached) ?? false
+            ? cached : 0;
+        var reasoningTokens = details.AdditionalCounts?.TryGetValue("OutputTokenDetails.ReasoningTokenCount", out var reasoning) ?? false
+            ? reasoning : 0;
+
         if (existing is not null)
         {
             inputTokens += existing.InputTokens;
             outputTokens += existing.OutputTokens;
             totalTokens += existing.TotalTokens;
+            cachedTokens += existing.InputTokensDetails?.CachedTokens ?? 0;
+            reasoningTokens += existing.OutputTokensDetails?.ReasoningTokens ?? 0;
         }
 
-        return AzureAIAgentServerResponsesModelFactory.ResponseUsage(
+        return new ResponseUsage(
             inputTokens: inputTokens,
+            inputTokensDetails: new ResponseUsageInputTokensDetails(cachedTokens),
             outputTokens: outputTokens,
+            outputTokensDetails: new ResponseUsageOutputTokensDetails(reasoningTokens),
             totalTokens: totalTokens);
     }
 
