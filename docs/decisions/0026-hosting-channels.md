@@ -44,7 +44,7 @@ The gap is between **owning a hostable target** (an agent or a workflow) and **o
 4. **Resolves a session from a channel-neutral `isolation_key`** so two channels mounted on the same host can converge on the same session for the same end user — enabling cross-channel chat continuity (start on Telegram, continue on Teams) without per-channel session bookkeeping.
 5. **Bridges channel-native identities into the shared `isolation_key` namespace** — every channel has its own user identifier (Telegram `chat_id`, Teams AAD object id, WhatsApp phone, Slack user id). The generic host needs (a) an **identity resolver** seam that maps a channel-native id to an `isolation_key` for already-known users, and (b) an **identity linker** seam that lets an end user **connect** a new channel to an existing `isolation_key` through a well-known mechanism (OAuth, MFA, signed one-time code) — without each channel reinventing the linking flow.
 6. Provides a first-class extension seam for webhook/message channels with native command catalogs (per PR #5393 Telegram sample).
-7. Treats the **invocation hook** as the adapter between a channel's default `ChannelRequest` and the input shape the target needs — the same hook seam that adapts `temperature`/`store` for Responses also adapts a chat message into the typed inputs of a workflow.
+7. Treats the **invocation hook** as the developer's runtime escape hatch over a uniform request envelope. Every channel translates its native protocol payload (Responses JSON body, Telegram update, Invocations request, …) into the same `ChannelRequest` shape — that uniformity is what lets one host front many channels with one target. The invocation hook runs **after** that channel-internal translation and **before** the target is invoked, receives the channel-built `ChannelRequest`, and returns a possibly-modified `ChannelRequest`. The same seam covers, for example: reshaping a free-form chat message into the typed input a workflow target requires, removing or adding fields on `ChatOptions` (e.g. dropping `temperature`/`store` that a particular target should never see, or injecting a default `model`), enforcing app policy (rejecting requests that omit a required option), or overriding `session_mode` / `response_target`. The list is illustrative, not exhaustive — anything the channel put on the `ChannelRequest` is fair game for the hook to validate, rewrite, or strip.
 8. Treats **response delivery** as a first-class, configurable concern — by default the response goes back to the originating channel synchronously, but the host must support routing the response to a different channel (the user's most recently active channel, a specific channel, or all linked channels) and **background runs** where the request returns immediately with a `RunHandle` and the response is delivered later via a channel push when the user is next observed (or polled by the caller).
 9. Applies the same conceptual model across language ecosystems so concepts, terminology, and behavior transfer between teams and docs.
 
@@ -59,7 +59,7 @@ The hosting core is deliberately **not** a replacement for the existing protocol
 | **Mental model** | One package = one protocol surface, owns its own server | One host owns the app; channels plug protocols in |
 | **Scope** | Protocol-specific request/session/event mapping | Generic host + channel contract; protocol logic lives in channel packages |
 | **Composition** | One protocol per process or per Mount | Many channels per host, shared middleware, lifecycle, session resolution |
-| **Multi-agent** | Out of scope per package | **No.** One host = one agent. Future work. |
+| **Multi-agent** | Out of scope per package | **No.** One host = one agent. Future work, if desired. |
 | **Cross-language** | Per language, per protocol | Same conceptual model in every implementing language |
 
 **Explicit non-goals:**
@@ -76,13 +76,10 @@ The hosting core is deliberately **not** a replacement for the existing protocol
 
 ## Decision Drivers
 
+These are the design principles applied on top of the [business goals](#what-are-the-business-goals-for-this-feature) above.
+
 - Keep the app author experience simple for the common case (one host, channels, one start call).
-- Support one host exposing one **hostable target** (agent or workflow) on multiple channels at once.
 - Treat agents and workflows as peer hostable targets behind one host, so the same channel ecosystem (Responses, Invocations, Telegram, Teams, …) can serve either without rework.
-- **Enable cross-channel chat continuity** — two channels on the same host can resolve to the same session for the same end user via a channel-neutral `isolation_key`, with a pluggable session store enabling continuity across hosts and processes as a follow-up.
-- **Bridge channel-native identity into the shared `isolation_key` namespace** — provide first-class identity resolution and identity linking seams so channels never invent their own linking flow and end users have a well-known way (OAuth, MFA, signed one-time code) to connect a new channel to an existing identity.
-- **Make response delivery a first-class concern** — decouple where a response is delivered from where the request originated, support routing to the originating, active, specific, all, or no channels, and elevate background/asynchronous runs to a first-class capability so a user can start a request on one channel and pick up the result on another (or via polling).
-- **Allow mixed-trust channels on one host** — channels can declare opaque trust tiers (e.g. `corp` vs `public`) and the host accepts a link/delivery policy that decides which channel pairs may share an `isolation_key` and may push responses to one another. Includes an explicit "deny all" policy for cases where channels share a target on the same host but must remain strictly session-isolated. Running multiple hosts is always a valid alternative; the policy exists for cases where one shared host with policy-enforced isolation is preferred (shared middleware, shared deployment).
 - Preserve room for channel-specific capabilities (signature validation, conversations, streaming, native commands, action surfaces).
 - Support message-channel capabilities — native commands, command menus, action surfaces — from the start.
 - Support channels that need startup/shutdown behavior (long polling, platform-side command registration) in addition to routes.
@@ -106,24 +103,16 @@ Chosen option: **Create a new hosting core plus separate channel packages, infor
 
 ### Summary
 
-We will introduce a new hosting core distribution package per language, exposing the same conceptual abstractions:
+We will introduce a new hosting core distribution package per language. The full conceptual vocabulary is defined once in [Terminology](#terminology); this section calls out only the design decisions baked into each concept.
 
-- **Host** (`AgentFrameworkHost`) — owns one **hostable target** (an agent or a workflow), builds one application using the language's idiomatic web framework (Starlette in Python, ASP.NET Core / Kestrel in .NET), exposes the underlying app as the canonical portability surface, and offers a `serve(...)`-style convenience for the common single-process case. The host is named `AgentFrameworkHost` rather than `AgentHost` because the target is not restricted to agents.
-- **Hostable target** — the executable object the host is fronting. May be:
-  - an **agent** invoked via the per-language agent execution seam (`SupportsAgentRun.run(...)` / `AIAgent.RunAsync(...)`), or
-  - a **workflow** invoked via the per-language workflow execution seam.
-  The host detects the target kind and routes to the appropriate runner. Channels are unchanged; the `invocation_hook` is the seam where channel-default `ChannelRequest` data is adapted to the target's input shape.
-- **Channel** — contributes routes plus optional middleware, command metadata, and lifecycle (startup/shutdown) hooks. One channel = one external protocol surface.
-- **ChannelContext** — host-owned bridge from a channel into the target's run/stream invocation. Surfaces a uniform `run`/`stream` API regardless of whether the underlying target is an agent or a workflow.
-- **ChannelRequest** and **ChannelSession** — normalize inbound channel data without introducing a new message model. Channels still translate into the framework's existing input, session, message, and content types in each language. `ChannelSession.isolation_key` follows hosted-agent terminology for isolation rather than assuming a direct user ID.
-- **ChannelInvocationHook** — gives each channel a sensible default request-to-target mapping while letting app authors rewrite or validate per-request invocation behavior **before** the target is invoked. This hook is the **adapter** between the channel's default `ChannelRequest` and the target's required input shape — central to workflow hosting because workflows usually take typed inputs rather than free-form chat messages.
-- **IdentityResolver** — host-level seam that maps a channel-native identifier (Telegram `chat_id`, Teams AAD object id, WhatsApp phone, …) into an `isolation_key`. Channels publish the native identifier they observed; the resolver decides what the channel-neutral identity is. Default: identity (use the native id verbatim, scoped per channel).
-- **IdentityLinker** — host-level seam that runs a **link/connect ceremony** to associate a new channel-native identity with an existing `isolation_key`. The linker contract is generic enough to host well-known mechanisms — OAuth authorization-code redirect, MFA challenge, signed short-lived one-time code issued from one channel and entered in another — without baking any specific provider into the core. The host exposes the route(s) and lifecycle the linker needs; channels surface `link`/`connect` commands or buttons that drive the ceremony.
-- **ResponseTarget** and **ChannelPush** — describe **where** a response should be delivered when it's ready. Each `ChannelRequest` carries a `response_target` (default: `originating`; alternatives: `active`, a specific channel id, a list of channels, `all_linked`, or `none` for fully-detached background runs). When the response target isn't the originating channel — including all background runs — the host delivers via a `ChannelPush` capability the destination channel exposes (proactive message, webhook push, server-sent event broadcast, …). Channels that cannot push (pure request/response protocols like Responses) are valid targets only for `originating`.
-- **RunHandle** — first-class artifact returned for background runs. Carries a stable run id, status (`queued` | `running` | `completed` | `failed`), and the resolved isolation key. Channels can return it directly in their protocol response (e.g. an Invocations 202 with a polling URL, a Telegram inline acknowledgement) so the caller can poll later; the host also pushes the result to the configured response target when ready. The host owns the run-handle store; mechanism for persistence is the same one used for sessions (pluggable, fast follow).
-- **Active channel** — the channel most recently observed for a given `isolation_key`. The host tracks last-seen `(isolation_key, channel)` per request so `response_target="active"` resolves to whichever channel the user is currently using. Heuristic, not authoritative — apps can override on the request via the invocation hook.
-- **ChannelCommand** — gives message channels a portable way to describe native commands or actions, projected into Telegram menus, Teams slash commands, WhatsApp action surfaces, or text-command dispatch.
-- **Built-in channels** — own their protocol-defined relative routes under default mount roots, so default surfaces become e.g. `/responses/v1`, `/invocations/invoke`, and `/telegram/webhook` without the app author spelling those out.
+- **Host** (`AgentFrameworkHost`) — owns the application object (Starlette in Python, ASP.NET Core / Kestrel in .NET), one **hostable target**, and a sequence of channels. Exposes the underlying app as the canonical portability surface and a `serve(...)`-style convenience for the common single-process case. **Named `AgentFrameworkHost` rather than `AgentHost` because the target is not restricted to agents.**
+- **Hostable target** — may be either an **agent** (per-language agent execution seam) or a **workflow** (per-language workflow execution seam). The host detects the kind and dispatches; channels are unchanged.
+- **Channel**, **`ChannelContext`**, **`ChannelRequest`**, **`ChannelSession`**, **`ChannelContribution`**, **`ChannelCommand`** — the channel-authoring surface. Defined in Terminology.
+- **`ChannelInvocationHook`** — the developer's runtime escape hatch over the uniform `ChannelRequest` envelope. Channels translate their native protocol payload into `ChannelRequest`; the hook then runs **after** that translation and **before** target invocation, receiving and returning a `ChannelRequest`. Examples (illustrative): reshaping a chat message into a workflow's typed input, dropping/injecting `ChatOptions` fields, enforcing required options, overriding `session_mode` / `response_target`.
+- **`IdentityResolver`** + **`IdentityLinker`** — the channel-neutral identity stack. Resolver maps channel-native ids to `isolation_key`; linker runs the **link/connect ceremony** (OAuth / MFA / signed one-time code) so a new channel can join an existing `isolation_key`. The host owns the routes and short-lived state the linker needs; channels surface entry points.
+- **`ResponseTarget`** + **`ChannelPush`** + **`RunHandle`** + **active channel** — the response-delivery stack. `ResponseTarget` decouples *where* a response is delivered from *where* it originated; `ChannelPush` is the optional channel capability used for non-`originating` delivery; `RunHandle` makes background runs first-class with a stable id and status; the host tracks last-seen `(isolation_key, channel)` to resolve `response_target="active"`.
+- **`trust_level`** + **`LinkPolicy`** — the multi-tier-on-one-host stack. `trust_level` is an opaque per-channel label; `LinkPolicy` is the host-level decision over which channel pairs may share an `isolation_key` (link) and which may push to one another (deliver). Built-in `DenyAllLinks` enforces "share a target, never share a session"; running multiple hosts is always a valid alternative.
+- **Built-in channels** — own their protocol-defined relative routes under default mount roots (`/responses/v1`, `/invocations/invoke`, `/telegram/webhook`) without the app author spelling those out.
 
 Channel implementations live in **separate distribution packages**, one per channel, with public surfaces kept stable per language.
 
@@ -291,13 +280,7 @@ The decision is validated when, in each implementing language:
 
 ## More Information
 
-This ADR intentionally does **not** require:
-
-- immediate migration of existing protocol-specific packages,
-- a standardized persistence/storage abstraction in the first phase,
-- multi-agent routing inside one host,
-- a runtime or package dependency on legacy protocol-specific hosts in the new hosting core or its channel packages,
-- identical type names across languages — each language follows its own idioms while preserving the same concepts and terminology.
+See [Non-Goals](#non-goals--relationship-to-existing-hosting-packages) for what this ADR explicitly does **not** require in the first phase.
 
 The Telegram sample proposed in PR #5393 is prior art for native command catalogs and for channels that need startup/shutdown lifecycle behavior beyond plain route registration. The same shape is expected to inform future Teams and WhatsApp channels in both languages.
 
