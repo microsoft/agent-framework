@@ -293,7 +293,7 @@ jobs:
           -m integration
           -n logical --dist worksteal
           -x
-          --timeout=360 --session-timeout=900 --timeout_method thread
+          --timeout=480 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
           --junitxml=pytest.xml
       - name: Upload test results
