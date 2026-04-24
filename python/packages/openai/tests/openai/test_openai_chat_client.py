@@ -3962,6 +3962,12 @@ def test_with_callable_api_key() -> None:
             True,
             id="tool_choice_required",
         ),
+        param(
+            "tool_choice",
+            {"mode": "auto", "allowed_tools": ["get_weather"]},
+            True,
+            id="tool_choice_allowed_tools",
+        ),
         param("response_format", OutputStruct, True, id="response_format_pydantic"),
         param(
             "response_format",
