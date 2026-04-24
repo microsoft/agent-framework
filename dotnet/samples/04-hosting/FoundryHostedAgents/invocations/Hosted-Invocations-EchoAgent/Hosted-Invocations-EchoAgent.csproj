@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+    <RootNamespace>HostedInvocationsEchoAgent</RootNamespace>
+    <AssemblyName>HostedInvocationsEchoAgent</AssemblyName>
+    <NoWarn>$(NoWarn);</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.AgentServer.Invocations" />
+    <PackageReference Include="DotNetEnv" />
+  </ItemGroup>
+
+  <!-- For contributors: uses ProjectReference to build against local source -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!-- For end-users: uncomment the PackageReference below and remove the ProjectReference above
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.AI.Abstractions" Version="1.0.0" />
+    <PackageReference Include="Azure.AI.AgentServer.Invocations" />
+  </ItemGroup>
+  -->
+
+</Project>

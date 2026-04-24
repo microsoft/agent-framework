@@ -13,7 +13,6 @@ from typing import Any, ClassVar, Generic, Literal, TypedDict
 from uuid import uuid4
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
@@ -31,6 +30,7 @@ from agent_framework import (
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._telemetry import get_user_agent
 from agent_framework.exceptions import ChatClientInvalidResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
@@ -299,7 +299,7 @@ class BedrockChatClient(
             self._bedrock_client = session.client(
                 "bedrock-runtime",
                 region_name=region,
-                config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
+                config=BotoConfig(user_agent_extra=get_user_agent()),
             )
 
         super().__init__(

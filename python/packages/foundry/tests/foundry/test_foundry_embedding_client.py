@@ -198,6 +198,7 @@ class TestRawFoundryEmbeddingClient:
                     "FOUNDRY_MODELS_API_KEY": "env-key",
                     "FOUNDRY_EMBEDDING_MODEL": "env-model",
                 },
+                clear=True,
             ),
             patch("agent_framework_foundry._embedding_client.EmbeddingsClient"),
             patch("agent_framework_foundry._embedding_client.ImageEmbeddingsClient"),

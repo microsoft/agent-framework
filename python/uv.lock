@@ -84,19 +84,19 @@ wheels = [
 
 [[package]]
 name = "ag-ui-protocol"
-version = "0.1.13"
+version = "0.1.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/04/b5/fc0b65b561d00d88811c8a7d98ee735833f81554be244340950e7b65820c/ag_ui_protocol-0.1.13.tar.gz", hash = "sha256:811d7d7dcce4783dec252918f40b717ebfa559399bf6b071c4ba47c0c1e21bcb", size = 5671, upload-time = "2026-02-19T18:40:38.602Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/0f/5a8ce5eb5cd7adf3f733da87d7a5a8a38f24ec9e029c1300f9495ae9c7fa/ag_ui_protocol-0.1.17.tar.gz", hash = "sha256:5fae4cfced8245c8ac329b85702fd166ff226d99dc1ea8a1ae95890826aa69e5", size = 6273, upload-time = "2026-04-20T21:09:19.436Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/9f/b833c1ab1999da35ebad54841ae85d2c2764c931da9a6f52d8541b6901b2/ag_ui_protocol-0.1.13-py3-none-any.whl", hash = "sha256:1393fa894c1e8416efe184168a50689e760d05b32f4646eebb8ff423dddf8e8f", size = 8053, upload-time = "2026-02-19T18:40:37.27Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/82/e5f1686b4c4e232818c75598d651b82088f584e59adef71802920d74f82f/ag_ui_protocol-0.1.17-py3-none-any.whl", hash = "sha256:6a9065590d21c7b9b8ae9bb1a3410ecf4d18cb8041a077d25574f792dfa504fe", size = 8648, upload-time = "2026-04-20T21:09:20.488Z" },
 ]
 
 [[package]]
 name = "agent-framework"
-version = "1.1.0"
+version = "1.1.1"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -151,7 +151,7 @@ dev = [
 
 [[package]]
 name = "agent-framework-a2a"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/a2a" }
 dependencies = [
     { name = "a2a-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -166,7 +166,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/ag-ui" }
 dependencies = [
     { name = "ag-ui-protocol", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -183,7 +183,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-protocol", specifier = "==0.1.13" },
+    { name = "ag-ui-protocol", specifier = ">=0.1.16,<0.2" },
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "fastapi", specifier = ">=0.115.0,<0.133.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = "==0.28.1" },
@@ -194,7 +194,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "agent-framework-anthropic"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/anthropic" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -209,7 +209,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-ai-search"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/azure-ai-search" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -224,7 +224,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-cosmos"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/azure-cosmos" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -239,7 +239,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azurefunctions"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/azurefunctions" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -261,7 +261,7 @@ dev = []
 
 [[package]]
 name = "agent-framework-bedrock"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/bedrock" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -278,7 +278,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-chatkit"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/chatkit" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -293,7 +293,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-claude"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/claude" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -308,7 +308,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-copilotstudio"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/copilotstudio" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -323,7 +323,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.1.0"
+version = "1.1.1"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -395,7 +395,7 @@ provides-extras = ["all"]
 
 [[package]]
 name = "agent-framework-declarative"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/declarative" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -420,7 +420,7 @@ dev = [{ name = "types-pyyaml", specifier = "==6.0.12.20250915" }]
 
 [[package]]
 name = "agent-framework-devui"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/devui" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -458,7 +458,7 @@ provides-extras = ["dev", "all"]
 
 [[package]]
 name = "agent-framework-durabletask"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/durabletask" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -485,7 +485,7 @@ dev = [{ name = "types-python-dateutil", specifier = "==2.9.0.20260402" }]
 
 [[package]]
 name = "agent-framework-foundry"
-version = "1.1.0"
+version = "1.1.1"
 source = { editable = "packages/foundry" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -504,7 +504,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0a260421"
+version = "1.0.0a260424"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -516,14 +516,14 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-ai-agentserver-core", specifier = "==2.0.0b2" },
-    { name = "azure-ai-agentserver-invocations", specifier = "==1.0.0b2" },
-    { name = "azure-ai-agentserver-responses", specifier = "==1.0.0b4" },
+    { name = "azure-ai-agentserver-core", specifier = "==2.0.0b3" },
+    { name = "azure-ai-agentserver-invocations", specifier = "==1.0.0b3" },
+    { name = "azure-ai-agentserver-responses", specifier = "==1.0.0b5" },
 ]
 
 [[package]]
 name = "agent-framework-foundry-local"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/foundry_local" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -540,7 +540,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-gemini"
-version = "1.0.0a260421"
+version = "1.0.0a260423"
 source = { editable = "packages/gemini" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -555,7 +555,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-github-copilot"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/github_copilot" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -570,7 +570,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hyperlight"
-version = "1.0.0a260421"
+version = "1.0.0a260423"
 source = { editable = "packages/hyperlight" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -589,7 +589,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-lab"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/lab" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -670,7 +670,7 @@ dev = [
 
 [[package]]
 name = "agent-framework-mem0"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/mem0" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -685,7 +685,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ollama"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/ollama" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -700,7 +700,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-openai"
-version = "1.1.0"
+version = "1.1.1"
 source = { editable = "packages/openai" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -715,7 +715,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-orchestrations"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/orchestrations" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -726,7 +726,7 @@ requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agent-framework-purview"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/purview" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -743,7 +743,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-redis"
-version = "1.0.0b260421"
+version = "1.0.0b260423"
 source = { editable = "packages/redis" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1068,7 +1068,7 @@ wheels = [
 
 [[package]]
 name = "azure-ai-agentserver-core"
-version = "2.0.0b2"
+version = "2.0.0b3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-monitor-opentelemetry-exporter", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1078,26 +1078,26 @@ dependencies = [
     { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "starlette", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a0/25/25865cfa76cbc20c18c4e9ed337456fd7374c01e930dd151463b4c183ac0/azure_ai_agentserver_core-2.0.0b2.tar.gz", hash = "sha256:cc6c90fdc4c2b2ce594f0e85288fda84910c04939d1427a64a485b2d48d6d684", size = 41605, upload-time = "2026-04-19T08:58:09.27Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/29/1a9606d5252b02d77070a1b633dd0c26fe65a0f4a0fb0cfdaa751e2ed458/azure_ai_agentserver_core-2.0.0b3.tar.gz", hash = "sha256:e295b19a65d53c513929f52f0862bbb815cc9e9fc29d2a2825452f3136260123", size = 42573, upload-time = "2026-04-23T04:13:16.717Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/35/cf8a034f86d653fa902edb5ffa0a86005ea941f2840d2fa27302484856c1/azure_ai_agentserver_core-2.0.0b2-py3-none-any.whl", hash = "sha256:931e7a2d82275a01d7eb5ef08a70dba230938e3646be64c03d82749dd7be8afc", size = 27494, upload-time = "2026-04-19T08:58:10.588Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/9b/1fc87c05b55821f33c46c5e8a3b97a573aa2fc4bff387e75cca1a87800b4/azure_ai_agentserver_core-2.0.0b3-py3-none-any.whl", hash = "sha256:5ef921eb9fd9c0f15682fe930320fae50dccfa915d7518f9a16d99014bbcb3cb", size = 29127, upload-time = "2026-04-23T04:13:17.976Z" },
 ]
 
 [[package]]
 name = "azure-ai-agentserver-invocations"
-version = "1.0.0b2"
+version = "1.0.0b3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-ai-agentserver-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9d/ef/11a161fa400f28390e9885854c434417fbd204ae006ca02b3a45ab285069/azure_ai_agentserver_invocations-1.0.0b2.tar.gz", hash = "sha256:cf352fd11b0057a2af28b1a921c84fb11f2fcbb9b4185cae9d93f2a45980227b", size = 30242, upload-time = "2026-04-19T09:43:31.439Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/95/ebab2b06777352b33dd4c407fa5624765b7443d3b4b5fb6cb1f51660643b/azure_ai_agentserver_invocations-1.0.0b3.tar.gz", hash = "sha256:1eaad3ae8dc6a28038b9a16c7b5f853fda33202c1ea57559992a6c6fe71952a4", size = 31002, upload-time = "2026-04-23T04:30:29.449Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0c/f4/057206e0fca266b30ea68a531fa425078fd883500e779d5552858fe33d5b/azure_ai_agentserver_invocations-1.0.0b2-py3-none-any.whl", hash = "sha256:e799a9e6e54a10499296ee4f61720377fb31f540204832b654bac6f20e801597", size = 11432, upload-time = "2026-04-19T09:43:32.744Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/43/a421671296ae33b62af3a034869fa82ff1979e5f455a29924d30ae1b8307/azure_ai_agentserver_invocations-1.0.0b3-py3-none-any.whl", hash = "sha256:771a15a3509e049b56f71c43c87a3fdeecd12addddcae0f80339990adc41e678", size = 11433, upload-time = "2026-04-23T04:30:30.412Z" },
 ]
 
 [[package]]
 name = "azure-ai-agentserver-responses"
-version = "1.0.0b4"
+version = "1.0.0b5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1105,9 +1105,9 @@ dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cc/01/614dafa9366a5bdfe50ec112b15faa57e32a96866796bc2812ba329f4fec/azure_ai_agentserver_responses-1.0.0b4.tar.gz", hash = "sha256:2fa69db26ff52d8d2cd667a1461675e5124aabf8f268b842402e36f50d6c7176", size = 397007, upload-time = "2026-04-20T07:33:18.612Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/27/3ecb7fe704ff8764199bfbe4cc1e584a520a9affe042470d9d50b6e1e73a/azure_ai_agentserver_responses-1.0.0b5.tar.gz", hash = "sha256:0b627b810359c792ea7b6fa6782abaf6df32d9bc9e5a569ad722afcffd0ce8d9", size = 410908, upload-time = "2026-04-23T04:31:15.414Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/24/bd/c56df7c9257f10014ae1cd161ac08784bd9fe682233ab1a987c98b5b78c0/azure_ai_agentserver_responses-1.0.0b4-py3-none-any.whl", hash = "sha256:7684c6bef57bdcd1941cce2d6b5e2ea07edd7ce9f90e84f171804cc728b60fcc", size = 263375, upload-time = "2026-04-20T07:33:19.956Z" },
+    { url = "https://files.pythonhosted.org/packages/44/91/1e5c0d7ce95ca8b022e69e4ca6b23e413fc2d57f0191429c4633e02213d2/azure_ai_agentserver_responses-1.0.0b5-py3-none-any.whl", hash = "sha256:4c2a6ab56e71eeb330aa52b7cb2cc71b8ec6b5bbe0e7dc84310f2c7fbda393a3", size = 268362, upload-time = "2026-04-23T04:31:17.014Z" },
 ]
 
 [[package]]

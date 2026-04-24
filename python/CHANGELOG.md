@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-04-23
+
+### Added
+- **agent-framework-core**: Add `expected_output` ground-truth support to `evaluate_workflow` for similarity evaluators ([#5234](https://github.com/microsoft/agent-framework/pull/5234))
+- **agent-framework-ag-ui**, **agent-framework-a2a**: Propagate `thread_id` and `forwarded_props` through AG-UI to A2A `context_id` ([#5383](https://github.com/microsoft/agent-framework/pull/5383))
+- **samples**: Add second approval-required tool (`set_stop_loss`) to `concurrent_builder_tool_approval` sample ([#4875](https://github.com/microsoft/agent-framework/pull/4875))
+- **agent-framework-core**: Add `SKIP_PARSING` sentinel for `FunctionTool.invoke` to bypass `Content`-wrapping and return raw function results ([#5424](https://github.com/microsoft/agent-framework/pull/5424))
+
+### Changed
+- **agent-framework-foundry-hosting**: Correct Development Status classifier from Beta (4) to Alpha (3) to match the package's lifecycle stage ([#5387](https://github.com/microsoft/agent-framework/pull/5387))
+- **tests**: Add Python flaky test report workflow ([#5342](https://github.com/microsoft/agent-framework/pull/5342))
+- **agent-framework-hyperlight**: Simplify host callback to pass raw Python results via `SKIP_PARSING`, switch `execute_code` input schema to a plain JSON-schema dict, and tighten public API surface ([#5424](https://github.com/microsoft/agent-framework/pull/5424))
+
+### Fixed
+- **agent-framework-openai**: Fix OpenAI Responses streaming to propagate `created_at` from the final `response.completed` event ([#5382](https://github.com/microsoft/agent-framework/pull/5382))
+- **agent-framework-openai**: Fix `OpenAIEmbeddingClient` to use `AsyncOpenAI` for `/openai/v1` endpoints ([#5137](https://github.com/microsoft/agent-framework/pull/5137))
+- **agent-framework-openai**: Exclude null `file_id` from `input_image` payload to prevent schema 400 errors ([#5125](https://github.com/microsoft/agent-framework/pull/5125))
+- **agent-framework-foundry**: Reconcile Toolbox hosted-tool payloads with the Responses API ([#5414](https://github.com/microsoft/agent-framework/pull/5414))
+- **agent-framework-ag-ui**: Pass client `thread_id` as `session_id` when constructing `AgentSession` ([#5384](https://github.com/microsoft/agent-framework/pull/5384))
+- **agent-framework-hyperlight**: Thread-confine `WasmSandbox` interactions via per-entry `ThreadPoolExecutor` to eliminate the PyO3 `unsendable` panic when touched from asyncio worker threads
+  ([#5424](https://github.com/microsoft/agent-framework/pull/5424))
+
 ## [1.1.0] - 2026-04-21
 
 ### Added
