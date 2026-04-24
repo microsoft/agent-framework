@@ -49,8 +49,23 @@ internal static class RequestOptionsExtensions
         private static void AddUserAgentHeader(PipelineMessage message)
         {
             var supplement = HostedAgentContext.UserAgentSupplement;
-            var value = supplement is null ? s_userAgentValue : $"{s_userAgentValue} {supplement}";
-            message.Request.Headers.Add("User-Agent", value);
+            var meaiValue = supplement is null ? s_userAgentValue : $"{s_userAgentValue} {supplement}";
+
+            if (message.Request.Headers.TryGetValue("User-Agent", out var existing) && !string.IsNullOrEmpty(existing))
+            {
+                // Guard against double-append on retries or when the policy
+                // is registered on multiple pipeline positions.
+                if (existing.Contains(s_userAgentValue))
+                {
+                    return;
+                }
+
+                message.Request.Headers.Set("User-Agent", $"{existing} {meaiValue}");
+            }
+            else
+            {
+                message.Request.Headers.Set("User-Agent", meaiValue);
+            }
         }
 
         private static string CreateUserAgentValue()

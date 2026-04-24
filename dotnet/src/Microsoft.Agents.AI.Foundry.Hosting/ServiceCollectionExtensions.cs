@@ -1,10 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel.Primitives;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
+using Azure.AI.Projects;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.AspNetCore.Builder;
@@ -49,6 +52,7 @@ public static class FoundryHostingExtensions
     public static IServiceCollection AddFoundryResponses(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
+        SetHostedUserAgent();
         services.AddResponsesServer();
         services.TryAddSingleton<AgentSessionStore, InMemoryAgentSessionStore>();
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
@@ -83,6 +87,7 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(agent);
+        SetHostedUserAgent();
 
         services.AddResponsesServer();
         agentSessionStore ??= new InMemoryAgentSessionStore();
@@ -192,6 +197,25 @@ public static class FoundryHostingExtensions
     }
 
     /// <summary>
+    /// Adds a pipeline policy to <paramref name="options"/> that appends the hosted-agent
+    /// identifier (<c>foundry-hosting/agent-framework-dotnet/{version}</c>) to the
+    /// <c>User-Agent</c> header on every outgoing HTTP request.
+    /// </summary>
+    /// <remarks>
+    /// Call this method on the <see cref="AIProjectClientOptions"/> you pass to
+    /// <see cref="AIProjectClient"/> so that outgoing API calls to Azure AI Foundry
+    /// include the hosted-agent telemetry header.
+    /// </remarks>
+    /// <param name="options">The client options to configure.</param>
+    /// <returns>The same <paramref name="options"/> instance for chaining.</returns>
+    public static AIProjectClientOptions AddHostedAgentTelemetry(this AIProjectClientOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        options.AddPolicy(new HostedUserAgentPolicy(GetHostedUserAgentValue()), PipelinePosition.BeforeTransport);
+        return options;
+    }
+
+    /// <summary>
     /// The ActivitySource name for the Responses hosting pipeline.
     /// Matches the value previously exposed by <c>AgentHostTelemetry.ResponsesSourceName</c>
     /// in <c>Azure.AI.AgentServer.Core</c>.
@@ -214,6 +238,74 @@ public static class FoundryHostingExtensions
         return agent.AsBuilder()
                     .UseOpenTelemetry(sourceName: ResponsesSourceName)
                     .Build();
+    }
+
+    /// <summary>
+    /// Sets the global <see cref="HostedAgentContext.UserAgentSupplement"/> so that
+    /// <c>MeaiUserAgentPolicy</c> in the Foundry package appends the hosted-agent
+    /// identifier on code paths that use per-request <see cref="RequestOptions"/>.
+    /// Called once at service registration time.
+    /// </summary>
+    private static void SetHostedUserAgent()
+    {
+        HostedAgentContext.UserAgentSupplement ??= GetHostedUserAgentValue();
+    }
+
+    /// <summary>
+    /// Computes the <c>"foundry-hosting/agent-framework-dotnet/{version}"</c> string
+    /// from the hosting assembly's informational version.
+    /// </summary>
+    private static string GetHostedUserAgentValue()
+    {
+        const string Name = "foundry-hosting/agent-framework-dotnet";
+
+        if (typeof(FoundryHostingExtensions).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion is string version)
+        {
+            int pos = version.IndexOf('+');
+            if (pos >= 0)
+            {
+                version = version.Substring(0, pos);
+            }
+
+            if (version.Length > 0)
+            {
+                return $"{Name}/{version}";
+            }
+        }
+
+        return Name;
+    }
+
+    /// <summary>Pipeline policy that appends the hosted-agent User-Agent segment to outgoing requests.</summary>
+    private sealed class HostedUserAgentPolicy(string userAgentValue) : PipelinePolicy
+    {
+        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        {
+            this.AppendUserAgent(message);
+            ProcessNext(message, pipeline, currentIndex);
+        }
+
+        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        {
+            this.AppendUserAgent(message);
+            return ProcessNextAsync(message, pipeline, currentIndex);
+        }
+
+        private void AppendUserAgent(PipelineMessage message)
+        {
+            if (message.Request.Headers.TryGetValue("User-Agent", out var existing) && !string.IsNullOrEmpty(existing))
+            {
+                // Guard against double-appending on retries.
+                if (!existing.Contains(userAgentValue, StringComparison.Ordinal))
+                {
+                    message.Request.Headers.Set("User-Agent", $"{existing} {userAgentValue}");
+                }
+            }
+            else
+            {
+                message.Request.Headers.Set("User-Agent", userAgentValue);
+            }
+        }
     }
 
     private sealed class AgentFrameworkUserAgentMiddleware(RequestDelegate next)
