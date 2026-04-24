@@ -14,12 +14,12 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// Implementations determine the execution strategy (e.g., local subprocess, hosted code execution environment).
-/// The <paramref name="arguments"/> parameter preserves the raw JSON format sent by the caller,
-/// which may be a JSON array (for positional CLI arguments) or a JSON object (for named parameters).
+/// The <paramref name="arguments"/> parameter preserves the raw JSON sent by the caller, in the shape
+/// described by <see cref="AgentFileSkillScript.ParametersSchema"/>.
 /// </remarks>
 /// <param name="skill">The skill that owns the script.</param>
 /// <param name="script">The file-based script to run.</param>
-/// <param name="arguments">Raw JSON arguments for the script, preserving the original format (object or array) sent by the caller.</param>
+/// <param name="arguments">Raw JSON arguments for the script, in the shape described by <see cref="AgentFileSkillScript.ParametersSchema"/>.</param>
 /// <param name="serviceProvider">Optional service provider for dependency injection.</param>
 /// <param name="cancellationToken">Cancellation token.</param>
 /// <returns>The script execution result.</returns>

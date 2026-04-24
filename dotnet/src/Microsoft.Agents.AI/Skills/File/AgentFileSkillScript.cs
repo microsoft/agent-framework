@@ -19,8 +19,7 @@ public sealed class AgentFileSkillScript : AgentSkillScript
     /// <summary>
     /// Cached JSON schema element describing the expected argument format: a string array of CLI arguments.
     /// </summary>
-    private static readonly JsonElement s_defaultSchema =
-        JsonDocument.Parse("""{"type":"array","items":{"type":"string"}}""").RootElement.Clone();
+    private static readonly JsonElement s_defaultSchema = CreateDefaultSchema();
 
     private readonly AgentFileSkillScriptRunner? _runner;
 
@@ -65,5 +64,11 @@ public sealed class AgentFileSkillScript : AgentSkillScript
         }
 
         return await this._runner(fileSkill, this, arguments, serviceProvider, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static JsonElement CreateDefaultSchema()
+    {
+        using JsonDocument document = JsonDocument.Parse("""{"type":"array","items":{"type":"string"}}""");
+        return document.RootElement.Clone();
     }
 }
