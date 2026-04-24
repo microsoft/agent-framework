@@ -340,10 +340,10 @@ class Workflow(DictConvertible):
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
                     started = WorkflowEvent.started()
-                yield started
+                yield started  # noqa: RUF070
                 with _framework_event_origin():
                     in_progress = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
-                yield in_progress
+                yield in_progress  # noqa: RUF070
 
                 # Reset context for a new run if supported
                 if reset_context:
@@ -388,7 +388,7 @@ class Workflow(DictConvertible):
                         emitted_in_progress_pending = True
                         with _framework_event_origin():
                             pending_status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
-                        yield pending_status
+                        yield pending_status  # noqa: RUF070
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     with _framework_event_origin():
@@ -409,10 +409,10 @@ class Workflow(DictConvertible):
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
-                yield failed_event
+                yield failed_event  # noqa: RUF070
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
-                yield failed_status
+                yield failed_status  # noqa: RUF070
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
                     attributes={
