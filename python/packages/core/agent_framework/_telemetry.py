@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from typing import Any, Final
@@ -60,13 +61,12 @@ def _detect_hosted_environment() -> None:
     global _hosted_env_detected
     if _hosted_env_detected:
         return
-    _hosted_env_detected = True
 
-    env_value = os.environ.get(_FOUNDRY_HOSTING_ENV_VAR)
-    if env_value is not None:
+    if (env_value := os.environ.get(_FOUNDRY_HOSTING_ENV_VAR)) is not None:
         # Env var exists — trust its value and skip the fallback.
         if env_value:
             _add_user_agent_prefix(_HOSTED_USER_AGENT_PREFIX)
+            _hosted_env_detected = True
         return
 
     # Env var not set — fall back to AgentConfig as a second layer of defense.
@@ -78,13 +78,12 @@ def _detect_hosted_environment() -> None:
             return
     except (ModuleNotFoundError, ValueError):
         return
-    try:
+    with contextlib.suppress(ImportError, AttributeError):
         from azure.ai.agentserver.core import AgentConfig  # pyright: ignore[reportMissingImports]
 
         if AgentConfig.from_env().is_hosted:
             _add_user_agent_prefix(_HOSTED_USER_AGENT_PREFIX)
-    except (ImportError, AttributeError):
-        pass
+            _hosted_env_detected = True
 
 
 def get_user_agent() -> str:
