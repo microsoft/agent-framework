@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import subprocess
 from typing import Any
 
-from agent_framework import Agent, Message, tool
+from agent_framework import Agent, Message
 from agent_framework.openai import OpenAIChatClient
+from agent_framework_tools.shell import LocalShellTool
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -14,79 +14,51 @@ load_dotenv()
 """
 OpenAI Chat Client with Local Shell Tool Example
 
-This sample demonstrates implementing a local shell tool using get_shell_tool(func=...)
-that wraps Python's subprocess module. Unlike the hosted shell tool (get_shell_tool()),
-local shell execution runs commands on YOUR machine, not in a remote container.
+This sample uses ``LocalShellTool`` from ``agent-framework-tools`` — the
+framework-supplied cross-OS shell executor with safe defaults (approval
+required, deny-list of destructive commands, timeout, output truncation,
+workdir confinement).
 
-Currently not all models support the shell tool. Refer to the OpenAI documentation for the
-list of supported models: https://developers.openai.com/api/docs/models/
+Currently not all models support the shell tool. Refer to the OpenAI
+documentation for the list of supported models:
+https://developers.openai.com/api/docs/models/
 
 SECURITY NOTE: This example executes real commands on your local machine.
-Only enable this when you trust the agent's actions. Consider implementing
-allowlists, sandboxing, or approval workflows for production use.
+``LocalShellTool`` requires approval by default; only accept commands you
+understand.
 """
 
 
-@tool(approval_mode="always_require")
-def run_bash(command: str) -> str:
-    """Execute a shell command locally and return stdout, stderr, and exit code."""
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        parts: list[str] = []
-        if result.stdout:
-            parts.append(result.stdout)
-        if result.stderr:
-            parts.append(f"stderr: {result.stderr}")
-        parts.append(f"exit_code: {result.returncode}")
-        return "\n".join(parts)
-    except subprocess.TimeoutExpired:
-        return "Command timed out after 30 seconds"
-    except Exception as e:
-        return f"Error executing command: {e}"
-
-
 async def main() -> None:
-    """Example showing how to use a local shell tool with OpenAI."""
-    print("=== OpenAI Agent with Local Shell Tool Example ===")
+    print("=== OpenAI Agent with LocalShellTool Example ===")
     print("NOTE: Commands will execute on your local machine.\n")
 
-    # Currently not all models support the shell tool. Refer to the OpenAI
-    # documentation for the list of supported models:
-    # https://developers.openai.com/api/docs/models/
     client = OpenAIChatClient(model="gpt-5.4-nano")
-    local_shell_tool = client.get_shell_tool(
-        func=run_bash,
-    )
 
-    agent = Agent(
-        client=client,
-        instructions="You are a helpful assistant that can run shell commands to help the user.",
-        tools=[local_shell_tool],
-    )
+    async with LocalShellTool() as shell:
+        agent = Agent(
+            client=client,
+            instructions="You are a helpful assistant that can run shell commands to help the user.",
+            tools=[client.get_shell_tool(func=shell.as_function())],
+        )
 
-    query = "Use the run_bash tool to execute `python --version` and show only the command output."
-    print(f"User: {query}")
-    result = await run_with_approvals(query, agent)
-    if isinstance(result, str):
-        print(f"Agent: {result}\n")
-        return
-    if result.text:
-        print(f"Agent: {result.text}\n")
-    else:
-        printed = False
-        for message in result.messages:
-            for content in message.contents:
-                if content.type == "function_result" and content.result:
-                    print(f"Agent (tool output): {content.result}\n")
-                    printed = True
-        if not printed:
-            print("Agent: (no text output returned)\n")
+        query = "Use the shell tool to execute `python --version` and show only the command output."
+        print(f"User: {query}")
+        result = await run_with_approvals(query, agent)
+        if isinstance(result, str):
+            print(f"Agent: {result}\n")
+            return
+        if result.text:
+            print(f"Agent: {result.text}\n")
+        else:
+            printed = False
+            for message in result.messages:
+                for content in message.contents:
+                    if content.type == "function_result" and content.result:
+                        print(f"Agent (tool output): {content.result}\n")
+                        printed = True
+            if not printed:
+                print("Agent: (no text output returned)\n")
 
 
 async def run_with_approvals(query: str, agent: Agent) -> Any:

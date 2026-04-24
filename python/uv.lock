@@ -55,6 +55,7 @@ members = [
     "agent-framework-orchestrations",
     "agent-framework-purview",
     "agent-framework-redis",
+    "agent-framework-tools",
 ]
 constraints = [
     { name = "fastapi-sso", specifier = ">=0.19.0" },
@@ -793,6 +794,17 @@ requires-dist = [
     { name = "redis", specifier = ">=6.4.0,<7.2.1" },
     { name = "redisvl", specifier = ">=0.11.0,<0.16" },
 ]
+
+[[package]]
+name = "agent-framework-tools"
+version = "1.0.0a260424"
+source = { editable = "packages/tools" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agentlightning"
