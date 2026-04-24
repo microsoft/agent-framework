@@ -194,7 +194,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         input_messages = _items_to_messages(input_items)
 
         history = await context.get_history()
-        run_kwargs: dict[str, Any] = {"messages": [*_output_items_to_messages(history), input_messages]}
+        run_kwargs: dict[str, Any] = {"messages": [*_output_items_to_messages(history), *input_messages]}
         is_streaming_request = request.stream is not None and request.stream is True
 
         chat_options, are_options_set = _to_chat_options(request)

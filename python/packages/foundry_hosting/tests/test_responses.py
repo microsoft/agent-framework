@@ -1461,7 +1461,7 @@ class TestMultiTurnMixedContent:
         assert body["status"] == "completed"
 
         # Verify agent received text + image
-        messages = agent.run.call_args.args[0]
+        messages = agent.run.call_args.kwargs["messages"]
         assert len(messages) == 1
         assert messages[0].role == "user"
         assert len(messages[0].contents) == 2
@@ -1499,7 +1499,7 @@ class TestMultiTurnMixedContent:
         body = resp.json()
         assert body["status"] == "completed"
 
-        messages = agent.run.call_args.args[0]
+        messages = agent.run.call_args.kwargs["messages"]
         assert len(messages) == 1
         assert len(messages[0].contents) == 2
         assert messages[0].contents[0].type == "text"
@@ -1536,7 +1536,7 @@ class TestMultiTurnMixedContent:
         body = resp.json()
         assert body["status"] == "completed"
 
-        messages = agent.run.call_args.args[0]
+        messages = agent.run.call_args.kwargs["messages"]
         assert len(messages) == 1
         assert len(messages[0].contents) == 2
         assert messages[0].contents[0].type == "text"
@@ -1577,7 +1577,7 @@ class TestMultiTurnMixedContent:
         body = resp.json()
         assert body["status"] == "completed"
 
-        messages = agent.run.call_args.args[0]
+        messages = agent.run.call_args.kwargs["messages"]
         assert len(messages) == 3
         assert messages[0].role == "user"
         assert messages[0].contents[0].type == "text"
@@ -1626,7 +1626,7 @@ class TestMultiTurnMixedContent:
         assert body2["status"] == "completed"
 
         # Verify second call receives history from turn 1 + text+image input
-        second_call_messages = agent.run.call_args_list[1].args[0]
+        second_call_messages = agent.run.call_args_list[1].kwargs["messages"]
         # History: output message from turn 1 ("Send me an image")
         # Input: message with text + image
         assert len(second_call_messages) >= 2
@@ -1687,7 +1687,7 @@ class TestMultiTurnMixedContent:
         assert resp2.json()["status"] == "completed"
 
         # Verify turn 2 received history including function call/result
-        second_call_messages = agent.run.call_args_list[1].args[0]
+        second_call_messages = agent.run.call_args_list[1].kwargs["messages"]
         roles = [m.role for m in second_call_messages]
         assert "assistant" in roles
         assert "tool" in roles
@@ -1738,7 +1738,7 @@ class TestMultiTurnMixedContent:
         assert resp2.json()["status"] == "completed"
 
         # Verify history includes the reasoning and text from turn 1
-        second_call_messages = agent.run.call_args_list[1].args[0]
+        second_call_messages = agent.run.call_args_list[1].kwargs["messages"]
         assert len(second_call_messages) >= 2  # history + new input
 
     async def test_multi_turn_with_mixed_content_and_streaming(self) -> None:
@@ -1830,7 +1830,7 @@ class TestMultiTurnMixedContent:
         body = resp.json()
         assert body["status"] == "completed"
 
-        messages = agent.run.call_args.args[0]
+        messages = agent.run.call_args.kwargs["messages"]
         assert len(messages) == 2
         assert messages[0].role == "user"
         assert messages[0].contents[0].type == "text"
@@ -1902,7 +1902,7 @@ class TestMultiTurnMixedContent:
         assert resp3.json()["status"] == "completed"
 
         # Verify turn 3 received full history from turns 1+2 plus new image input
-        third_call_messages = agent.run.call_args_list[2].args[0]
+        third_call_messages = agent.run.call_args_list[2].kwargs["messages"]
         # Should have: history from turn 1 (assistant text) + history from turn 2
         # (function_call, function_call_output, text) + new input (text + image)
         assert len(third_call_messages) >= 5
@@ -1953,7 +1953,7 @@ class TestMultiTurnMixedContent:
         body = resp.json()
         assert body["status"] == "completed"
 
-        messages = agent.run.call_args.args[0]
+        messages = agent.run.call_args.kwargs["messages"]
         assert len(messages) == 1
         assert len(messages[0].contents) == 2
         assert messages[0].contents[0].type == "text"
@@ -2017,7 +2017,7 @@ class TestMultiTurnMixedContent:
         assert resp2.json()["status"] == "completed"
 
         # Verify turn 2 received history from turn 1 + new text+file input
-        second_call_messages = agent.run.call_args_list[1].args[0]
+        second_call_messages = agent.run.call_args_list[1].kwargs["messages"]
         assert len(second_call_messages) >= 2
 
         # History should include the assistant response from turn 1
@@ -2085,7 +2085,7 @@ class TestMultiTurnMixedContent:
         assert resp2.json()["status"] == "completed"
 
         # Verify turn 2 received history with function call + new text+image
-        second_call_messages = agent.run.call_args_list[1].args[0]
+        second_call_messages = agent.run.call_args_list[1].kwargs["messages"]
         # History should contain function_call and function_result from turn 1
         fc_contents = [
             c for m in second_call_messages if m.role == "assistant" for c in m.contents if c.type == "function_call"
