@@ -662,7 +662,7 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                         "type": "function",
                         "function": {"name": func_name},
                     }
-                elif mode in ("auto", "required") and (allowed := tool_mode.get("allowed_tools")) is not None:
+                elif mode in ("auto", "required") and tool_mode.get("allowed_tools") is not None:
                     logger.warning(
                         "allowed_tools is not supported by the Chat Completions API; "
                         "the setting will be ignored. Use OpenAIChatClient (Responses API) instead."
