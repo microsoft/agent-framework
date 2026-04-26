@@ -248,6 +248,7 @@ from ._workflows._workflow_executor import (
 )
 from .exceptions import (
     MiddlewareException,
+    ToolApprovalRequiredException,
     UserInputRequiredException,
     WorkflowCheckpointException,
     WorkflowConvergenceException,
@@ -403,6 +404,7 @@ __all__ = [
     "TypeCompatibilityError",
     "UpdateT",
     "UsageDetails",
+    "ToolApprovalRequiredException",
     "UserInputRequiredException",
     "ValidationTypeEnum",
     "Workflow",

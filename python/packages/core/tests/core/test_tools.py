@@ -1085,6 +1085,89 @@ def test_ai_function_with_ctx_and_typed_context_parameter_fails():
             return f"{x}-{ctx.kwargs}-{runtime.kwargs}"
 
 
+# region approval_mode enforcement tests
+
+
+async def test_invoke_blocked_when_approval_required():
+    """Test that direct invoke() raises ToolApprovalRequiredException for always_require tools."""
+    from agent_framework.exceptions import ToolApprovalRequiredException
+
+    @tool(name="dangerous_tool", description="Requires approval", approval_mode="always_require")
+    def dangerous_action(path: str) -> str:
+        """A tool that requires human approval."""
+        return f"deleted {path}"
+
+    # Arrange / Act / Assert
+    with pytest.raises(ToolApprovalRequiredException, match="requires human approval"):
+        await dangerous_action.invoke(arguments={"path": "/critical"})
+
+
+async def test_invoke_succeeds_with_approved_flag():
+    """Test that invoke() succeeds when _approved=True is passed for always_require tools."""
+
+    @tool(name="approved_tool", description="Requires approval", approval_mode="always_require")
+    def guarded_action(x: int) -> str:
+        """A tool that requires human approval."""
+        return f"result={x}"
+
+    # Arrange / Act
+    result = await guarded_action.invoke(arguments={"x": 42}, _approved=True)
+
+    # Assert
+    assert len(result) == 1
+    assert result[0].text == "result=42"
+
+
+async def test_invoke_allowed_when_approval_not_required():
+    """Test that invoke() works normally for tools without approval_mode='always_require'."""
+
+    @tool(name="safe_tool", description="No approval needed")
+    def safe_action(x: int) -> str:
+        """A tool that does not require approval."""
+        return f"safe={x}"
+
+    # Arrange / Act
+    result = await safe_action.invoke(arguments={"x": 7})
+
+    # Assert
+    assert len(result) == 1
+    assert result[0].text == "safe=7"
+    assert safe_action.approval_mode == "never_require"
+
+
+async def test_invoke_allowed_for_auto_approval_mode():
+    """Test that invoke() works for tools with approval_mode other than 'always_require'."""
+
+    @tool(name="auto_tool", description="Auto approval", approval_mode="auto")
+    def auto_action(x: int) -> str:
+        """A tool with auto approval mode."""
+        return f"auto={x}"
+
+    # Arrange / Act
+    result = await auto_action.invoke(arguments={"x": 3})
+
+    # Assert
+    assert len(result) == 1
+    assert result[0].text == "auto=3"
+
+
+async def test_call_still_works_for_approval_required_tools():
+    """Test that __call__ (the raw function) is not gated — only invoke() is gated."""
+
+    @tool(name="callable_tool", description="Requires approval", approval_mode="always_require")
+    def callable_action(x: int) -> int:
+        """A tool that requires human approval."""
+        return x * 2
+
+    # Arrange / Act — __call__ is the low-level execution, not the security boundary
+    result = callable_action(5)
+
+    # Assert
+    assert result == 10
+
+
+# endregion
+
 # region _parse_annotation tests
 
 

@@ -545,6 +545,7 @@ class FunctionTool(SerializationMixin):
         context: FunctionInvocationContext | None = None,
         tool_call_id: str | None = None,
         skip_parsing: Literal[True],
+        _approved: bool = False,
         **kwargs: Any,
     ) -> Any: ...
 
@@ -556,6 +557,7 @@ class FunctionTool(SerializationMixin):
         context: FunctionInvocationContext | None = None,
         tool_call_id: str | None = None,
         skip_parsing: Literal[False] = False,
+        _approved: bool = False,
         **kwargs: Any,
     ) -> list[Content]: ...
 
@@ -566,6 +568,7 @@ class FunctionTool(SerializationMixin):
         context: FunctionInvocationContext | None = None,
         tool_call_id: str | None = None,
         skip_parsing: bool = False,
+        _approved: bool = False,
         **kwargs: Any,
     ) -> list[Content] | Any:
         """Run the AI function with the provided arguments as a Pydantic model.
@@ -588,6 +591,10 @@ class FunctionTool(SerializationMixin):
             tool_call_id: Optional tool call identifier used for telemetry and tracing.
             skip_parsing: When ``True``, bypass parsing and return the wrapped function's
                 raw value instead of a ``list[Content]``. Defaults to ``False``.
+            _approved: Internal flag set by the auto-invocation pipeline after the
+                approval gate in ``_try_execute_function_calls`` has been satisfied.
+                Callers outside the pipeline must obtain human approval and pass
+                ``_approved=True`` to execute tools with ``approval_mode='always_require'``.
             kwargs: Direct function argument values. When provided, every keyword
                 must match a declared tool parameter. Runtime data must be passed
                 via ``context``.
@@ -599,9 +606,18 @@ class FunctionTool(SerializationMixin):
 
         Raises:
             TypeError: If arguments is not mapping-like or fails schema checks.
+            ToolApprovalRequiredException: If the tool requires approval and ``_approved`` is False.
         """
         if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
+        if self.approval_mode == "always_require" and not _approved:
+            from .exceptions import ToolApprovalRequiredException
+
+            raise ToolApprovalRequiredException(
+                f"Function '{self.name}' requires human approval (approval_mode='always_require'). "
+                "The auto-invocation pipeline handles this automatically. If calling invoke() "
+                "directly, obtain human approval first and pass _approved=True."
+            )
         global OBSERVABILITY_SETTINGS
         from ._middleware import FunctionInvocationContext
         from ._types import Content
@@ -1520,6 +1536,7 @@ async def _auto_invoke_function(
                 arguments=args,
                 context=direct_context,
                 tool_call_id=function_call_content.call_id,
+                _approved=True,
             )
             return Content.from_function_result(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
@@ -1551,6 +1568,7 @@ async def _auto_invoke_function(
             arguments=context_obj.arguments,
             context=context_obj,
             tool_call_id=function_call_content.call_id,
+            _approved=True,
         )
 
     from ._middleware import MiddlewareTermination

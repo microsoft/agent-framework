@@ -180,6 +180,19 @@ class ToolExecutionException(ToolException):
     pass
 
 
+class ToolApprovalRequiredException(ToolException):
+    """Raised when a tool with approval_mode='always_require' is invoked without approval.
+
+    Direct calls to ``FunctionTool.invoke()`` on tools that require human approval
+    must pass ``_approved=True`` to certify that the approval gate has been satisfied.
+    The auto-invocation pipeline in ``_try_execute_function_calls`` handles this
+    automatically; this exception guards against bypasses from alternative call paths
+    (e.g., Claude, Copilot Studio, or custom integrations).
+    """
+
+    pass
+
+
 class UserInputRequiredException(ToolException):
     """Raised when a tool wrapping a sub-agent requires user input to proceed.
 
