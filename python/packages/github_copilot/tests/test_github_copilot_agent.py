@@ -189,6 +189,29 @@ class TestGitHubCopilotAgentInit:
             "content": "Direct instructions",
         }
 
+    def test_default_options_includes_model_for_telemetry(self) -> None:
+        """Test that default_options merges model from settings for AgentTelemetryLayer span attributes."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            default_options={"model": "claude-sonnet-4-5", "timeout": 120}
+        )
+        opts = agent.default_options
+        assert opts["model"] == "claude-sonnet-4-5"
+        assert "timeout" not in opts  # timeout is extracted into _settings, not returned in default_options
+
+    def test_default_options_without_model_configured(self) -> None:
+        """Test that default_options works correctly when no model is configured."""
+        agent = GitHubCopilotAgent(instructions="Helper")
+        opts = agent.default_options
+        assert "model" not in opts
+        assert opts.get("system_message") == {"mode": "append", "content": "Helper"}
+
+    def test_default_options_returns_independent_copy(self) -> None:
+        """Test that mutating the returned dict does not affect internal state."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(default_options={"model": "gpt-5.1-mini"})
+        opts = agent.default_options
+        opts["model"] = "mutated"
+        assert agent._settings.get("model") == "gpt-5.1-mini"
+
 
 class TestGitHubCopilotAgentLifecycle:
     """Test cases for agent lifecycle management."""

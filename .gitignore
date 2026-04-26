@@ -136,6 +136,10 @@ celerybeat.pid
 .venv
 env/
 venv/
+
+# Foundry agent CLI (contains secrets, auto-generated)
+.foundry-agent.json
+.foundry-agent-build.log
 ENV/
 env.bak/
 venv.bak/
@@ -203,6 +207,8 @@ temp*/
 
 # AI
 .claude/
+.omc/
+.omx/
 WARP.md
 **/memory-bank/
 **/projectBrief.md

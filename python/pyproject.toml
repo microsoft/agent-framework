@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.1"
+version = "1.2.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.0.1",
+    "agent-framework-core[all]==1.2.0",
 ]
 
 [dependency-groups]
@@ -41,6 +41,7 @@ dev = [
     "pyright==1.1.408",
     "mcp[ws]==1.27.0",
     "opentelemetry-sdk==1.40.0",
+    "azure-monitor-opentelemetry==1.8.7",
     #tasks
     "poethepoet==0.42.1",
     "rich>=13.7.1,<15.0.0",
@@ -79,6 +80,7 @@ agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
 agent-framework-durabletask = { workspace = true }
 agent-framework-foundry = { workspace = true }
+agent-framework-foundry-hosting = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
 agent-framework-gemini = { workspace = true }
 agent-framework-github-copilot = { workspace = true }

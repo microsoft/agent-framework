@@ -596,7 +596,7 @@ def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> lis
             events.extend(_close_reasoning_block(flow))
             # Open new reasoning block.
             events.append(ReasoningStartEvent(message_id=message_id))
-            events.append(ReasoningMessageStartEvent(message_id=message_id, role="assistant"))
+            events.append(ReasoningMessageStartEvent(message_id=message_id, role="reasoning"))
             flow.reasoning_message_id = message_id
 
         if text:
@@ -613,7 +613,7 @@ def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> lis
     else:
         # No flow -- backward-compatible full sequence per call.
         events.append(ReasoningStartEvent(message_id=message_id))
-        events.append(ReasoningMessageStartEvent(message_id=message_id, role="assistant"))
+        events.append(ReasoningMessageStartEvent(message_id=message_id, role="reasoning"))
 
         if text:
             events.append(ReasoningMessageContentEvent(message_id=message_id, delta=text))
