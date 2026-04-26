@@ -351,6 +351,16 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         # agent endpoint and tools present. FunctionTools are invoked client-side
         # by the function invocation layer, not sent to the service.
         run_options.pop("model", None)
+        # Strip text/text_format from the request body. The Foundry agent endpoint
+        # rejects per-call ``text`` configuration when an agent is bound with
+        # ``400 invalid_payload "Not allowed when agent is specified."``. The
+        # original ``response_format`` remains in ``options`` and is honored
+        # client-side via ``ChatResponse``'s lazy structured-value parsing in
+        # ``_parse_response_from_openai``. The bound agent itself must be
+        # configured to emit JSON matching the requested schema; otherwise
+        # ``response.value`` will raise ``pydantic.ValidationError`` on access.
+        run_options.pop("text", None)
+        run_options.pop("text_format", None)
         if not self.allow_preview:
             run_options.pop("tools", None)
             run_options.pop("tool_choice", None)
