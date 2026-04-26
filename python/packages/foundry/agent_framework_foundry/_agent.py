@@ -357,8 +357,12 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         # original ``response_format`` remains in ``options`` and is honored
         # client-side via ``ChatResponse``'s lazy structured-value parsing in
         # ``_parse_response_from_openai``. The bound agent itself must be
-        # configured to emit JSON matching the requested schema; otherwise
-        # ``response.value`` will raise ``pydantic.ValidationError`` on access.
+        # configured to emit JSON compatible with the requested format. For a
+        # Pydantic ``response_format``, accessing ``response.value`` may raise
+        # ``pydantic.ValidationError`` if the output does not validate. For a
+        # dict / ``json_schema`` ``response_format``, the lazy path only parses
+        # JSON and may raise ``ValueError`` on invalid JSON; it does not
+        # validate against the schema.
         run_options.pop("text", None)
         run_options.pop("text_format", None)
         if not self.allow_preview:
