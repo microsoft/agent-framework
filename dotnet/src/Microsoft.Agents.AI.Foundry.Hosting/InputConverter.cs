@@ -237,7 +237,7 @@ internal static class InputConverter
         {
             OutputItemMessage msg => ConvertOutputItemMessageToChat(msg),
             OutputItemFunctionToolCall funcCall => ConvertOutputItemFunctionCall(funcCall),
-            FunctionToolCallOutputResource funcOutput => ConvertFunctionToolCallOutputResource(funcOutput),
+            OutputItemFunctionToolCallOutput funcOutput => ConvertFunctionToolCallOutput(funcOutput),
             OutputItemReasoningItem => null,
             _ => null
         };
@@ -332,7 +332,7 @@ internal static class InputConverter
             [new FunctionCallContent(funcCall.CallId, funcCall.Name, arguments)]);
     }
 
-    private static ChatMessage ConvertFunctionToolCallOutputResource(FunctionToolCallOutputResource funcOutput)
+    private static ChatMessage ConvertFunctionToolCallOutput(OutputItemFunctionToolCallOutput funcOutput)
     {
         return new ChatMessage(
             ChatRole.Tool,

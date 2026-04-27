@@ -160,9 +160,7 @@ public class WorkflowIntegrationTests
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(
-            model: "test",
-            agentReference: new AgentReference("my-workflow"));
+        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("my-workflow") };
         request.Input = CreateUserInput("Test keyed workflow");
         var mockContext = CreateMockContext();
 
@@ -363,7 +361,7 @@ public class WorkflowIntegrationTests
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test");
+        var request = new CreateResponse { Model = "test" };
         request.Input = CreateUserInput(userMessage);
         var mockContext = CreateMockContext();
 
@@ -393,7 +391,7 @@ public class WorkflowIntegrationTests
     private static (ResponseEventStream stream, Mock<ResponseContext> mockContext) CreateTestStream()
     {
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "test-model");
+        var request = new CreateResponse { Model = "test-model" };
         var stream = new ResponseEventStream(mockContext.Object, request);
         return (stream, mockContext);
     }

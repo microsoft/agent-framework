@@ -7,8 +7,9 @@ import os
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, AgentResponse, Message
+from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
+from agent_framework._telemetry import get_user_agent
 
 from agent_framework_foundry._memory_provider import FoundryMemoryProvider
 
@@ -94,7 +95,7 @@ def test_init_with_project_endpoint_and_credential(mock_project_client: AsyncMoc
             endpoint="https://test.project.endpoint",
             credential=mock_credential,
             allow_preview=True,
-            user_agent=AGENT_FRAMEWORK_USER_AGENT,
+            user_agent=get_user_agent(),
         )
 
 

@@ -34,7 +34,8 @@ class AgentFrameworkException(Exception):
             logger.log(log_level, message, exc_info=inner_exception)
         if inner_exception:
             super().__init__(message, inner_exception, *args)  # type: ignore
-        super().__init__(message, *args)  # type: ignore
+        else:
+            super().__init__(message, *args)  # type: ignore
 
 
 # region Agent Exceptions

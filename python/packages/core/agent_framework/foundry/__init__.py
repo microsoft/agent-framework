@@ -14,6 +14,7 @@ from typing import Any
 _IMPORTS: dict[str, tuple[str, str]] = {
     "AnthropicFoundryClient": ("agent_framework_anthropic", "agent-framework-anthropic"),
     "FoundryAgent": ("agent_framework_foundry", "agent-framework-foundry"),
+    "FoundryAgentOptions": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatOptions": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),

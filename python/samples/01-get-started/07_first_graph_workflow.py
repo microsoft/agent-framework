@@ -12,9 +12,12 @@ from agent_framework import (
 from typing_extensions import Never
 
 """
-First Workflow — Chain executors with edges
+First Graph Workflow — Chain executors with edges
 
-This sample builds a minimal workflow with two steps:
+The graph API gives you full control over execution topology: edges,
+fan-out/fan-in, switch/case, and superstep-based checkpointing.
+
+This sample builds a minimal graph workflow with two steps:
 1. Convert text to uppercase (class-based executor)
 2. Reverse the text (function-based executor)
 

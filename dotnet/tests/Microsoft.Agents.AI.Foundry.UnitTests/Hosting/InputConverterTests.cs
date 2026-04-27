@@ -2,7 +2,6 @@
 
 using System;
 using System.Linq;
-using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
@@ -146,11 +145,7 @@ public class InputConverterTests
     [Fact]
     public void ConvertToChatOptions_SetsTemperatureAndTopP()
     {
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(
-            temperature: 0.7,
-            topP: 0.9,
-            maxOutputTokens: 1000,
-            model: "gpt-4o");
+        var request = new CreateResponse { Temperature = 0.7, TopP = 0.9, MaxOutputTokens = 1000, Model = "gpt-4o" };
 
         var options = InputConverter.ConvertToChatOptions(request);
 
@@ -211,9 +206,9 @@ public class InputConverterTests
     }
 
     [Fact]
-    public void ConvertOutputItemsToMessages_FunctionToolCallOutputResource_ReturnsToolMessage()
+    public void ConvertOutputItemsToMessages_FunctionToolCallOutput_ReturnsToolMessage()
     {
-        var funcOutput = new FunctionToolCallOutputResource(
+        var funcOutput = new OutputItemFunctionToolCallOutput(
             callId: "call_def",
             output: BinaryData.FromString("result data"));
 
@@ -229,8 +224,7 @@ public class InputConverterTests
     [Fact]
     public void ConvertOutputItemsToMessages_ReasoningItem_ReturnsNull()
     {
-        var reasoning = AzureAIAgentServerResponsesModelFactory.OutputItemReasoningItem(
-            id: "reason_001");
+        var reasoning = new OutputItemReasoningItem("reason_001", []);
 
         var messages = InputConverter.ConvertOutputItemsToMessages([reasoning]);
 
@@ -661,7 +655,7 @@ public class InputConverterTests
     [Fact]
     public void ConvertToChatOptions_ModelId_NotSetFromRequest()
     {
-        var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "my-model");
+        var request = new CreateResponse { Model = "my-model" };
 
         var options = InputConverter.ConvertToChatOptions(request);
 

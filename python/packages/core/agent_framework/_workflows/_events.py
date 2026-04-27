@@ -120,6 +120,7 @@ WorkflowEventType = Literal[
     "executor_invoked",  # Executor handler was called (use .executor_id, .data)
     "executor_completed",  # Executor handler completed (use .executor_id, .data)
     "executor_failed",  # Executor handler raised error (use .executor_id, .details)
+    "executor_bypassed",  # Executor skipped via cache hit during replay (use .executor_id, .data)
     # Orchestration event types (use .data for typed payload)
     "group_chat",  # Group chat orchestrator events (use .data as GroupChatRequestSentEvent | GroupChatResponseReceivedEvent) # noqa: E501
     "handoff_sent",  # Handoff routing events (use .data as HandoffSentEvent)
@@ -148,6 +149,7 @@ class WorkflowEvent(Generic[DataT]):
     - `WorkflowEvent.executor_invoked(executor_id)` - executor handler called
     - `WorkflowEvent.executor_completed(executor_id)` - executor handler completed
     - `WorkflowEvent.executor_failed(executor_id, details)` - executor handler failed
+    - `WorkflowEvent.executor_bypassed(executor_id)` - executor skipped via cache hit
 
     The generic parameter DataT represents the type of the event's data payload:
     - Lifecycle events: `WorkflowEvent[None]` (data is None)
@@ -317,6 +319,11 @@ class WorkflowEvent(Generic[DataT]):
     def executor_failed(cls, executor_id: str, details: WorkflowErrorDetails) -> WorkflowEvent[WorkflowErrorDetails]:
         """Create an 'executor_failed' event when an executor handler raises an error."""
         return WorkflowEvent("executor_failed", executor_id=executor_id, data=details, details=details)
+
+    @classmethod
+    def executor_bypassed(cls, executor_id: str, data: DataT | None = None) -> WorkflowEvent[DataT]:
+        """Create an 'executor_bypassed' event when a step is skipped via cache hit during replay."""
+        return cls("executor_bypassed", executor_id=executor_id, data=data)
 
     # ==========================================================================
     # Property for type-safe access
