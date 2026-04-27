@@ -321,22 +321,19 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     # --- Overall status table (most recent first) ---
     lines.append("## Overall Status (Last 5 Runs)")
     lines.append("")
-    lines.append("| Run | Executed | ✅ Passed | ❌ Failed | ⏭️ Skipped |")
-    lines.append("|-----|----------|-----------|-----------|------------|")
+    lines.append("| Run | Total | ✅ Passed | ❌ Failed | ⏭️ Skipped |")
+    lines.append("|-----|-------|-----------|-----------|------------|")
 
     for run in reversed(runs):
         s = run.get("summary", {})
-        passed = s.get("passed", 0)
-        failed = s.get("failed", 0)
-        skipped = s.get("skipped", 0)
-        executed = passed + failed
+        total = s.get("total", 0)
         label = _format_run_label(run["timestamp"])
         lines.append(
             f"| {label} "
-            f"| {executed} "
-            f"| {passed} "
-            f"| {failed} "
-            f"| {skipped} |"
+            f"| {total} "
+            f"| {s.get('passed', 0)}/{total} "
+            f"| {s.get('failed', 0)}/{total} "
+            f"| {s.get('skipped', 0)}/{total} |"
         )
 
     for _ in range(MAX_HISTORY - len(runs)):
