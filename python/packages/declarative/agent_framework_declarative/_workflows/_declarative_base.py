@@ -29,6 +29,7 @@ import locale
 import logging
 import sys
 import uuid
+from enum import Enum
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal as _Decimal
@@ -121,7 +122,20 @@ def _make_powerfx_safe(value: Any) -> Any:
     Returns:
         A PowerFx-safe representation of the value
     """
-    if value is None or isinstance(value, _POWERFX_SAFE_TYPES):
+    if value is None:
+        return value
+
+    # Enum coercion must run BEFORE the primitive type check: many MAF
+    # enums (e.g. MessageRole) are ``str``-subclass enums, so they pass
+    # ``isinstance(v, str)`` but pythonnet refuses to convert them to
+    # ``System.String`` and raises ``'MessageRole' value cannot be
+    # converted to System.<X>'`` for every PowerFx primitive type. Reduce
+    # to the underlying value (or its string form) so PowerFx sees a
+    # plain ``str``/``int``.
+    if isinstance(value, Enum):
+        return _make_powerfx_safe(value.value)
+
+    if isinstance(value, _POWERFX_SAFE_TYPES):
         return value
 
     if isinstance(value, dict):
