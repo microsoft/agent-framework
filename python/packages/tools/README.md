@@ -45,16 +45,26 @@ asyncio.run(main())
 
 ### Safety
 
-Out of the box, `LocalShellTool`:
+> **`LocalShellTool` is not a sandbox.** It runs commands directly on the
+> host with the agent process's privileges. The actual security boundary
+> is **approval-in-the-loop**. For untrusted input use a sandboxed
+> executor — see [`agent-framework-hyperlight`](#relationship-to-agent-framework-hyperlight).
 
-- **Requires approval** for every command (uses the framework's existing
-  `user_input_requests` approval flow).
-- **Denies destructive patterns** by default (`rm -rf /`, `mkfs`, `dd if=`,
-  `shutdown`, `curl … | sh`, etc.).
-- **Truncates output** to 64 KiB.
-- **Enforces a 30 s timeout** per command and kills the whole process tree.
-- **Confines `cd`** to the configured `workdir` (defaults to the current
-  directory).
+Defenses (in priority order):
+
+- **Approval-in-the-loop** — every command surfaces as a
+  `user_input_request`; nothing runs without consent. Disabling this
+  requires `acknowledge_unsafe=True`.
+- **Process-tree termination on timeout** via `psutil`, so child
+  processes (`make`, watchers, network tools) cannot survive the timeout.
+- **Output truncation** to 64 KiB (head + tail with marker).
+- **Audit hook** (`on_command=…`) for SIEM / append-only logs.
+- **Best-effort policy denylist** (`rm -rf /`, `mkfs`, `dd if=`, fork
+  bombs, `curl … | sh`, …). This is a guardrail, **not a boundary** —
+  trivial bypasses include `\rm -rf /`, `${RM:=rm} -rf /`,
+  `python -c "…"`, `eval $(echo … | base64 -d)`, `find / -delete`, and
+  PowerShell-native `Remove-Item -Recurse -Force`. See
+  `tests/test_security.py` for the documented residual risk surface.
 
 Override with `ShellPolicy`:
 
@@ -64,6 +74,7 @@ from agent_framework_tools.shell import LocalShellTool, ShellPolicy
 shell = LocalShellTool(
     policy=ShellPolicy(allowlist=[r"^ls\b", r"^cat\b", r"^git status$"]),
     approval_mode="never_require",
+    acknowledge_unsafe=True,  # required to bypass approval
 )
 ```
 

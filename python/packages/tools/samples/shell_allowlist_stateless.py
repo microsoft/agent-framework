@@ -24,7 +24,7 @@ async def main() -> None:
 
     shell = LocalShellTool(
         mode="stateless",
-        approval_mode="never_require",
+        approval_mode="never_require", acknowledge_unsafe=True,
         policy=ShellPolicy(
             allowlist=[
                 r"^ls(\s|$)",

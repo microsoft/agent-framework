@@ -43,6 +43,7 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 
+from ._killtree import kill_process_tree
 from ._resolve import is_powershell
 from ._types import ShellResult
 
@@ -155,7 +156,7 @@ class ShellSession:
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=_SHUTDOWN_GRACE)
                 except asyncio.TimeoutError:
-                    await _kill_tree(proc)
+                    await kill_process_tree(proc, grace=_SHUTDOWN_GRACE)
             except Exception:
                 pass
             finally:
@@ -414,41 +415,8 @@ class ShellSession:
 
 
 async def _kill_tree(proc: asyncio.subprocess.Process) -> None:
-    """Best-effort process-tree kill across platforms."""
-    if proc.returncode is not None:
-        return
-    if sys.platform == "win32":
-        # asyncio on Windows doesn't expose process-tree kill directly;
-        # fall back to taskkill /T /F which walks the tree via job info.
-        try:
-            killer = await asyncio.create_subprocess_exec(
-                "taskkill",
-                "/T",
-                "/F",
-                "/PID",
-                str(proc.pid),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            try:
-                await asyncio.wait_for(killer.wait(), timeout=_SHUTDOWN_GRACE)
-            except asyncio.TimeoutError:
-                killer.kill()
-        except (FileNotFoundError, OSError):
-            pass
-        try:
-            proc.kill()
-        except (ProcessLookupError, OSError):
-            pass
-    else:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=_SHUTDOWN_GRACE)
-            except asyncio.TimeoutError:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+    """Deprecated: use :func:`kill_process_tree` from ``_killtree``."""
+    await kill_process_tree(proc, grace=_SHUTDOWN_GRACE)
 
 
 def _parse_rc(after: bytes) -> int:

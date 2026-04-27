@@ -12,14 +12,12 @@ protocol.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import os
-import signal
 import subprocess  # noqa: S404  (executing user shell commands is the whole point)
 import sys
 import time
 from collections.abc import Mapping, Sequence
 
+from ._killtree import kill_process_tree
 from ._resolve import is_powershell
 from ._types import ShellResult
 
@@ -40,40 +38,6 @@ def _popen_kwargs_for_group() -> dict[str, object]:
         # CREATE_NEW_PROCESS_GROUP lets CTRL_BREAK_EVENT hit the whole group.
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}  # type: ignore[attr-defined]
     return {"start_new_session": True}
-
-
-async def _kill_tree(proc: asyncio.subprocess.Process) -> None:
-    if proc.returncode is not None:
-        return
-    if sys.platform == "win32":
-        # Walk the tree via taskkill /T /F; falls back to direct kill.
-        try:
-            killer = await asyncio.create_subprocess_exec(
-                "taskkill",
-                "/T",
-                "/F",
-                "/PID",
-                str(proc.pid),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            try:
-                await asyncio.wait_for(killer.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                killer.kill()
-        except (FileNotFoundError, OSError):
-            pass
-        with contextlib.suppress(ProcessLookupError, OSError):
-            proc.kill()
-        return
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(proc.wait(), timeout=2.0)
-            return
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
 
 
 async def run_stateless(
@@ -122,7 +86,7 @@ async def run_stateless(
         )
     except asyncio.TimeoutError:
         timed_out = True
-        await _kill_tree(proc)
+        await kill_process_tree(proc)
         # Drain any queued output.
         try:
             stdout_bytes, stderr_bytes = await proc.communicate()

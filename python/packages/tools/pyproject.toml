@@ -23,6 +23,11 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.2.0,<2",
+    # psutil powers cross-OS process-tree termination on timeout. It's a
+    # mandatory dep because it's the difference between "child processes
+    # may survive timeout on Windows" and "they don't" — a security-relevant
+    # property, not an optional one.
+    "psutil>=5.9",
 ]
 
 [tool.uv]

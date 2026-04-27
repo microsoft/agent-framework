@@ -801,10 +801,14 @@ version = "1.0.0a260424"
 source = { editable = "packages/tools" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "psutil", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "psutil", specifier = ">=5.9" },
+]
 
 [[package]]
 name = "agentlightning"

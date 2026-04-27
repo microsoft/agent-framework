@@ -78,7 +78,13 @@ class LocalShellTool:
         approval_mode: ``"always_require"`` (default) or ``"never_require"``.
             Controls the ``FunctionTool.approval_mode`` on the returned
             function, which the framework uses to gate execution via
-            ``user_input_requests``.
+            ``user_input_requests``. **Approval is the actual security
+            boundary of this tool** — disabling it requires
+            ``acknowledge_unsafe=True``.
+        acknowledge_unsafe: Required to be ``True`` if you set
+            ``approval_mode="never_require"``. The denylist is a guardrail,
+            not a boundary; without approval the tool will execute any
+            command the model emits.
         on_command: Optional audit hook called with the command string for
             every command that passes policy. Use for logging / telemetry.
     """
@@ -96,10 +102,20 @@ class LocalShellTool:
         timeout: float | None = 30.0,
         max_output_bytes: int = 64 * 1024,
         approval_mode: Literal["always_require", "never_require"] = "always_require",
+        acknowledge_unsafe: bool = False,
         on_command: Callable[[str], None] | None = None,
     ) -> None:
         if mode not in ("persistent", "stateless"):
             raise ValueError(f"mode must be 'persistent' or 'stateless', got {mode!r}")
+        if approval_mode == "never_require" and not acknowledge_unsafe:
+            raise ValueError(
+                "Setting approval_mode='never_require' disables the only built-in "
+                "security boundary of LocalShellTool. If you understand the risk "
+                "(arbitrary commands run on the host with the agent's privileges, "
+                "the policy denylist is best-effort and trivially bypassable), "
+                "pass acknowledge_unsafe=True. For untrusted input prefer a "
+                "sandboxed executor (e.g. HyperlightCodeActProvider)."
+            )
         self._mode: ShellMode = mode
         self._shell_override = shell
         self._workdir: str | None = os.fspath(workdir) if workdir is not None else None

@@ -1,12 +1,26 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Policy model for :class:`LocalShellTool`.
+r"""Policy model for :class:`LocalShellTool`.
 
 ``ShellPolicy`` is evaluated *before* approval and *before* execution. It lets
 callers define allow/deny rules and a final custom callback, mirroring the
 layered-defense pattern used by competitor frameworks (LangChain's
 ``BashProcess``, AutoGen's ``LocalCommandLineCodeExecutor``, Claude Code's
 bash tool).
+
+.. warning::
+   **Not a security boundary.** The denylist regexes stop accidents and
+   crude prompt-injection attempts, not adversaries. Trivial bypasses
+   include backslash insertion (``r''m -rf /``), variable expansion
+   (``${RM:=rm} -rf /``), interpreter escape hatches
+   (``python -c "import os; os.system('rm -rf /')"``), base64-encoded
+   payloads (``eval $(printf … | base64 -d)``), and absolute paths
+   (``/usr/bin/rm`` matches ``\\brm\\b`` but not all anchored patterns).
+
+   The actual security boundary is **(a) approval-in-the-loop** (default
+   ``approval_mode="always_require"``) and **(b) operator trust / sandbox
+   tier**. For untrusted input use ``HyperlightCodeActProvider`` (microVM)
+   or run the agent inside a container.
 """
 
 from __future__ import annotations
@@ -111,3 +125,7 @@ class ShellPolicy:
             if override is not None:
                 return override
         return ShellDecision("allow")
+
+    def evaluate_command(self, command: str) -> ShellDecision:
+        """Convenience: evaluate a bare command with no workdir context."""
+        return self.evaluate(ShellRequest(command=command))
