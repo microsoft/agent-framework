@@ -2,16 +2,18 @@
 
 """Aggregate per-provider JUnit XML test results and generate a trend report.
 
-Parses ``pytest.xml`` (JUnit XML) files produced by each CI job, merges them
-into a single run, combines with historical data, and generates a markdown
-trend table — the same pattern used by ``scripts/sample_validation/aggregate.py``.
+Parses JUnit XML files produced by CI jobs — both ``pytest.xml`` (Python) and
+xunit v3 ``*.junit.xml`` (dotnet) — merges them into a single run, combines
+with historical data, and generates a markdown trend table.
 
 Usage (from CI):
     python aggregate.py <reports-dir> <history-file> <output-file>
 
-The reports directory is expected to contain subdirectories named
-``test-results-<provider>/`` each containing a ``pytest.xml`` file
-(created by ``actions/download-artifact``).
+The reports directory is expected to contain artifact subdirectories.  Two
+layouts are supported:
+
+- **Python (pytest):**  ``test-results-<provider>/pytest.xml``
+- **Dotnet (xunit):**   ``dotnet-test-results-<tfm>-<os>/*.junit.xml``
 """
 
 from __future__ import annotations
@@ -46,9 +48,21 @@ def _format_run_label(timestamp: str) -> str:
 def _derive_provider(directory_name: str) -> str:
     """Derive a provider label from a report directory name.
 
-    ``test-results-openai`` → ``OpenAI``
-    ``test-results-azure-openai`` → ``Azure OpenAI``
+    Handles both Python and dotnet naming conventions:
+    - ``test-results-openai`` → ``OpenAI``
+    - ``test-results-azure-openai`` → ``Azure OpenAI``
+    - ``dotnet-test-results-net10.0-ubuntu-latest`` → ``net10.0 (ubuntu)``
     """
+    # Dotnet convention: dotnet-test-results-<framework>-<os>
+    if directory_name.startswith("dotnet-test-results-"):
+        raw = directory_name.replace("dotnet-test-results-", "")
+        # e.g. "net10.0-ubuntu-latest" → framework="net10.0", os="ubuntu-latest"
+        parts = raw.split("-", 1)
+        framework = parts[0]
+        os_label = parts[1].split("-")[0] if len(parts) > 1 else ""
+        return f"{framework} ({os_label})" if os_label else framework
+
+    # Python convention: test-results-<provider>
     raw = directory_name.replace("test-results-", "")
     known = {
         "openai": "OpenAI",
@@ -102,11 +116,21 @@ def _parse_junit_xml(xml_path: Path) -> list[dict[str, str]]:
         # it appends the class name, e.g.:
         #   "packages.foundry.tests.foundry.test_foundry_embedding_client.TestFoundryEmbeddingIntegration"
         # We want the file-level module: "test_foundry_embedding_client"
+        #
+        # xunit (dotnet) writes classname as the full C# type, e.g.:
+        #   "OpenAIChatCompletion.IntegrationTests.ChatCompletionTests"
+        # We want the project prefix: "OpenAIChatCompletion"
         if classname:
             parts = classname.rsplit(".", 2)
             # If the last segment starts with uppercase it's a class name — take the one before it
             if len(parts) >= 2 and parts[-1][0:1].isupper():
-                module = parts[-2]
+                # For dotnet: if the penultimate part is "IntegrationTests" or "UnitTests",
+                # use the part before that (the project name) instead
+                if parts[-2] in ("IntegrationTests", "UnitTests") and len(parts) >= 3:
+                    # parts[0] may contain dots — take the last segment of it
+                    module = parts[0].rsplit(".", 1)[-1]
+                else:
+                    module = parts[-2]
             else:
                 module = parts[-1]
         else:
@@ -148,28 +172,61 @@ def _parse_junit_xml(xml_path: Path) -> list[dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
+def _discover_xml_files(reports_dir: Path) -> list[tuple[str, Path]]:
+    """Discover JUnit XML test result files in artifact subdirectories.
+
+    Handles two directory layouts:
+    - **Python (pytest):** ``test-results-<provider>/pytest.xml``
+    - **Dotnet (xunit):** ``dotnet-test-results-<tfm>-<os>/*.junit.xml``
+
+    Returns:
+        List of ``(directory_name, xml_path)`` tuples.
+    """
+    xml_files: list[tuple[str, Path]] = []
+    if not reports_dir.is_dir():
+        return xml_files
+
+    for subdir in sorted(reports_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+
+        # Python layout: single pytest.xml per artifact
+        pytest_xml = subdir / "pytest.xml"
+        if pytest_xml.exists():
+            xml_files.append((subdir.name, pytest_xml))
+            continue
+
+        # Dotnet layout: multiple *.junit.xml files per artifact
+        junit_files = sorted(subdir.rglob("*.junit.xml"))
+        for jf in junit_files:
+            xml_files.append((subdir.name, jf))
+
+        # Fallback: any .xml file that looks like JUnit (not .trx, not cobertura)
+        if not junit_files:
+            for xf in sorted(subdir.rglob("*.xml")):
+                if xf.suffix == ".xml" and not xf.name.endswith(".cobertura.xml"):
+                    xml_files.append((subdir.name, xf))
+
+    return xml_files
+
+
 def load_current_run(reports_dir: Path) -> dict[str, Any]:
     """Load per-provider JUnit XML reports from the current CI run and merge.
 
+    Supports both pytest (Python) and xunit v3 (dotnet) JUnit XML formats.
+
     Args:
-        reports_dir: Directory containing ``test-results-<provider>/`` subdirs.
+        reports_dir: Directory containing artifact subdirectories with XML reports.
 
     Returns:
         Merged run dict with ``timestamp``, ``summary``, ``results``.
     """
     combined_results: dict[str, dict[str, str]] = {}  # nodeid → {status, provider}
 
-    # actions/download-artifact creates: reports_dir/test-results-openai/pytest.xml
-    xml_files: list[tuple[str, Path]] = []
-    if reports_dir.is_dir():
-        for subdir in sorted(reports_dir.iterdir()):
-            if subdir.is_dir():
-                xml_file = subdir / "pytest.xml"
-                if xml_file.exists():
-                    xml_files.append((subdir.name, xml_file))
+    xml_files = _discover_xml_files(reports_dir)
 
     if not xml_files:
-        print(f"Warning: No pytest.xml files found in {reports_dir}")
+        print(f"Warning: No JUnit XML files found in {reports_dir}")
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "summary": {
@@ -186,7 +243,21 @@ def load_current_run(reports_dir: Path) -> dict[str, Any]:
         provider = _derive_provider(dir_name)
         tests = _parse_junit_xml(xml_file)
         for test in tests:
-            combined_results[test["nodeid"]] = {
+            # Use provider-qualified key when the same test runs under
+            # multiple providers (e.g. dotnet net10.0 vs net472).  This
+            # prevents later results from silently overwriting earlier ones.
+            raw_id = test["nodeid"]
+            key = raw_id
+            if key in combined_results and combined_results[key]["provider"] != provider:
+                # Collision: re-key existing entry and use qualified key for new one
+                existing = combined_results.pop(key)
+                combined_results[f"{existing['provider']}::{raw_id}"] = existing
+                key = f"{provider}::{raw_id}"
+            elif f"{provider}::{raw_id}" in combined_results:
+                # Provider-qualified key already exists (previous collision)
+                key = f"{provider}::{raw_id}"
+
+            combined_results[key] = {
                 "status": test["status"],
                 "provider": provider,
                 "module": test.get("module", ""),
@@ -247,7 +318,7 @@ def _short_name(nodeid: str) -> str:
 def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     """Generate a markdown trend report from run history."""
     lines = [
-        "# 🔬 Flaky Test Report",
+        "# 🔬 Integration Test Report",
         "",
         f"*Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*",
         "",
