@@ -238,24 +238,18 @@ def load_current_run(reports_dir: Path) -> dict[str, Any]:
             "results": {},
         }
 
+    # Dotnet tests always run under multiple frameworks, so we always
+    # qualify their keys with the provider to ensure deterministic,
+    # stable keys across runs regardless of file parse order.
+    is_dotnet = any(d.startswith("dotnet-test-results-") for d, _ in xml_files)
+
     for dir_name, xml_file in xml_files:
         print(f"  Loading: {xml_file}")
         provider = _derive_provider(dir_name)
         tests = _parse_junit_xml(xml_file)
         for test in tests:
-            # Use provider-qualified key when the same test runs under
-            # multiple providers (e.g. dotnet net10.0 vs net472).  This
-            # prevents later results from silently overwriting earlier ones.
             raw_id = test["nodeid"]
-            key = raw_id
-            if key in combined_results and combined_results[key]["provider"] != provider:
-                # Collision: re-key existing entry and use qualified key for new one
-                existing = combined_results.pop(key)
-                combined_results[f"{existing['provider']}::{raw_id}"] = existing
-                key = f"{provider}::{raw_id}"
-            elif f"{provider}::{raw_id}" in combined_results:
-                # Provider-qualified key already exists (previous collision)
-                key = f"{provider}::{raw_id}"
+            key = f"{provider}::{raw_id}" if is_dotnet else raw_id
 
             combined_results[key] = {
                 "status": test["status"],
@@ -327,19 +321,22 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     # --- Overall status table (most recent first) ---
     lines.append("## Overall Status (Last 5 Runs)")
     lines.append("")
-    lines.append("| Run | Total | ✅ Passed | ❌ Failed | ⏭️ Skipped |")
-    lines.append("|-----|-------|-----------|-----------|------------|")
+    lines.append("| Run | Executed | ✅ Passed | ❌ Failed | ⏭️ Skipped |")
+    lines.append("|-----|----------|-----------|-----------|------------|")
 
     for run in reversed(runs):
         s = run.get("summary", {})
-        total = s.get("total", 0)
+        passed = s.get("passed", 0)
+        failed = s.get("failed", 0)
+        skipped = s.get("skipped", 0)
+        executed = passed + failed
         label = _format_run_label(run["timestamp"])
         lines.append(
             f"| {label} "
-            f"| {total} "
-            f"| {s.get('passed', 0)}/{total} "
-            f"| {s.get('failed', 0)}/{total} "
-            f"| {s.get('skipped', 0)}/{total} |"
+            f"| {executed} "
+            f"| {passed} "
+            f"| {failed} "
+            f"| {skipped} |"
         )
 
     for _ in range(MAX_HISTORY - len(runs)):
