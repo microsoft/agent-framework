@@ -12,9 +12,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import ChatResponse, Content, Message, SupportsChatGetResponse, tool
-from agent_framework._telemetry import AGENT_FRAMEWORK_USER_AGENT
+from agent_framework._telemetry import get_user_agent
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework_openai import OpenAIContentFilterException
+from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
@@ -199,7 +200,7 @@ def test_init_with_project_endpoint_creates_project_client() -> None:
     assert factory.call_args.kwargs["endpoint"] == _TEST_FOUNDRY_PROJECT_ENDPOINT
     assert factory.call_args.kwargs["credential"] is credential
     assert factory.call_args.kwargs["allow_preview"] is True
-    assert factory.call_args.kwargs["user_agent"] == AGENT_FRAMEWORK_USER_AGENT
+    assert factory.call_args.kwargs["user_agent"] == get_user_agent()
 
 
 def test_init_with_empty_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -993,3 +994,165 @@ def test_get_mcp_tool_with_connection_id() -> None:
         description="GitHub MCP via Foundry",
     )
     assert tool_obj is not None
+
+
+def test_parse_chunk_surfaces_oauth_consent_request() -> None:
+    """An oauth_consent_request output item surfaces as Content with consent_link."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = "https://consent-host.example.com/login?data=abc123"
+    mock_item.id = "oauth-item-1"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
+    assert update.role == "assistant"
+    assert update.raw_representation is mock_event
+    assert update.model == "test-model"
+
+
+def test_parse_chunk_skips_non_https_oauth_consent() -> None:
+    """An oauth_consent_request with a non-HTTPS link is rejected."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = "http://insecure.example.com/login"
+    mock_item.id = "oauth-item-2"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 0
+
+
+def test_parse_chunk_handles_missing_consent_link() -> None:
+    """An oauth_consent_request without a consent_link produces no content."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = None
+    mock_item.id = "oauth-item-3"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 0
+
+
+def test_parse_chunk_handles_empty_string_consent_link() -> None:
+    """An oauth_consent_request with empty-string consent_link produces no content."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = ""
+    mock_item.id = "oauth-item-4"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 0
+
+
+def test_parse_chunk_delegates_non_oauth_events_to_super() -> None:
+    """Non-oauth events are delegated to super()._parse_chunk_from_openai()."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.delta"
+
+    with patch.object(
+        RawOpenAIChatClient,
+        "_parse_chunk_from_openai",
+        return_value=MagicMock(),
+    ) as mock_super:
+        client._parse_chunk_from_openai(mock_event, {}, {})
+        mock_super.assert_called_once_with(mock_event, {}, {}, None)
+
+
+def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
+    """A top-level response.oauth_consent_requested event surfaces as Content."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.oauth_consent_requested"
+    mock_event.consent_link = "https://consent-host.example.com/authorize?code=xyz"
+    mock_event.id = "consent-event-1"
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
+    assert update.role == "assistant"
+    assert update.raw_representation is mock_event

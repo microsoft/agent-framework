@@ -8,6 +8,26 @@ namespace Microsoft.Agents.AI.Hosting.A2A.Converters;
 
 internal static class MessageConverter
 {
+    public static List<Part> ToParts(this AgentResponseUpdate update)
+    {
+        if (update is null || update.Contents is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        var parts = new List<Part>();
+        foreach (var content in update.Contents)
+        {
+            var part = content.ToPart();
+            if (part is not null)
+            {
+                parts.Add(part);
+            }
+        }
+
+        return parts;
+    }
+
     public static List<Part> ToParts(this IList<ChatMessage> chatMessages)
     {
         if (chatMessages is null || chatMessages.Count == 0)
