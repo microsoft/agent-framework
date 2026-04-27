@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 
 from agent_framework import Agent, MCPStreamableHTTPTool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework_azure_cosmos import CosmosHistoryProvider
 from azure.identity import DefaultAzureCredential
 from tools import (
@@ -109,14 +109,17 @@ def get_agent() -> Agent:
         if not endpoint:
             raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required")
 
-        # Create Azure OpenAI chat client with credential
+        # Create Azure OpenAI chat client with credential.
+        # OpenAIChatClient routes to Azure when explicit Azure inputs
+        # (azure_endpoint / credential) are provided. The Azure deployment
+        # name is passed via the `model` parameter.
         global _credential
         if _credential is None:
             _credential = DefaultAzureCredential()
 
-        chat_client = AzureOpenAIChatClient(
-            endpoint=endpoint,
-            deployment_name=deployment_name,
+        chat_client = OpenAIChatClient(
+            model=deployment_name,
+            azure_endpoint=endpoint,
             api_version=api_version,
             credential=_credential,
         )

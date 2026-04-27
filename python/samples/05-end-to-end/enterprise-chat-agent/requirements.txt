@@ -1,19 +1,15 @@
 # Azure Functions
 azure-functions>=1.21.0
 
-# Microsoft Agent Framework (rc5 - March 2026)
-# See: https://learn.microsoft.com/agent-framework/support/upgrade/python-2026-significant-changes
-agent-framework>=1.0.0rc5,<2.0.0
+# Microsoft Agent Framework
+agent-framework>=1.2.0,<2.0.0
 
 # Azure Cosmos DB History Provider
 # Provides CosmosHistoryProvider for automatic conversation history persistence
-agent-framework-azure-cosmos>=1.0.0b260311,<2.0.0
+agent-framework-azure-cosmos>=1.0.0b260424,<2.0.0
 
 # Azure SDK
 azure-identity>=1.15.0
-
-# Azure OpenAI (used directly until Agent Framework packages are published)
-openai>=1.0.0
 
 # MCP Client (for Microsoft Learn documentation tools)
 mcp>=1.0.0
