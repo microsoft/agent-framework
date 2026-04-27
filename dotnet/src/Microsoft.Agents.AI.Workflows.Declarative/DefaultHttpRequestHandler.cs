@@ -183,10 +183,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             httpRequest.Content = new StringContent(request.Body, Encoding.UTF8);
             // Replace the default content-type header (including charset) with the declared type.
             httpRequest.Content.Headers.Remove("Content-Type");
-            if (!httpRequest.Content.Headers.TryAddWithoutValidation("Content-Type", contentType))
-            {
-                httpRequest.Content.Headers.TryAddWithoutValidation("Content-Type", "application/octet-stream");
-            }
+            httpRequest.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
         }
 
         if (request.Headers is not null)
