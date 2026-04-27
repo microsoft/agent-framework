@@ -257,8 +257,23 @@ def load_current_run(reports_dir: Path) -> dict[str, Any]:
                 "module": test.get("module", ""),
             }
 
-    # Build summary counts using mutually exclusive status buckets.
-    # Errors are folded into the failed count for display purposes.
+    # Build per-provider summary counts so the report can show one row per
+    # framework (dotnet) or per provider (Python).
+    provider_counts: dict[str, dict[str, int]] = {}
+    for r in combined_results.values():
+        prov = r.get("provider", "Unknown")
+        if prov not in provider_counts:
+            provider_counts[prov] = {"total": 0, "passed": 0, "failed": 0, "skipped": 0}
+        provider_counts[prov]["total"] += 1
+        st = r["status"]
+        if st == "passed":
+            provider_counts[prov]["passed"] += 1
+        elif st in ("failed", "error"):
+            provider_counts[prov]["failed"] += 1
+        elif st == "skipped":
+            provider_counts[prov]["skipped"] += 1
+
+    # Overall summary (sum across all providers).
     statuses = [r["status"] for r in combined_results.values()]
     summary = {
         "total": len(statuses),
@@ -270,6 +285,7 @@ def load_current_run(reports_dir: Path) -> dict[str, Any]:
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "summary": summary,
+        "provider_summaries": provider_counts,
         "results": combined_results,
     }
 
@@ -318,7 +334,29 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
         "",
     ]
 
-    # --- Overall status table (most recent first) ---
+    # Detect whether this is a dotnet report (provider-qualified keys).
+    is_dotnet = False
+    for run in runs:
+        provider_sums = run.get("provider_summaries", {})
+        if any(p.startswith("net") for p in provider_sums):
+            is_dotnet = True
+            break
+
+    if is_dotnet:
+        _generate_dotnet_report(lines, runs)
+    else:
+        _generate_python_report(lines, runs)
+
+    lines.append("")
+    lines.append("**Legend:** ✅ Passed · ❌ Failed · ⏭️ Skipped · ⚠️ Expected Failure (xfail) · N/A Not available")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def _generate_python_report(lines: list[str], runs: list[dict[str, Any]]) -> None:
+    """Generate the original single-table Python report format."""
+    # --- Overall status table ---
     lines.append("## Overall Status (Last 5 Runs)")
     lines.append("")
     lines.append("| Run | Total | ✅ Passed | ❌ Failed | ⏭️ Skipped |")
@@ -341,27 +379,91 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
 
     lines.append("")
 
-    # --- Per-test results table ---
-    lines.append("## Per-Test Results")
-    lines.append("")
+    # --- Single per-test results table ---
+    _generate_per_test_table(lines, runs, "## Per-Test Results")
 
-    # Collect all test nodeids, providers, and modules across all runs
-    all_tests: dict[str, str] = {}  # nodeid → provider (from most recent run)
-    all_modules: dict[str, str] = {}  # nodeid → module (from most recent run)
+
+def _generate_dotnet_report(lines: list[str], runs: list[dict[str, Any]]) -> None:
+    """Generate per-framework tables for dotnet (net10.0, net472, etc.)."""
+    # Collect all providers seen across all runs, sorted for stable ordering
+    all_providers: set[str] = set()
+    for run in runs:
+        all_providers.update(run.get("provider_summaries", {}).keys())
+    providers = sorted(all_providers)
+
+    for provider in providers:
+        lines.append(f"## {provider}")
+        lines.append("")
+
+        # --- Per-provider summary table ---
+        lines.append("| Run | Total | ✅ Passed | ❌ Failed | ⏭️ Skipped |")
+        lines.append("|-----|-------|-----------|-----------|------------|")
+
+        for run in reversed(runs):
+            ps = run.get("provider_summaries", {}).get(provider, {})
+            total = ps.get("total", 0)
+            label = _format_run_label(run["timestamp"])
+            if total == 0:
+                lines.append(f"| {label} | N/A | N/A | N/A | N/A |")
+            else:
+                lines.append(
+                    f"| {label} "
+                    f"| {total} "
+                    f"| {ps.get('passed', 0)}/{total} "
+                    f"| {ps.get('failed', 0)}/{total} "
+                    f"| {ps.get('skipped', 0)}/{total} |"
+                )
+
+        for _ in range(MAX_HISTORY - len(runs)):
+            lines.append("| N/A | N/A | N/A | N/A | N/A |")
+
+        lines.append("")
+
+        # --- Per-test table filtered to this provider ---
+        _generate_per_test_table(
+            lines, runs,
+            heading=None,
+            provider_filter=provider,
+        )
+
+
+def _generate_per_test_table(
+    lines: list[str],
+    runs: list[dict[str, Any]],
+    heading: str | None = None,
+    provider_filter: str | None = None,
+) -> None:
+    """Emit a per-test trend table, optionally filtered to a single provider."""
+    if heading:
+        lines.append(heading)
+        lines.append("")
+
+    # Collect all test nodeids (and metadata) across all runs
+    all_tests: dict[str, str] = {}  # nodeid → provider
+    all_modules: dict[str, str] = {}  # nodeid → module
     for run in runs:
         for nodeid, info in run.get("results", {}).items():
-            provider = info.get("provider", "Unknown") if isinstance(info, dict) else "Unknown"
-            module = info.get("module", "") if isinstance(info, dict) else ""
-            all_tests[nodeid] = provider
+            if not isinstance(info, dict):
+                continue
+            prov = info.get("provider", "Unknown")
+            if provider_filter and prov != provider_filter:
+                continue
+            module = info.get("module", "")
+            all_tests[nodeid] = prov
             all_modules[nodeid] = module
 
     if not all_tests:
         lines.append("*No test results available.*")
-        return "\n".join(lines)
+        lines.append("")
+        return
 
-    # Build header (most recent run first)
-    header = "| Test | File | Provider |"
-    separator = "|------|------|----------|"
+    # Build header
+    if provider_filter:
+        header = "| Test | File |"
+        separator = "|------|------|"
+    else:
+        header = "| Test | File | Provider |"
+        separator = "|------|------|----------|"
     for run in reversed(runs):
         label = _format_run_label(run["timestamp"])
         header += f" {label} |"
@@ -373,12 +475,15 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     lines.append(header)
     lines.append(separator)
 
-    # Sort by provider then test name
-    for nodeid in sorted(all_tests, key=lambda n: (all_tests[n], n)):
-        provider = all_tests[nodeid]
+    # Sort by module then test name
+    for nodeid in sorted(all_tests, key=lambda n: (all_modules.get(n, ""), n)):
         module = all_modules.get(nodeid, "")
         short = _short_name(nodeid)
-        row = f"| `{short}` | `{module}` | {provider} |"
+        if provider_filter:
+            row = f"| `{short}` | `{module}` |"
+        else:
+            provider = all_tests[nodeid]
+            row = f"| `{short}` | `{module}` | {provider} |"
 
         for run in reversed(runs):
             result = run.get("results", {}).get(nodeid)
@@ -395,10 +500,6 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
         lines.append(row)
 
     lines.append("")
-    lines.append("**Legend:** ✅ Passed · ❌ Failed · ⏭️ Skipped · ⚠️ Expected Failure (xfail) · N/A Not available")
-    lines.append("")
-
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
