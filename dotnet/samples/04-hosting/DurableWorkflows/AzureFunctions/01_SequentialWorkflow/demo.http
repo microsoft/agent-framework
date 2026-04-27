@@ -7,6 +7,21 @@ Content-Type: text/plain
 
 12345
 
+### Cancel an order and wait for the result
+POST {{authority}}/api/workflows/CancelOrder/run
+Content-Type: text/plain
+x-ms-wait-for-response: true
+
+12345
+
+### Cancel an order and wait for the result (JSON response)
+POST {{authority}}/api/workflows/CancelOrder/run
+Content-Type: text/plain
+Accept: application/json
+x-ms-wait-for-response: true
+
+12345
+
 ### Cancel an order with a custom run ID
 POST {{authority}}/api/workflows/CancelOrder/run?runId=my-custom-id-123
 Content-Type: text/plain
@@ -16,6 +31,13 @@ Content-Type: text/plain
 ### Get order status (shares OrderLookup executor with CancelOrder)
 POST {{authority}}/api/workflows/OrderStatus/run
 Content-Type: text/plain
+
+12345
+
+### Get order status and wait for the result
+POST {{authority}}/api/workflows/OrderStatus/run
+Content-Type: text/plain
+x-ms-wait-for-response: true
 
 12345
 
