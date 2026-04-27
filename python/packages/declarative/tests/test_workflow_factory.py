@@ -228,6 +228,34 @@ actions:
         outputs = result.get_outputs()
         assert any("hello-world" in str(o) for o in outputs), f"Expected 'hello-world' in outputs but got: {outputs}"
 
+    @pytest.mark.asyncio
+    async def test_as_agent_round_trip_with_last_message_text(self):
+        """Regression test: a declarative workflow built via WorkflowFactory must be
+        consumable as an AIAgent via Workflow.as_agent().
+
+        Specifically, the declarative start executor must accept list[Message]
+        (the input passed by WorkflowAgent) and populate System.LastMessageText
+        so =System.LastMessageText is resolvable in the YAML.
+        """
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: as-agent-roundtrip-test
+actions:
+  - kind: SetVariable
+    variable: Local.echo
+    value: =System.LastMessageText
+  - kind: SendActivity
+    activity:
+      text: =Local.echo
+""")
+
+        agent = workflow.as_agent(name="echo-agent")
+        response = await agent.run("Hello there")
+
+        assert "Hello there" in response.text, (
+            f"Expected 'Hello there' in agent response text but got: {response.text!r}"
+        )
+
 
 class TestWorkflowFactoryAgentRegistration:
     """Tests for agent registration."""

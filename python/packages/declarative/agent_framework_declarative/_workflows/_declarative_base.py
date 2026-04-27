@@ -36,6 +36,7 @@ from typing import Any, Literal, cast
 
 from agent_framework import (
     Executor,
+    Message,
     WorkflowContext,
 )
 from agent_framework._workflows._state import State
@@ -873,6 +874,9 @@ class DeclarativeActionExecutor(Executor):
         Follows .NET's DefaultTransform pattern - accepts any input type:
         - dict/Mapping: Used directly as workflow.inputs
         - str: Converted to {"input": value}
+        - list[Message]: Joined to a string from the last user message text
+          (or last message text if no user message). Falls through to the
+          string-input path so System.LastMessage.Text is populated.
         - DeclarativeMessage: Internal message, no initialization needed
         - Any other type: Converted via str() to {"input": str(value)}
 
@@ -888,6 +892,23 @@ class DeclarativeActionExecutor(Executor):
         if isinstance(trigger, dict):
             # Structured inputs - use directly
             state.initialize(trigger)  # type: ignore
+        elif isinstance(trigger, list) and all(isinstance(m, Message) for m in trigger):
+            # list[Message] (e.g. from WorkflowAgent / as_agent()) - extract the
+            # last user message text and treat it as the string input. Fall
+            # through to the same state initialization as the str case so
+            # =System.LastMessage.Text / =System.LastMessageText keep working.
+            messages_list = cast(list[Message], trigger)
+            user_text = ""
+            for msg in reversed(messages_list):
+                if str(msg.role).lower() == "user" and msg.text:
+                    user_text = msg.text
+                    break
+            if not user_text:
+                # Fallback: concatenate any text from the last message.
+                user_text = messages_list[-1].text if messages_list else ""
+            state.initialize({"input": user_text})
+            state.set("System.LastMessage", {"Text": user_text, "Id": ""})
+            state.set("System.LastMessageText", user_text)
         elif isinstance(trigger, str):
             # String input - wrap in dict and populate System.LastMessage.Text
             # so YAML expressions like =System.LastMessage.Text see the user input
