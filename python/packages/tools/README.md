@@ -85,10 +85,53 @@ shell = LocalShellTool(
 - Override via the `shell=` constructor argument or the
   `AGENT_FRAMEWORK_SHELL` environment variable.
 
+## `DockerShellTool` — sandboxed tier
+
+When commands originate from untrusted input (e.g. the model is acting on
+prompt-injected document content), prefer `DockerShellTool`. The
+container is the security boundary, so approval gating is optional.
+
+```python
+import asyncio
+from agent_framework_tools.shell import DockerShellTool
+
+
+async def main() -> None:
+    async with DockerShellTool(
+        image="mcr.microsoft.com/azurelinux/base/core:3.0",
+        approval_mode="never_require",  # container is the boundary
+    ) as shell:
+        result = await shell.run("uname -a && id")
+        print(result.stdout)
+
+
+asyncio.run(main())
+```
+
+Defaults applied to every container:
+
+- `--network none` — no host or external network.
+- `--user 65534:65534` — runs as `nobody:nogroup`.
+- `--read-only` root filesystem; only mounted host paths are writable.
+- `--cap-drop ALL` and `--security-opt no-new-privileges`.
+- `--memory 512m`, `--pids-limit 256`, ephemeral `tmpfs /tmp`.
+
+To expose a host directory, pass `host_workdir="/path"` (mounted
+read-only by default; `mount_readonly=False` to allow writes). Swap the
+container runtime with `docker_binary="podman"`.
+
+## Sandbox tiers at a glance
+
+| Use case | Tool | Sandbox |
+|---|---|---|
+| Run *code* (untrusted) | `HyperlightCodeActProvider.execute_code` (`agent-framework-hyperlight`) | Hyperlight WASM microVM |
+| Run *shell* (untrusted) | `DockerShellTool` | OCI container (network-off, non-root, capabilities dropped) |
+| Run *shell* (trusted dev) | `LocalShellTool` | Approval-in-the-loop |
+
 ## Relationship to `agent-framework-hyperlight`
 
-`LocalShellTool` runs commands **directly on the host** and is complementary
-to the sandboxed `execute_code` tool shipped by
-`agent_framework_hyperlight.HyperlightCodeActProvider`. If you need
-microVM-isolated execution, prefer CodeAct. A future `HyperlightShellExecutor`
-backend is planned so callers can share one sandbox across both tools.
+`agent-framework-hyperlight` is a **code** sandbox (a single WASM guest
+loaded into a microVM, called via a hostcall ABI — there is no kernel,
+userland, or shell binary inside). It is the right tier for executing
+generated *code*. For sandboxing *shell* commands, the realistic tier is
+OCI, which `DockerShellTool` provides.
