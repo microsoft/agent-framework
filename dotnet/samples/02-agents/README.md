@@ -19,3 +19,4 @@ The getting started samples demonstrate the fundamental concepts and functionali
 | [Declarative Agents](./DeclarativeAgents) | Loading and executing AI agents from YAML configuration files |
 | [AG-UI](./AGUI/README.md) | Getting started with AG-UI (Agent UI Protocol) servers and clients |
 | [Dev UI](./DevUI/README.md) | Interactive web interface for testing and debugging AI agents during development |
+| [A2A Agents](./A2A/README.md) | Working with Agent-to-Agent (A2A) specific features |

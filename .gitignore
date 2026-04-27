@@ -47,6 +47,8 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+pytest.xml
+python-coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
@@ -134,6 +136,10 @@ celerybeat.pid
 .venv
 env/
 venv/
+
+# Foundry agent CLI (contains secrets, auto-generated)
+.foundry-agent.json
+.foundry-agent-build.log
 ENV/
 env.bak/
 venv.bak/
@@ -201,6 +207,8 @@ temp*/
 
 # AI
 .claude/
+.omc/
+.omx/
 WARP.md
 **/memory-bank/
 **/projectBrief.md
@@ -233,3 +241,4 @@ python/dotnet-ref
 
 # Generated filtered solution files (created by eng/scripts/New-FilteredSolution.ps1)
 dotnet/filtered-*.slnx
+**/*.lscache

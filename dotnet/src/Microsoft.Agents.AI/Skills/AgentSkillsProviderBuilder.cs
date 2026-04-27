@@ -21,7 +21,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <list type="bullet">
 ///   <item><description><strong>Mixed skill types</strong> — combine file-based, code-defined (<see cref="AgentInlineSkill"/>),
-///   and class-based (<see cref="AgentClassSkill"/>) skills in a single provider.</description></item>
+///   and class-based (<see cref="AgentClassSkill{TSelf}"/>) skills in a single provider.</description></item>
 ///   <item><description><strong>Multiple file script runners</strong> — use different script runners for different
 ///   file skill directories via per-source <c>scriptRunner</c> parameters on
 ///   <see cref="UseFileSkill"/> / <see cref="UseFileSkills(IEnumerable{string}, AgentFileSkillsSourceOptions?, AgentFileSkillScriptRunner?)"/>.</description></item>

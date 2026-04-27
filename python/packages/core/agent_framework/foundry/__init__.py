@@ -14,12 +14,14 @@ from typing import Any
 _IMPORTS: dict[str, tuple[str, str]] = {
     "AnthropicFoundryClient": ("agent_framework_anthropic", "agent-framework-anthropic"),
     "FoundryAgent": ("agent_framework_foundry", "agent-framework-foundry"),
+    "FoundryAgentOptions": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatOptions": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryEmbeddingOptions": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryEmbeddingSettings": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryEvals": ("agent_framework_foundry", "agent-framework-foundry"),
+    "FoundryHostedToolType": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryMemoryProvider": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryLocalChatOptions": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalClient": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
@@ -31,6 +33,9 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "RawFoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_foundry_target": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_traces": ("agent_framework_foundry", "agent-framework-foundry"),
+    "get_toolbox_tool_name": ("agent_framework_foundry", "agent-framework-foundry"),
+    "get_toolbox_tool_type": ("agent_framework_foundry", "agent-framework-foundry"),
+    "select_toolbox_tools": ("agent_framework_foundry", "agent-framework-foundry"),
 }
 
 

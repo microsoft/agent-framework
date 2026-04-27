@@ -206,6 +206,14 @@ internal sealed class TurnTrackingStartExecutor : ChatProtocolExecutor
     }
 }
 
+public class NonChatProtocolExecutor() : Executor<string>(nameof(NonChatProtocolExecutor))
+{
+    public override ValueTask HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        return default;
+    }
+}
+
 public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 {
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
@@ -730,6 +738,25 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             .SelectMany(u => u.Contents.OfType<ErrorContent>())
             .Should()
             .BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Test_AsAgent_FailsWhenNotChatProtocolAsync(bool runAsync)
+    {
+        // Arrange
+        NonChatProtocolExecutor executor = new();
+        executor.DescribeProtocol().IsChatProtocol().Should().BeFalse();
+
+        Workflow workflow = new WorkflowBuilder(executor).Build();
+        AIAgent workflowAsAgent = workflow.AsAIAgent();
+
+        Func<Task> action = runAsync
+                          ? () => workflowAsAgent.RunStreamingAsync().ToAgentResponseAsync()
+                          : () => workflowAsAgent.RunAsync();
+
+        await action.Should().ThrowAsync<InvalidOperationException>();
     }
 
     private async Task Run_AsAgent_OutgoingMessagesInHistoryAsync(Workflow workflow, bool runAsync)

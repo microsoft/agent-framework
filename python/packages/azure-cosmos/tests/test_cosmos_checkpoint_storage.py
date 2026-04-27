@@ -6,6 +6,7 @@ import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -402,9 +403,7 @@ async def test_list_checkpoint_ids_empty_returns_empty(mock_container: MagicMock
 # --- Tests for close and context manager ---
 
 
-async def test_close_closes_owned_client(
-    monkeypatch: pytest.MonkeyPatch, mock_cosmos_client: MagicMock
-) -> None:
+async def test_close_closes_owned_client(monkeypatch: pytest.MonkeyPatch, mock_cosmos_client: MagicMock) -> None:
     mock_factory = MagicMock(return_value=mock_cosmos_client)
     monkeypatch.setattr(checkpoint_storage_module, "CosmosClient", mock_factory)
 
@@ -597,3 +596,142 @@ async def test_cosmos_checkpoint_storage_roundtrip_with_emulator() -> None:
         finally:
             with suppress(Exception):
                 await cosmos_client.delete_database(database_name)
+
+
+# --- Tests for allowed_checkpoint_types ---
+
+
+@dataclass
+class _AppState:
+    """Application-defined state type used to test allowed_checkpoint_types."""
+
+    label: str
+    count: int
+
+
+_APP_STATE_TYPE_KEY = f"{_AppState.__module__}:{_AppState.__qualname__}"
+
+
+def _make_checkpoint_with_state(state: dict[str, Any]) -> WorkflowCheckpoint:
+    """Create a checkpoint with custom state for serialization tests."""
+    return WorkflowCheckpoint(
+        workflow_name="test-workflow",
+        graph_signature_hash="abc123",
+        timestamp="2025-01-01T00:00:00+00:00",
+        state=state,
+        iteration_count=1,
+    )
+
+
+async def test_init_accepts_allowed_checkpoint_types(mock_container: MagicMock) -> None:
+    """CosmosCheckpointStorage.__init__ accepts allowed_checkpoint_types."""
+    storage = CosmosCheckpointStorage(
+        container_client=mock_container,
+        allowed_checkpoint_types=["some.module:SomeType"],
+    )
+    assert storage is not None
+
+
+async def test_load_allows_builtin_safe_types(mock_container: MagicMock) -> None:
+    """Built-in safe types load without opt-in via allowed_checkpoint_types."""
+    from datetime import datetime, timezone
+
+    checkpoint = _make_checkpoint_with_state({
+        "ts": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        "tags": {1, 2, 3},
+    })
+    doc = _checkpoint_to_cosmos_document(checkpoint)
+    mock_container.query_items.return_value = _to_async_iter([doc])
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+    loaded = await storage.load(checkpoint.checkpoint_id)
+
+    assert loaded.state["ts"] == datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert loaded.state["tags"] == {1, 2, 3}
+
+
+async def test_load_blocks_unlisted_app_type(mock_container: MagicMock) -> None:
+    """Application types are blocked when not listed in allowed_checkpoint_types."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="x", count=1)})
+    doc = _checkpoint_to_cosmos_document(checkpoint)
+    mock_container.query_items.return_value = _to_async_iter([doc])
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        await storage.load(checkpoint.checkpoint_id)
+
+
+async def test_load_allows_listed_app_type(mock_container: MagicMock) -> None:
+    """Application types are allowed when listed in allowed_checkpoint_types."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="ok", count=7)})
+    doc = _checkpoint_to_cosmos_document(checkpoint)
+    mock_container.query_items.return_value = _to_async_iter([doc])
+
+    storage = CosmosCheckpointStorage(
+        container_client=mock_container,
+        allowed_checkpoint_types=[_APP_STATE_TYPE_KEY],
+    )
+    loaded = await storage.load(checkpoint.checkpoint_id)
+
+    assert isinstance(loaded.state["data"], _AppState)
+    assert loaded.state["data"].label == "ok"
+    assert loaded.state["data"].count == 7
+
+
+async def test_list_checkpoints_blocks_unlisted_app_type(mock_container: MagicMock) -> None:
+    """list_checkpoints skips documents with unlisted application types."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="x", count=1)})
+    doc = _checkpoint_to_cosmos_document(checkpoint)
+    mock_container.query_items.return_value = _to_async_iter([doc])
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+    results = await storage.list_checkpoints(workflow_name="test-workflow")
+
+    # The document is skipped (logged as warning) because the type is blocked
+    assert len(results) == 0
+
+
+async def test_list_checkpoints_allows_listed_app_type(mock_container: MagicMock) -> None:
+    """list_checkpoints decodes documents with listed application types."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="ok", count=3)})
+    doc = _checkpoint_to_cosmos_document(checkpoint)
+    mock_container.query_items.return_value = _to_async_iter([doc])
+
+    storage = CosmosCheckpointStorage(
+        container_client=mock_container,
+        allowed_checkpoint_types=[_APP_STATE_TYPE_KEY],
+    )
+    results = await storage.list_checkpoints(workflow_name="test-workflow")
+
+    assert len(results) == 1
+    assert isinstance(results[0].state["data"], _AppState)
+
+
+async def test_get_latest_blocks_unlisted_app_type(mock_container: MagicMock) -> None:
+    """get_latest raises when the checkpoint contains an unlisted application type."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="x", count=1)})
+    doc = _checkpoint_to_cosmos_document(checkpoint)
+    mock_container.query_items.return_value = _to_async_iter([doc])
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        await storage.get_latest(workflow_name="test-workflow")
+
+
+async def test_get_latest_allows_listed_app_type(mock_container: MagicMock) -> None:
+    """get_latest decodes checkpoints with listed application types."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="latest", count=9)})
+    doc = _checkpoint_to_cosmos_document(checkpoint)
+    mock_container.query_items.return_value = _to_async_iter([doc])
+
+    storage = CosmosCheckpointStorage(
+        container_client=mock_container,
+        allowed_checkpoint_types=[_APP_STATE_TYPE_KEY],
+    )
+    result = await storage.get_latest(workflow_name="test-workflow")
+
+    assert result is not None
+    assert isinstance(result.state["data"], _AppState)
+    assert result.state["data"].label == "latest"
