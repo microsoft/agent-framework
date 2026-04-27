@@ -3,7 +3,7 @@
 """Aggregate per-provider JUnit XML test results and generate a trend report.
 
 Parses JUnit XML files produced by CI jobs — both ``pytest.xml`` (Python) and
-xunit v3 ``*.junit.xml`` (dotnet) — merges them into a single run, combines
+xunit v3 ``*.junit`` (dotnet) — merges them into a single run, combines
 with historical data, and generates a markdown trend table.
 
 Usage (from CI):
@@ -13,7 +13,7 @@ The reports directory is expected to contain artifact subdirectories.  Two
 layouts are supported:
 
 - **Python (pytest):**  ``test-results-<provider>/pytest.xml``
-- **Dotnet (xunit):**   ``dotnet-test-results-<tfm>-<os>/*.junit.xml``
+- **Dotnet (xunit):**   ``dotnet-test-results-<tfm>-<os>/*.junit``
 """
 
 from __future__ import annotations
@@ -177,7 +177,7 @@ def _discover_xml_files(reports_dir: Path) -> list[tuple[str, Path]]:
 
     Handles two directory layouts:
     - **Python (pytest):** ``test-results-<provider>/pytest.xml``
-    - **Dotnet (xunit):** ``dotnet-test-results-<tfm>-<os>/*.junit.xml``
+    - **Dotnet (xunit):** ``dotnet-test-results-<tfm>-<os>/*.junit``
 
     Returns:
         List of ``(directory_name, xml_path)`` tuples.
@@ -196,8 +196,8 @@ def _discover_xml_files(reports_dir: Path) -> list[tuple[str, Path]]:
             xml_files.append((subdir.name, pytest_xml))
             continue
 
-        # Dotnet layout: multiple *.junit.xml files per artifact
-        junit_files = sorted(subdir.rglob("*.junit.xml"))
+        # Dotnet layout: multiple *.junit files per artifact
+        junit_files = sorted(subdir.rglob("*.junit"))
         for jf in junit_files:
             xml_files.append((subdir.name, jf))
 

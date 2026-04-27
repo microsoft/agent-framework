@@ -306,7 +306,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: dotnet-test-results-${{ matrix.targetFramework }}-${{ matrix.os }}
-          path: IntegrationTestResults/**/*.junit.xml
+          path: IntegrationTestResults/**/*.junit
           if-no-files-found: ignore
 
   # This final job is required to satisfy the merge queue. It must only run (or succeed) if no tests failed
