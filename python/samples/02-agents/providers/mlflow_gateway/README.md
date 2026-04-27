@@ -16,13 +16,19 @@ All gateway features are configured through the MLflow UI. Your application code
 
 ## Prerequisites
 
-1. **Install MLflow**:
+1. **Install MLflow** (using [`uv`](https://docs.astral.sh/uv/), which Agent Framework uses):
 
     ```bash
-    pip install 'mlflow[genai]'
+    uv pip install 'mlflow[genai]'
     ```
 
-2. **Start the MLflow server**:
+    Or run it directly with `uvx` (no install needed):
+
+    ```bash
+    uvx --from 'mlflow[genai]' mlflow server --host 127.0.0.1 --port 5000
+    ```
+
+2. **Start the MLflow server** (if you didn't use `uvx` above):
 
     ```bash
     mlflow server --host 127.0.0.1 --port 5000
