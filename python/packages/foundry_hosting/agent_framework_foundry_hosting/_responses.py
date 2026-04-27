@@ -256,6 +256,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         input_messages = _items_to_messages(input_items)
         is_streaming_request = request.stream is not None and request.stream is True
 
+        # Fetch prior conversation history from Foundry storage so workflow
+        # agents see the same history their non-workflow counterparts get
+        # (see _handle_inner_agent which builds messages from history +
+        # current input). Without this, declarative workflows triggered via
+        # WorkflowAgent.as_agent only ever see the latest user turn, even
+        # though the host's checkpoint replay restores the workflow's
+        # internal state - declarative workflows reset Conversation.messages
+        # on every new run, so cross-turn context has to come from the
+        # message list passed in, not from checkpointed workflow state.
+        history = await context.get_history()
+        history_messages = _output_items_to_messages(history)
+        full_messages = [*history_messages, *input_messages]
+
         _, are_options_set = _to_chat_options(request)
         if are_options_set:
             logger.warning("Workflow agent doesn't support runtime options. They will be ignored.")
@@ -307,7 +320,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         if not is_streaming_request:
             # Run the agent in non-streaming mode
-            response = await self._agent.run(input_messages, stream=False, checkpoint_storage=checkpoint_storage)
+            response = await self._agent.run(full_messages, stream=False, checkpoint_storage=checkpoint_storage)
 
             for message in response.messages:
                 for content in message.contents:
@@ -323,7 +336,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker = _OutputItemTracker(response_event_stream)
 
         # Run the workflow agent in streaming mode
-        async for update in self._agent.run(input_messages, stream=True, checkpoint_storage=checkpoint_storage):
+        async for update in self._agent.run(full_messages, stream=True, checkpoint_storage=checkpoint_storage):
             for content in update.contents:
                 for event in tracker.handle(content):
                     yield event
