@@ -236,6 +236,7 @@ from ._workflows._workflow_executor import (
     WorkflowExecutor,
 )
 from .exceptions import (
+    AgentFrameworkException,
     MiddlewareException,
     UserInputRequiredException,
     WorkflowCheckpointException,
@@ -264,6 +265,7 @@ __all__ = [
     "USER_AGENT_TELEMETRY_DISABLED_ENV_VAR",
     "Agent",
     "AgentContext",
+    "AgentFrameworkException",
     "AgentEvalConverter",
     "AgentExecutor",
     "AgentExecutorRequest",
