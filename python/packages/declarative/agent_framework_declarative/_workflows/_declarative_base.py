@@ -874,9 +874,15 @@ class DeclarativeActionExecutor(Executor):
         Follows .NET's DefaultTransform pattern - accepts any input type:
         - dict/Mapping: Used directly as workflow.inputs
         - str: Converted to {"input": value}
-        - list[Message]: Joined to a string from the last user message text
-          (or last message text if no user message). Falls through to the
-          string-input path so System.LastMessage.Text is populated.
+        - list[Message]: Treated as the agent-facing message contract
+          (e.g. from WorkflowAgent / as_agent()). The full message list is
+          stored in ``Conversation.messages``/``Conversation.history`` and
+          mirrored to ``System.conversations.{id}.messages`` so workflows
+          that reference ``=Conversation.messages`` (e.g. InvokeAzureAgent)
+          see the complete history including assistant turns and non-text
+          content. The last user message's text is also used as the string
+          input (``Inputs.input``) and surfaced via ``System.LastMessage*``
+          for backward compatibility with simple text-only workflows.
         - DeclarativeMessage: Internal message, no initialization needed
         - Any other type: Converted via str() to {"input": str(value)}
 
@@ -893,22 +899,76 @@ class DeclarativeActionExecutor(Executor):
             # Structured inputs - use directly
             state.initialize(trigger)  # type: ignore
         elif isinstance(trigger, list) and all(isinstance(m, Message) for m in trigger):
-            # list[Message] (e.g. from WorkflowAgent / as_agent()) - extract the
-            # last user message text and treat it as the string input. Fall
-            # through to the same state initialization as the str case so
-            # =System.LastMessage.Text / =System.LastMessageText keep working.
+            # list[Message] (e.g. from WorkflowAgent / as_agent()).
+            # Populate the full conversation rather than collapsing to a
+            # single string, so workflows that operate on the message list
+            # (InvokeAzureAgent with =Conversation.messages, history-aware
+            # agents, multi-modal content, etc.) see the complete input.
             messages_list = cast(list[Message], trigger)
-            user_text = ""
-            for msg in reversed(messages_list):
-                if str(msg.role).lower() == "user" and msg.text:
-                    user_text = msg.text
+
+            # Locate the trailing user message: WorkflowAgent merges session
+            # history with the caller's new input and forwards the combined
+            # list, so the most recent user message represents "this turn"
+            # (everything before it is prior history). InvokeAzureAgent's
+            # contract is that Conversation.messages holds PRIOR turns only -
+            # the executor appends the new user input itself before invoking
+            # the agent. To avoid duplicating the latest user turn we split
+            # the trigger at that boundary.
+            last_user_index = -1
+            for idx in range(len(messages_list) - 1, -1, -1):
+                if str(messages_list[idx].role).lower() == "user":
+                    last_user_index = idx
                     break
-            if not user_text:
-                # Fallback: concatenate any text from the last message.
-                user_text = messages_list[-1].text if messages_list else ""
-            state.initialize({"input": user_text})
-            state.set("System.LastMessage", {"Text": user_text, "Id": ""})
-            state.set("System.LastMessageText", user_text)
+
+            if last_user_index >= 0:
+                last_user_msg = messages_list[last_user_index]
+                last_user_text = last_user_msg.text or ""
+                last_user_id = getattr(last_user_msg, "message_id", "") or ""
+                # Prior history excludes the latest user turn; trailing
+                # non-user messages (e.g. tool results) are preserved so
+                # later actions still see them in Conversation.messages.
+                history_messages = (
+                    messages_list[:last_user_index] + messages_list[last_user_index + 1:]
+                )
+            else:
+                # No user message in the list - rare path (e.g. resume after
+                # an assistant-only sequence). Treat the whole list as prior
+                # history and surface the last message's text for backwards
+                # compatibility with =System.LastMessageText.
+                history_messages = list(messages_list)
+                tail = messages_list[-1] if messages_list else None
+                last_user_text = (tail.text or "") if tail is not None else ""
+                last_user_id = (
+                    getattr(tail, "message_id", "") or "" if tail is not None else ""
+                )
+
+            # Initialize state. Using the last user text as Inputs.input
+            # keeps simple yamls (=inputs.input / =System.LastMessageText)
+            # working, and matches what InvokeAzureAgent expects to find via
+            # its input_text fallback chain.
+            state.initialize({"input": last_user_text})
+
+            # Populate Conversation.messages/.history with PRIOR turns only
+            # (matching the executor contract above). Raw Message objects
+            # are stored - matching what agent executors append at runtime.
+            for msg in history_messages:
+                state.append("Conversation.messages", msg)
+                state.append("Conversation.history", msg)
+
+            # Mirror to System.conversations.{ConversationId}.messages so
+            # actions resolving conversation-scoped paths see the same
+            # history.
+            conversation_id = state.get("System.ConversationId")
+            if conversation_id:
+                conv_path = f"System.conversations.{conversation_id}.messages"
+                for msg in history_messages:
+                    state.append(conv_path, msg)
+
+            # System.LastMessage* mirrors the most recent USER message
+            # (matching .NET DefaultTransform semantics for agent input).
+            state.set("System.LastMessage", {"Text": last_user_text, "Id": last_user_id})
+            state.set("System.LastMessageText", last_user_text)
+            state.set("System.LastMessageId", last_user_id)
         elif isinstance(trigger, str):
             # String input - wrap in dict and populate System.LastMessage.Text
             # so YAML expressions like =System.LastMessage.Text see the user input
