@@ -11,6 +11,11 @@ across multiple model providers.
 Since Doubleword exposes an OpenAI-compatible API, you can use the built-in
 OpenAIChatCompletionClient with a custom base URL.
 
+Three execution modes are demonstrated:
+- main()       — realtime (priority tier)
+- main_async() — 1-hour async (flex tier, mid-tier cost)
+- main_batch() — 24-hour batch (deepest discount)
+
 Setup:
     pip install agent-framework-openai
     export DOUBLEWORD_API_KEY="your-api-key"
@@ -40,8 +45,36 @@ async def main() -> None:
     print(f"Assistant: {response}")
 
 
+async def main_async() -> None:
+    """Run requests on the 1-hour async (flex) tier using autobatcher.
+
+    Mid-tier cost between realtime and 24-hour batch — use when next-day
+    batch turnaround is too slow but realtime is too expensive.
+
+    Install: pip install autobatcher
+    See: https://pypi.org/project/autobatcher/
+    """
+    from autobatcher import AsyncOpenAI
+
+    client = OpenAIChatCompletionClient(
+        model="Qwen/Qwen3.5-397B-A17B-FP8",
+        async_client=AsyncOpenAI(
+            api_key=os.environ["DOUBLEWORD_API_KEY"],
+            base_url="https://api.doubleword.ai/v1",
+        ),
+    )
+
+    message = Message("user", contents=["Explain the benefits of an AI model gateway in one paragraph."])
+    print(f"User: {message.text}")
+
+    response = await client.get_response([message], stream=False)
+    print(f"Assistant: {response}")
+
+
 async def main_batch() -> None:
     """Run batch requests at reduced cost using autobatcher.
+
+    24-hour batch tier — deepest discount (up to ~90% off realtime).
 
     Install: pip install autobatcher
     See: https://pypi.org/project/autobatcher/
