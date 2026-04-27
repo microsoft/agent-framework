@@ -22,7 +22,7 @@ Follow the instructions in the [Running the Agent Host Locally](../../README.md#
 
 > Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../../README.md) for more details. Use this README for sample queries you can send to the agent.
 
-Send a POST request to the server with a JSON body containing a "message" field to interact with the agent. For example:
+Send a POST request to the server with a JSON body containing an `"input"` field to interact with the agent. For example:
 
 ```bash
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "List all the repositories I own on GitHub."}'

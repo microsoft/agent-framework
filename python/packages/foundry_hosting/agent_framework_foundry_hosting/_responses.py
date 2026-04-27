@@ -1087,9 +1087,16 @@ def _convert_file_data(data_uri: str, filename: str | None = None) -> Content:
         header, encoded = data_uri.split(";base64,", 1)
         media_type = header[len("data:") :]
         if media_type.startswith("text/"):
-            decoded_text = base64.b64decode(encoded).decode("utf-8")
-            prefix = f"[File: {filename}]\n" if filename else ""
-            return Content.from_text(f"{prefix}{decoded_text}")
+            try:
+                decoded_text = base64.b64decode(encoded).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                logger.warning(
+                    "Failed to decode text/* file_data as UTF-8, falling through to URI passthrough.",
+                    exc_info=True,
+                )
+            else:
+                prefix = f"[File: {filename}]\n" if filename else ""
+                return Content.from_text(f"{prefix}{decoded_text}")
     additional_properties = {"filename": filename} if filename else None
     return Content.from_uri(data_uri, additional_properties=additional_properties)
 
@@ -1127,6 +1134,8 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content.type == "input_image":
         image = cast(MessageContentInputImageContent, content)
         if image.image_url:
+            if image.image_url.startswith("data:"):
+                return Content.from_uri(image.image_url)
             return Content.from_uri(image.image_url, media_type="image/*")
         if image.file_id:
             return Content.from_hosted_file(image.file_id)
