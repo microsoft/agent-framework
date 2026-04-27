@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sys
 from random import randint
 from typing import Annotated
 
@@ -42,6 +43,22 @@ See: https://mlflow.org/docs/latest/genai/governance/ai-gateway/
 """
 
 
+def _require_env(name: str) -> str:
+    """Read a required env var; exit with a clear error if missing or empty.
+
+    Without this check, an empty MLFLOW_GATEWAY_ENDPOINT would cause
+    OpenAIChatClient to silently fall back to OpenAI's public endpoint and
+    forward prompts there.
+    """
+    value = os.getenv(name)
+    if not value:
+        sys.exit(
+            f"Error: {name} is not set. See the README in this folder for setup "
+            "instructions: https://mlflow.org/docs/latest/genai/governance/ai-gateway/"
+        )
+    return value
+
+
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # see samples/02-agents/tools/function_tool_with_approval.py
 # and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
@@ -54,14 +71,14 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-async def non_streaming_example() -> None:
+async def non_streaming_example(base_url: str, model: str) -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
     _client = OpenAIChatClient(
         api_key="unused",  # Provider keys are managed by the MLflow server
-        base_url=os.getenv("MLFLOW_GATEWAY_ENDPOINT"),
-        model=os.getenv("MLFLOW_GATEWAY_MODEL"),
+        base_url=base_url,
+        model=model,
     )
     agent = Agent(
         client=_client,
@@ -76,14 +93,14 @@ async def non_streaming_example() -> None:
     print(f"Agent: {result}\n")
 
 
-async def streaming_example() -> None:
+async def streaming_example(base_url: str, model: str) -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
     _client = OpenAIChatClient(
         api_key="unused",  # Provider keys are managed by the MLflow server
-        base_url=os.getenv("MLFLOW_GATEWAY_ENDPOINT"),
-        model=os.getenv("MLFLOW_GATEWAY_MODEL"),
+        base_url=base_url,
+        model=model,
     )
     agent = Agent(
         client=_client,
@@ -104,8 +121,13 @@ async def streaming_example() -> None:
 async def main() -> None:
     print("=== MLflow AI Gateway with OpenAI Chat Client Agent Example ===")
 
-    await non_streaming_example()
-    await streaming_example()
+    # Validate required env vars upfront so we never silently route to OpenAI's
+    # public endpoint if MLFLOW_GATEWAY_ENDPOINT is missing or empty.
+    base_url = _require_env("MLFLOW_GATEWAY_ENDPOINT")
+    model = _require_env("MLFLOW_GATEWAY_MODEL")
+
+    await non_streaming_example(base_url, model)
+    await streaming_example(base_url, model)
 
 
 if __name__ == "__main__":
