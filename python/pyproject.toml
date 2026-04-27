@@ -96,6 +96,7 @@ agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-azure-contentunderstanding = { workspace = true }
 agent-framework-tools = { workspace = true }
+agent-framework-valkey = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -215,6 +216,7 @@ executionEnvironments = [
     { root = "packages/orchestrations/tests", reportPrivateUsage = "none" },
     { root = "packages/purview/tests", reportPrivateUsage = "none" },
     { root = "packages/redis/tests", reportPrivateUsage = "none" },
+    { root = "packages/valkey/tests", reportPrivateUsage = "none" },
     { root = "tests", reportPrivateUsage = "none" },
 ]
 
