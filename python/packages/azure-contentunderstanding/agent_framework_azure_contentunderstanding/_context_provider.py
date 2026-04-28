@@ -175,6 +175,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
         if client is not None:
             # Use the pre-built client directly — endpoint/credential are ignored.
             self._client = client
+            self._owns_client = False
             self._endpoint = ""
             self._credential = None
         else:
@@ -201,6 +202,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
             self._client = ContentUnderstandingClient(
                 self._endpoint, self._credential, user_agent=AGENT_FRAMEWORK_USER_AGENT
             )
+            self._owns_client = True
         self.analyzer_id = analyzer_id
         self.max_wait = max_wait
         self.output_sections: list[AnalysisSection] = output_sections or ["markdown", "fields"]
@@ -234,7 +236,10 @@ class ContentUnderstandingContextProvider(ContextProvider):
         # Clean up uploaded files; the vector store itself is caller-managed.
         if self.file_search and self._all_uploaded_file_ids:
             await self._cleanup_uploaded_files()
-        await self._client.close()
+        # Only close the client if we created it internally.
+        # When a pre-built client was passed in, the caller owns its lifecycle.
+        if self._owns_client:
+            await self._client.close()
 
     async def before_run(
         self,
