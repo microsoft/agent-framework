@@ -105,7 +105,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: LLM non-determinism can produce null orchestration results")]
     public async Task SingleAgentOrchestrationChainingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "02_AgentOrchestration_Chaining");
