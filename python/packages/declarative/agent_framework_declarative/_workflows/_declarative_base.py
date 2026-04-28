@@ -29,10 +29,10 @@ import locale
 import logging
 import sys
 import uuid
-from enum import Enum
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal as _Decimal
+from enum import Enum
 from typing import Any, Literal, cast
 
 from agent_framework import (
@@ -211,6 +211,16 @@ class DeclarativeWorkflowState:
             self.initialize()
             result = self._state.get(DECLARATIVE_STATE_KEY)
         return cast(DeclarativeStateData, result)
+
+    def is_initialized(self) -> bool:
+        """Return True when declarative state has been initialized.
+
+        Useful for distinguishing a fresh start from a continuation: when
+        Workflow state preserves data across run() calls (multi-turn
+        scenarios), the start executor needs to avoid calling initialize()
+        and clobbering the prior turn's Conversation/Local/System data.
+        """
+        return self._state.get(DECLARATIVE_STATE_KEY) is not None
 
     def set_state_data(self, data: DeclarativeStateData) -> None:
         """Set the full state data dict in state."""
@@ -917,7 +927,7 @@ class DeclarativeActionExecutor(Executor):
         if isinstance(trigger, dict):
             # Structured inputs - use directly
             state.initialize(trigger)  # type: ignore
-        elif isinstance(trigger, list) and all(isinstance(m, Message) for m in trigger):
+        elif isinstance(trigger, list) and all(isinstance(m, Message) for m in trigger):  # pyright: ignore[reportUnknownVariableType]
             # list[Message] (e.g. from WorkflowAgent / as_agent()).
             messages_list = cast(list[Message], trigger)
 
@@ -929,14 +939,14 @@ class DeclarativeActionExecutor(Executor):
             # Instead, treat the trigger as the new turn's user input only:
             # update Inputs.input, append the new user message to existing
             # Conversation history, and refresh System.LastMessage*.
-            existing_state = state._state.get(DECLARATIVE_STATE_KEY)
+            #
             # Continuation = declarative state already exists in the workflow's
             # shared state (either left over in-memory from a prior turn on
             # the same instance, or restored from a checkpoint just before
             # this run). In that case state.initialize() would wipe Local.*,
             # System.*, Conversation.* etc., destroying the cross-turn
             # context we're trying to preserve.
-            is_continuation = existing_state is not None and isinstance(existing_state, dict)
+            is_continuation = state.is_initialized()
 
             # Locate the trailing user message in the trigger.
             last_user_index = -1
@@ -1022,10 +1032,11 @@ class DeclarativeActionExecutor(Executor):
             state.set("System.LastMessage", {"Text": trigger, "Id": ""})
             state.set("System.LastMessageText", trigger)
         elif not isinstance(
-            trigger, (ActionTrigger, ActionComplete, ConditionResult, LoopIterationResult, LoopControl)
+            trigger,
+            (ActionTrigger, ActionComplete, ConditionResult, LoopIterationResult, LoopControl),  # pyright: ignore[reportUnknownArgumentType]
         ):
             # Any other type - convert to string like .NET's DefaultTransform
-            input_str = str(trigger)
+            input_str = str(cast(Any, trigger))
             state.initialize({"input": input_str})
             state.set("System.LastMessage", {"Text": input_str, "Id": ""})
             state.set("System.LastMessageText", input_str)
