@@ -11,11 +11,11 @@ import logging
 import types
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
+from .._sessions import ContextProvider
 from .._types import ResponseStream
 from ..observability import OtelAttr, capture_exception, create_workflow_span
-from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
@@ -34,6 +34,9 @@ from ._runner import Runner
 from ._runner_context import RunnerContext
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
+
+if TYPE_CHECKING:
+    from ._agent import WorkflowAgent
 
 logger = logging.getLogger(__name__)
 
@@ -337,10 +340,10 @@ class Workflow(DictConvertible):
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
                     started = WorkflowEvent.started()
-                yield started
+                yield started  # noqa: RUF070
                 with _framework_event_origin():
                     in_progress = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
-                yield in_progress
+                yield in_progress  # noqa: RUF070
 
                 # Reset context for a new run if supported
                 if reset_context:
@@ -385,7 +388,7 @@ class Workflow(DictConvertible):
                         emitted_in_progress_pending = True
                         with _framework_event_origin():
                             pending_status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
-                        yield pending_status
+                        yield pending_status  # noqa: RUF070
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     with _framework_event_origin():
@@ -406,10 +409,10 @@ class Workflow(DictConvertible):
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
-                yield failed_event
+                yield failed_event  # noqa: RUF070
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
-                yield failed_status
+                yield failed_status  # noqa: RUF070
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
                     attributes={
@@ -910,7 +913,14 @@ class Workflow(DictConvertible):
 
         return list(output_types)
 
-    def as_agent(self, name: str | None = None) -> WorkflowAgent:
+    def as_agent(
+        self,
+        name: str | None = None,
+        *,
+        description: str | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
+        **kwargs: Any,
+    ) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.
 
         The returned agent converts standard agent inputs (strings, Message, or lists of these)
@@ -924,7 +934,10 @@ class Workflow(DictConvertible):
         initialization will fail with a ValueError.
 
         Args:
-            name: Optional name for the agent. If None, a default name will be generated.
+            name: Optional name for the agent. Defaults to workflow name.
+            description: Optional description of the agent. Defaults to workflow description.
+            context_providers: Optional sequence of context providers for the agent.
+            **kwargs: Additional keyword arguments passed to BaseAgent.
 
         Returns:
             A WorkflowAgent instance that wraps this workflow.
@@ -935,4 +948,10 @@ class Workflow(DictConvertible):
         # Import here to avoid circular imports
         from ._agent import WorkflowAgent
 
-        return WorkflowAgent(workflow=self, name=name)
+        return WorkflowAgent(
+            workflow=self,
+            name=name if name is not None else self.name,
+            description=description if description is not None else self.description,
+            context_providers=context_providers,
+            **kwargs,
+        )

@@ -189,6 +189,29 @@ class TestGitHubCopilotAgentInit:
             "content": "Direct instructions",
         }
 
+    def test_default_options_includes_model_for_telemetry(self) -> None:
+        """Test that default_options merges model from settings for AgentTelemetryLayer span attributes."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            default_options={"model": "claude-sonnet-4-5", "timeout": 120}
+        )
+        opts = agent.default_options
+        assert opts["model"] == "claude-sonnet-4-5"
+        assert "timeout" not in opts  # timeout is extracted into _settings, not returned in default_options
+
+    def test_default_options_without_model_configured(self) -> None:
+        """Test that default_options works correctly when no model is configured."""
+        agent = GitHubCopilotAgent(instructions="Helper")
+        opts = agent.default_options
+        assert "model" not in opts
+        assert opts.get("system_message") == {"mode": "append", "content": "Helper"}
+
+    def test_default_options_returns_independent_copy(self) -> None:
+        """Test that mutating the returned dict does not affect internal state."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(default_options={"model": "gpt-5.1-mini"})
+        opts = agent.default_options
+        opts["model"] = "mutated"
+        assert agent._settings.get("model") == "gpt-5.1-mini"
+
 
 class TestGitHubCopilotAgentLifecycle:
     """Test cases for agent lifecycle management."""
@@ -861,6 +884,7 @@ class TestGitHubCopilotAgentSessionManagement:
             streaming=unittest.mock.ANY,
             tools=unittest.mock.ANY,
             mcp_servers=unittest.mock.ANY,
+            provider=unittest.mock.ANY,
         )
 
     async def test_session_config_includes_model(
@@ -1082,6 +1106,198 @@ class TestGitHubCopilotAgentMCPServers:
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
         assert config["mcp_servers"] is None
+
+
+class TestGitHubCopilotAgentProvider:
+    """Test cases for provider configuration (BYOK / Managed Identity)."""
+
+    async def test_provider_passed_to_create_session(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Test that provider config is passed through to create_session."""
+        from copilot.session import ProviderConfig
+
+        provider: ProviderConfig = {
+            "type": "azure",
+            "base_url": "https://my-resource.openai.azure.com",
+            "bearer_token": "test-token",
+        }
+
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"provider": provider},
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["provider"]["type"] == "azure"
+        assert config["provider"]["base_url"] == "https://my-resource.openai.azure.com"
+        assert config["provider"]["bearer_token"] == "test-token"
+
+    async def test_provider_passed_to_resume_session(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Test that provider config is passed through to resume_session."""
+        from copilot.session import ProviderConfig
+
+        provider: ProviderConfig = {
+            "type": "azure",
+            "base_url": "https://my-resource.openai.azure.com",
+            "bearer_token": "test-token",
+        }
+
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"provider": provider},
+        )
+        await agent.start()
+
+        session = AgentSession()
+        session.service_session_id = "existing-session-id"
+
+        await agent._get_or_create_session(session)  # type: ignore
+
+        mock_client.resume_session.assert_called_once()
+        call_args = mock_client.resume_session.call_args
+        config = call_args.kwargs
+        assert config["provider"]["type"] == "azure"
+
+    async def test_session_config_excludes_provider_when_not_set(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Test that provider is None in session config when not set."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["provider"] is None
+
+    async def test_resume_session_excludes_provider_when_not_set(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Test that provider is None in resume session config when not set."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        session = AgentSession()
+        session.service_session_id = "existing-session-id"
+
+        await agent._get_or_create_session(session)  # type: ignore
+
+        call_args = mock_client.resume_session.call_args
+        config = call_args.kwargs
+        assert config["provider"] is None
+
+    async def test_runtime_provider_takes_precedence(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Test that runtime provider options override default_options provider."""
+        from copilot.session import ProviderConfig
+
+        default_provider: ProviderConfig = {
+            "type": "azure",
+            "base_url": "https://default.openai.azure.com",
+            "bearer_token": "default-token",
+        }
+        runtime_provider: ProviderConfig = {
+            "type": "openai",
+            "base_url": "https://runtime.openai.com",
+            "api_key": "runtime-key",
+        }
+
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"provider": default_provider},
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(  # type: ignore
+            AgentSession(),
+            runtime_options={"provider": runtime_provider},
+        )
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["provider"]["type"] == "openai"
+        assert config["provider"]["base_url"] == "https://runtime.openai.com"
+
+    async def test_provider_not_leaked_into_default_options(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Test that provider is popped from opts and not left in _default_options."""
+        from copilot.session import ProviderConfig
+
+        provider: ProviderConfig = {
+            "type": "azure",
+            "base_url": "https://my-resource.openai.azure.com",
+            "bearer_token": "test-token",
+        }
+
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"provider": provider, "model": "gpt-5"},
+        )
+
+        assert "provider" not in agent._default_options
+        assert agent._provider is not None
+        assert agent._provider["type"] == "azure"
+
+    async def test_provider_coexists_with_other_options(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Test that provider works alongside model, tools, and mcp_servers."""
+        from copilot.session import MCPServerConfig, ProviderConfig
+
+        provider: ProviderConfig = {
+            "type": "azure",
+            "base_url": "https://my-resource.openai.azure.com",
+            "bearer_token": "test-token",
+        }
+        mcp_servers: dict[str, MCPServerConfig] = {
+            "test-server": {
+                "type": "stdio",
+                "command": "echo",
+                "args": ["hello"],
+                "tools": ["*"],
+            },
+        }
+
+        def my_tool(arg: str) -> str:
+            """A test tool."""
+            return arg
+
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            tools=[my_tool],
+            default_options={
+                "model": "gpt-5",
+                "provider": provider,
+                "mcp_servers": mcp_servers,
+            },
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["provider"]["type"] == "azure"
+        assert config["model"] == "gpt-5"
+        assert config["mcp_servers"] is not None
+        assert config["tools"] is not None
 
 
 class TestGitHubCopilotAgentToolConversion:

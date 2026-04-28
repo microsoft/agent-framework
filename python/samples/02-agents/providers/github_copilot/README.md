@@ -24,6 +24,22 @@ The following environment variables can be configured:
 | `GITHUB_COPILOT_TIMEOUT` | Request timeout in seconds | `60` |
 | `GITHUB_COPILOT_LOG_LEVEL` | CLI log level | `info` |
 
+## Observability
+
+`GitHubCopilotAgent` has OpenTelemetry tracing built-in. To enable it, call `configure_otel_providers()` before running the agent:
+
+```python
+from agent_framework.observability import configure_otel_providers
+from agent_framework.github import GitHubCopilotAgent
+
+configure_otel_providers(enable_console_exporters=True)
+
+async with GitHubCopilotAgent() as agent:
+    response = await agent.run("Hello!")
+```
+
+See the [observability samples](../../../02-agents/observability/) for full examples with OTLP exporters.
+
 ## Examples
 
 | File | Description |

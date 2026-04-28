@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, Final, Literal, TypeAlias, overload
@@ -49,7 +48,7 @@ from agent_framework.observability import AgentTelemetryLayer
 
 __all__ = ["A2AAgent", "A2AContinuationToken"]
 
-URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$")
+from agent_framework_a2a._utils import get_uri_data
 
 
 class A2AContinuationToken(ContinuationToken):
@@ -76,14 +75,6 @@ IN_PROGRESS_TASK_STATES = [
 
 A2AClientEvent: TypeAlias = tuple[Task, TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None]
 A2AStreamItem: TypeAlias = A2AMessage | A2AClientEvent
-
-
-def _get_uri_data(uri: str) -> str:
-    match = URI_PATTERN.match(uri)
-    if not match:
-        raise ValueError(f"Invalid data URI format: {uri}")
-
-    return match.group("base64_data")
 
 
 class A2AAgent(AgentTelemetryLayer, BaseAgent):
@@ -295,7 +286,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         else:
             if not normalized_messages:
                 raise ValueError("At least one message is required when starting a new task (no continuation_token).")
-            a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
+            a2a_message = self._prepare_message_for_a2a(
+                normalized_messages[-1],
+                context_id=session.service_session_id if session else None,
+            )
             a2a_stream = self.client.send_message(a2a_message)
 
         provider_session = session
@@ -374,6 +368,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     contents=contents,
                     role="assistant" if item.role == A2ARole.agent else "user",
                     response_id=str(getattr(item, "message_id", uuid.uuid4())),
+                    additional_properties={"a2a_metadata": item.metadata} if item.metadata else None,
                     raw_representation=item,
                 )
                 all_updates.append(update)
@@ -452,13 +447,24 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         role=message.role,
                         response_id=task.id,
                         message_id=getattr(message.raw_representation, "artifact_id", None),
+                        additional_properties={"a2a_metadata": merged}
+                        if (merged := {**message.additional_properties, **(task.metadata or {})})
+                        else None,
                         raw_representation=task,
                     )
                     for message in task_messages
                 ]
             if task.artifacts is not None:
                 return []
-            return [AgentResponseUpdate(contents=[], role="assistant", response_id=task.id, raw_representation=task)]
+            return [
+                AgentResponseUpdate(
+                    contents=[],
+                    role="assistant",
+                    response_id=task.id,
+                    additional_properties={"a2a_metadata": task.metadata} if task.metadata else None,
+                    raw_representation=task,
+                )
+            ]
 
         if background and status.state in IN_PROGRESS_TASK_STATES:
             token = self._build_continuation_token(task)
@@ -468,6 +474,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     role="assistant",
                     response_id=task.id,
                     continuation_token=token,
+                    additional_properties={"a2a_metadata": task.metadata} if task.metadata else None,
                     raw_representation=task,
                 )
             ]
@@ -488,6 +495,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         contents=contents,
                         role="assistant" if status.message.role == A2ARole.agent else "user",
                         response_id=task.id,
+                        additional_properties={"a2a_metadata": task.metadata} if task.metadata else None,
                         raw_representation=task,
                     )
                 ]
@@ -502,12 +510,17 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             contents = self._parse_contents_from_a2a(update_event.artifact.parts)
             if not contents:
                 return []
+            merged_metadata = {
+                **(update_event.artifact.metadata or {}),
+                **(update_event.metadata or {}),
+            } or None
             return [
                 AgentResponseUpdate(
                     contents=contents,
                     role="assistant",
                     response_id=update_event.task_id,
                     message_id=update_event.artifact.artifact_id,
+                    additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
                     raw_representation=update_event,
                 )
             ]
@@ -523,11 +536,16 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if not contents:
             return []
 
+        merged_metadata = {
+            **(message.metadata or {}),
+            **(update_event.metadata or {}),
+        } or None
         return [
             AgentResponseUpdate(
                 contents=contents,
                 role="assistant" if message.role == A2ARole.agent else "user",
                 response_id=update_event.task_id,
+                additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
                 raw_representation=update_event,
             )
         ]
@@ -560,7 +578,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             return AgentResponse.from_updates(updates)
         return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
 
-    def _prepare_message_for_a2a(self, message: Message) -> A2AMessage:
+    def _prepare_message_for_a2a(self, message: Message, *, context_id: str | None = None) -> A2AMessage:
         """Prepare a Message for the A2A protocol.
 
         Transforms Agent Framework Message objects into A2A protocol Messages by:
@@ -569,6 +587,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         - Converting file references (URI/data/hosted_file) to FilePart objects
         - Preserving metadata and additional properties from the original message
         - Setting the role to 'user' as framework messages are treated as user input
+
+        Args:
+            message: The framework Message to convert.
+            context_id: Optional fallback context identifier (e.g. derived from
+                ``AgentSession.service_session_id``). When the *message* already
+                carries a ``context_id`` in its ``additional_properties`` that
+                value takes precedence; otherwise this fallback is used.
         """
         parts: list[A2APart] = []
         if not message.contents:
@@ -618,7 +643,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         A2APart(
                             root=FilePart(
                                 file=FileWithBytes(
-                                    bytes=_get_uri_data(content.uri),
+                                    bytes=get_uri_data(content.uri),
                                     mime_type=content.media_type,
                                 ),
                                 metadata=content.additional_properties,
@@ -642,15 +667,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 case _:
                     raise ValueError(f"Unknown content type: {content.type}")
 
-        # Exclude framework-internal keys (e.g. attribution) from wire metadata
-        internal_keys = {"_attribution", "context_id"}
-        metadata = {k: v for k, v in message.additional_properties.items() if k not in internal_keys} or None
+        metadata = message.additional_properties.get("a2a_metadata")
 
         return A2AMessage(
             role=A2ARole("user"),
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
-            context_id=message.additional_properties.get("context_id"),
+            context_id=message.additional_properties.get("context_id") or context_id,
             metadata=metadata,
         )
 
@@ -718,6 +741,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 Message(
                     role="assistant" if history_item.role == A2ARole.agent else "user",
                     contents=contents,
+                    additional_properties=history_item.metadata,
                     raw_representation=history_item,
                 )
             )
@@ -730,5 +754,6 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         return Message(
             role="assistant",
             contents=contents,
+            additional_properties=artifact.metadata,
             raw_representation=artifact,
         )

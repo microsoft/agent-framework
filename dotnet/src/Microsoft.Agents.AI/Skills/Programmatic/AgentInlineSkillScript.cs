@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
@@ -67,8 +68,42 @@ internal sealed class AgentInlineSkillScript : AgentSkillScript
     public override JsonElement? ParametersSchema => this._function.JsonSchema;
 
     /// <inheritdoc/>
-    public override async Task<object?> RunAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default)
+    public override async Task<object?> RunAsync(AgentSkill skill, JsonElement? arguments, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default)
     {
-        return await this._function.InvokeAsync(arguments, cancellationToken).ConfigureAwait(false);
+        var funcArgs = ConvertToFunctionArguments(arguments);
+        funcArgs.Services = serviceProvider;
+
+        return await this._function.InvokeAsync(funcArgs, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Converts a raw <see cref="JsonElement"/> to <see cref="AIFunctionArguments"/> for delegate invocation.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when <paramref name="arguments"/> is provided but is not a JSON object.
+    /// Inline skill scripts expect arguments as a JSON object whose properties map to the delegate's parameters.
+    /// </exception>
+    private static AIFunctionArguments ConvertToFunctionArguments(JsonElement? arguments)
+    {
+        if (arguments is null ||
+            arguments.Value.ValueKind == JsonValueKind.Null ||
+            arguments.Value.ValueKind == JsonValueKind.Undefined)
+        {
+            return [];
+        }
+
+        if (arguments.Value.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                $"Inline skill scripts expect arguments as a JSON object but received a JSON element of kind '{arguments.Value.ValueKind}'.");
+        }
+
+        var dict = new Dictionary<string, object?>();
+        foreach (var property in arguments.Value.EnumerateObject())
+        {
+            dict[property.Name] = property.Value;
+        }
+
+        return new AIFunctionArguments(dict);
     }
 }

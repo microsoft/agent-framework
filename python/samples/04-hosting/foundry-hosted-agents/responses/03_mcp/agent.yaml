@@ -1,0 +1,11 @@
+kind: hosted
+name: agent-framework-agent-with-remote-mcp-tools-responses
+protocols:
+  - protocol: responses
+    version: 1.0.0
+resources:
+  cpu: "0.25"
+  memory: 0.5Gi
+environment_variables:
+  - name: GITHUB_PAT
+    value: ${GITHUB_PAT}
