@@ -136,7 +136,7 @@ async def main():
           # project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
           # model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
       ),
-      name="HaikuBot",
+      name="HaikuAgent",
       instructions="You are an upbeat assistant that writes beautifully.",
     )
 
@@ -147,7 +147,7 @@ if __name__ == "__main__":
 ```
 
 #### Basic Agent - .NET
-Create a simple Agent, using Microsoft Foundry with token-based auth, that tells jokes
+Create a simple Agent, using Microsoft Foundry that writes a haiku about the Microsoft Agent Framework
 
 ```c#
 // This sample shows how to create and run a basic agent with AIProjectClient.AsAIAgent(...).
@@ -161,10 +161,10 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 
 AIAgent agent =
     new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
-    .AsAIAgent(model: deploymentName, instructions: "You are good at telling jokes.", name: "JokerAgent");
+    .AsAIAgent(model: deploymentName, instructions: "You are an upbeat assistant that writes beautifully.", name: "HaikuAgent");
 
 // Once you have the agent, you can invoke it like any other AIAgent.
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
+Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
 
 ## More Examples & Samples
