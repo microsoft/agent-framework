@@ -159,6 +159,10 @@ OPTION_TRANSLATIONS: dict[str, str] = {
     "max_tokens": "max_completion_tokens",
 }
 
+REASONING_DETAILS_FIELD = "reasoning_details"
+REASONING_CONTENT_FIELD = "reasoning_content"
+REASONING_FORMAT_KEY = "openai_reasoning_format"
+
 
 # region Base Client
 class RawOpenAIChatCompletionClient(  # type: ignore[misc]
@@ -687,8 +691,8 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                 contents.append(text_content)
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
-            if reasoning_details := getattr(choice.message, "reasoning_details", None):
-                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+            if reasoning_content := self._parse_reasoning_from_choice_message(choice):
+                contents.append(reasoning_content)
             messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -725,8 +729,8 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
-            if reasoning_details := getattr(choice.delta, "reasoning_details", None):
-                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+            if reasoning_content := self._parse_reasoning_from_choice_delta(choice):
+                contents.append(reasoning_content)
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -768,6 +772,28 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             return Content.from_text(text=message.content, raw_representation=choice)
         if hasattr(message, "refusal") and message.refusal:
             return Content.from_text(text=message.refusal, raw_representation=choice)
+        return None
+
+    def _parse_reasoning_from_choice_message(self, choice: Choice) -> Content | None:
+        """Parse reasoning content from a non-streaming chat completion choice."""
+        if reasoning_details := getattr(choice.message, REASONING_DETAILS_FIELD, None):
+            return Content.from_text_reasoning(protected_data=json.dumps(reasoning_details))
+        if reasoning_content := getattr(choice.message, REASONING_CONTENT_FIELD, None):
+            return Content.from_text_reasoning(
+                protected_data=json.dumps(reasoning_content),
+                additional_properties={REASONING_FORMAT_KEY: REASONING_CONTENT_FIELD},
+            )
+        return None
+
+    def _parse_reasoning_from_choice_delta(self, choice: ChunkChoice) -> Content | None:
+        """Parse reasoning content from a streaming chat completion delta."""
+        if reasoning_details := getattr(choice.delta, REASONING_DETAILS_FIELD, None):
+            return Content.from_text_reasoning(protected_data=json.dumps(reasoning_details))
+        if reasoning_content := getattr(choice.delta, REASONING_CONTENT_FIELD, None):
+            return Content.from_text_reasoning(
+                text=reasoning_content,
+                additional_properties={REASONING_FORMAT_KEY: REASONING_CONTENT_FIELD},
+            )
         return None
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
@@ -852,6 +878,7 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 
         all_messages: list[dict[str, Any]] = []
         pending_reasoning: Any = None
+        pending_reasoning_field = REASONING_DETAILS_FIELD
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
             if content.type in ("function_approval_request", "function_approval_response"):
@@ -862,15 +889,22 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             }
             if message.author_name and message.role != "tool":
                 args["name"] = message.author_name
-            if "reasoning_details" in message.additional_properties and (
-                details := message.additional_properties["reasoning_details"]
+            if (
+                reasoning_field := self._reasoning_field_from_additional_properties(message.additional_properties)
+            ) and (
+                details := message.additional_properties.get(reasoning_field)
             ):
-                args["reasoning_details"] = details
+                args[reasoning_field] = details
             match content.type:
                 case "function_call":
                     if all_messages and "tool_calls" in all_messages[-1]:
                         # If the last message already has tool calls, append to it
                         all_messages[-1]["tool_calls"].append(self._prepare_content_for_openai(content))
+                    elif self._can_extend_last_assistant_message(
+                        all_messages,
+                        message,
+                    ):
+                        all_messages[-1]["tool_calls"] = [self._prepare_content_for_openai(content)]
                     else:
                         args["tool_calls"] = [self._prepare_content_for_openai(content)]  # type: ignore
                 case "function_result":
@@ -889,29 +923,50 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                         args["content"] = content.result if content.result is not None else ""
                     all_messages.append(args)
                     continue
-                case "text_reasoning" if (protected_data := content.protected_data) is not None:
+                case "text_reasoning":
                     # Buffer reasoning to attach to the next message with content/tool_calls
-                    pending_reasoning = json.loads(protected_data)
+                    reasoning_field = self._reasoning_field_from_additional_properties(content.additional_properties)
+                    if reasoning_field is None:
+                        reasoning_field = REASONING_DETAILS_FIELD
+                    if content.protected_data is not None:
+                        pending_reasoning = json.loads(content.protected_data)
+                        pending_reasoning_field = reasoning_field
+                        continue
+                    if content.text is not None:
+                        pending_reasoning = content.text
+                        pending_reasoning_field = reasoning_field
+                        continue
                 case _:
-                    if "content" not in args:
-                        args["content"] = []
-                    # this is a list to allow multi-modal content
-                    args["content"].append(self._prepare_content_for_openai(content))  # type: ignore
+                    if self._can_extend_last_assistant_message(
+                        all_messages,
+                        message,
+                    ):
+                        last_content = all_messages[-1].setdefault("content", [])
+                        if not isinstance(last_content, list):
+                            last_content = [Content.from_text(text=str(last_content)).to_dict(exclude_none=True)]
+                            all_messages[-1]["content"] = last_content
+                        cast(list[dict[str, Any]], last_content).append(self._prepare_content_for_openai(content))
+                    else:
+                        if "content" not in args:
+                            args["content"] = []
+                        # this is a list to allow multi-modal content
+                        args["content"].append(self._prepare_content_for_openai(content))  # type: ignore
             if "content" in args or "tool_calls" in args:
                 if pending_reasoning is not None:
-                    args["reasoning_details"] = pending_reasoning
+                    args[pending_reasoning_field] = pending_reasoning
                     pending_reasoning = None
+                    pending_reasoning_field = REASONING_DETAILS_FIELD
                 all_messages.append(args)
 
         # If reasoning was the only content, emit a valid message with empty content
         if pending_reasoning is not None:
             if all_messages:
-                all_messages[-1]["reasoning_details"] = pending_reasoning
+                all_messages[-1][pending_reasoning_field] = pending_reasoning
             else:
                 pending_args: dict[str, Any] = {
                     "role": message.role,
                     "content": "",
-                    "reasoning_details": pending_reasoning,
+                    pending_reasoning_field: pending_reasoning,
                 }
                 if message.author_name and message.role != "tool":
                     pending_args["name"] = message.author_name
@@ -939,6 +994,37 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                     )
 
         return all_messages
+
+    def _reasoning_field_from_additional_properties(
+        self,
+        additional_properties: Mapping[str, Any] | None,
+    ) -> str | None:
+        """Return the outbound reasoning field based on additional properties."""
+        if not additional_properties:
+            return None
+        if REASONING_CONTENT_FIELD in additional_properties:
+            return REASONING_CONTENT_FIELD
+        if REASONING_DETAILS_FIELD in additional_properties:
+            return REASONING_DETAILS_FIELD
+        if (reasoning_format := additional_properties.get(REASONING_FORMAT_KEY)) in (
+            REASONING_DETAILS_FIELD,
+            REASONING_CONTENT_FIELD,
+        ):
+            return cast(str, reasoning_format)
+        return None
+
+    def _can_extend_last_assistant_message(
+        self,
+        all_messages: list[dict[str, Any]],
+        message: Message,
+    ) -> bool:
+        """Return True when content/tool calls should stay on the current assistant message."""
+        return bool(
+            all_messages
+            and message.role == "assistant"
+            and all_messages[-1].get("role") == "assistant"
+            and "tool_call_id" not in all_messages[-1]
+        )
 
     def _prepare_content_for_openai(self, content: Content) -> dict[str, Any]:
         """Prepare content for OpenAI."""
