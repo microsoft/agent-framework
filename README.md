@@ -95,6 +95,10 @@ pip install agent-framework
 
 ```bash
 dotnet add package Microsoft.Agents.AI
+# For Foundry integration (used in the .NET quickstart below):
+dotnet add package Microsoft.Agents.AI.Foundry
+dotnet add package Azure.AI.Projects
+dotnet add package Azure.Identity
 ```
 
 ### 📚 Learning Resources
