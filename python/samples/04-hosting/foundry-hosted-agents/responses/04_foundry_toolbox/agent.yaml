@@ -1,5 +1,5 @@
 kind: hosted
-name: agent-framework-agent-with-remote-mcp-tools
+name: agent-framework-agent-with-foundry-toolbox-responses
 protocols:
   - protocol: responses
     version: 1.0.0

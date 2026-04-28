@@ -1,5 +1,5 @@
 kind: hosted
-name: agent-framework-agent-with-local-tools
+name: agent-framework-agent-with-local-tools-responses
 protocols:
   - protocol: responses
     version: 1.0.0

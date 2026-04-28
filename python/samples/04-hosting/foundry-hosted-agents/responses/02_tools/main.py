@@ -8,7 +8,7 @@ from typing import Annotated
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import AzureCliCredential
+from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
@@ -52,8 +52,8 @@ def run_bash(command: str) -> str:
 def main():
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=DefaultAzureCredential(),
     )
 
     agent = Agent(
