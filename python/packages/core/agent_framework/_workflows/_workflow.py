@@ -609,13 +609,17 @@ class Workflow(DictConvertible):
         # events are intentionally NOT blocked here: a follow-up run with
         # message=... is the normal way to deliver a response to those
         # pending requests, e.g. via WorkflowAgent._process_pending_requests.)
-        if message is not None and checkpoint_id is None and responses is None:
-            if await self._runner.context.has_messages():
-                raise RuntimeError(
-                    "Cannot start a new run with 'message' while in-flight executor "
-                    "messages remain from a prior run. Either resume from a checkpoint "
-                    "(checkpoint_id=...) or wait for the prior run to complete."
-                )
+        if (
+            message is not None
+            and checkpoint_id is None
+            and responses is None
+            and await self._runner.context.has_messages()
+        ):
+            raise RuntimeError(
+                "Cannot start a new run with 'message' while in-flight executor "
+                "messages remain from a prior run. Either resume from a checkpoint "
+                "(checkpoint_id=...) or wait for the prior run to complete."
+            )
 
         initial_executor_fn = self._resolve_execution_mode(
             message, responses, checkpoint_id, checkpoint_storage
@@ -719,10 +723,9 @@ class Workflow(DictConvertible):
                 initial_executor_fn = functools.partial(self._send_responses_internal, responses)
             return initial_executor_fn
         # Regular run or checkpoint restoration
-        initial_executor_fn = functools.partial(
+        return functools.partial(
             self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage
         )
-        return initial_executor_fn
 
     async def _restore_and_send_responses(
         self,

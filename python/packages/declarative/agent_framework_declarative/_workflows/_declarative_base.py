@@ -954,7 +954,6 @@ class DeclarativeActionExecutor(Executor):
                 last_user_id = (
                     getattr(tail, "message_id", "") or "" if tail is not None else ""
                 )
-                last_user_msg = tail
 
             if is_continuation:
                 # Continuation turn: keep prior Conversation.messages intact.
