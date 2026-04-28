@@ -569,7 +569,6 @@ class TestOptions:
             {
                 "input": "Say hello briefly.",
                 "stream": False,
-                "temperature": 0.0,
                 "max_output_tokens": 50,
             },
         )
