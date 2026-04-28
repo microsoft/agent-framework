@@ -17,9 +17,6 @@ namespace AnthropicChatCompletion.IntegrationTests;
 
 public class AnthropicChatCompletionFixture : IChatClientAgentFixture
 {
-    // All tests for Anthropic are intended to be ran locally as the CI pipeline for Anthropic is not setup.
-    internal const string SkipReason = "Integrations tests for local execution only";
-
     private readonly bool _useReasoningModel;
     private readonly bool _useBeta;
 
@@ -105,8 +102,14 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
 
     public async ValueTask InitializeAsync()
     {
-        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
-        this._agent = await this.CreateChatClientAgentAsync();
+        try
+        {
+            this._agent = await this.CreateChatClientAgentAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            Assert.Skip("Anthropic configuration could not be loaded. Error:" + ex.Message);
+        }
     }
 
     public ValueTask DisposeAsync()

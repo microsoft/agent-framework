@@ -19,17 +19,21 @@ namespace AnthropicChatCompletion.IntegrationTests;
 /// </summary>
 public sealed class AnthropicSkillsIntegrationTests
 {
-    // All tests for Anthropic are intended to be ran locally as the CI pipeline for Anthropic is not setup.
-    private const string SkipReason = "Integrations tests for local execution only";
-
     [Fact]
     public async Task CreateAgentWithPptxSkillAsync()
     {
-        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
-
-        // Arrange
-        AnthropicClient anthropicClient = new() { ApiKey = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey) };
-        string model = TestConfiguration.GetRequiredValue(TestSettings.AnthropicChatModelName);
+        AnthropicClient? anthropicClient;
+        string? model;
+        try
+        {
+            anthropicClient = new() { ApiKey = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey) };
+            model = TestConfiguration.GetRequiredValue(TestSettings.AnthropicChatModelName);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Assert.Skip("Anthropic configuration could not be loaded. Error:" + ex.Message);
+            return;
+        }
 
         BetaSkillParams pptxSkill = new()
         {
@@ -56,10 +60,16 @@ public sealed class AnthropicSkillsIntegrationTests
     [Fact]
     public async Task ListAnthropicManagedSkillsAsync()
     {
-        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
-
-        // Arrange
-        AnthropicClient anthropicClient = new() { ApiKey = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey) };
+        AnthropicClient? anthropicClient;
+        try
+        {
+            anthropicClient = new() { ApiKey = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey) };
+        }
+        catch (InvalidOperationException ex)
+        {
+            Assert.Skip("Anthropic configuration could not be loaded. Error:" + ex.Message);
+            return;
+        }
 
         // Act
         SkillListPage skills = await anthropicClient.Beta.Skills.List(

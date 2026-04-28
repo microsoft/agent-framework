@@ -279,6 +279,10 @@ jobs:
           AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
           AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
           AZURE_AI_BING_CONNECTION_ID: ${{ vars.AZURE_AI_BING_CONNECTION_ID }}
+          # Anthropic Models
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_CHAT_MODEL_NAME: ${{ vars.ANTHROPIC_CHAT_MODEL_NAME }}
+          ANTHROPIC_REASONING_MODEL_NAME: ${{ vars.ANTHROPIC_REASONING_MODEL_NAME }}
 
       # Generate test reports and check coverage
       - name: Generate test reports
