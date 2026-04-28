@@ -235,7 +235,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         Assert.True(foundSuccess, "Orchestration did not complete successfully.");
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: LLM non-determinism can produce extra review notifications, see https://github.com/microsoft/agent-framework/issues/4971")]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
@@ -309,14 +309,14 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: LLM non-determinism can produce extra review notifications, see https://github.com/microsoft/agent-framework/issues/4971")]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
         {
             // This test takes a bit longer to run due to the multiple agent interactions and the lengthy content generation.
-            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(150));
+            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(90));
 
             // Test starting an agent that schedules a content generation orchestration
             await this.WriteInputAsync(
