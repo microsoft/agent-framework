@@ -283,11 +283,29 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # a fresh run.
         latest_checkpoint_id: str | None = None
         restore_storage: FileCheckpointStorage | None = None
+        latest_checkpoint = None
         if context_id is not None:
             restore_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
             latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
             if latest_checkpoint is not None:
                 latest_checkpoint_id = latest_checkpoint.checkpoint_id
+
+        # If the latest checkpoint represents a workflow that was idle with
+        # pending request_info events (human-in-the-loop interrupts), the
+        # restore-only pre-pass below would replay those events through
+        # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``,
+        # populating ``self._agent.pending_requests``. The subsequent
+        # ``run(input_messages, ...)`` call would then route through
+        # :meth:`WorkflowAgent._process_pending_requests`, which expects
+        # function-response content and rejects plain text input. The host
+        # currently does not support resuming workflows with outstanding
+        # request_info via plain-text user turns, so in that scenario we
+        # skip the restore-only pre-pass and start a fresh turn. State
+        # accumulated by purely state-preserving workflows (no request_info)
+        # is unaffected.
+        skip_restore_due_to_pending_requests = bool(
+            latest_checkpoint is not None and latest_checkpoint.pending_request_info_events
+        )
 
         # Now run the agent with the latest input
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
@@ -313,7 +331,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # restore-only call may yield events from any pending in-flight
         # work in the checkpoint; we consume those internally here so they
         # don't surface to the response stream as duplicates.
-        if latest_checkpoint_id is not None and restore_storage is not None:
+        if (
+            latest_checkpoint_id is not None
+            and restore_storage is not None
+            and not skip_restore_due_to_pending_requests
+        ):
             if is_streaming_request:
                 async for _ in self._agent.run(
                     stream=True,
