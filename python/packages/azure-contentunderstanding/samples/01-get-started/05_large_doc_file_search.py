@@ -5,7 +5,6 @@
 #     "agent-framework-azure-contentunderstanding",
 #     "agent-framework-foundry",
 #     "azure-identity",
-#     "openai",
 # ]
 # ///
 # Run with: uv run packages/azure-contentunderstanding/samples/01-get-started/05_large_doc_file_search.py
@@ -16,15 +15,13 @@ import os
 from pathlib import Path
 
 from agent_framework import Agent, AgentSession, Content, Message
-from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
-from openai import AsyncAzureOpenAI
-
 from agent_framework.foundry import (
     ContentUnderstandingContextProvider,
     FileSearchConfig,
+    FoundryChatClient,
 )
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -67,32 +64,26 @@ SAMPLE_PDF_PATH = Path(__file__).resolve().parents[1] / "shared" / "sample_asset
 
 
 async def main() -> None:
-    # 1. Set up credentials
+    # 1. Set up credentials and LLM client
     credential = AzureCliCredential()
 
-    # 2. Create async OpenAI client for vector store operations
-    token = credential.get_token("https://cognitiveservices.azure.com/.default").token
-    openai_client = AsyncAzureOpenAI(
-        azure_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        api_version="2025-03-01-preview",
-        azure_ad_token=token,
-    )
-
-    # 3. Create LLM client (needed for get_file_search_tool)
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["FOUNDRY_MODEL"],
         credential=credential,
     )
 
-    # 4. Create vector store and file_search tool
+    # 2. Get the async OpenAI client from FoundryChatClient for vector store operations
+    openai_client = client.client
+
+    # 3. Create vector store and file_search tool
     vector_store = await openai_client.vector_stores.create(
         name="cu_large_doc_demo",
         expires_after={"anchor": "last_active_at", "days": 1},
     )
     file_search_tool = client.get_file_search_tool(vector_store_ids=[vector_store.id])
 
-    # 5. Configure CU provider with file_search integration
+    # 4. Configure CU provider with file_search integration
     # When file_search is set, CU-extracted markdown is automatically uploaded
     # to the vector store and the file_search tool is registered on the context.
     cu = ContentUnderstandingContextProvider(
@@ -152,8 +143,7 @@ async def main() -> None:
 
     # Explicitly delete the vector store created for this sample
     await openai_client.vector_stores.delete(vector_store.id)
-    await openai_client.close()
-    print("Done. Vector store deleted and client closed.")
+    print("Done. Vector store deleted.")
 
 
 if __name__ == "__main__":
