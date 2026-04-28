@@ -443,7 +443,7 @@ class Workflow(DictConvertible):
         if message is None and checkpoint_id is None:
             raise ValueError("Must provide either 'message' or 'checkpoint_id'")
 
-        # Handle checkpoint restoration
+        # Handle checkpoint restoration (may be combined with message below)
         if checkpoint_id is not None:
             has_checkpointing = self._runner.context.has_checkpointing()
 
@@ -455,8 +455,10 @@ class Workflow(DictConvertible):
 
             await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
 
-        # Handle initial message
-        elif message is not None:
+        # Handle initial message - if combined with a checkpoint_id, this
+        # delivers a continuation message to the workflow's start executor
+        # without clearing prior shared state (reset_context=False).
+        if message is not None:
             executor = self.get_start_executor()
             await executor.execute(
                 message,
@@ -660,7 +662,13 @@ class Workflow(DictConvertible):
             raise ValueError("Cannot provide both 'message' and 'responses'. Use one or the other.")
 
         if message is not None and checkpoint_id is not None:
-            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
+            # Combined message + checkpoint_id is supported: restore prior
+            # workflow state from the checkpoint, then execute the start
+            # executor with the new message. The workflow's shared state
+            # (e.g. accumulated conversation history kept in custom shared
+            # state) is preserved across the boundary because reset_context
+            # is set to False for this combination (see _resolve_execution_mode).
+            pass
 
         if message is None and responses is None and checkpoint_id is None:
             raise ValueError(

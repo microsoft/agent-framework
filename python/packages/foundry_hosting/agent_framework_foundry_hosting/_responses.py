@@ -256,19 +256,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         input_messages = _items_to_messages(input_items)
         is_streaming_request = request.stream is not None and request.stream is True
 
-        # Fetch prior conversation history from Foundry storage so workflow
-        # agents see the same history their non-workflow counterparts get
-        # (see _handle_inner_agent which builds messages from history +
-        # current input). Without this, declarative workflows triggered via
-        # WorkflowAgent.as_agent only ever see the latest user turn, even
-        # though the host's checkpoint replay restores the workflow's
-        # internal state - declarative workflows reset Conversation.messages
-        # on every new run, so cross-turn context has to come from the
-        # message list passed in, not from checkpointed workflow state.
-        history = await context.get_history()
-        history_messages = _output_items_to_messages(history)
-        full_messages = [*history_messages, *input_messages]
-
         _, are_options_set = _to_chat_options(request)
         if are_options_set:
             logger.warning("Workflow agent doesn't support runtime options. They will be ignored.")
@@ -284,34 +271,27 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if not isinstance(self._agent, WorkflowAgent):
             raise RuntimeError("Agent is not a workflow agent.")
 
-        # Restore from the latest checkpoint if available, otherwise start with an empty history
+        # Determine the latest checkpoint (if any) so we can resume the
+        # workflow's prior state in the SAME run that delivers the new
+        # user input. Multi-turn declarative workflows need the workflow's
+        # internal state (e.g. Conversation.messages, intermediate Local.*
+        # variables) to survive across user turns; the only place that
+        # state lives is the workflow checkpoint, so on every turn we
+        # restore the latest checkpoint and feed the new input back into
+        # the start executor as a continuation rather than a fresh run.
+        latest_checkpoint_id: str | None = None
         if context_id is not None:
             checkpoint_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
             latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
             if latest_checkpoint is not None:
-                if not is_streaming_request:
-                    _ = await self._agent.run(
-                        stream=False,
-                        checkpoint_id=latest_checkpoint.checkpoint_id,
-                        checkpoint_storage=checkpoint_storage,
-                    )
-                else:
-                    # Consume the streaming or the invocation will result in a no-op
-                    async for _ in self._agent.run(
-                        stream=True,
-                        checkpoint_id=latest_checkpoint.checkpoint_id,
-                        checkpoint_storage=checkpoint_storage,
-                    ):
-                        pass
+                latest_checkpoint_id = latest_checkpoint.checkpoint_id
 
         # Now run the agent with the latest input
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
 
-        # Create a new checkpoint storage for this response based on the following rules:
-        # - If no previous response ID or conversation ID is provided,
-        #   create a new checkpoint storage for this response
-        # - If a previous response ID is provided, create a new checkpoint storage for this response
-        # - If a conversation ID is provided, reuse the existing checkpoint storage for the conversation
+        # Create / reuse the checkpoint storage that will receive checkpoints
+        # written during this turn. The directory is keyed by the outer
+        # conversation id so subsequent turns find the same checkpoint dir.
         context_id = context.conversation_id or context.response_id
         checkpoint_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
 
@@ -320,7 +300,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         if not is_streaming_request:
             # Run the agent in non-streaming mode
-            response = await self._agent.run(full_messages, stream=False, checkpoint_storage=checkpoint_storage)
+            response = await self._agent.run(
+                input_messages,
+                stream=False,
+                checkpoint_id=latest_checkpoint_id,
+                checkpoint_storage=checkpoint_storage,
+            )
 
             for message in response.messages:
                 for content in message.contents:
@@ -336,7 +321,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker = _OutputItemTracker(response_event_stream)
 
         # Run the workflow agent in streaming mode
-        async for update in self._agent.run(full_messages, stream=True, checkpoint_storage=checkpoint_storage):
+        async for update in self._agent.run(
+            input_messages,
+            stream=True,
+            checkpoint_id=latest_checkpoint_id,
+            checkpoint_storage=checkpoint_storage,
+        ):
             for content in update.contents:
                 for event in tracker.handle(content):
                     yield event

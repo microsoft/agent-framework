@@ -437,8 +437,17 @@ class WorkflowAgent(BaseAgent):
                     yield event
 
         elif checkpoint_id is not None:
+            # Restore the prior workflow state from the checkpoint and, if
+            # there's a new user message in this run, deliver it to the
+            # start executor in the same call. This is the multi-turn
+            # continuation path: shared state (e.g. accumulated conversation
+            # history maintained by the workflow's executors) survives across
+            # turns because Workflow.run sets reset_context=False whenever
+            # checkpoint_id is provided.
+            message_arg: Any | None = list(input_messages) if input_messages else None
             if streaming:
                 async for event in self.workflow.run(
+                    message=message_arg,
                     stream=True,
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
@@ -448,6 +457,7 @@ class WorkflowAgent(BaseAgent):
                     yield event
             else:
                 for event in await self.workflow.run(
+                    message=message_arg,
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
                     function_invocation_kwargs=function_invocation_kwargs,
