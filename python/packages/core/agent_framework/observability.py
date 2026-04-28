@@ -1323,6 +1323,12 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 from ._types import ChatResponse
 
                 try:
+                    if result_stream._stream_error is not None:  # pyright: ignore[reportPrivateUsage]
+                        # Stream errored; skip get_final_response() to avoid firing
+                        # result hooks such as after_run context providers on error
+                        # paths. Capture the error on the span before returning.
+                        capture_exception(span=span, exception=result_stream._stream_error, timestamp=time_ns())  # pyright: ignore[reportPrivateUsage]
+                        return
                     response: ChatResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(attributes, response)
@@ -1579,6 +1585,12 @@ class AgentTelemetryLayer:
                 from ._types import AgentResponse
 
                 try:
+                    if result_stream._stream_error is not None:  # pyright: ignore[reportPrivateUsage]
+                        # Stream errored; skip get_final_response() to avoid firing
+                        # result hooks such as after_run context providers on error
+                        # paths. Capture the error on the span before returning.
+                        capture_exception(span=span, exception=result_stream._stream_error, timestamp=time_ns())  # pyright: ignore[reportPrivateUsage]
+                        return
                     response: AgentResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(

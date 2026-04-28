@@ -23,6 +23,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowRunState,
+    executor,
     handler,
 )
 from agent_framework.orchestrations import SequentialBuilder
@@ -478,3 +479,90 @@ async def test_from_response_preserves_service_session_id() -> None:
     assert result.get_outputs() is not None
 
     assert spy_agent._captured_service_session_id == "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
+
+
+@executor(
+    id="upper_case_executor",
+    input=AgentExecutorResponse,
+    output=AgentExecutorResponse,
+    workflow_output=str,
+)
+async def _upper_case_executor(
+    response: AgentExecutorResponse,
+    ctx: WorkflowContext[AgentExecutorResponse, str],
+) -> None:
+    upper_text = response.agent_response.text.upper()
+    await ctx.send_message(response.with_text(upper_text))
+    await ctx.yield_output(upper_text)
+
+
+async def test_with_text_preserves_full_conversation_through_custom_executor() -> None:
+    """Custom executor using with_text must preserve the full conversation chain."""
+    # Mirrors the reproduction from issue #5246:
+    # agent1 ("User likes sky red") -> agent2 ("User likes sky blue") -> upper_case -> agent3 ("User likes sky green")
+    agent1 = AgentExecutor(
+        _SimpleAgent(id="agent1", name="ContextAgent1", reply_text="User likes sky red"), id="agent1"
+    )
+    agent2 = AgentExecutor(
+        _SimpleAgent(id="agent2", name="ContextAgent2", reply_text="User likes sky blue"), id="agent2"
+    )
+    agent3 = AgentExecutor(
+        _SimpleAgent(id="agent3", name="ContextAgent3", reply_text="User likes sky green"), id="agent3"
+    )
+    capturer = _CaptureFullConversation(id="capture")
+
+    wf = (
+        WorkflowBuilder(start_executor=agent1, output_executors=[capturer])
+        .add_chain([agent1, agent2, _upper_case_executor, agent3, capturer])
+        .build()
+    )
+
+    result = await wf.run("")
+    payload = next(o for o in result.get_outputs() if isinstance(o, dict))
+
+    # The final agent must see the full conversation: user, agent1, UPPER(agent2), agent3
+    assert payload["roles"] == ["user", "assistant", "assistant", "assistant"]
+    assert payload["texts"][1] == "User likes sky red"
+    assert payload["texts"][2] == "USER LIKES SKY BLUE"
+    assert payload["texts"][3] == "User likes sky green"
+
+
+async def test_with_text_does_not_mutate_original() -> None:
+    """with_text returns a new instance; the original must be unmodified."""
+    original = AgentExecutorResponse(
+        executor_id="test_exec",
+        agent_response=AgentResponse(messages=[Message("assistant", ["original reply"])]),
+        full_conversation=[Message("user", ["prompt"]), Message("assistant", ["original reply"])],
+    )
+
+    new = original.with_text("transformed reply")
+
+    assert new is not original
+    assert new.agent_response.text == "transformed reply"
+    assert new.full_conversation[-1].text == "transformed reply"
+    assert new.full_conversation[-1].role == "assistant"
+    # Original unchanged
+    assert original.agent_response.text == "original reply"
+    assert original.full_conversation[-1].text == "original reply"
+
+
+async def test_with_text_strips_multi_message_agent_turn() -> None:
+    """When the agent turn has multiple messages (tool calls), with_text strips all of them."""
+    tool_call = Message("assistant", ["<tool_call>"])
+    tool_result = Message("tool", ["<result>"])
+    final_reply = Message("assistant", ["actual answer"])
+    user_msg = Message("user", ["question"])
+
+    original = AgentExecutorResponse(
+        executor_id="exec",
+        agent_response=AgentResponse(messages=[tool_call, tool_result, final_reply]),
+        full_conversation=[user_msg, tool_call, tool_result, final_reply],
+    )
+
+    new = original.with_text("summarised answer")
+
+    # Only the pre-agent-turn messages should remain, plus the replacement
+    assert len(new.full_conversation) == 2
+    assert new.full_conversation[0].text == "question"
+    assert new.full_conversation[1].text == "summarised answer"
+    assert new.agent_response.text == "summarised answer"
