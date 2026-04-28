@@ -889,14 +889,19 @@ class DeclarativeActionExecutor(Executor):
         - dict/Mapping: Used directly as workflow.inputs
         - str: Converted to {"input": value}
         - list[Message]: Treated as the agent-facing message contract
-          (e.g. from WorkflowAgent / as_agent()). The full message list is
-          stored in ``Conversation.messages``/``Conversation.history`` and
-          mirrored to ``System.conversations.{id}.messages`` so workflows
-          that reference ``=Conversation.messages`` (e.g. InvokeAzureAgent)
-          see the complete history including assistant turns and non-text
-          content. The last user message's text is also used as the string
+          (e.g. from WorkflowAgent / as_agent()). The prior conversation
+          history is stored in ``Conversation.messages``/
+          ``Conversation.history`` and mirrored to
+          ``System.conversations.{id}.messages`` so workflows that
+          reference ``=Conversation.messages`` (e.g. InvokeAzureAgent) see
+          assistant turns and other earlier messages, including non-text
+          content. At the start of a turn this history excludes the current
+          user message; that message's text is instead used as the string
           input (``Inputs.input``) and surfaced via ``System.LastMessage*``
-          for backward compatibility with simple text-only workflows.
+          for backward compatibility with simple text-only workflows. Agent
+          executors are responsible for appending the current user message
+          to ``Conversation.messages`` immediately before invoking the
+          inner agent.
         - DeclarativeMessage: Internal message, no initialization needed
         - Any other type: Converted via str() to {"input": str(value)}
 
@@ -964,7 +969,21 @@ class DeclarativeActionExecutor(Executor):
                 # invoking the inner agent (matching the first-turn
                 # contract where Conversation.messages holds prior turns
                 # only).
-                state.set("Inputs.input", last_user_text)
+                #
+                # Note: ``state.set("Inputs.input", ...)`` would route to
+                # the Custom namespace (Inputs is not a recognized top-level
+                # writable namespace - see DeclarativeWorkflowState.set).
+                # PowerFx expressions like ``=Workflow.Inputs.input`` /
+                # ``=inputs.input`` read state_data["Inputs"] directly, so
+                # we update that dict in place via get_state_data /
+                # set_state_data.
+                state_data = state.get_state_data()
+                inputs_dict = state_data.get("Inputs")
+                if not isinstance(inputs_dict, dict):
+                    inputs_dict = {}
+                    state_data["Inputs"] = inputs_dict
+                inputs_dict["input"] = last_user_text
+                state.set_state_data(state_data)
                 # Trailing non-user messages (e.g. tool results) sandwiched
                 # before the new user message in the trigger are still
                 # appended so later actions see them.
