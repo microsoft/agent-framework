@@ -1,5 +1,5 @@
 kind: hosted
-name: agent-framework-workflows
+name: agent-framework-workflows-responses
 protocols:
   - protocol: responses
     version: 1.0.0

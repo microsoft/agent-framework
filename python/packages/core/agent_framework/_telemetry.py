@@ -79,9 +79,11 @@ def _detect_hosted_environment() -> None:
     except (ModuleNotFoundError, ValueError):
         return
     with contextlib.suppress(ImportError, AttributeError):
-        from azure.ai.agentserver.core import AgentConfig  # pyright: ignore[reportMissingImports]
+        from azure.ai.agentserver.core import (  # pyright: ignore[reportMissingImports]
+            AgentConfig,  # pyright: ignore[reportUnknownVariableType]
+        )
 
-        if AgentConfig.from_env().is_hosted:
+        if AgentConfig.from_env().is_hosted:  # pyright: ignore[reportUnknownMemberType]
             _add_user_agent_prefix(_HOSTED_USER_AGENT_PREFIX)
             _hosted_env_detected = True
 
