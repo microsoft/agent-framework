@@ -128,6 +128,13 @@ class AgentApprovalExecutor(WorkflowExecutor):
         Args:
             agent: The agent protocol to use for generating responses.
             context_mode: The mode for providing context to the agent.
+
+        Note:
+            ``propagate_request=True`` is set on the inner WorkflowExecutor so that
+            human-in-the-loop pause events bubble up through any parent workflow rather
+            than being intercepted internally. This means when this orchestration is itself
+            nested (e.g. used as a sub-workflow via WorkflowExecutor), HITL pauses surface
+            to the outermost caller automatically.
         """
         self._context_mode: Literal["full", "last_agent", "custom"] | None = context_mode
         self._description = agent.description

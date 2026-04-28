@@ -29,6 +29,11 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import deprecated  # type: ignore # pragma: no cover
+
 from agent_framework import Agent, AgentSession, Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
@@ -852,24 +857,23 @@ class GroupChatBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
-    def with_request_info(self, *, agents: Sequence[str | SupportsAgentRun] | None = None) -> GroupChatBuilder:
-        """Enable request info after agent participant responses.
+    def with_human_in_the_loop(self, *, agents: Sequence[str | SupportsAgentRun] | None = None) -> GroupChatBuilder:
+        """Enable human-in-the-loop (HITL) pausing after agent participant responses.
 
-        This enables human-in-the-loop (HIL) scenarios for the group chat orchestration.
         When enabled, the workflow pauses after each agent participant runs, emitting
-        a request_info event (type='request_info') that allows the caller to review the conversation and optionally
-        inject guidance for the agent participant to iterate. The caller provides input via
+        a request_info event (type='request_info') so the caller can review the conversation
+        and optionally inject guidance for the agent to iterate. The caller provides input via
         the standard response_handler/request_info pattern.
 
-        Simulated flow with HIL:
-        Input -> Orchestrator -> [Participant <-> Request Info] -> Orchestrator -> [Participant <-> Request Info] -> ...
+        Flow with HITL enabled:
+        Input -> Orchestrator -> [Participant <-> Human Review] -> Orchestrator -> [Participant <-> Human Review] -> ...
 
         Note: This is only available for agent participants. Executor participants can incorporate
         request info handling in their own implementation if desired.
 
         Args:
-            agents: Optional list of agents names to enable request info for.
-                    If None, enables HIL for all agent participants.
+            agents: Optional list of agent names or agent instances to enable HITL for.
+                    If None, enables HITL for all agent participants.
 
         Returns:
             Self for fluent chaining
@@ -880,6 +884,11 @@ class GroupChatBuilder:
         self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
 
         return self
+
+    @deprecated("with_request_info() is deprecated; use with_human_in_the_loop() instead.")
+    def with_request_info(self, *, agents: Sequence[str | SupportsAgentRun] | None = None) -> GroupChatBuilder:
+        """Deprecated: use with_human_in_the_loop() instead."""
+        return self.with_human_in_the_loop(agents=agents)
 
     def _resolve_orchestrator(self, participants: Sequence[Executor]) -> Executor:
         """Determine the orchestrator to use for the workflow.

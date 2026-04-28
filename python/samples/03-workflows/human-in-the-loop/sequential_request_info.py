@@ -3,7 +3,7 @@
 """
 Sample: Request Info with SequentialBuilder
 
-This sample demonstrates using the `.with_request_info()` method to pause a
+This sample demonstrates using the `.with_human_in_the_loop()` method to pause a
 SequentialBuilder workflow AFTER each agent runs, allowing external input
 (e.g., human feedback) for review and optional iteration.
 
@@ -12,7 +12,7 @@ Show how to use the request info API that pauses after every agent response,
 using the standard request_info pattern for consistency.
 
 Demonstrate:
-- Configuring request info with `.with_request_info()`
+- Configuring request info with `.with_human_in_the_loop()`
 - Handling request_info events with AgentInputRequest data
 - Injecting responses back into the workflow via run(responses=..., stream=True)
 
@@ -129,7 +129,7 @@ async def main() -> None:
     workflow = (
         SequentialBuilder(participants=[drafter, editor, finalizer])
         # Only enable request info for the editor agent
-        .with_request_info(agents=["editor"])
+        .with_human_in_the_loop(agents=["editor"])
         .build()
     )
 

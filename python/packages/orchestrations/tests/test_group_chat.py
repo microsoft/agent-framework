@@ -739,8 +739,8 @@ async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
 
 
-async def test_group_chat_with_request_info_filtering():
-    """Test that with_request_info(agents=[...]) only pauses before specified agents run."""
+async def test_group_chat_with_human_in_the_loop_filtering():
+    """Test that with_human_in_the_loop(agents=[...]) only pauses before specified agents run."""
     # Create agents - we want to verify only beta triggers pause
     alpha = StubAgent("alpha", "response from alpha")
     beta = StubAgent("beta", "response from beta")
@@ -765,7 +765,7 @@ async def test_group_chat_with_request_info_filtering():
             selection_func=selector,
             orchestrator_name="manager",
         )
-        .with_request_info(agents=["beta"])  # Only pause before beta runs
+        .with_human_in_the_loop(agents=["beta"])  # Only pause before beta runs
         .build()
     )
 
@@ -796,8 +796,8 @@ async def test_group_chat_with_request_info_filtering():
     assert len(outputs) == 1
 
 
-async def test_group_chat_with_request_info_no_filter_pauses_all():
-    """Test that with_request_info() without agents pauses before all participants."""
+async def test_group_chat_with_human_in_the_loop_no_filter_pauses_all():
+    """Test that with_human_in_the_loop() without agents pauses before all participants."""
     # Create agents
     alpha = StubAgent("alpha", "response from alpha")
 
@@ -819,7 +819,7 @@ async def test_group_chat_with_request_info_no_filter_pauses_all():
             selection_func=selector,
             orchestrator_name="manager",
         )
-        .with_request_info()  # No filter - pause for all
+        .with_human_in_the_loop()  # No filter - pause for all
         .build()
     )
 
@@ -835,17 +835,32 @@ async def test_group_chat_with_request_info_no_filter_pauses_all():
     assert request_events[0].source_executor_id == "alpha"
 
 
-def test_group_chat_builder_with_request_info_returns_self():
-    """Test that with_request_info() returns self for method chaining."""
+def test_group_chat_builder_with_human_in_the_loop_returns_self():
+    """Test that with_human_in_the_loop() returns self for method chaining."""
     agent = StubAgent("test", "response")
     builder = GroupChatBuilder(participants=[agent])
-    result = builder.with_request_info()
+    result = builder.with_human_in_the_loop()
     assert result is builder
 
     # Also test with agents parameter
     builder2 = GroupChatBuilder(participants=[agent])
-    result2 = builder2.with_request_info(agents=["test"])
+    result2 = builder2.with_human_in_the_loop(agents=["test"])
     assert result2 is builder2
+
+
+def test_group_chat_builder_with_request_info_deprecated():
+    """Test that with_request_info() emits DeprecationWarning and still works."""
+    import warnings
+
+    agent = StubAgent("test", "response")
+    builder = GroupChatBuilder(participants=[agent])
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        result = builder.with_request_info()
+        assert result is builder
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert "with_human_in_the_loop" in str(w[0].message)
 
 
 # region Orchestrator Factory Tests

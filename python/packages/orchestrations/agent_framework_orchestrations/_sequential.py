@@ -38,8 +38,14 @@ confusion and to mirror how the concurrent builder uses explicit dispatcher/aggr
 """
 
 import logging
+import sys
 from collections.abc import Sequence
 from typing import Any, Literal
+
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import deprecated  # type: ignore # pragma: no cover
 
 from agent_framework import Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import (
@@ -128,13 +134,13 @@ class SequentialBuilder:
         # Enable checkpoint persistence
         workflow = SequentialBuilder(participants=[agent1, agent2], checkpoint_storage=storage).build()
 
-        # Enable request info for mid-workflow feedback (pauses before each agent)
-        workflow = SequentialBuilder(participants=[agent1, agent2]).with_request_info().build()
+        # Enable human-in-the-loop for mid-workflow feedback (pauses before each agent)
+        workflow = SequentialBuilder(participants=[agent1, agent2]).with_human_in_the_loop().build()
 
-        # Enable request info only for specific agents
+        # Enable human-in-the-loop only for specific agents
         workflow = (
             SequentialBuilder(participants=[agent1, agent2, agent3])
-            .with_request_info(agents=[agent2])  # Only pause before agent2
+            .with_human_in_the_loop(agents=[agent2])  # Only pause before agent2
             .build()
         )
     """
@@ -191,28 +197,27 @@ class SequentialBuilder:
 
         self._participants = list(participants)
 
-    def with_request_info(
+    def with_human_in_the_loop(
         self,
         *,
         agents: Sequence[str | SupportsAgentRun] | None = None,
     ) -> "SequentialBuilder":
-        """Enable request info after agent participant responses.
+        """Enable human-in-the-loop (HITL) pausing after agent participant responses.
 
-        This enables human-in-the-loop (HIL) scenarios for the sequential orchestration.
         When enabled, the workflow pauses after each agent participant runs, emitting
-        a request_info event (type='request_info') that allows the caller to review the conversation and optionally
-        inject guidance for the agent participant to iterate. The caller provides input via
+        a request_info event (type='request_info') so the caller can review the conversation
+        and optionally inject guidance for the agent to iterate. The caller provides input via
         the standard response_handler/request_info pattern.
 
-        Simulated flow with HIL:
-        Input -> [Agent Participant <-> Request Info] -> [Agent Participant <-> Request Info] -> ...
+        Flow with HITL enabled:
+        Input -> [Agent <-> Human Review] -> [Agent <-> Human Review] -> ...
 
         Note: This is only available for agent participants. Executor participants can incorporate
         request info handling in their own implementation if desired.
 
         Args:
-            agents: Optional list of agents names or agent factories to enable request info for.
-                    If None, enables HIL for all agent participants.
+            agents: Optional list of agent names or agent instances to enable HITL for.
+                    If None, enables HITL for all agent participants.
 
         Returns:
             Self for fluent chaining
@@ -223,6 +228,15 @@ class SequentialBuilder:
         self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
 
         return self
+
+    @deprecated("with_request_info() is deprecated; use with_human_in_the_loop() instead.")
+    def with_request_info(
+        self,
+        *,
+        agents: Sequence[str | SupportsAgentRun] | None = None,
+    ) -> "SequentialBuilder":
+        """Deprecated: use with_human_in_the_loop() instead."""
+        return self.with_human_in_the_loop(agents=agents)
 
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
