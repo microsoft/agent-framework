@@ -13,8 +13,6 @@ namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) : SamplesValidationBase(outputHelper)
 {
-    private const string SkipFlakyTimingTest = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971";
-
     private static readonly string s_samplesPath = Path.GetFullPath(
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableAgents", "ConsoleApps"));
 
@@ -237,7 +235,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         Assert.True(foundSuccess, "Orchestration did not complete successfully.");
     }
 
-    [Fact(Skip = SkipFlakyTimingTest)]
+    [Fact]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
@@ -311,14 +309,14 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact(Skip = SkipFlakyTimingTest)]
+    [Fact]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
         {
             // This test takes a bit longer to run due to the multiple agent interactions and the lengthy content generation.
-            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(90));
+            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(150));
 
             // Test starting an agent that schedules a content generation orchestration
             await this.WriteInputAsync(
@@ -396,14 +394,14 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact(Skip = SkipFlakyTimingTest)]
+    [Fact]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_ReliableStreaming");
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
         {
             // This test takes a bit longer to run due to the multiple agent interactions and the lengthy content generation.
-            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(90));
+            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(150));
 
             // Test the agent endpoint with a simple prompt
             await this.WriteInputAsync(process, "Plan a 5-day trip to Seattle. Include daily activities.", testTimeoutCts.Token);

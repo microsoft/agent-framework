@@ -15,8 +15,6 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLifetime
 {
-    private const string SkipFlakyTimingTest = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971";
-
     private const string AzureFunctionsPort = "7071";
     private const string AzuritePort = "10000";
     private const string DtsPort = "8080";
@@ -37,7 +35,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             .Build();
 
     private static bool s_infrastructureStarted;
-    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(3);
 
     // In CI, `dotnet run` builds the Functions project from scratch before the host starts, so 60s is not enough.
     private static readonly TimeSpan s_functionsReadyTimeout = TimeSpan.FromSeconds(180);
@@ -274,7 +272,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact(Skip = SkipFlakyTimingTest)]
+    [Fact]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -316,7 +314,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     }
                 },
                 message: "Orchestration is requesting human feedback",
-                timeout: TimeSpan.FromSeconds(60));
+                timeout: TimeSpan.FromSeconds(90));
 
             // Approve the content
             Uri approvalUri = new($"{runAgentUri}?thread_id={sessionId}");
@@ -336,7 +334,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     }
                 },
                 message: "Content published notification is logged",
-                timeout: TimeSpan.FromSeconds(60));
+                timeout: TimeSpan.FromSeconds(90));
 
             // Verify the final orchestration status by asking the agent for the status
             Uri statusUri = new($"{runAgentUri}?thread_id={sessionId}");
@@ -360,7 +358,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     return isCompleted && hasContent;
                 },
                 message: "Orchestration is completed",
-                timeout: TimeSpan.FromSeconds(60));
+                timeout: TimeSpan.FromSeconds(90));
         });
     }
 
@@ -404,7 +402,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact(Skip = SkipFlakyTimingTest)]
+    [Fact]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");
