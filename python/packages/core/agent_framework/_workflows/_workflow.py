@@ -299,7 +299,7 @@ class Workflow(DictConvertible):
     async def _run_workflow_with_tracing(
         self,
         initial_executor_fn: Callable[[], Awaitable[None]] | None = None,
-        is_fresh_message_run: bool = True,
+        is_continuation: bool = False,
         streaming: bool = False,
         function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
@@ -311,12 +311,13 @@ class Workflow(DictConvertible):
 
         Args:
             initial_executor_fn: Optional function to execute initial executor.
-            is_fresh_message_run: True when this run is a fresh new turn delivered
-                via the start executor (i.e. ``message`` is provided without a
-                ``checkpoint_id`` or ``responses``). Resets per-run accounting
-                (iteration counter and run kwargs) without touching the shared
-                workflow state. False for checkpoint restores and responses-only
-                runs, which are continuations of prior work.
+            is_continuation: True when this run is a continuation of prior
+                work (a checkpoint restore or a responses-only replay) rather
+                than a fresh new turn delivered via the start executor with
+                ``message=...``. Continuations preserve per-run accounting
+                (iteration counter and run kwargs) from the prior turn;
+                fresh-message runs reset them. Shared workflow state is
+                preserved in both cases.
             streaming: Whether to enable streaming mode for agents.
             function_invocation_kwargs: Optional kwargs to store in State for function
                 invocations in subagents.
@@ -358,7 +359,7 @@ class Workflow(DictConvertible):
                 # the same instance and have prior turns' context survive.
                 # Iteration counting and per-run kwargs ARE per-run though,
                 # so they're reset here.
-                if is_fresh_message_run:
+                if not is_continuation:
                     self._runner.reset_iteration_count()
 
                 # Store run kwargs in State so executors can access them.
@@ -381,7 +382,7 @@ class Workflow(DictConvertible):
                             client_kwargs, "client_kwargs"
                         )
                     self._state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
-                elif is_fresh_message_run:
+                elif not is_continuation:
                     self._state.set(WORKFLOW_RUN_KWARGS_KEY, {})
                 self._state.commit()  # Commit immediately so kwargs are available
 
@@ -601,20 +602,18 @@ class Workflow(DictConvertible):
         if checkpoint_storage is not None:
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
 
-        # Async validation: a fresh-message run (no checkpoint, no responses)
-        # is only allowed when the runner context has fully drained from any
-        # prior run. If it still has in-flight executor messages, the prior
-        # run didn't complete - the caller must either resume from a
-        # checkpoint or wait for the prior run to drain. (Pending request_info
-        # events are intentionally NOT blocked here: a follow-up run with
-        # message=... is the normal way to deliver a response to those
-        # pending requests, e.g. via WorkflowAgent._process_pending_requests.)
-        if (
-            message is not None
-            and checkpoint_id is None
-            and responses is None
-            and await self._runner.context.has_messages()
-        ):
+        # Async validation: a fresh-message run is only allowed when the
+        # runner context has fully drained from any prior run. If it still
+        # has in-flight executor messages, the prior run didn't complete -
+        # the caller must either resume from a checkpoint or wait for the
+        # prior run to drain. (Pending request_info events are intentionally
+        # NOT blocked here: a follow-up run with message=... is the normal
+        # way to deliver a response to those pending requests, e.g. via
+        # WorkflowAgent._process_pending_requests.)
+        # NOTE: _validate_run_params already enforces that ``message`` is
+        # mutually exclusive with both ``checkpoint_id`` and ``responses``,
+        # so we don't need to re-check those here.
+        if message is not None and await self._runner.context.has_messages():
             raise RuntimeError(
                 "Cannot start a new run with 'message' while in-flight executor "
                 "messages remain from a prior run. Resume from a checkpoint "
@@ -629,7 +628,7 @@ class Workflow(DictConvertible):
 
         async for event in self._run_workflow_with_tracing(
             initial_executor_fn=initial_executor_fn,
-            is_fresh_message_run=(message is not None and checkpoint_id is None and responses is None),
+            is_continuation=(message is None),
             streaming=streaming,
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
