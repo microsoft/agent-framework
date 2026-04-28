@@ -56,7 +56,7 @@ MAF may be more than what you need today. It is intentionally designed for syste
 - **Orchestration Patterns & Workflows**: Build multi-agent systems with graph-based workflows supporting sequential, concurrent, handoff, and group collaboration patterns; includes checkpointing, streaming, human-in-the-loop, and time-travel
   - [Python workflows](./python/samples/03-workflows/) | [.NET workflows](./dotnet/samples/03-workflows/)
 - **Foundry Hosted Agents (new)**: Deploy and host your agents to Foundry-hosted infrastructure with just 2 additional lines of code
-  - [Foundry hosted agent samples](./python/samples/04-hosting/foundry-hosted-agents/)
+  - [Python samples](./python/samples/04-hosting/foundry-hosted-agents/) | [.NET samples](./dotnet/samples/04-hosting/FoundryHostedAgents/)
 - **Observability**: Built-in OpenTelemetry integration for distributed tracing, monitoring, and debugging
   - [Python observability](./python/samples/02-agents/observability/) | [.NET telemetry](./dotnet/samples/02-agents/AgentOpenTelemetry/)
 - **Declarative Agents**: Define agents using YAML for faster setup and versioning
@@ -73,9 +73,9 @@ MAF may be more than what you need today. It is intentionally designed for syste
 - [Getting Started](#-getting-started)
   - [Installation](#-installation)
   - [Learning Resources](#-learning-resources)
-- [Quickstart](#quickstart)
-  - [Basic Agent - Python](#basic-agent---python)
-  - [Basic Agent - .NET](#basic-agent---net)
+  - [Quickstart](#quickstart)
+    - [Basic Agent - Python](#basic-agent---python)
+    - [Basic Agent - .NET](#basic-agent---net)
 - [More Examples & Samples](#more-examples--samples)
 - [Community & Feedback](#-community--feedback)
 - [Troubleshooting](#troubleshooting)
