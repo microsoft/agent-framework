@@ -147,9 +147,9 @@ class TestBasicText:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "completed"
-        # There should be at least one output item with text
+        # There should be exactly one output item with text
         output_messages = [o for o in body["output"] if o["type"] == "message"]
-        assert len(output_messages) >= 1
+        assert len(output_messages) == 1
         text_parts = [c for c in output_messages[0]["content"] if c["type"] == "output_text"]
         assert len(text_parts) >= 1
         assert len(text_parts[0]["text"]) > 0
@@ -219,7 +219,9 @@ class TestStructuredContentInput:
         body = resp.json()
         assert body["status"] == "completed"
         # The response should mention Alice
-        output_text = body["output"][0]["content"][0]["text"]
+        output_messages = [o for o in body["output"] if o["type"] == "message"]
+        assert len(output_messages) == 1
+        output_text = output_messages[0]["content"][0]["text"]
         assert "alice" in output_text.lower()
 
     @pytest.mark.flaky
@@ -250,7 +252,9 @@ class TestStructuredContentInput:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "completed"
-        output_text = body["output"][0]["content"][0]["text"].lower()
+        output_messages = [o for o in body["output"] if o["type"] == "message"]
+        assert len(output_messages) == 1
+        output_text = output_messages[0]["content"][0]["text"].lower()
         assert "cat" in output_text
 
     @pytest.mark.flaky
@@ -283,7 +287,9 @@ class TestStructuredContentInput:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "completed"
-        output_text = body["output"][0]["content"][0]["text"].lower()
+        output_messages = [o for o in body["output"] if o["type"] == "message"]
+        assert len(output_messages) == 1
+        output_text = output_messages[0]["content"][0]["text"].lower()
         assert "cat" in output_text
 
     @pytest.mark.flaky
@@ -315,7 +321,9 @@ class TestStructuredContentInput:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "completed"
-        output_text = body["output"][0]["content"][0]["text"].lower()
+        output_messages = [o for o in body["output"] if o["type"] == "message"]
+        assert len(output_messages) == 1
+        output_text = output_messages[0]["content"][0]["text"].lower()
         assert "paris" in output_text
 
     @pytest.mark.flaky
@@ -348,7 +356,9 @@ class TestStructuredContentInput:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "completed"
-        output_text = body["output"][0]["content"][0]["text"]
+        output_messages = [o for o in body["output"] if o["type"] == "message"]
+        assert len(output_messages) == 1
+        output_text = output_messages[0]["content"][0]["text"]
         assert "microsoft" in output_text.lower()
 
 
@@ -392,7 +402,9 @@ class TestMultiTurn:
         assert resp2.status_code == 200
         body2 = resp2.json()
         assert body2["status"] == "completed"
-        output_text = body2["output"][0]["content"][0]["text"].lower()
+        output_messages = [o for o in body2["output"] if o["type"] == "message"]
+        assert len(output_messages) == 1
+        output_text = output_messages[0]["content"][0]["text"].lower()
         assert "blue" in output_text
 
     @pytest.mark.flaky
@@ -433,7 +445,10 @@ class TestMultiTurn:
             },
         )
         assert resp3.status_code == 200
-        output_text = resp3.json()["output"][0]["content"][0]["text"].lower()
+        body3 = resp3.json()
+        output_messages = [o for o in body3["output"] if o["type"] == "message"]
+        assert len(output_messages) == 1
+        output_text = output_messages[0]["content"][0]["text"].lower()
         assert "max" in output_text
         assert "luna" in output_text
 
@@ -503,7 +518,7 @@ class TestToolCalling:
 
         # The output should contain the final text referencing the weather
         output_messages = [o for o in body["output"] if o["type"] == "message"]
-        assert len(output_messages) >= 1
+        assert len(output_messages) == 1
         final_text = output_messages[0]["content"][0]["text"].lower()
         assert "72" in final_text or "sunny" in final_text or "seattle" in final_text
 
@@ -562,5 +577,7 @@ class TestOptions:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "completed"
-        output_text = body["output"][0]["content"][0]["text"]
+        output_messages = [o for o in body["output"] if o["type"] == "message"]
+        assert len(output_messages) == 1
+        output_text = output_messages[0]["content"][0]["text"]
         assert len(output_text) > 0
