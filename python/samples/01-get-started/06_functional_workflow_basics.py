@@ -36,6 +36,8 @@ async def text_workflow(text: str) -> str:
     """Uppercase the text, then reverse it."""
     upper = await to_upper_case(text)
     return await reverse_text(upper)
+
+
 # </create_workflow>
 
 

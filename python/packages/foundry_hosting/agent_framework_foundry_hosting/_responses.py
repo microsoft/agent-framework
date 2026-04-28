@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -1075,6 +1076,31 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     raise ValueError(f"Unsupported OutputMessageContent type: {content.type}")
 
 
+def _convert_file_data(data_uri: str, filename: str | None = None) -> Content:
+    """Convert a file_data data URI to a Content object.
+
+    For text/* MIME types, decodes the base64 content and returns it as text.
+    For other types, returns a URI-based Content with the filename preserved.
+    """
+    # Parse data URI: data:<media_type>;base64,<data>
+    if data_uri.startswith("data:") and ";base64," in data_uri:
+        header, encoded = data_uri.split(";base64,", 1)
+        media_type = header[len("data:") :]
+        if media_type.startswith("text/"):
+            try:
+                decoded_text = base64.b64decode(encoded).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                logger.warning(
+                    "Failed to decode text/* file_data as UTF-8, falling through to URI passthrough.",
+                    exc_info=True,
+                )
+            else:
+                prefix = f"[File: {filename}]\n" if filename else ""
+                return Content.from_text(f"{prefix}{decoded_text}")
+    additional_properties = {"filename": filename} if filename else None
+    return Content.from_uri(data_uri, additional_properties=additional_properties)
+
+
 def _convert_message_content(content: MessageContent) -> Content:
     """Converts a MessageContent to a Content object.
 
@@ -1108,7 +1134,9 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content.type == "input_image":
         image = cast(MessageContentInputImageContent, content)
         if image.image_url:
-            return Content.from_uri(image.image_url)
+            if image.image_url.startswith("data:"):
+                return Content.from_uri(image.image_url)
+            return Content.from_uri(image.image_url, media_type="image/*")
         if image.file_id:
             return Content.from_hosted_file(image.file_id)
     if content.type == "input_file":
@@ -1117,6 +1145,8 @@ def _convert_message_content(content: MessageContent) -> Content:
             return Content.from_uri(file.file_url)
         if file.file_id:
             return Content.from_hosted_file(file.file_id, name=file.filename)
+        if file.file_data:
+            return _convert_file_data(file.file_data, file.filename)
     if content.type == "computer_screenshot":
         screenshot = cast(ComputerScreenshotContent, content)
         return Content.from_uri(screenshot.image_url)
