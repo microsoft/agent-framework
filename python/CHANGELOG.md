@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-04-28
+
+### Added
+- **agent-framework-foundry-hosting**: Add file data type support to hosted-agent Responses, refresh `foundry-hosted-agents` samples, and add response test coverage ([#5485](https://github.com/microsoft/agent-framework/pull/5485))
+- **samples**: Add `requirements.txt` and `.env.example` to the `a2a/` hosting sample for pip-based setup ([#5510](https://github.com/microsoft/agent-framework/pull/5510))
+
+### Changed
+- **dependencies**: Update `rich` requirement from `<15.0.0,>=13.7.1` to `>=13.7.1,<16.0.0` in `/python` ([#5227](https://github.com/microsoft/agent-framework/pull/5227))
+- **dependencies**: Bump `prek` from `0.3.8` to `0.3.9` in `/python` ([#5228](https://github.com/microsoft/agent-framework/pull/5228))
+- **dependencies**: Bump `python-multipart` from `0.0.22` to `0.0.26` in `/python` ([#5286](https://github.com/microsoft/agent-framework/pull/5286))
+- **dependencies**: Bump `pyasn1` from `0.6.2` to `0.6.3` in `/python` ([#4748](https://github.com/microsoft/agent-framework/pull/4748))
+- **dependencies**: Bump `pytest` from `9.0.2` to `9.0.3` in `/python/packages/ag-ui` ([#5461](https://github.com/microsoft/agent-framework/pull/5461))
+- **dependencies**: Bump `pytest` from `9.0.2` to `9.0.3` in `/python/packages/devui` ([#5492](https://github.com/microsoft/agent-framework/pull/5492))
+- **dependencies**: Bump `pytest` from `9.0.2` to `9.0.3` in `/python/packages/lab` ([#5470](https://github.com/microsoft/agent-framework/pull/5470))
+- **dependencies**: Bump `uv` from `0.11.3` to `0.11.6` in `/python/packages/lab` ([#5469](https://github.com/microsoft/agent-framework/pull/5469))
+- **dependencies**: Bump `vite` from `7.1.12` to `7.3.2` in `/python/packages/devui/frontend` ([#5127](https://github.com/microsoft/agent-framework/pull/5127))
+- **dependencies**: Bump `vite` from `7.1.12` to `7.3.2` in `/python/samples/05-end-to-end/chatkit-integration/frontend` ([#5126](https://github.com/microsoft/agent-framework/pull/5126))
+- **dependencies**: Bump `postcss` from `8.5.6` to `8.5.10` in `/python/packages/devui/frontend` ([#5484](https://github.com/microsoft/agent-framework/pull/5484))
+- **dependencies**: Bump `postcss` from `8.5.6` to `8.5.10` in `/python/samples/05-end-to-end/chatkit-integration/frontend` ([#5491](https://github.com/microsoft/agent-framework/pull/5491))
+- **dependencies**: Bump `postcss` from `8.5.6` to `8.5.12` in `/python/samples/05-end-to-end/ag_ui_workflow_handoff/frontend` ([#5527](https://github.com/microsoft/agent-framework/pull/5527))
+- **dependencies**: Bump `picomatch` from `4.0.3` to `4.0.4` in `/python/packages/devui/frontend` ([#4921](https://github.com/microsoft/agent-framework/pull/4921))
+- **dependencies**: Bump `picomatch` from `4.0.3` to `4.0.4` in `/python/samples/05-end-to-end/ag_ui_workflow_handoff/frontend` ([#4936](https://github.com/microsoft/agent-framework/pull/4936))
+
+### Fixed
+- **agent-framework-core**: Prevent `inner_exception` from being lost in `AgentFrameworkException` ([#5167](https://github.com/microsoft/agent-framework/pull/5167))
+
 ## [1.2.0] - 2026-04-24
 
 ### Added
@@ -977,7 +1003,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.2.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.2.1...HEAD
+[1.2.1]: https://github.com/microsoft/agent-framework/compare/python-1.2.0...python-1.2.1
 [1.2.0]: https://github.com/microsoft/agent-framework/compare/python-1.1.1...python-1.2.0
 [1.1.1]: https://github.com/microsoft/agent-framework/compare/python-1.1.0...python-1.1.1
 [1.1.0]: https://github.com/microsoft/agent-framework/compare/python-1.0.1...python-1.1.0
