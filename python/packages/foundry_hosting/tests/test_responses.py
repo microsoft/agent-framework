@@ -25,13 +25,15 @@ from agent_framework import (
     RawAgent,
     ResponseStream,
 )
-from azure.ai.agentserver.responses import InMemoryResponseProvider
+from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponseEventStream
+from azure.ai.agentserver.responses.models import ResponseStreamEvent
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _to_outputs,  # pyright: ignore[reportPrivateUsage]
 )
 
 # region Helpers
@@ -132,6 +134,11 @@ def _parse_sse_events(body: str) -> list[dict[str, Any]]:
 def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
     """Extract event type strings from parsed SSE events."""
     return [e["event"] for e in events]
+
+
+async def _empty_response_events(*args: Any, **kwargs: Any) -> AsyncIterator[ResponseStreamEvent]:
+    if False:
+        yield MagicMock()
 
 
 # endregion
@@ -558,6 +565,56 @@ class TestStreaming:
         assert types[-1] == "response.completed"
         assert "response.output_item.added" in types
         assert "response.output_item.done" in types
+
+
+# endregion
+
+
+# region _to_outputs conversion
+
+
+class TestToOutputs:
+    """Tests for _to_outputs covering streaming Content to ResponseStreamEvent conversion."""
+
+    async def test_oauth_consent_request_emits_consent_link_message(self, caplog: pytest.LogCaptureFixture) -> None:
+        stream = MagicMock(spec=ResponseEventStream)
+        stream.aoutput_item_message.side_effect = _empty_response_events
+        content = Content.from_oauth_consent_request(
+            "https://example.com/consent",
+            additional_properties={"server_label": "github"},
+        )
+
+        async for _ in _to_outputs(stream, content):
+            pass
+
+        stream.aoutput_item_message.assert_called_once()
+        text = stream.aoutput_item_message.call_args.args[0]
+        assert "OAuth consent required" in text
+        assert "github" in text
+        assert "https://example.com/consent" in text
+        assert "not supported yet" not in caplog.text
+
+    async def test_function_approval_request_emits_approval_message(self, caplog: pytest.LogCaptureFixture) -> None:
+        stream = MagicMock(spec=ResponseEventStream)
+        stream.aoutput_item_message.side_effect = _empty_response_events
+        function_call = Content.from_function_call("call-1", "my_tool", arguments='{"x": 1}')
+        content = Content.from_function_approval_request(
+            "req-123",
+            function_call,
+            additional_properties={"server_label": "github"},
+        )
+
+        async for _ in _to_outputs(stream, content):
+            pass
+
+        stream.aoutput_item_message.assert_called_once()
+        text = stream.aoutput_item_message.call_args.args[0]
+        assert "Approval required" in text
+        assert "my_tool" in text
+        assert "github" in text
+        assert "req-123" in text
+        assert '{"x": 1}' in text
+        assert "not supported yet" not in caplog.text
 
 
 # endregion

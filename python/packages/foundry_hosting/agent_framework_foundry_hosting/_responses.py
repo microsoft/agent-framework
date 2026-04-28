@@ -1258,6 +1258,22 @@ async def _to_outputs(stream: ResponseEventStream, content: Content) -> AsyncIte
             max_output_length=content.max_output_length,
         ):
             yield event
+    elif content.type == "oauth_consent_request" and content.consent_link:
+        label = (content.additional_properties or {}).get("server_label", "")
+        text = f"OAuth consent required for MCP server '{label}'. Please visit:\n{content.consent_link}"
+        async for event in stream.aoutput_item_message(text):
+            yield event
+    elif content.type == "function_approval_request" and content.function_call is not None:
+        fn = content.function_call
+        label = (content.additional_properties or {}).get("server_label", "")
+        text = (
+            f"Approval required for MCP tool '{fn.name or 'unknown'}'"
+            + (f" on server '{label}'" if label else "")
+            + f" (request id: {content.id}).\n"
+            + f"Arguments: {_arguments_to_str(fn.arguments)}"
+        )
+        async for event in stream.aoutput_item_message(text):
+            yield event
     else:
         # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
         logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
