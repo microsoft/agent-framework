@@ -143,7 +143,7 @@ if __name__ == "__main__":
 ```
 
 #### Basic Agent - .NET
-Create a simple Agent, using Microsoft Foundry with token-based auth, that writes a haiku about the Microsoft Agent Framework
+Create a simple Agent, using Microsoft Foundry with token-based auth, that tells jokes
 
 ```c#
 // This sample shows how to create and run a basic agent with AIProjectClient.AsAIAgent(...).
