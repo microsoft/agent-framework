@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._agent import FoundryAgent, RawFoundryAgent, RawFoundryAgentChatClient
+from ._agent import FoundryAgent, FoundryAgentOptions, RawFoundryAgent, RawFoundryAgentChatClient
 from ._chat_client import FoundryChatClient, FoundryChatOptions, RawFoundryChatClient
 from ._embedding_client import (
     FoundryEmbeddingClient,
@@ -25,6 +25,7 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "FoundryAgent",
+    "FoundryAgentOptions",
     "FoundryChatClient",
     "FoundryChatOptions",
     "FoundryEmbeddingClient",

@@ -15,7 +15,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     private static readonly string[] s_customExtensions = [".custom"];
     private static readonly string[] s_validExtensions = [".md", ".json", ".custom"];
     private static readonly string[] s_mixedValidInvalidExtensions = [".md", "json"];
-    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
+    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, sp, ct) => Task.FromResult<object?>(null);
 
     private readonly string _testRoot;
 

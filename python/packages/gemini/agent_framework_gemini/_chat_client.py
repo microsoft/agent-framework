@@ -10,7 +10,6 @@ from typing import Any, ClassVar, Generic, cast
 from uuid import uuid4
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
@@ -28,6 +27,7 @@ from agent_framework import (
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from google import genai
 from google.auth.credentials import Credentials
@@ -355,7 +355,7 @@ class RawGeminiChatClient(
             )
 
             client_kwargs: dict[str, Any] = {
-                "http_options": {"headers": {"x-goog-api-client": AGENT_FRAMEWORK_USER_AGENT}},
+                "http_options": {"headers": {"x-goog-api-client": get_user_agent()}},
             }
             if configured_vertexai is not None:
                 client_kwargs["vertexai"] = configured_vertexai
