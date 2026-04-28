@@ -63,12 +63,12 @@ class TestBuildSafeMetadata:
         result = _build_safe_metadata(metadata)
         assert result == metadata
 
-    def test_truncates_long_strings(self):
-        """Truncates strings over 512 chars."""
+    def test_drops_long_strings(self):
+        """Drops strings over 512 chars instead of truncating."""
         long_value = "x" * 1000
         metadata = {"key": long_value}
         result = _build_safe_metadata(metadata)
-        assert len(result["key"]) == 512
+        assert "key" not in result
 
     def test_serializes_non_strings(self):
         """Serializes non-string values to JSON."""
@@ -77,12 +77,12 @@ class TestBuildSafeMetadata:
         assert result["count"] == "42"
         assert result["items"] == "[1, 2, 3]"
 
-    def test_truncates_serialized_values(self):
-        """Truncates serialized values over 512 chars."""
+    def test_drops_oversized_serialized_values(self):
+        """Drops serialized values over 512 chars instead of truncating."""
         long_list = list(range(200))
         metadata = {"data": long_list}
         result = _build_safe_metadata(metadata)
-        assert len(result["data"]) == 512
+        assert "data" not in result
 
 
 class TestHasOnlyToolCalls:
@@ -1244,7 +1244,7 @@ class TestEmitTextReasoning:
         assert events[0].message_id == "reason_1"
         assert isinstance(events[1], ReasoningMessageStartEvent)
         assert events[1].message_id == "reason_1"
-        assert events[1].role == "assistant"
+        assert events[1].role == "reasoning"
         assert isinstance(events[2], ReasoningMessageContentEvent)
         assert events[2].message_id == "reason_1"
         assert events[2].delta == "The user is asking about weather, so I should call the weather tool."
@@ -1640,3 +1640,146 @@ class TestReasoningInSnapshot:
         # close: MsgEnd(block2) + End(block2)
         assert isinstance(close[0], ReasoningMessageEndEvent)
         assert close[0].message_id == "block2"
+
+
+class TestReasoningEventRole:
+    """Tests that reasoning events use role='reasoning' per AG-UI spec."""
+
+    def test_reasoning_role_without_flow(self):
+        """ReasoningMessageStartEvent uses role='reasoning' in non-flow mode."""
+        content = Content.from_text_reasoning(
+            id="reason_role_1",
+            text="Thinking about the question.",
+        )
+
+        events = _emit_text_reasoning(content)
+
+        msg_starts = [e for e in events if isinstance(e, ReasoningMessageStartEvent)]
+        assert len(msg_starts) == 1
+        assert msg_starts[0].role == "reasoning"
+
+    def test_reasoning_role_with_flow(self):
+        """ReasoningMessageStartEvent uses role='reasoning' in streaming flow mode."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            id="reason_role_2",
+            text="Reasoning in streaming mode.",
+        )
+
+        events = _emit_text_reasoning(content, flow)
+
+        msg_starts = [e for e in events if isinstance(e, ReasoningMessageStartEvent)]
+        assert len(msg_starts) == 1
+        assert msg_starts[0].role == "reasoning"
+
+
+async def test_session_id_matches_thread_id():
+    """Session created by run_agent_stream uses the client thread_id as session_id."""
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub)
+
+    payload = {
+        "thread_id": "my-thread-123",
+        "run_id": "run-1",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "my-thread-123"
+
+
+async def test_session_id_matches_camel_case_thread_id():
+    """Session uses threadId (camelCase) as session_id when snake_case is absent."""
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub)
+
+    payload = {
+        "threadId": "camel-thread-456",
+        "run_id": "run-2",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "camel-thread-456"
+
+
+async def test_session_id_matches_thread_id_with_service_session():
+    """Session uses thread_id as session_id even when use_service_session is enabled."""
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-3",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "service-thread-789"
+    assert stub.last_session.service_session_id == "service-thread-789"
+
+
+async def test_session_id_generated_when_no_thread_id():
+    """Session gets a generated UUID as session_id when no thread_id is provided."""
+    import uuid
+
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub)
+
+    payload = {
+        "run_id": "run-4",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    # Should be a valid UUID (auto-generated)
+    uuid.UUID(stub.last_session.session_id)
+
+
+async def test_service_session_no_thread_id_generates_uuid():
+    """With use_service_session=True and no thread_id, session_id is a UUID and service_session_id is None."""
+    import uuid
+
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+
+    payload = {
+        "run_id": "run-5",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    # session_id should be a valid auto-generated UUID
+    uuid.UUID(stub.last_session.session_id)
+    # service_session_id should be None since no thread_id was supplied
+    assert stub.last_session.service_session_id is None

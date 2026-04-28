@@ -34,4 +34,17 @@ internal static partial class A2AAgentLogMessages
         string methodName,
         string agentId,
         string? agentName);
+
+    /// <summary>
+    /// Logs <see cref="A2AAgent"/> falling back to GetTaskAsync after SubscribeToTaskAsync failed with UnsupportedOperation.
+    /// </summary>
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "A2AAgent {AgentId}/{AgentName} SubscribeToTask for task '{TaskId}' failed with UnsupportedOperation: {ErrorMessage}. Falling back to GetTaskAsync.")]
+    public static partial void LogA2ASubscribeToTaskFallback(
+        this ILogger logger,
+        string agentId,
+        string? agentName,
+        string taskId,
+        string errorMessage);
 }

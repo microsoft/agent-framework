@@ -30,4 +30,40 @@ public sealed class A2AClientExtensionsTests
         Assert.Equal(TestName, agent.Name);
         Assert.Equal(TestDescription, agent.Description);
     }
+
+    [Fact]
+    public void GetAIAgent_WithIA2AClient_ReturnsA2AAgentWithSpecifiedProperties()
+    {
+        // Arrange - use IA2AClient reference type to verify the extension method works with the interface
+        IA2AClient a2aClient = new A2AClient(new Uri("http://test-endpoint"));
+
+        const string TestId = "ia2a-agent-id";
+        const string TestName = "IA2A Agent";
+        const string TestDescription = "Agent created from IA2AClient";
+
+        // Act
+        var agent = a2aClient.AsAIAgent(TestId, TestName, TestDescription);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<A2AAgent>(agent);
+        Assert.Equal(TestId, agent.Id);
+        Assert.Equal(TestName, agent.Name);
+        Assert.Equal(TestDescription, agent.Description);
+    }
+
+    [Fact]
+    public void GetAIAgent_WithIA2AClient_ExposesClientViaGetService()
+    {
+        // Arrange
+        IA2AClient a2aClient = new A2AClient(new Uri("http://test-endpoint"));
+
+        // Act
+        var agent = a2aClient.AsAIAgent();
+
+        // Assert
+        var service = agent.GetService(typeof(IA2AClient));
+        Assert.NotNull(service);
+        Assert.Same(a2aClient, service);
+    }
 }
