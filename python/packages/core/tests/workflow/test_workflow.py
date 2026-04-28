@@ -488,8 +488,13 @@ class StateTrackingExecutor(Executor):
         await ctx.yield_output(existing_messages.copy())  # type: ignore
 
 
-async def test_workflow_multiple_runs_no_state_collision():
-    """Test that running the same workflow instance multiple times doesn't have state collision."""
+async def test_workflow_multiple_runs_preserve_state():
+    """Test that running the same workflow instance multiple times preserves shared state.
+
+    State preservation is the new default - calling ``Workflow.run`` repeatedly
+    on the same instance behaves like a chat agent maintaining memory across
+    turns. Callers that want fresh state should rebuild the Workflow.
+    """
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
@@ -503,29 +508,45 @@ async def test_workflow_multiple_runs_no_state_collision():
             .build()
         )
 
-        # Run 1: Should only see messages from run 1
+        # Run 1: Single record from run 1
         result1 = await workflow.run(StateTrackingMessage(data="message1", run_id="run1"))
         assert result1.get_final_state() == WorkflowRunState.IDLE
         outputs1 = result1.get_outputs()
         assert outputs1[0] == ["run1:message1"]
 
-        # Run 2: Should only see messages from run 2, not run 1
+        # Run 2: State from run 1 persists; run 2's record appends.
         result2 = await workflow.run(StateTrackingMessage(data="message2", run_id="run2"))
         assert result2.get_final_state() == WorkflowRunState.IDLE
         outputs2 = result2.get_outputs()
-        assert outputs2[0] == ["run2:message2"]  # Should NOT contain run1 data
+        assert outputs2[0] == ["run1:message1", "run2:message2"]
 
-        # Run 3: Should only see messages from run 3
+        # Run 3: Same - all three accumulate.
         result3 = await workflow.run(StateTrackingMessage(data="message3", run_id="run3"))
         assert result3.get_final_state() == WorkflowRunState.IDLE
         outputs3 = result3.get_outputs()
-        assert outputs3[0] == ["run3:message3"]  # Should NOT contain run1 or run2 data
+        assert outputs3[0] == ["run1:message1", "run2:message2", "run3:message3"]
 
-        # Verify that each run only processed its own message
-        # This confirms that the checkpointable context properly resets between runs
-        assert outputs1[0] != outputs2[0]
-        assert outputs2[0] != outputs3[0]
-        assert outputs1[0] != outputs3[0]
+
+async def test_workflow_multiple_runs_no_state_collision_after_rebuild():
+    """Rebuilding the Workflow gives a fresh shared-state slate."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        def _build():
+            executor = StateTrackingExecutor(id="state_executor")
+            return (
+                WorkflowBuilder(start_executor=executor, checkpoint_storage=storage)
+                .add_edge(executor, executor)
+                .build()
+            )
+
+        wf1 = _build()
+        result1 = await wf1.run(StateTrackingMessage(data="message1", run_id="run1"))
+        assert result1.get_outputs()[0] == ["run1:message1"]
+
+        wf2 = _build()
+        result2 = await wf2.run(StateTrackingMessage(data="message2", run_id="run2"))
+        assert result2.get_outputs()[0] == ["run2:message2"]
 
 
 async def test_workflow_checkpoint_runtime_only_configuration(
@@ -942,13 +963,16 @@ async def test_workflow_run_parameter_validation(simple_executor: Executor) -> N
     result = await workflow.run(test_message)
     assert result.get_final_state() == WorkflowRunState.IDLE
 
-    # Valid: message + checkpoint_id (combined restore + new input)
-    # is supported as of the multi-turn checkpoint continuation work
-    # (restore prior state, then deliver message to start executor with
-    # reset_context=False). Use a fake id - we just need to confirm the
-    # call no longer raises at the validation layer.
-    # Note: passing a non-existent checkpoint_id will fail at restore time,
-    # which is a different code path than the validation we're checking.
+    # Invalid: message + checkpoint_id (mutually exclusive). Multi-turn
+    # state preservation is handled by Workflow.run preserving state across
+    # calls, so the host pattern is two separate calls (restore-then-run),
+    # not a single combined call.
+    with pytest.raises(ValueError, match="Cannot provide both 'message' and 'checkpoint_id'"):
+        await workflow.run(test_message, checkpoint_id="some-checkpoint")
+
+    with pytest.raises(ValueError, match="Cannot provide both 'message' and 'checkpoint_id'"):
+        async for _ in workflow.run(test_message, checkpoint_id="some-checkpoint", stream=True):
+            pass
 
     # Invalid: none of message or checkpoint_id
     with pytest.raises(ValueError, match="Must provide at least one of"):

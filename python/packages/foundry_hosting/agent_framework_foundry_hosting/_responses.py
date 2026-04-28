@@ -298,12 +298,33 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
+        # Multi-turn pattern: when we have a prior checkpoint, restore it
+        # first (drive the workflow back to idle with prior state intact),
+        # then make a separate call that delivers the new user input. This
+        # depends on Workflow.run preserving shared state across calls. The
+        # restore-only call may yield events from any pending in-flight
+        # work in the checkpoint; we consume those internally here so they
+        # don't surface to the response stream as duplicates.
+        if latest_checkpoint_id is not None:
+            if is_streaming_request:
+                async for _ in self._agent.run(
+                    stream=True,
+                    checkpoint_id=latest_checkpoint_id,
+                    checkpoint_storage=checkpoint_storage,
+                ):
+                    pass
+            else:
+                await self._agent.run(
+                    stream=False,
+                    checkpoint_id=latest_checkpoint_id,
+                    checkpoint_storage=checkpoint_storage,
+                )
+
         if not is_streaming_request:
-            # Run the agent in non-streaming mode
+            # Run the agent in non-streaming mode with the new user input.
             response = await self._agent.run(
                 input_messages,
                 stream=False,
-                checkpoint_id=latest_checkpoint_id,
                 checkpoint_storage=checkpoint_storage,
             )
 
@@ -320,11 +341,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # lazily created on matching content, closed when a different type arrives.
         tracker = _OutputItemTracker(response_event_stream)
 
-        # Run the workflow agent in streaming mode
+        # Run the workflow agent in streaming mode with the new user input.
         async for update in self._agent.run(
             input_messages,
             stream=True,
-            checkpoint_id=latest_checkpoint_id,
             checkpoint_storage=checkpoint_storage,
         ):
             for content in update.contents:
