@@ -617,9 +617,10 @@ class Workflow(DictConvertible):
         ):
             raise RuntimeError(
                 "Cannot start a new run with 'message' while in-flight executor "
-                "messages remain from a prior run. Either resume from a checkpoint "
-                "(checkpoint_id=...), wait for the prior run to complete, or call "
-                "'await workflow.reset()' to drop the pending messages."
+                "messages remain from a prior run. Resume from a checkpoint "
+                "(checkpoint_id=...) or wait for the prior run to complete. "
+                "Workflows that need to recover from a mid-run failure must use "
+                "checkpointing; there is no in-process recovery path."
             )
 
         initial_executor_fn = self._resolve_execution_mode(
@@ -651,30 +652,6 @@ class Workflow(DictConvertible):
         if checkpoint_storage is not None:
             self._runner.context.clear_runtime_checkpoint_storage()
         self._reset_running_flag()
-
-    async def reset(self) -> None:
-        """Drop all in-flight executor messages and per-run accounting.
-
-        Workflows preserve shared state and pending executor messages
-        across :meth:`run` calls so that multi-turn callers (e.g.
-        :class:`WorkflowAgent`) can deliver follow-up turns to the same
-        instance without losing context. If a prior run aborted (e.g. the
-        runner raised :class:`WorkflowConvergenceException`) and the
-        workflow is not checkpointed, those pending messages remain in
-        the runner context and every future ``run(message=...)`` call
-        fails with ``RuntimeError`` because of the in-flight-messages
-        guard. Callers that have no checkpoint to resume from can use
-        ``await workflow.reset()`` as an explicit escape hatch to clear
-        pending messages and start fresh.
-
-        Note: this does NOT clear the workflow ``State`` (use
-        :meth:`Workflow.run` with a ``checkpoint_id`` for state replay)
-        and is a no-op while another run is in progress on this instance.
-        """
-        if self._is_running:
-            raise RuntimeError("Cannot reset a workflow while a run is in progress.")
-        self._runner.context.reset_for_new_run()
-        self._runner.reset_iteration_count()
 
     @staticmethod
     def _finalize_events(

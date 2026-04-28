@@ -960,8 +960,8 @@ async def test_workflow_run_inflight_messages_guard(simple_executor: Executor) -
     calls. If a prior run aborted before the runner drained those pending
     messages (e.g. it raised :class:`WorkflowConvergenceException`), the next
     fresh-message call should fail loudly instead of silently mixing the
-    leftover messages with the new turn. Callers can recover via
-    :meth:`Workflow.reset`.
+    leftover messages with the new turn. The supported recovery path is to
+    resume from a checkpoint; there is no in-process recovery hatch.
     """
     workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
     test_message = WorkflowMessage(data="test", source_id="test", target_id=None)
@@ -976,25 +976,6 @@ async def test_workflow_run_inflight_messages_guard(simple_executor: Executor) -
     with pytest.raises(RuntimeError, match="in-flight executor messages"):
         async for _ in workflow.run(test_message, stream=True):
             pass
-
-    # ``Workflow.reset`` is the documented escape hatch.
-    await workflow.reset()
-    assert not await workflow._runner.context.has_messages()
-
-    # After reset, a new run is accepted again.
-    result = await workflow.run(test_message)
-    assert result.get_final_state() == WorkflowRunState.IDLE
-
-
-async def test_workflow_reset_rejects_concurrent_runs(simple_executor: Executor) -> None:
-    """``Workflow.reset`` must not stomp on an in-progress run."""
-    workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
-    workflow._is_running = True
-    try:
-        with pytest.raises(RuntimeError, match="run is in progress"):
-            await workflow.reset()
-    finally:
-        workflow._is_running = False
 
 
 async def test_workflow_run_parameter_validation(simple_executor: Executor) -> None:
