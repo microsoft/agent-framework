@@ -516,9 +516,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-ai-agentserver-core", specifier = "==2.0.0b3" },
-    { name = "azure-ai-agentserver-invocations", specifier = "==1.0.0b3" },
-    { name = "azure-ai-agentserver-responses", specifier = "==1.0.0b5" },
+    { name = "azure-ai-agentserver-core", specifier = ">=2.0.0b3,<3" },
+    { name = "azure-ai-agentserver-invocations", specifier = ">=1.0.0b3,<2" },
+    { name = "azure-ai-agentserver-responses", specifier = ">=1.0.0b5,<2" },
 ]
 
 [[package]]
