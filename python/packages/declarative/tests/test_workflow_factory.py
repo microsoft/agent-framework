@@ -228,7 +228,6 @@ actions:
         outputs = result.get_outputs()
         assert any("hello-world" in str(o) for o in outputs), f"Expected 'hello-world' in outputs but got: {outputs}"
 
-    @pytest.mark.asyncio
     async def test_as_agent_round_trip_with_last_message_text(self):
         """Regression test: a declarative workflow built via WorkflowFactory must be
         consumable as an AIAgent via Workflow.as_agent().
@@ -254,6 +253,71 @@ actions:
 
         assert "Hello there" in response.text, (
             f"Expected 'Hello there' in agent response text but got: {response.text!r}"
+        )
+
+    async def test_as_agent_continuation_preserves_prior_state(self):
+        """Regression test for the ``is_continuation`` branch in
+        ``DeclarativeWorkflowExecutor._ensure_state_initialized``.
+
+        Verifies, end-to-end via ``Workflow.as_agent()``:
+          * Turn 1 initializes the declarative state via ``state.initialize``.
+          * Turn 2 takes the *continuation* branch (skips ``state.initialize``),
+            so any non-Inputs/non-System state stamped on turn 1 survives.
+          * Turn 2 still refreshes ``Inputs.input`` and
+            ``System.LastMessage*`` to the new user message.
+
+        Without state preservation, ``Workflow.run`` would clear shared state
+        on entry and ``state.initialize`` would re-run on every turn,
+        wiping the marker we stamped between calls.
+        """
+        from agent_framework_declarative._workflows._declarative_base import DECLARATIVE_STATE_KEY
+
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: as-agent-continuation-test
+actions:
+  - kind: SendActivity
+    activity:
+      text: =System.LastMessageText
+""")
+
+        agent = workflow.as_agent(name="continuation-agent")
+
+        first = await agent.run("turn-1-msg")
+        assert first.text == "turn-1-msg", (
+            f"Expected turn-1 echo 'turn-1-msg', got: {first.text!r}"
+        )
+
+        # Stamp a marker into the declarative state between turns. The
+        # continuation branch must preserve it; a state-clearing run would
+        # wipe ``DECLARATIVE_STATE_KEY`` and force re-initialization.
+        state_data = workflow._state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(state_data, dict), (
+            "Expected declarative state to be initialized after turn 1"
+        )
+        state_data["Local"] = {"persisted_marker": "kept-from-turn-1"}
+        workflow._state.set(DECLARATIVE_STATE_KEY, state_data)
+        workflow._state.commit()
+
+        second = await agent.run("turn-2-msg")
+        assert second.text == "turn-2-msg", (
+            f"Expected System.LastMessageText to refresh to 'turn-2-msg', got: {second.text!r}"
+        )
+
+        # The continuation branch in ``_ensure_state_initialized`` must:
+        # 1. preserve the cross-turn marker we stamped above
+        # 2. refresh Inputs.input and System.LastMessage* to the new turn
+        post_state = workflow._state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(post_state, dict), "declarative state vanished between turns"
+        local = post_state.get("Local", {})
+        assert local.get("persisted_marker") == "kept-from-turn-1", (
+            f"Cross-turn marker was wiped (state was reset). post_state Local={local!r}"
+        )
+        assert post_state.get("Inputs", {}).get("input") == "turn-2-msg", (
+            f"Inputs.input not refreshed on turn 2: {post_state.get('Inputs')!r}"
+        )
+        assert post_state.get("System", {}).get("LastMessageText") == "turn-2-msg", (
+            f"System.LastMessageText not refreshed on turn 2: {post_state.get('System')!r}"
         )
 
 

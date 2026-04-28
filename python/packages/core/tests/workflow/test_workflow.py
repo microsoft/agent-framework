@@ -953,6 +953,50 @@ async def test_agent_streaming_vs_non_streaming() -> None:
     assert accumulated_text == "Hello World", f"Expected 'Hello World', got '{accumulated_text}'"
 
 
+async def test_workflow_run_inflight_messages_guard(simple_executor: Executor) -> None:
+    """``run(message=...)`` must reject in-flight executor messages from a prior run.
+
+    Workflows preserve state and pending messages across :meth:`Workflow.run`
+    calls. If a prior run aborted before the runner drained those pending
+    messages (e.g. it raised :class:`WorkflowConvergenceException`), the next
+    fresh-message call should fail loudly instead of silently mixing the
+    leftover messages with the new turn. Callers can recover via
+    :meth:`Workflow.reset`.
+    """
+    workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
+    test_message = WorkflowMessage(data="test", source_id="test", target_id=None)
+
+    # Simulate an aborted prior run by leaving a message in the runner context.
+    workflow._runner.context._messages["test"] = [test_message]
+    assert await workflow._runner.context.has_messages()
+
+    with pytest.raises(RuntimeError, match="in-flight executor messages"):
+        await workflow.run(test_message)
+
+    with pytest.raises(RuntimeError, match="in-flight executor messages"):
+        async for _ in workflow.run(test_message, stream=True):
+            pass
+
+    # ``Workflow.reset`` is the documented escape hatch.
+    await workflow.reset()
+    assert not await workflow._runner.context.has_messages()
+
+    # After reset, a new run is accepted again.
+    result = await workflow.run(test_message)
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_reset_rejects_concurrent_runs(simple_executor: Executor) -> None:
+    """``Workflow.reset`` must not stomp on an in-progress run."""
+    workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
+    workflow._is_running = True
+    try:
+        with pytest.raises(RuntimeError, match="run is in progress"):
+            await workflow.reset()
+    finally:
+        workflow._is_running = False
+
+
 async def test_workflow_run_parameter_validation(simple_executor: Executor) -> None:
     """Test that stream properly validate parameter combinations."""
     workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
