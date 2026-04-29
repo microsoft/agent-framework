@@ -247,6 +247,7 @@ from ._workflows._workflow_executor import (
     WorkflowExecutor,
 )
 from .exceptions import (
+    AgentFrameworkException,
     MiddlewareException,
     UserInputRequiredException,
     WorkflowCheckpointException,
@@ -280,6 +281,7 @@ __all__ = [
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
+    "AgentFrameworkException",
     "AgentMiddleware",
     "AgentMiddlewareLayer",
     "AgentMiddlewareTypes",
