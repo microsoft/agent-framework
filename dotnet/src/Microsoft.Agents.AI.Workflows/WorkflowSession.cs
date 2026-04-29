@@ -427,6 +427,20 @@ internal sealed class WorkflowSession : AgentSession
 
                     break;
 
+                case ExecutorFailedEvent executorFailed:
+                    Exception? executorException = executorFailed.Data;
+                    if (executorException is TargetInvocationException etie && etie.InnerException != null)
+                    {
+                        executorException = etie.InnerException;
+                    }
+
+                    string executorMessage = this._includeExceptionDetails && executorException != null
+                                          ? $"Executor '{executorFailed.ExecutorId}' failed: {executorException.Message}"
+                                          : $"Executor '{executorFailed.ExecutorId}' failed.";
+
+                    yield return this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
+                    break;
+
                 case SuperStepCompletedEvent stepCompleted:
                     this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
                     goto default;

@@ -51,8 +51,11 @@ internal static class OutputConverter
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Handle workflow events from RawRepresentation
-            if (update.RawRepresentation is WorkflowEvent workflowEvent)
+            // Handle workflow events from RawRepresentation.
+            // If the update also carries Contents (e.g. WorkflowSession unwrapped a
+            // WorkflowErrorEvent or ExecutorFailedEvent into an ErrorContent payload),
+            // fall through to the content-processing path below so those are emitted.
+            if (update.RawRepresentation is WorkflowEvent workflowEvent && update.Contents.Count == 0)
             {
                 // Close any open message builder before emitting workflow items
                 foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
