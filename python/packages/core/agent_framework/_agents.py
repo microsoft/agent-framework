@@ -1447,6 +1447,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             else:
                 chat_options["instructions"] = combined_instructions
 
+        # Only store merged instructions when sensitive-data capture is enabled,
+        # so provider-extended instruction text isn't retained unnecessarily.
+        from .observability import AGENT_MERGED_INSTRUCTIONS, OBSERVABILITY_SETTINGS
+
+        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+            AGENT_MERGED_INSTRUCTIONS.set(chat_options.get("instructions"))
+
         return session_context, chat_options
 
     def as_mcp_server(

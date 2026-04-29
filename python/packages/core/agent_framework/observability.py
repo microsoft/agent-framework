@@ -105,6 +105,32 @@ INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = co
     "inner_accumulated_usage", default=None
 )
 
+# Tracks the final merged instructions (base + context-provider-extended) for the current agent invocation.
+# Set by BaseAgent._prepare_session_and_messages() after context providers run,
+# read by AgentTelemetryLayer to re-capture gen_ai.system_instructions with the full instructions.
+AGENT_MERGED_INSTRUCTIONS: Final[contextvars.ContextVar[str | list[str] | None]] = contextvars.ContextVar(
+    "agent_merged_instructions", default=None
+)
+
+
+def _recapture_system_instructions(span: trace.Span) -> None:
+    """Re-capture gen_ai.system_instructions from the AGENT_MERGED_INSTRUCTIONS ContextVar.
+
+    Called after execute() completes so the span reflects provider-extended instructions
+    rather than just the base instructions captured before execution.
+    """
+    if not OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        return
+    merged_instructions = AGENT_MERGED_INSTRUCTIONS.get()
+    if merged_instructions is not None:
+        if not isinstance(merged_instructions, list):
+            merged_instructions = [merged_instructions]
+        otel_sys_instructions = [{"type": "text", "content": instruction} for instruction in merged_instructions]
+        span.set_attribute(
+            OtelAttr.SYSTEM_INSTRUCTIONS,
+            json.dumps(otel_sys_instructions, ensure_ascii=False),
+        )
+
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
 TOKEN_USAGE_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
@@ -1541,6 +1567,7 @@ class AgentTelemetryLayer:
             inner_response_telemetry_captured_fields
         )
         inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
+        agent_merged_instructions_token = AGENT_MERGED_INSTRUCTIONS.set(None)
 
         if stream:
             try:
@@ -1602,6 +1629,10 @@ class AgentTelemetryLayer:
                     )
                     _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
+
+                    # Re-capture system_instructions if context providers extended them.
+                    _recapture_system_instructions(span)
+
                     if (
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
                         and isinstance(response, AgentResponse)
@@ -1618,12 +1649,20 @@ class AgentTelemetryLayer:
                 finally:
                     INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                     INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                    AGENT_MERGED_INSTRUCTIONS.reset(agent_merged_instructions_token)
                     _close_span()
 
             wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = result_stream.with_cleanup_hook(
                 _record_duration
             ).with_cleanup_hook(_finalize_stream)
-            weakref.finalize(wrapped_stream, _close_span)
+
+            def _gc_cleanup() -> None:
+                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                AGENT_MERGED_INSTRUCTIONS.reset(agent_merged_instructions_token)
+                _close_span()
+
+            weakref.finalize(wrapped_stream, _gc_cleanup)
             return wrapped_stream
 
         async def _run() -> AgentResponse[Any]:
@@ -1642,6 +1681,13 @@ class AgentTelemetryLayer:
                     except Exception as exception:
                         capture_exception(span=span, exception=exception, timestamp=time_ns())
                         raise
+
+                    # Re-capture system_instructions if context providers extended them.
+                    # The initial capture above only sees base instructions from merged_options;
+                    # AGENT_MERGED_INSTRUCTIONS is set by _prepare_session_and_messages()
+                    # after context providers have run and merged their contributions.
+                    _recapture_system_instructions(span)
+
                     duration = perf_counter() - start_time_stamp
                     if response:
                         response_attributes = _get_response_attributes(
@@ -1664,6 +1710,7 @@ class AgentTelemetryLayer:
             finally:
                 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                 INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                AGENT_MERGED_INSTRUCTIONS.reset(agent_merged_instructions_token)
 
         return _run()
 
