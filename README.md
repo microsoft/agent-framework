@@ -36,17 +36,19 @@ MAF supports a broad ecosystem including Microsoft Foundry, Azure OpenAI, OpenAI
 
 ## Is this the right framework for you?
 
-✅ MAF is a strong fit if you:
+MAF is a strong fit if you:
 - are building agents and workflows you expect to run in production,
 - need orchestration beyond a single prompt or stateless chat loop,
 - want graph-based patterns such as sequential, concurrent, handoff, and group collaboration,
 - care about durability, restartability, observability, governance, or human-in-the-loop control,
 - need provider flexibility so your architecture can evolve without major rewrites.
 
-💡 If your scope is limited to experimentation or simple single-prompt chatbots,
+If your scope is limited to experimentation or simple single-prompt chatbots,
 MAF may be more than what you need today. It is intentionally designed for systems where agent behavior, reliability, and operational needs grow over time.
 
-## ✨ Key Features
+## Key Features
+Explore new MAF capabilities and real implementation patterns on the [official blog](https://devblogs.microsoft.com/agent-framework/).
+
 - **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
   - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
 - **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
@@ -68,21 +70,21 @@ MAF may be more than what you need today. It is intentionally designed for syste
 - **DevUI**: Interactive developer UI for agent development, testing, and debugging workflows
   - [See the DevUI in action](https://www.youtube.com/watch?v=mOAaGY4WPvc)
 
-## 📖 Table of Contents
+## Table of Contents
 
-- [Getting Started](#-getting-started)
-  - [Installation](#-installation)
-  - [Learning Resources](#-learning-resources)
+- [Getting Started](#getting-started)
+  - [Installation](#installation)
+  - [Learning Resources](#learning-resources)
   - [Quickstart](#quickstart)
     - [Basic Agent - Python](#basic-agent---python)
     - [Basic Agent - .NET](#basic-agent---net)
 - [More Examples & Samples](#more-examples--samples)
-- [Community & Feedback](#-community--feedback)
+- [Community & Feedback](#community--feedback)
 - [Troubleshooting](#troubleshooting)
 - [Contributor Resources](#contributor-resources)
 
-## 📋 Getting Started
-### 📦 Installation
+## Getting Started
+### Installation
 Python
 
 ```bash
@@ -101,7 +103,7 @@ dotnet add package Azure.AI.Projects
 dotnet add package Azure.Identity
 ```
 
-### 📚 Learning Resources
+### Learning Resources
 
 - **[Overview](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview)** - High level overview of the framework
 - **[Quick Start](https://learn.microsoft.com/agent-framework/tutorials/quick-start)** - Get started with a simple agent
@@ -186,10 +188,10 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 - [Hosting](./dotnet/samples/04-hosting): A2A, Durable Agents, Durable Workflows
 - [End-to-End](./dotnet/samples/05-end-to-end): full applications and demos
 
-## 💬 Community & Feedback
+## Community & Feedback
 
 - **Found a bug?** File a [GitHub issue](https://github.com/microsoft/agent-framework/issues) to help us improve.
-- **Enjoying MAF?** [![GitHub stars](https://img.shields.io/badge/⭐-Star%20us%20on%20GitHub-yellow)](https://github.com/microsoft/agent-framework) to show your support and help others discover the project.
+- **Enjoying MAF?** [![GitHub stars](https://img.shields.io/badge/Star-us%20on%20GitHub-yellow)](https://github.com/microsoft/agent-framework) to show your support and help others discover the project.
 - **Have questions?** Join our [Discord](https://discord.gg/b5zjErwbQM) or visit [weekly office hours](./COMMUNITY.md#public-community-office-hours).
 
 ## Troubleshooting
