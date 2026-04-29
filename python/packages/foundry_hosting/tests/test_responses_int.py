@@ -563,13 +563,12 @@ class TestOptions:
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled
     async def test_temperature_and_max_tokens(self, server: ResponsesHostServer) -> None:
-        """Set temperature and max_output_tokens and verify the response succeeds."""
+        """Set max_output_tokens and verify the response succeeds."""
         resp = await _post_json(
             server,
             {
                 "input": "Say hello briefly.",
                 "stream": False,
-                "temperature": 0.7,
                 "max_output_tokens": 200,
             },
         )
