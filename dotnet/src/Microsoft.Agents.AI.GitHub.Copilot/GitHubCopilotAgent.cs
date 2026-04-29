@@ -67,6 +67,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="description">The description of the agent.</param>
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
+    /// <param name="onPermissionRequest">Handler called before each tool execution to approve or deny it. Defaults to <see cref="PermissionHandler.ApproveAll"/>.</param>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         bool ownsClient = false,
@@ -74,10 +75,11 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? name = null,
         string? description = null,
         IList<AITool>? tools = null,
-        string? instructions = null)
+        string? instructions = null,
+        PermissionRequestHandler? onPermissionRequest = null)
         : this(
             copilotClient,
-            GetSessionConfig(tools, instructions),
+            GetSessionConfig(tools, instructions, onPermissionRequest),
             ownsClient,
             id,
             name,
@@ -148,7 +150,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         // Create or resume a session with streaming enabled
         SessionConfig sessionConfig = this._sessionConfig != null
             ? CopySessionConfig(this._sessionConfig)
-            : new SessionConfig { Streaming = true };
+            : throw new InvalidOperationException("Session configuration is required to run the agent. Please provide a valid SessionConfig when constructing the agent or use the constructor that accepts tools and instructions.");
 
         CopilotSession copilotSession;
         if (typedSession.SessionId is not null)
@@ -210,7 +212,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                 string prompt = string.Join("\n", messages.Select(m => m.Text));
 
                 // Handle DataContent as attachments
-                (List<UserMessageDataAttachmentsItem>? attachments, tempDir) = await ProcessDataContentAttachmentsAsync(
+                (List<UserMessageAttachment>? attachments, tempDir) = await ProcessDataContentAttachmentsAsync(
                     messages,
                     cancellationToken).ConfigureAwait(false);
 
@@ -281,8 +283,11 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     {
         return new SessionConfig
         {
+            SessionId = source.SessionId,
+            ClientName = source.ClientName,
             Model = source.Model,
             ReasoningEffort = source.ReasoningEffort,
+            ModelCapabilities = source.ModelCapabilities,
             Tools = source.Tools,
             SystemMessage = source.SystemMessage,
             AvailableTools = source.AvailableTools,
@@ -290,15 +295,24 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             Provider = source.Provider,
             OnPermissionRequest = source.OnPermissionRequest,
             OnUserInputRequest = source.OnUserInputRequest,
+            OnElicitationRequest = source.OnElicitationRequest,
+            OnEvent = source.OnEvent,
             Hooks = source.Hooks,
             WorkingDirectory = source.WorkingDirectory,
             ConfigDir = source.ConfigDir,
+            EnableConfigDiscovery = source.EnableConfigDiscovery,
+            Streaming = true,
+            IncludeSubAgentStreamingEvents = source.IncludeSubAgentStreamingEvents,
             McpServers = source.McpServers,
             CustomAgents = source.CustomAgents,
+            DefaultAgent = source.DefaultAgent,
+            Agent = source.Agent,
             SkillDirectories = source.SkillDirectories,
             DisabledSkills = source.DisabledSkills,
             InfiniteSessions = source.InfiniteSessions,
-            Streaming = true
+            Commands = source.Commands,
+            CreateSessionFsHandler = source.CreateSessionFsHandler,
+            GitHubToken = source.GitHubToken,
         };
     }
 
@@ -310,8 +324,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     {
         return new ResumeSessionConfig
         {
+            ClientName = source?.ClientName,
             Model = source?.Model,
             ReasoningEffort = source?.ReasoningEffort,
+            ModelCapabilities = source?.ModelCapabilities,
             Tools = source?.Tools,
             SystemMessage = source?.SystemMessage,
             AvailableTools = source?.AvailableTools,
@@ -319,15 +335,24 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             Provider = source?.Provider,
             OnPermissionRequest = source?.OnPermissionRequest,
             OnUserInputRequest = source?.OnUserInputRequest,
+            OnElicitationRequest = source?.OnElicitationRequest,
+            OnEvent = source?.OnEvent,
             Hooks = source?.Hooks,
             WorkingDirectory = source?.WorkingDirectory,
             ConfigDir = source?.ConfigDir,
+            EnableConfigDiscovery = source?.EnableConfigDiscovery,
+            Streaming = true,
+            IncludeSubAgentStreamingEvents = source?.IncludeSubAgentStreamingEvents ?? true,
             McpServers = source?.McpServers,
             CustomAgents = source?.CustomAgents,
+            DefaultAgent = source?.DefaultAgent,
+            Agent = source?.Agent,
             SkillDirectories = source?.SkillDirectories,
             DisabledSkills = source?.DisabledSkills,
             InfiniteSessions = source?.InfiniteSessions,
-            Streaming = true
+            Commands = source?.Commands,
+            CreateSessionFsHandler = source?.CreateSessionFsHandler,
+            GitHubToken = source?.GitHubToken,
         };
     }
 
@@ -430,24 +455,24 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    private static SessionConfig? GetSessionConfig(IList<AITool>? tools, string? instructions)
+    private static SessionConfig? GetSessionConfig(IList<AITool>? tools, string? instructions, PermissionRequestHandler? onPermissionRequest = null)
     {
         List<AIFunction>? mappedTools = tools is { Count: > 0 } ? tools.OfType<AIFunction>().ToList() : null;
         SystemMessageConfig? systemMessage = instructions is not null ? new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = instructions } : null;
 
-        if (mappedTools is null && systemMessage is null)
+        if (mappedTools is null && systemMessage is null && onPermissionRequest is null)
         {
             return null;
         }
 
-        return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage };
+        return new SessionConfig { Tools = mappedTools, SystemMessage = systemMessage, OnPermissionRequest = onPermissionRequest };
     }
 
-    private static async Task<(List<UserMessageDataAttachmentsItem>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(
+    private static async Task<(List<UserMessageAttachment>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(
         IEnumerable<ChatMessage> messages,
         CancellationToken cancellationToken)
     {
-        List<UserMessageDataAttachmentsItem>? attachments = null;
+        List<UserMessageAttachment>? attachments = null;
         string? tempDir = null;
         foreach (ChatMessage message in messages)
         {
@@ -461,7 +486,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                     string tempFilePath = await dataContent.SaveToAsync(tempDir, cancellationToken).ConfigureAwait(false);
 
                     attachments ??= [];
-                    attachments.Add(new UserMessageDataAttachmentsItemFile
+                    attachments.Add(new UserMessageAttachmentFile
                     {
                         Path = tempFilePath,
                         DisplayName = Path.GetFileName(tempFilePath)

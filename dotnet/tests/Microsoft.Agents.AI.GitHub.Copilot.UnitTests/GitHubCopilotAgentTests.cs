@@ -111,7 +111,7 @@ public sealed class GitHubCopilotAgentTests
         var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
         PermissionRequestHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
         UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
-        var mcpServers = new Dictionary<string, object> { ["server1"] = new McpLocalServerConfig() };
+        var mcpServers = new Dictionary<string, McpServerConfig> { ["server1"] = new McpStdioServerConfig { Command = "echo" } };
 
         var source = new SessionConfig
         {
@@ -129,6 +129,7 @@ public sealed class GitHubCopilotAgentTests
             OnUserInputRequest = userInputHandler,
             McpServers = mcpServers,
             DisabledSkills = ["skill1"],
+            GitHubToken = "test-token",
         };
 
         // Act
@@ -149,6 +150,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal("test-token", result.GitHubToken);
         Assert.True(result.Streaming);
     }
 
@@ -162,7 +164,7 @@ public sealed class GitHubCopilotAgentTests
         var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
         PermissionRequestHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
         UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
-        var mcpServers = new Dictionary<string, object> { ["server1"] = new McpLocalServerConfig() };
+        var mcpServers = new Dictionary<string, McpServerConfig> { ["server1"] = new McpStdioServerConfig { Command = "echo" } };
 
         var source = new SessionConfig
         {
@@ -180,6 +182,7 @@ public sealed class GitHubCopilotAgentTests
             OnUserInputRequest = userInputHandler,
             McpServers = mcpServers,
             DisabledSkills = ["skill1"],
+            GitHubToken = "test-token",
         };
 
         // Act
@@ -200,6 +203,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal("test-token", result.GitHubToken);
         Assert.True(result.Streaming);
     }
 

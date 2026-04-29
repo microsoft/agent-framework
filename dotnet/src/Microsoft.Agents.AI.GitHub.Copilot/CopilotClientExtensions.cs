@@ -56,6 +56,7 @@ public static class CopilotClientExtensions
     /// <param name="description">The description of the agent.</param>
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
+    /// <param name="onPermissionRequest">Handler called before each tool execution to approve or deny it. Defaults to <see cref="PermissionHandler.ApproveAll"/>.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the GitHub Copilot client.</returns>
     public static AIAgent AsAIAgent(
         this CopilotClient client,
@@ -64,10 +65,11 @@ public static class CopilotClientExtensions
         string? name = null,
         string? description = null,
         IList<AITool>? tools = null,
-        string? instructions = null)
+        string? instructions = null,
+        PermissionRequestHandler? onPermissionRequest = null)
     {
         Throw.IfNull(client);
 
-        return new GitHubCopilotAgent(client, ownsClient, id, name, description, tools, instructions);
+        return new GitHubCopilotAgent(client, ownsClient, id, name, description, tools, instructions, onPermissionRequest);
     }
 }
