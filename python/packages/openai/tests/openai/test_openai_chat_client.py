@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import inspect
 import json
@@ -36,6 +37,7 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
     SettingNotFoundError,
 )
+from dotenv import load_dotenv
 from openai import BadRequestError
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
@@ -57,6 +59,8 @@ from pytest import param
 from agent_framework_openai import OpenAIChatClient
 from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
+
+load_dotenv()
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -119,6 +123,15 @@ async def create_vector_store(
     )
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
+
+    # Wait for the vector store index to be fully searchable.
+    # create_and_poll confirms file processing, but the search index is eventually consistent.
+    for _ in range(10):
+        vs = await client.client.vector_stores.retrieve(vector_store.id)
+        if vs.file_counts.completed >= 1 and vs.file_counts.in_progress == 0:
+            break
+        await asyncio.sleep(1)
+    await asyncio.sleep(2)
 
     return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
@@ -4379,10 +4392,6 @@ async def test_integration_web_search() -> None:
     assert response.text is not None
 
 
-@pytest.mark.skip(
-    reason="Unreliable due to OpenAI vector store indexing potential "
-    "race condition. See https://github.com/microsoft/agent-framework/issues/1669"
-)
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
@@ -4413,10 +4422,6 @@ async def test_integration_file_search() -> None:
     assert "75" in response.text
 
 
-@pytest.mark.skip(
-    reason="Unreliable due to OpenAI vector store indexing "
-    "potential race condition. See https://github.com/microsoft/agent-framework/issues/1669"
-)
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
@@ -4428,14 +4433,15 @@ async def test_integration_streaming_file_search() -> None:
     file_id, vector_store = await create_vector_store(openai_responses_client)
     # Use static method for file search tool
     file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
-    # Test that the client will use the web search tool
-    response = openai_responses_client.get_streaming_response(
+    # Test that the client will use the file search tool
+    response = openai_responses_client.get_response(
         messages=[
             Message(
                 role="user",
                 contents=["What is the weather today? Do a file search to find the answer."],
             )
         ],
+        stream=True,
         options={
             "tool_choice": "auto",
             "tools": [file_search_tool],
