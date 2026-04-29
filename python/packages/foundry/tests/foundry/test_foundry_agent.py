@@ -200,7 +200,7 @@ async def test_raw_foundry_agent_chat_client_prepare_options_accepts_function_to
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_fields() -> None:
-    """Test that _prepare_options strips model, tool-loop, and text fields from run_options."""
+    """Test that _prepare_options strips model and tool-loop fields from run_options."""
 
     mock_project = MagicMock()
     mock_openai = MagicMock()
@@ -225,8 +225,6 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_
             "tools": [{"type": "function", "function": {"name": "my_func"}}],
             "tool_choice": "auto",
             "parallel_tool_calls": True,
-            "text": {"format": {"type": "json_schema", "name": "x", "schema": {"type": "object"}}},
-            "text_format": MagicMock(),
         },
     ):
         result = await client._prepare_options(
@@ -238,24 +236,24 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_
     assert "tools" not in result
     assert "tool_choice" not in result
     assert "parallel_tool_calls" not in result
-    assert "text" not in result
-    assert "text_format" not in result
     assert result == {}
 
 
-async def test_raw_foundry_agent_chat_client_prepare_options_strips_text_for_runtime_response_format() -> None:
-    """Issue #5467: per-call response_format must not be sent to the Foundry agent endpoint.
+async def test_raw_foundry_agent_chat_client_prepare_options_rejects_runtime_response_format() -> None:
+    """Issue #5467: per-call ``response_format`` is not supported on FoundryAgent.
 
-    The Foundry agent endpoint rejects requests that carry per-call ``text``
-    when an agent is bound (``400 invalid_payload "Not allowed when agent is
-    specified."``). The runtime ``response_format`` must instead be honored
-    client-side via ``ChatResponse``'s lazy parsing path.
+    FoundryAgent is bound to a server-side agent whose response schema is
+    fixed at creation time. The Foundry agent endpoint enforces this with
+    ``400 invalid_payload "Not allowed when agent is specified."``. Surface a
+    clear up-front error pointing the caller at the two supported paths
+    (recreate the agent server-side, or use ``FoundryChatClient`` + ``Agent``)
+    instead of silently dropping the option or bubbling the wire-level 400.
     """
+    from agent_framework.exceptions import ChatClientInvalidRequestException
     from pydantic import BaseModel
 
     class OutputStruct(BaseModel):
         location: str
-        conditions: str
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
@@ -265,43 +263,18 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_text_for_run
         agent_name="test-agent",
     )
 
-    # Simulate what the parent OpenAI Responses client produces for a Pydantic
-    # ``response_format``: it sets ``text_format`` and would route through
-    # ``responses.parse()``.
-    with patch(
-        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
-        new_callable=AsyncMock,
-        return_value={"text_format": OutputStruct},
-    ):
-        result = await client._prepare_options(
+    with pytest.raises(ChatClientInvalidRequestException, match="FoundryAgent does not support per-call"):
+        await client._prepare_options(
             messages=[Message(role="user", contents="hi")],
             options={"response_format": OutputStruct},
         )
 
-    assert "text" not in result
-    assert "text_format" not in result
-
-    # And for the dict / json_schema variant the parent populates ``text``.
-    with patch(
-        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
-        new_callable=AsyncMock,
-        return_value={
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "WeatherDigest",
-                    "schema": {"type": "object", "properties": {"location": {"type": "string"}}},
-                }
-            }
-        },
-    ):
-        result = await client._prepare_options(
+    # Same guard applies to the dict / json_schema variant.
+    with pytest.raises(ChatClientInvalidRequestException, match="FoundryAgent does not support per-call"):
+        await client._prepare_options(
             messages=[Message(role="user", contents="hi")],
             options={"response_format": {"type": "json_schema", "json_schema": {"name": "WeatherDigest"}}},
         )
-
-    assert "text" not in result
-    assert "text_format" not in result
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_maps_agent_session_id_to_extra_body() -> None:
