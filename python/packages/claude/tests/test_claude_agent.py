@@ -602,6 +602,141 @@ class TestClaudeAgentToolConversion:
         assert "Something went wrong" in result["content"][0]["text"]
 
 
+# region Test ClaudeAgent Function Approval Enforcement
+
+
+class TestClaudeAgentFunctionApproval:
+    """Tests that ``approval_mode='always_require'`` is enforced at the agent boundary."""
+
+    async def test_handler_denies_when_no_callback_configured(self) -> None:
+        """Approval-required tool must be denied without executing when no callback is set."""
+        invocations: list[Any] = []
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"path": "/critical"})
+
+        assert invocations == []
+        text = result["content"][0]["text"]
+        assert "requires human approval" in text
+        assert "no on_function_approval callback is configured" in text
+
+    async def test_handler_denies_when_callback_returns_false(self) -> None:
+        """Falsy callback return value must deny the call and skip execution."""
+        invocations: list[Any] = []
+        seen: list[Content] = []
+
+        def deny(call: Content) -> bool:
+            seen.append(call)
+            return False
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": deny})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"path": "/critical"})
+
+        assert invocations == []
+        assert len(seen) == 1
+        assert seen[0].type == "function_call"
+        assert seen[0].name == "dangerous"  # type: ignore[attr-defined]
+        assert seen[0].arguments == {"path": "/critical"}  # type: ignore[attr-defined]
+        assert "denied" in result["content"][0]["text"].lower()
+
+    async def test_handler_executes_when_callback_returns_true(self) -> None:
+        """Truthy callback return value must allow the tool to execute normally."""
+
+        def approve(call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"result={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": approve})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 42})
+
+        assert result["content"][0]["text"] == "result=42"
+
+    async def test_handler_supports_async_callback(self) -> None:
+        """Async callback must be awaited and respected."""
+
+        async def approve(call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"async={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": approve})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 7})
+
+        assert result["content"][0]["text"] == "async=7"
+
+    async def test_callback_failure_denies_safely(self) -> None:
+        """A callback that raises must result in denial, not in tool execution."""
+        invocations: list[Any] = []
+
+        def boom(call: Content) -> bool:
+            raise RuntimeError("nope")
+
+        @tool(approval_mode="always_require")
+        def dangerous(x: int) -> str:
+            """A tool that requires human approval."""
+            invocations.append(x)
+            return f"x={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": boom})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 1})
+
+        assert invocations == []
+        assert "denied" in result["content"][0]["text"].lower()
+
+    async def test_handler_does_not_invoke_callback_for_never_require(self) -> None:
+        """Tools without approval_mode='always_require' must not trigger the callback."""
+        callback_calls: list[Any] = []
+
+        def approve(call: Content) -> bool:
+            callback_calls.append(call)
+            return True
+
+        @tool
+        def safe(x: int) -> str:
+            """A tool that does not require approval."""
+            return f"safe={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": approve})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(safe)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 5})
+
+        assert callback_calls == []
+        assert result["content"][0]["text"] == "safe=5"
+
+
+# endregion
+
+
 # region Test ClaudeAgent Permissions
 
 
