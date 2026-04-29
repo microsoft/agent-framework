@@ -1,0 +1,32 @@
+#
+# This workflow tests invoking HttpRequestAction end-to-end.
+# Uses the public GitHub API (unauthenticated) to fetch repo metadata.
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_http_request_test
+  actions:
+
+    # Set the repo owner used to form the request URL.
+    - kind: SetVariable
+      id: set_repo_owner
+      variable: Local.RepoOwner
+      value: dotnet
+
+    # Invoke the GitHub repo API.
+    - kind: HttpRequestAction
+      id: fetch_repo_info
+      conversationId: =System.ConversationId
+      method: GET
+      url: =Concatenate("https://api.github.com/repos/", Local.RepoOwner, "/runtime")
+      headers:
+        Accept: application/vnd.github+json
+        User-Agent: agent-framework-integration-test
+      response: Local.RepoInfo
+
+    # Surface the Repo visibility field from the parsed JSON response.
+    - kind: SendMessage
+      id: show_visibility
+      message: "visibility: {Local.RepoInfo.visibility}"

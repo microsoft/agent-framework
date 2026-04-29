@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260424"
+version = "1.0.0b260428"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,7 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "agent-framework-core>=1.2.0,<2",
+  "agent-framework-core>=1.2.1,<2",
 ]
 
 [project.optional-dependencies]
@@ -57,9 +57,9 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv==0.11.3",
+    "uv==0.11.6",
     "ruff==0.15.8",
-    "pytest==9.0.2",
+    "pytest==9.0.3",
     "mypy==1.20.0",
     "pyright==1.1.408",
     #tasks
@@ -69,7 +69,7 @@ dev = [
     "tomli-w==1.2.0",
     # tau2 from source (not available on PyPI)
     "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
-    "prek==0.3.8",
+    "prek==0.3.9",
 ]
 
 [project.scripts]

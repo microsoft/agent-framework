@@ -4,7 +4,7 @@ description = "Microsoft Foundry integrations for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.2.0"
+version = "1.2.1"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.2.0,<2",
+    "agent-framework-core>=1.2.1,<2",
     "agent-framework-openai>=1.1.0,<2",
     "azure-ai-inference>=1.0.0b9,<1.0.0b10",
     "azure-ai-projects>=2.1.0,<3.0",

@@ -4,7 +4,7 @@ description = "Google Gemini integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a260424"
+version = "1.0.0a260428"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,8 +24,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.2.0,<2.0",
-    "google-genai>=1.0.0,<2.0.0",
+    "agent-framework-core>=1.2.1,<2.0",
+    "google-genai>=1.65.0,<2.0.0",
 ]
 
 [tool.uv]

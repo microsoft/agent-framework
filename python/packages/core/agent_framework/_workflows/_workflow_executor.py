@@ -361,7 +361,7 @@ class WorkflowExecutor(Executor):
         return any(is_instance_of(message.data, input_type) for input_type in self.workflow.input_types)
 
     @handler
-    async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:
+    async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any, Any]) -> None:
         """Execute the sub-workflow with raw input data.
 
         This handler starts a new sub-workflow execution. When the sub-workflow
@@ -428,7 +428,7 @@ class WorkflowExecutor(Executor):
     async def handle_message_wrapped_request_response(
         self,
         response: SubWorkflowResponseMessage,
-        ctx: WorkflowContext[Any],
+        ctx: WorkflowContext[Any, Any],
     ) -> None:
         """Handle response from parent for a forwarded request.
 
