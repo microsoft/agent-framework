@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-04-29
+
+### Added
+- **agent-framework-azure-contentunderstanding**: New alpha package — Azure AI Content Understanding context provider that auto-analyzes file attachments (documents, images, audio, video) and injects structured results into the LLM context, with multi-document session state, configurable timeout, output filtering via `AnalysisSection`, and auto-registered `list_documents` / `get_analyzed_document` tools ([#4829](https://github.com/microsoft/agent-framework/pull/4829))
+- **agent-framework-foundry-hosting**: Add hosted Durable Workflow support — propagate full conversation history to workflow agents and wire `Workflow.as_agent()` end-to-end via the foundry hosting layer ([#5531](https://github.com/microsoft/agent-framework/pull/5531))
+
+### Changed
+- **agent-framework-orchestrations**: [BREAKING] Standardize orchestration terminal outputs as `AgentResponse` so `Workflow.as_agent()` returns the final answer only; aligns sequential-approval (`with_request_info`) and concurrent (`intermediate_outputs=True`) flows on the same output contract ([#5301](https://github.com/microsoft/agent-framework/pull/5301))
+- **agent-framework-core**, **agent-framework-declarative**: Preserve `Workflow.run()` shared state across calls so multi-turn `WorkflowAgent` invocations retain context, accept `list[Message]` input in the declarative start executor, and coerce `Enum` values when serializing PowerFx symbols ([#5531](https://github.com/microsoft/agent-framework/pull/5531))
+- **dependencies**: Update workspace package dependencies and preserve `mcp[ws]` / `uvicorn[standard]` extras through override-dependencies in `/python` ([#5555](https://github.com/microsoft/agent-framework/pull/5555))
+
+### Fixed
+- **agent-framework-core**: Fix observability spans not being correctly nested when using streaming ([#5552](https://github.com/microsoft/agent-framework/pull/5552))
+- **agent-framework-openai**: Fix `file_search` citations breaking the assistant-message history roundtrip — skip `hosted_file` content in the assistant role so the Responses API no longer rejects `input_file` ([#5557](https://github.com/microsoft/agent-framework/pull/5557))
+
 ## [1.2.1] - 2026-04-28
 
 ### Added
@@ -1003,7 +1018,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.2.1...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.2.2...HEAD
+[1.2.2]: https://github.com/microsoft/agent-framework/compare/python-1.2.1...python-1.2.2
 [1.2.1]: https://github.com/microsoft/agent-framework/compare/python-1.2.0...python-1.2.1
 [1.2.0]: https://github.com/microsoft/agent-framework/compare/python-1.1.1...python-1.2.0
 [1.1.1]: https://github.com/microsoft/agent-framework/compare/python-1.1.0...python-1.1.1

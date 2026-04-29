@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.2.1"
+version = "1.2.2"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.2.1",
+    "agent-framework-core[all]==1.2.2",
 ]
 
 [dependency-groups]
@@ -52,8 +52,9 @@ dev = [
 [tool.uv]
 package = false
 prerelease = "if-necessary-or-explicit"
-# Keep transitive litellm below the compromised 1.82.7/1.82.8 releases.
-constraint-dependencies = ["litellm<1.82.7"]
+# Security floors for transitive deps; overrides bypass litellm[proxy]'s strict pins.
+constraint-dependencies = ["litellm>=1.83.7", "fastapi-sso>=0.19.0"]
+override-dependencies = ["mcp[ws]>=1.27.0", "uvicorn[standard]>=0.34.0"]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
@@ -92,7 +93,7 @@ agent-framework-openai = { workspace = true }
 agent-framework-orchestrations = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
-litellm = { url = "https://files.pythonhosted.org/packages/57/77/0c6eca2cb049793ddf8ce9cdcd5123a35666c4962514788c4fc90edf1d3b/litellm-1.82.1-py3-none-any.whl" }
+agent-framework-azure-contentunderstanding = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -190,6 +191,7 @@ executionEnvironments = [
     { root = "packages/ag-ui/tests", reportPrivateUsage = "none" },
     { root = "packages/anthropic/tests", reportPrivateUsage = "none" },
     { root = "packages/azure-ai-search/tests", reportPrivateUsage = "none" },
+    { root = "packages/azure-contentunderstanding/tests", reportPrivateUsage = "none" },
     { root = "packages/azure-cosmos/tests", reportPrivateUsage = "none" },
     { root = "packages/azurefunctions/tests", reportPrivateUsage = "none" },
     { root = "packages/bedrock/tests", reportPrivateUsage = "none" },

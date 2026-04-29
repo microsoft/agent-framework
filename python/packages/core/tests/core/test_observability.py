@@ -3313,3 +3313,487 @@ async def test_agent_invoke_span_aggregates_usage_on_max_iterations_exhaustion(s
     # The invoke_agent span must aggregate usage from the in-loop call and the final exhaustion call
     assert agent_span.attributes.get(OtelAttr.INPUT_TOKENS) == 500
     assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 100
+
+
+# region Test span nesting (parent-child relationships)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_chat_span_nested_under_agent_span(span_exporter: InMemorySpanExporter, stream: bool):
+    """The inner chat span must be a child of the outer agent invoke span."""
+
+    class NestedChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            if stream:
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
+                    yield ChatResponseUpdate(
+                        contents=[Content.from_text(" world")], role="assistant", finish_reason="stop"
+                    )
+
+                def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                    return ChatResponse(
+                        messages=[Message(role="assistant", contents=["Hello world"])],
+                        response_id="resp_1",
+                        usage_details=UsageDetails(input_token_count=3, output_token_count=4),
+                        finish_reason="stop",
+                    )
+
+                return ResponseStream(_stream(), finalizer=_finalize)
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message(role="assistant", contents=["Hello world"])],
+                    response_id="resp_1",
+                    usage_details=UsageDetails(input_token_count=3, output_token_count=4),
+                    finish_reason="stop",
+                )
+
+            return _get()
+
+    agent = Agent(
+        client=NestedChatClient(),
+        id="nested_agent_id",
+        name="nested_agent",
+        default_options={"model": "NestedModel"},
+    )
+
+    span_exporter.clear()
+    if stream:
+        result_stream = agent.run("Test message", stream=True)
+        async for _ in result_stream:
+            pass
+        await result_stream.get_final_response()
+    else:
+        await agent.run("Test message")
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 2
+
+    span_by_op = {s.attributes[OtelAttr.OPERATION.value]: s for s in spans}
+    agent_span = span_by_op[OtelAttr.AGENT_INVOKE_OPERATION]
+    chat_span = span_by_op[OtelAttr.CHAT_COMPLETION_OPERATION]
+
+    # Agent span has no parent (it is the root)
+    assert agent_span.parent is None
+
+    # Chat span's parent must be the agent span
+    assert chat_span.parent is not None
+    assert chat_span.parent.span_id == agent_span.context.span_id
+    assert chat_span.parent.trace_id == agent_span.context.trace_id
+
+    # Both spans must share the same trace
+    assert chat_span.context.trace_id == agent_span.context.trace_id
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemorySpanExporter, stream: bool):
+    """All inner spans (chat completions and execute_tool) must be children of the agent span."""
+    from agent_framework import Content
+    from agent_framework._tools import FunctionInvocationLayer
+
+    @tool(name="get_weather", description="Get the weather for a location")
+    def get_weather(location: str) -> str:
+        return f"The weather in {location} is sunny."
+
+    class NestedToolChatClient(FunctionInvocationLayer, ChatTelemetryLayer, BaseChatClient[Any]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.call_count = 0
+
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            self.call_count += 1
+            is_first = self.call_count == 1
+
+            if stream:
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    if is_first:
+                        yield ChatResponseUpdate(
+                            contents=[
+                                Content.from_function_call(
+                                    call_id="call_123",
+                                    name="get_weather",
+                                    arguments='{"location": "Seattle"}',
+                                )
+                            ],
+                            role="assistant",
+                        )
+                    else:
+                        yield ChatResponseUpdate(
+                            contents=[Content.from_text("The weather in Seattle is sunny!")],
+                            role="assistant",
+                            finish_reason="stop",
+                        )
+
+                def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                    return ChatResponse.from_updates(updates)
+
+                return ResponseStream(_stream(), finalizer=_finalize)
+
+            async def _get() -> ChatResponse:
+                if is_first:
+                    return ChatResponse(
+                        messages=[
+                            Message(
+                                role="assistant",
+                                contents=[
+                                    Content.from_function_call(
+                                        call_id="call_123",
+                                        name="get_weather",
+                                        arguments='{"location": "Seattle"}',
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                return ChatResponse(
+                    messages=[Message(role="assistant", contents=["The weather in Seattle is sunny!"])],
+                    finish_reason="stop",
+                )
+
+            return _get()
+
+    agent = Agent(
+        client=NestedToolChatClient(),
+        id="tool_agent_id",
+        name="tool_agent",
+        default_options={"model": "ToolModel", "tools": [get_weather], "tool_choice": "auto"},
+    )
+
+    span_exporter.clear()
+    if stream:
+        result_stream = agent.run("What's the weather in Seattle?", stream=True)
+        async for _ in result_stream:
+            pass
+        await result_stream.get_final_response()
+    else:
+        await agent.run("What's the weather in Seattle?")
+
+    spans = span_exporter.get_finished_spans()
+
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
+    tool_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.TOOL_EXECUTION_OPERATION]
+
+    assert len(invoke_spans) == 1, f"Expected 1 invoke_agent span, got {len(invoke_spans)}"
+    assert len(chat_spans) == 2, f"Expected 2 chat spans, got {len(chat_spans)}"
+    assert len(tool_spans) == 1, f"Expected 1 execute_tool span, got {len(tool_spans)}"
+
+    agent_span = invoke_spans[0]
+    assert agent_span.parent is None
+
+    # All inner spans must be parented under the agent invoke span
+    for inner in (*chat_spans, *tool_spans):
+        assert inner.parent is not None, f"Span {inner.name} has no parent"
+        assert inner.parent.span_id == agent_span.context.span_id, (
+            f"Span {inner.name} parent={inner.parent.span_id} != agent={agent_span.context.span_id}"
+        )
+        assert inner.context.trace_id == agent_span.context.trace_id
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_chat_span_nested_under_explicit_outer_span(
+    span_exporter: InMemorySpanExporter, mock_chat_client, stream: bool
+):
+    """Chat telemetry spans (including streaming) must inherit a user-provided outer span as parent."""
+    from agent_framework.observability import get_tracer
+
+    client = mock_chat_client()
+    span_exporter.clear()
+
+    tracer = get_tracer()
+    with tracer.start_as_current_span("outer") as outer_span:
+        outer_ctx = outer_span.get_span_context()
+        if stream:
+            stream_obj = client.get_response(
+                stream=True, messages=[Message(role="user", contents=["Test"])], options={"model": "Test"}
+            )
+            async for _ in stream_obj:
+                pass
+            await stream_obj.get_final_response()
+        else:
+            await client.get_response(messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
+
+    spans = span_exporter.get_finished_spans()
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
+    assert len(chat_spans) == 1
+    chat_span = chat_spans[0]
+
+    assert chat_span.parent is not None
+    assert chat_span.parent.span_id == outer_ctx.span_id
+    assert chat_span.context.trace_id == outer_ctx.trace_id
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_http_span_nested_under_chat_span(span_exporter: InMemorySpanExporter, stream: bool):
+    """A span created inside ``_inner_get_response`` (e.g. an HTTP client call to the LLM provider)
+    must be parented under the chat completion span.
+
+    This validates that the chat span context is active while the inner client implementation
+    runs, both for non-streaming responses and while streaming updates are being pulled.
+    """
+    from agent_framework.observability import get_tracer
+
+    tracer = get_tracer()
+
+    class HttpEmittingClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            if stream:
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    # Simulate an HTTP request to the model provider while producing the stream.
+                    with tracer.start_as_current_span("HTTP POST"):
+                        pass
+                    yield ChatResponseUpdate(contents=[Content.from_text("hi")], role="assistant", finish_reason="stop")
+
+                def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                    return ChatResponse.from_updates(updates)
+
+                return ResponseStream(_stream(), finalizer=_finalize)
+
+            async def _get() -> ChatResponse:
+                # Simulate an HTTP request to the model provider during the call.
+                with tracer.start_as_current_span("HTTP POST"):
+                    pass
+                return ChatResponse(
+                    messages=[Message(role="assistant", contents=["done"])],
+                    usage_details=UsageDetails(input_token_count=1, output_token_count=1),
+                )
+
+            return _get()
+
+    span_exporter.clear()
+    client = HttpEmittingClient()
+    if stream:
+        result_stream = client.get_response(
+            stream=True, messages=[Message(role="user", contents=["Test"])], options={"model": "Test"}
+        )
+        async for _ in result_stream:
+            pass
+        await result_stream.get_final_response()
+    else:
+        await client.get_response(messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
+
+    spans = span_exporter.get_finished_spans()
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
+    http_spans = [s for s in spans if s.name == "HTTP POST"]
+    assert len(chat_spans) == 1
+    assert len(http_spans) == 1
+
+    chat_span = chat_spans[0]
+    http_span = http_spans[0]
+
+    assert http_span.parent is not None
+    assert http_span.parent.span_id == chat_span.context.span_id
+    assert http_span.context.trace_id == chat_span.context.trace_id
+
+
+# region Test ResponseStream.with_pull_context_manager
+
+
+async def test_with_pull_context_manager_enters_and_exits_per_pull():
+    """The registered factory is entered and exited symmetrically around each iterator pull."""
+    import contextlib
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def cm():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    async def src() -> AsyncIterable[int]:
+        yield 1
+        yield 2
+
+    stream: ResponseStream[int, list[int]] = ResponseStream(src(), finalizer=lambda updates: list(updates))
+    stream.with_pull_context_manager(cm)
+
+    pulled = [u async for u in stream]
+
+    assert pulled == [1, 2]
+    # Enter/exit must be balanced and there must be at least one pair per yielded update.
+    assert events.count("enter") == events.count("exit")
+    assert events.count("enter") >= 2
+    # Verify symmetric ordering (no overlapping pairs).
+    for i in range(0, len(events), 2):
+        assert events[i] == "enter"
+        assert events[i + 1] == "exit"
+
+
+async def test_with_pull_context_manager_exits_on_iteration_error():
+    """The pull context is exited even when the underlying stream raises mid-iteration."""
+    import contextlib
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def cm():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    async def src() -> AsyncIterable[int]:
+        yield 1
+        raise RuntimeError("boom")
+
+    stream: ResponseStream[int, list[int]] = ResponseStream(src(), finalizer=lambda updates: list(updates))
+    stream.with_pull_context_manager(cm)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async for _ in stream:
+            pass
+
+    # Enter/exit balanced even on the failing pull.
+    assert events.count("enter") == events.count("exit")
+    assert events.count("enter") >= 2
+
+
+async def test_with_pull_context_manager_wraps_stream_resolution_via_await():
+    """Awaiting a ``from_awaitable`` stream resolves the inner stream under the pull contexts."""
+    import contextlib
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def cm():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    async def inner() -> AsyncIterable[int]:
+        yield 1
+
+    async def make_stream() -> ResponseStream[int, list[int]]:
+        # Record that we resolve while a pull context is active.
+        events.append("resolving")
+        return ResponseStream(inner(), finalizer=lambda updates: list(updates))
+
+    stream: ResponseStream[int, list[int]] = ResponseStream.from_awaitable(make_stream())
+    stream.with_pull_context_manager(cm)
+
+    await stream  # Triggers _resolve_stream_with_pull_contexts via __await__
+
+    assert "resolving" in events
+    resolve_index = events.index("resolving")
+    assert events[resolve_index - 1] == "enter"  # Pull context active during resolution
+
+
+# region Test streaming telemetry error paths
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_streaming_super_failure_closes_span(span_exporter: InMemorySpanExporter, enable_sensitive_data):
+    """If the underlying client raises synchronously when constructing the stream, the chat
+    span is ended and the exception is recorded (no span leak)."""
+
+    class FailingClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            raise RuntimeError("inner failed")
+
+    span_exporter.clear()
+    client = FailingClient()
+    with pytest.raises(RuntimeError, match="inner failed"):
+        client.get_response(stream=True, messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
+
+    spans = span_exporter.get_finished_spans()
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
+    assert len(chat_spans) == 1
+    assert chat_spans[0].status.status_code == StatusCode.ERROR
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvars(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """If ``execute()`` raises synchronously during streaming agent invocation, the agent span is
+    ended, the exception is recorded, and the telemetry contextvars are reset."""
+    from agent_framework.observability import (
+        INNER_ACCUMULATED_USAGE,
+        INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS,
+    )
+
+    class _FailingExecuteAgent:
+        AGENT_PROVIDER_NAME = "test_provider"
+
+        def __init__(self):
+            self._id = "failing_execute"
+            self._name = "Failing Execute"
+            self._description = "Agent whose stream call raises synchronously"
+            self._default_options: dict[str, Any] = {}
+
+        @property
+        def id(self):
+            return self._id
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def description(self):
+            return self._description
+
+        @property
+        def default_options(self):
+            return self._default_options
+
+        def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
+            if stream:
+                raise RuntimeError("execute failed")
+            raise NotImplementedError
+
+    class FailingExecuteAgent(AgentTelemetryLayer, _FailingExecuteAgent):
+        pass
+
+    # Sentinel values to detect that contextvars were reset to their pre-call state.
+    sentinel_fields: set[str] = set()
+    sentinel_usage: dict[str, Any] = {}
+    fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(sentinel_fields)
+    usage_token = INNER_ACCUMULATED_USAGE.set(sentinel_usage)
+    try:
+        agent = FailingExecuteAgent()
+        span_exporter.clear()
+        with pytest.raises(RuntimeError, match="execute failed"):
+            agent.run(messages="Hello", stream=True)
+
+        # Contextvars must be back to the sentinel values registered before the call.
+        assert INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.get() is sentinel_fields
+        assert INNER_ACCUMULATED_USAGE.get() is sentinel_usage
+    finally:
+        INNER_ACCUMULATED_USAGE.reset(usage_token)
+        INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(fields_token)
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].status.status_code == StatusCode.ERROR
