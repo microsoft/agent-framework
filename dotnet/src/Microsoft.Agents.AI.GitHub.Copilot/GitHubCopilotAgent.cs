@@ -67,7 +67,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <param name="description">The description of the agent.</param>
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
-    /// <param name="onPermissionRequest">Handler called before each tool execution to approve or deny it.</param>
+    [Obsolete("This constructor does not accept an OnPermissionRequest handler, which is required by GitHub.Copilot.SDK 0.3.0+. Use the overload that includes the onPermissionRequest parameter, or pass a SessionConfig with OnPermissionRequest set.", error: true)]
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
         bool ownsClient = false,
@@ -75,8 +75,37 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? name = null,
         string? description = null,
         IList<AITool>? tools = null,
-        string? instructions = null,
-        PermissionRequestHandler? onPermissionRequest = null)
+        string? instructions = null)
+        : this(
+            copilotClient,
+            GetSessionConfig(tools, instructions),
+            ownsClient,
+            id,
+            name,
+            description)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
+    /// </summary>
+    /// <param name="copilotClient">The Copilot client to use for interacting with GitHub Copilot.</param>
+    /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
+    /// <param name="id">The unique identifier for the agent.</param>
+    /// <param name="name">The name of the agent.</param>
+    /// <param name="description">The description of the agent.</param>
+    /// <param name="tools">The tools to make available to the agent.</param>
+    /// <param name="instructions">Optional instructions to append as a system message.</param>
+    /// <param name="onPermissionRequest">Handler called before each tool execution to approve or deny it. GitHub Copilot SDK 0.3.0+ requires a permission handler on every session; if not provided here or via <see cref="SessionConfig.OnPermissionRequest"/>, session creation will fail at runtime.</param>
+    public GitHubCopilotAgent(
+        CopilotClient copilotClient,
+        bool ownsClient,
+        string? id,
+        string? name,
+        string? description,
+        IList<AITool>? tools,
+        string? instructions,
+        PermissionRequestHandler? onPermissionRequest)
         : this(
             copilotClient,
             GetSessionConfig(tools, instructions, onPermissionRequest),
@@ -150,7 +179,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         // Create or resume a session with streaming enabled
         SessionConfig sessionConfig = this._sessionConfig != null
             ? CopySessionConfig(this._sessionConfig)
-            : throw new InvalidOperationException("Session configuration is required to run the agent. Please provide a valid SessionConfig when constructing the agent or use the constructor that accepts tools and instructions.");
+            : throw new InvalidOperationException("Session configuration is required to run the agent. GitHub Copilot SDK 0.3.0+ requires SessionConfig.OnPermissionRequest to be provided. Please construct the agent with a valid SessionConfig that sets OnPermissionRequest, or provide the onPermissionRequest constructor parameter.");
 
         CopilotSession copilotSession;
         if (typedSession.SessionId is not null)
@@ -342,7 +371,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             ConfigDir = source?.ConfigDir,
             EnableConfigDiscovery = source?.EnableConfigDiscovery,
             Streaming = true,
-            IncludeSubAgentStreamingEvents = source?.IncludeSubAgentStreamingEvents ?? true,
+            IncludeSubAgentStreamingEvents = source?.IncludeSubAgentStreamingEvents ?? default,
             McpServers = source?.McpServers,
             CustomAgents = source?.CustomAgents,
             DefaultAgent = source?.DefaultAgent,

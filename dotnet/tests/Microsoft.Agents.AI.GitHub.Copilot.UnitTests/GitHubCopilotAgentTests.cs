@@ -13,6 +13,8 @@ namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
 /// </summary>
 public sealed class GitHubCopilotAgentTests
 {
+    private static readonly PermissionRequestHandler s_testPermissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult { Kind = PermissionRequestResultKind.Approved });
+
     [Fact]
     public void Constructor_WithCopilotClient_InitializesPropertiesCorrectly()
     {
@@ -23,7 +25,7 @@ public sealed class GitHubCopilotAgentTests
         const string TestDescription = "test-description";
 
         // Act
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, name: TestName, description: TestDescription, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, name: TestName, description: TestDescription, tools: null, instructions: null, onPermissionRequest: s_testPermissionHandler);
 
         // Assert
         Assert.Equal(TestId, agent.Id);
@@ -45,7 +47,7 @@ public sealed class GitHubCopilotAgentTests
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
 
         // Act
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: null, name: null, description: null, tools: null, instructions: null, onPermissionRequest: s_testPermissionHandler);
 
         // Assert
         Assert.NotNull(agent.Id);
@@ -59,7 +61,7 @@ public sealed class GitHubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: null, name: null, description: null, tools: null, instructions: null, onPermissionRequest: s_testPermissionHandler);
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -74,7 +76,7 @@ public sealed class GitHubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: null, name: null, description: null, tools: null, instructions: null, onPermissionRequest: s_testPermissionHandler);
         const string TestSessionId = "test-session-id";
 
         // Act
@@ -94,7 +96,7 @@ public sealed class GitHubCopilotAgentTests
         List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
-        var agent = new GitHubCopilotAgent(copilotClient, tools: tools);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: null, name: null, description: null, tools: tools, instructions: null, onPermissionRequest: s_testPermissionHandler);
 
         // Assert
         Assert.NotNull(agent);
@@ -239,12 +241,80 @@ public sealed class GitHubCopilotAgentTests
         };
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
         const string TestId = "agent-id";
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, name: null, description: null, tools: null, instructions: null, onPermissionRequest: s_testPermissionHandler);
         AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage);
 
         // result.Text need to be empty because the content was already delivered via delta events, and we want to avoid emitting duplicate content in the response update.
         // The content should be delivered through TextContent in the Contents collection instead.
         Assert.Empty(result.Text);
         Assert.DoesNotContain(result.Contents, c => c is TextContent);
+    }
+
+    [Fact]
+    public void Constructor_WithSessionConfig_InitializesCorrectly()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var sessionConfig = new SessionConfig
+        {
+            OnPermissionRequest = s_testPermissionHandler,
+            Model = "gpt-4o",
+        };
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig: sessionConfig, id: "cfg-id", name: "Cfg Agent");
+
+        // Assert
+        Assert.Equal("cfg-id", agent.Id);
+        Assert.Equal("Cfg Agent", agent.Name);
+    }
+
+    [Fact]
+    public void Constructor_WithToolsAndPermissionHandler_InitializesCorrectly()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+
+        // Act
+        var agent = new GitHubCopilotAgent(
+            copilotClient,
+            ownsClient: false,
+            id: "tool-agent",
+            name: "Tool Agent",
+            description: "Agent with tools",
+            tools: tools,
+            instructions: "Be helpful",
+            onPermissionRequest: s_testPermissionHandler);
+
+        // Assert
+        Assert.Equal("tool-agent", agent.Id);
+        Assert.Equal("Tool Agent", agent.Name);
+        Assert.Equal("Agent with tools", agent.Description);
+    }
+
+    [Fact]
+    public void OldConstructor_WithoutPermissionHandler_IsMarkedObsoleteWithError()
+    {
+        // The old constructor (tools/instructions without onPermissionRequest) should be
+        // marked with [Obsolete(error: true)], causing a compile error if used directly.
+        // Verify via reflection that the attribute is present and is an error.
+        var oldCtor = typeof(GitHubCopilotAgent).GetConstructor(new[]
+        {
+            typeof(CopilotClient),
+            typeof(bool),
+            typeof(string),
+            typeof(string),
+            typeof(string),
+            typeof(IList<AITool>),
+            typeof(string),
+        });
+
+        Assert.NotNull(oldCtor);
+        var obsoleteAttr = oldCtor!.GetCustomAttributes(typeof(ObsoleteAttribute), false);
+        Assert.Single(obsoleteAttr);
+        var attr = (ObsoleteAttribute)obsoleteAttr[0];
+        Assert.True(attr.IsError);
+        Assert.Contains("OnPermissionRequest", attr.Message);
     }
 }
