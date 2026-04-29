@@ -535,6 +535,7 @@ class WorkflowAgent(BaseAgent):
                 raw_representations.append(output_event)
             else:
                 data = output_event.data
+
                 if isinstance(data, AgentResponseUpdate):
                     # We cannot support AgentResponseUpdate in non-streaming mode. This is because the message
                     # sequence cannot be guaranteed when there are streaming updates in between non-streaming
@@ -635,16 +636,23 @@ class WorkflowAgent(BaseAgent):
             A list of AgentResponseUpdate objects. Empty list if the event is not relevant.
         """
         if event.type == "output":
-            # Convert workflow output to agent response updates.
-            # Handle different data types appropriately.
             data = event.data
             executor_id = event.executor_id
 
             if isinstance(data, AgentResponseUpdate):
-                # Pass through AgentResponseUpdate directly (streaming from AgentExecutor)
-                if not data.author_name:
-                    data.author_name = executor_id
-                return [data]
+                # Construct a fresh AgentResponseUpdate so we don't mutate a payload
+                # that AgentExecutor still holds a reference to in its `updates` list.
+                return [
+                    AgentResponseUpdate(
+                        contents=list(data.contents),
+                        role=data.role,
+                        author_name=data.author_name or executor_id,
+                        response_id=data.response_id,
+                        message_id=data.message_id,
+                        created_at=data.created_at,
+                        raw_representation=data.raw_representation,
+                    )
+                ]
             if isinstance(data, AgentResponse):
                 # Convert each message in AgentResponse to an AgentResponseUpdate
                 updates: list[AgentResponseUpdate] = []

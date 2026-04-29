@@ -559,6 +559,7 @@ class TestToolCalling:
 class TestOptions:
     """Verify chat options are passed through to the model."""
 
+    @pytest.mark.skip(reason="Flaky in merge queue, blocking unrelated PRs. Tracked in #5553.")
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled

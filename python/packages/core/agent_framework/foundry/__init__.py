@@ -4,6 +4,7 @@
 
 This module lazily re-exports objects from:
 - ``agent-framework-anthropic``
+- ``agent-framework-azure-contentunderstanding``
 - ``agent-framework-foundry``
 - ``agent-framework-foundry-local``
 """
@@ -12,7 +13,12 @@ import importlib
 from typing import Any
 
 _IMPORTS: dict[str, tuple[str, str]] = {
+    "AnalysisSection": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
     "AnthropicFoundryClient": ("agent_framework_anthropic", "agent-framework-anthropic"),
+    "ContentUnderstandingContextProvider": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
+    "DocumentStatus": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
+    "FileSearchBackend": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
+    "FileSearchConfig": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
     "FoundryAgent": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryAgentOptions": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
