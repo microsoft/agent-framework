@@ -463,6 +463,7 @@ internal sealed class WorkflowSession : AgentSession
                     {
                         IEnumerable<ChatMessage> chatMessages => chatMessages,
                         ChatMessage chatMessage => [chatMessage],
+                        AgentResponse agentResponse => agentResponse.Messages,
                         _ => null
                     };
 
