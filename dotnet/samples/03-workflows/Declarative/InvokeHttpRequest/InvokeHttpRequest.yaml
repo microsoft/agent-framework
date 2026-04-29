@@ -22,15 +22,15 @@ trigger:
   id: workflow_invoke_http_request_demo
   actions:
 
-    # Capture the original user message for input to the location-aware agent
+    # Capture the original user message for input to the follow-up agent.
     - kind: SetVariable
       id: set_user_message
       variable: Local.InputMessage
       value: =System.LastMessage
 
-    # Set the repo owner used to form the request URL.
+    # Set the repository org/name used to form the request URL.
     - kind: SetVariable
-      id: set_repo_owner
+      id: set_repo_name
       variable: Local.RepoName
       value: microsoft/agent-framework
 

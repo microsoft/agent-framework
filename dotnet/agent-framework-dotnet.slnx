@@ -226,9 +226,7 @@
     <Project Path="samples/03-workflows/Declarative/HostedWorkflow/HostedWorkflow.csproj" />
     <Project Path="samples/03-workflows/Declarative/InputArguments/InputArguments.csproj" />
     <Project Path="samples/03-workflows/Declarative/InvokeFunctionTool/InvokeFunctionTool.csproj" />
-    <Project Path="samples/03-workflows/Declarative/InvokeHttpRequest/InvokeHttpRequest.csproj">
-      <Build Solution="Debug|*" Project="false" />
-    </Project>
+    <Project Path="samples/03-workflows/Declarative/InvokeHttpRequest/InvokeHttpRequest.csproj" />
     <Project Path="samples/03-workflows/Declarative/InvokeMcpTool/InvokeMcpTool.csproj" />
     <Project Path="samples/03-workflows/Declarative/Marketing/Marketing.csproj" />
     <Project Path="samples/03-workflows/Declarative/StudentTeacher/StudentTeacher.csproj" />
