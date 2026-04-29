@@ -921,6 +921,20 @@ class TestApplyRuntimeOptions:
         mock_client.set_model.assert_not_called()
         mock_client.set_permission_mode.assert_not_called()
 
+    async def test_apply_runtime_on_function_approval_rejected(self) -> None:
+        """on_function_approval cannot be overridden per run."""
+        mock_client = MagicMock()
+        mock_client.set_model = AsyncMock()
+        mock_client.set_permission_mode = AsyncMock()
+
+        agent = ClaudeAgent()
+        agent._client = mock_client  # type: ignore[reportPrivateUsage]
+
+        with pytest.raises(ValueError, match="on_function_approval"):
+            await agent._apply_runtime_options({"on_function_approval": lambda _c: True})  # type: ignore[reportPrivateUsage]
+        mock_client.set_model.assert_not_called()
+        mock_client.set_permission_mode.assert_not_called()
+
 
 # region Test ClaudeAgent Structured Output
 

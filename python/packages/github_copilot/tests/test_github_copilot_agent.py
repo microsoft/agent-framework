@@ -2305,3 +2305,16 @@ class TestGitHubCopilotAgentContextProviders:
         await agent.run("Hello", session=session, options={"timeout": 120})
 
         assert observed_options.get("timeout") == 120
+
+    async def test_runtime_on_function_approval_rejected(self, mock_client: MagicMock) -> None:
+        """Passing on_function_approval at runtime must raise rather than be silently ignored."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        with pytest.raises(ValueError, match="on_function_approval"):
+            await agent.run("hello", options={"on_function_approval": lambda _c: True})
+
+    async def test_runtime_on_function_approval_rejected_streaming(self, mock_client: MagicMock) -> None:
+        """Passing on_function_approval at runtime must raise on the streaming path too."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        with pytest.raises(ValueError, match="on_function_approval"):
+            async for _ in agent.run("hello", stream=True, options={"on_function_approval": lambda _c: True}):
+                pass

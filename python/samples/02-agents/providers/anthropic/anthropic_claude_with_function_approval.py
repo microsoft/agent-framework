@@ -54,11 +54,7 @@ def prompt_for_approval(call: Content) -> bool:
     call; returning ``False`` denies it and a tool-error is returned to the
     model.
     """
-    print(
-        "\n[Function Approval Request]"
-        f"\n  Tool: {call.name}"  # type: ignore[attr-defined]
-        f"\n  Arguments: {call.arguments}"  # type: ignore[attr-defined]
-    )
+    print(f"\n[Function Approval Request]\n  Tool: {call.name}\n  Arguments: {call.arguments}")
     response = input("Approve this tool call? (y/n): ").strip().lower()
     return response in ("y", "yes")
 
@@ -70,11 +66,7 @@ async def prompt_for_approval_async(call: Content) -> bool:
     review service or queueing the request to a UI). ``input()`` is wrapped
     with ``asyncio.to_thread`` so the event loop is not blocked.
     """
-    print(
-        "\n[Function Approval Request - async]"
-        f"\n  Tool: {call.name}"  # type: ignore[attr-defined]
-        f"\n  Arguments: {call.arguments}"  # type: ignore[attr-defined]
-    )
+    print(f"\n[Function Approval Request - async]\n  Tool: {call.name}\n  Arguments: {call.arguments}")
     response = await asyncio.to_thread(input, "Approve this tool call? (y/n): ")
     return response.strip().lower() in ("y", "yes")
 

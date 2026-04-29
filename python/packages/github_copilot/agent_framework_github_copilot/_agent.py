@@ -98,7 +98,7 @@ async def _resolve_function_approval(
     request = Content.from_function_call(
         call_id=f"af-copilot-approval::{func_tool.name}",
         name=func_tool.name,
-        arguments=dict(arguments) if arguments else None,
+        arguments=None if arguments is None else dict(arguments),
     )
     try:
         outcome = callback(request)
@@ -489,6 +489,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
+        if "on_function_approval" in opts:
+            raise ValueError(
+                "on_function_approval is a security-sensitive option and must be set "
+                "via default_options at agent construction time. It cannot be overridden "
+                "per run."
+            )
         timeout = opts.get("timeout") or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
 
         input_messages = normalize_messages(messages)
@@ -568,6 +574,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
+        if "on_function_approval" in opts:
+            raise ValueError(
+                "on_function_approval is a security-sensitive option and must be set "
+                "via default_options at agent construction time. It cannot be overridden "
+                "per run."
+            )
 
         input_messages = normalize_messages(messages)
 

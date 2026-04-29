@@ -107,7 +107,7 @@ async def _resolve_function_approval(
     request = Content.from_function_call(
         call_id=f"af-claude-approval::{func_tool.name}",
         name=func_tool.name,
-        arguments=dict(arguments) if arguments else None,
+        arguments=None if arguments is None else dict(arguments),
     )
     try:
         outcome = callback(request)
@@ -613,6 +613,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         """
         if not options or not self._client:
             return
+
+        if "on_function_approval" in options:
+            raise ValueError(
+                "on_function_approval is a security-sensitive option and must be set "
+                "via default_options at agent construction time. It cannot be overridden "
+                "per run."
+            )
 
         if "model" in options:
             await self._client.set_model(options["model"])
