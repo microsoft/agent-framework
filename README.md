@@ -19,7 +19,7 @@ It is designed for teams moving beyond prototypes who need:
 - built-in observability and tracing with OpenTelemetry,
 - and practical paths to test, host, and operate agents in real production systems.
 
-MAF supports a broad ecosystem including Azure AI Foundry, Azure OpenAI, OpenAI, and GitHub Copilot SDK, with samples and hosting patterns for both local development and cloud deployment.
+MAF supports a broad ecosystem including Microsoft Foundry, Azure OpenAI, OpenAI, and the GitHub Copilot SDK, with samples and hosting patterns for both local development and cloud deployment.
 
 
 <p align="center">
