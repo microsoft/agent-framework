@@ -11,16 +11,7 @@
 
 Microsoft Agent Framework (MAF) is an open, multi-language framework for building **production-grade AI agents and multi-agent workflows** in **.NET and Python**.
 
-It is designed for teams moving beyond prototypes who need:
-- a consistent agent programming model with tools, middleware, and provider flexibility,
-- graph-based workflows with checkpointing, streaming, human-in-the-loop, and time-travel,
-- durable and restartable execution for long-running, stateful orchestration,
-- interoperable architectures through MCP and Agent-to-Agent (A2A) communication,
-- built-in observability and tracing with OpenTelemetry,
-- and practical paths to test, host, and operate agents in real production systems.
-
-MAF supports a broad ecosystem including Microsoft Foundry, Azure OpenAI, OpenAI, and the GitHub Copilot SDK, with samples and hosting patterns for both local development and cloud deployment.
-
+Microsoft Agent Framework is built for teams taking agents from prototype to production. It provides a consistent foundation for building, orchestrating, and operating agent systems across Python and .NET, while keeping architecture choices open as requirements evolve, and supports a broad ecosystem including Microsoft Foundry, Azure OpenAI, OpenAI, and the GitHub Copilot SDK, with samples and hosting patterns for both local development and cloud deployment.
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=AAgdMhftj8w" title="Watch the full Agent Framework introduction (30 min)">
@@ -42,9 +33,6 @@ MAF is a strong fit if you:
 - want graph-based patterns such as sequential, concurrent, handoff, and group collaboration,
 - care about durability, restartability, observability, governance, or human-in-the-loop control,
 - need provider flexibility so your architecture can evolve without major rewrites.
-
-If your scope is limited to experimentation or simple single-prompt chatbots,
-MAF may be more than what you need today. It is intentionally designed for systems where agent behavior, reliability, and operational needs grow over time.
 
 ## Key Features
 Explore new MAF capabilities and real implementation patterns on the [official blog](https://devblogs.microsoft.com/agent-framework/).
