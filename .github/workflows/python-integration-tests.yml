@@ -369,6 +369,53 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
+  # Foundry Hosting integration tests
+  python-tests-foundry-hosting:
+    name: Python Integration Tests - Foundry Hosting
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Test with pytest (Foundry Hosting integration)
+        timeout-minutes: 15
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/foundry_hosting/tests
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-foundry-hosting
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
   # Azure Cosmos integration tests
   python-tests-cosmos:
     name: Python Integration Tests - Cosmos
@@ -435,6 +482,7 @@ jobs:
         python-tests-misc-integration,
         python-tests-functions,
         python-tests-foundry,
+        python-tests-foundry-hosting,
         python-tests-cosmos,
       ]
     runs-on: ubuntu-latest
@@ -498,6 +546,7 @@ jobs:
         python-tests-misc-integration,
         python-tests-functions,
         python-tests-foundry,
+        python-tests-foundry-hosting,
         python-tests-cosmos
       ]
     steps:

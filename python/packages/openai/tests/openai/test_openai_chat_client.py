@@ -1914,6 +1914,285 @@ def test_hosted_file_content_preparation() -> None:
     assert result["file_id"] == "file_abc123"
 
 
+def test_assistant_text_preserves_citation_annotations_on_roundtrip() -> None:
+    """Citation annotations on assistant text should survive serialization back to the Responses API.
+
+    Previously `output_text.annotations` was hardcoded to `[]`, silently dropping `file_search`
+    citation context on every roundtrip. Preserving them keeps citations intact across
+    multi-agent forwarding.
+    """
+    from agent_framework._types import Annotation, TextSpanRegion
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    text_content = Content.from_text(
+        "Per the docs, the answer is X. See also the report.",
+        annotations=[
+            Annotation(
+                type="citation",
+                file_id="file-abc123",
+                url="guidelines.md",
+                additional_properties={"index": 12},
+            ),
+            Annotation(
+                type="citation",
+                title="Quarterly Report",
+                url="https://example.com/report",
+                annotated_regions=[TextSpanRegion(type="text_span", start_index=40, end_index=46)],
+            ),
+            Annotation(
+                type="citation",
+                file_id="file-container456",
+                url="data.csv",
+                additional_properties={"container_id": "container-789"},
+                annotated_regions=[TextSpanRegion(type="text_span", start_index=0, end_index=3)],
+            ),
+        ],
+    )
+
+    result = client._prepare_content_for_openai("assistant", text_content)
+
+    assert result["type"] == "output_text"
+    annotations = result["annotations"]
+    assert len(annotations) == 3
+
+    file_citation = next(a for a in annotations if a["type"] == "file_citation")
+    assert file_citation["file_id"] == "file-abc123"
+    assert file_citation["filename"] == "guidelines.md"
+    assert file_citation["index"] == 12
+
+    url_citation = next(a for a in annotations if a["type"] == "url_citation")
+    assert url_citation["url"] == "https://example.com/report"
+    assert url_citation["title"] == "Quarterly Report"
+    assert url_citation["start_index"] == 40
+    assert url_citation["end_index"] == 46
+
+    container = next(a for a in annotations if a["type"] == "container_file_citation")
+    assert container["file_id"] == "file-container456"
+    assert container["container_id"] == "container-789"
+    assert container["filename"] == "data.csv"
+    assert container["start_index"] == 0
+    assert container["end_index"] == 3
+
+
+def test_assistant_text_preserves_file_path_annotation() -> None:
+    """A `file_path`-style citation (file_id only, no url) should serialize as `file_path`."""
+    from agent_framework._types import Annotation
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    text_content = Content.from_text(
+        "See attached.",
+        annotations=[
+            Annotation(
+                type="citation",
+                file_id="file-only",
+                additional_properties={"index": 42},
+            ),
+        ],
+    )
+
+    result = client._prepare_content_for_openai("assistant", text_content)
+
+    assert result["type"] == "output_text"
+    annotations = result["annotations"]
+    assert annotations == [{"type": "file_path", "file_id": "file-only", "index": 42}]
+
+
+def test_assistant_text_fans_out_multiple_annotated_regions() -> None:
+    """A url_citation with multiple `annotated_regions` should emit one entry per region.
+
+    The Responses API annotation dict carries one start/end pair, so a framework Annotation
+    with N regions must produce N output annotation entries.
+    """
+    from agent_framework._types import Annotation, TextSpanRegion
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    text_content = Content.from_text(
+        "See report. The report says X. Also report.",
+        annotations=[
+            Annotation(
+                type="citation",
+                title="Report",
+                url="https://example.com/report",
+                annotated_regions=[
+                    TextSpanRegion(type="text_span", start_index=4, end_index=10),
+                    TextSpanRegion(type="text_span", start_index=16, end_index=22),
+                    TextSpanRegion(type="text_span", start_index=36, end_index=42),
+                ],
+            ),
+        ],
+    )
+
+    result = client._prepare_content_for_openai("assistant", text_content)
+    annotations = result["annotations"]
+    assert len(annotations) == 3
+    assert all(a["type"] == "url_citation" for a in annotations)
+    spans = [(a["start_index"], a["end_index"]) for a in annotations]
+    assert spans == [(4, 10), (16, 22), (36, 42)]
+
+
+def test_assistant_text_skips_regions_with_invalid_span() -> None:
+    """Regions missing integer start/end bounds are skipped rather than emitted with `None`."""
+    from agent_framework._types import Annotation, TextSpanRegion
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    text_content = Content.from_text(
+        "See report.",
+        annotations=[
+            Annotation(
+                type="citation",
+                title="Report",
+                url="https://example.com/report",
+                annotated_regions=[
+                    TextSpanRegion(type="text_span"),  # type: ignore[typeddict-item]
+                    TextSpanRegion(type="text_span", start_index=4, end_index=10),
+                ],
+            ),
+        ],
+    )
+
+    result = client._prepare_content_for_openai("assistant", text_content)
+    annotations = result["annotations"]
+    assert len(annotations) == 1
+    assert annotations[0]["start_index"] == 4
+    assert annotations[0]["end_index"] == 10
+
+
+def test_assistant_text_without_annotations_emits_empty_list() -> None:
+    """Plain assistant text should still emit `annotations: []` (Azure validation requires the field)."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    result = client._prepare_content_for_openai("assistant", Content.from_text("hello"))
+
+    assert result["type"] == "output_text"
+    assert result["text"] == "hello"
+    assert result["annotations"] == []
+
+
+def test_streamed_file_citation_coalesces_onto_surrounding_text() -> None:
+    """Streamed citation events emit empty-text Content with annotations; `_finalize_response`
+    coalesces consecutive text contents and unions their annotations, so the citation lands on
+    the merged assistant text content (not a stray empty-text entry).
+
+    Without this, span indices in the annotation would reference `text == ""` after roundtrip.
+    """
+    text_event = MagicMock()
+    text_event.type = "response.output_text.delta"
+    text_event.delta = "Hello world."
+    text_event.item_id = "item_1"
+    text_event.output_index = 0
+    text_event.content_index = 0
+
+    citation_event = MagicMock()
+    citation_event.type = "response.output_text.annotation.added"
+    citation_event.annotation_index = 0
+    citation_event.annotation = {
+        "type": "file_citation",
+        "file_id": "file-abc",
+        "filename": "guidelines.md",
+        "index": 5,
+    }
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    update1 = client._parse_chunk_from_openai(text_event, chat_options, function_call_ids)
+    update2 = client._parse_chunk_from_openai(citation_event, chat_options, function_call_ids)
+
+    response = ChatResponse.from_updates([update1, update2])
+
+    assert len(response.messages) == 1
+    contents = response.messages[0].contents
+    assert len(contents) == 1
+    merged = contents[0]
+    assert merged.type == "text"
+    assert merged.text == "Hello world."
+    assert merged.annotations is not None
+    assert len(merged.annotations) == 1
+    assert merged.annotations[0]["file_id"] == "file-abc"
+
+
+def test_streamed_file_citation_roundtrips_as_assistant_history() -> None:
+    """End-to-end: file_citation arrives via streaming, then gets forwarded as assistant history.
+
+    Reproduces the user-reported sequential/group-chat workflow bug where one agent's
+    `file_search` citations became `input_file` items in the next agent's request and were
+    rejected by the Responses API.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    text_event = MagicMock()
+    text_event.type = "response.output_text.delta"
+    text_event.delta = "According to the docs, the answer is X."
+    text_event.item_id = "item_1"
+    text_event.output_index = 0
+    text_event.content_index = 0
+
+    citation_event = MagicMock()
+    citation_event.type = "response.output_text.annotation.added"
+    citation_event.annotation_index = 0
+    citation_event.annotation = {
+        "type": "file_citation",
+        "file_id": "file-xyz789",
+        "filename": "guidelines.md",
+        "index": 12,
+    }
+
+    update1 = client._parse_chunk_from_openai(text_event, chat_options, function_call_ids)
+    update2 = client._parse_chunk_from_openai(citation_event, chat_options, function_call_ids)
+
+    assistant_history = Message(
+        role="assistant",
+        contents=[*update1.contents, *update2.contents],
+    )
+    prepared = client._prepare_message_for_openai(assistant_history)
+
+    assert len(prepared) == 1
+    content_items = prepared[0].get("content", [])
+    types = [c.get("type") for c in content_items]
+    assert "input_file" not in types, f"input_file leaked into assistant history: {types}"
+    output_text_items = [c for c in content_items if c.get("type") == "output_text"]
+    assert any(
+        any(a.get("type") == "file_citation" and a.get("file_id") == "file-xyz789" for a in c.get("annotations", []))
+        for c in output_text_items
+    ), "file_citation annotation should survive the streaming → history roundtrip"
+
+
+def test_hosted_file_in_assistant_message_does_not_emit_input_file() -> None:
+    """Hosted file citations attached to an assistant message must not roundtrip as `input_file`.
+
+    The Responses API rejects `input_file` items inside an assistant role's content array;
+    `input_file` is an input-only content type. This guards the multi-agent / sequential workflow
+    case where one agent's `file_search` citations get forwarded as history to the next call.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_text("According to the docs, the answer is X."),
+            Content.from_hosted_file(file_id="file_abc123"),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(assistant_msg)
+
+    assert len(prepared) == 1
+    assistant_item = prepared[0]
+    assert assistant_item["role"] == "assistant"
+    content_types = [c.get("type") for c in assistant_item.get("content", [])]
+    assert "input_file" not in content_types, (
+        f"`input_file` is not valid inside an assistant message; got {content_types}"
+    )
+    assert "output_text" in content_types
+
+
 def test_function_approval_response_with_mcp_tool_call() -> None:
     """Test function approval response content with MCP server tool call content."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -2682,7 +2961,7 @@ def test_streaming_response_in_progress_type() -> None:
 
 
 def test_streaming_annotation_added_with_file_path() -> None:
-    """Test streaming annotation added event with file_path type extracts HostedFileContent."""
+    """Streaming `file_path` should attach as a text annotation, matching non-streaming."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -2700,15 +2979,23 @@ def test_streaming_annotation_added_with_file_path() -> None:
 
     assert len(response.contents) == 1
     content = response.contents[0]
-    assert content.type == "hosted_file"
-    assert content.file_id == "file-abc123"
-    assert content.additional_properties is not None
-    assert content.additional_properties.get("annotation_index") == 0
-    assert content.additional_properties.get("index") == 42
+    assert content.type == "text"
+    assert content.annotations is not None
+    assert len(content.annotations) == 1
+    annotation = content.annotations[0]
+    assert annotation["type"] == "citation"
+    assert annotation["file_id"] == "file-abc123"
+    assert annotation["additional_properties"]["annotation_index"] == 0
+    assert annotation["additional_properties"]["index"] == 42
 
 
 def test_streaming_annotation_added_with_file_citation() -> None:
-    """Test streaming annotation added event with file_citation type extracts HostedFileContent."""
+    """Streaming `file_citation` should attach as a text annotation, matching non-streaming.
+
+    Previously the streaming path produced a standalone `HostedFileContent`, which then
+    serialized as `input_file` in assistant history and was rejected by the Responses API.
+    Annotations on text content roundtrip cleanly.
+    """
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -2727,15 +3014,19 @@ def test_streaming_annotation_added_with_file_citation() -> None:
 
     assert len(response.contents) == 1
     content = response.contents[0]
-    assert content.type == "hosted_file"
-    assert content.file_id == "file-xyz789"
-    assert content.additional_properties is not None
-    assert content.additional_properties.get("filename") == "sample.txt"
-    assert content.additional_properties.get("index") == 15
+    assert content.type == "text"
+    assert content.annotations is not None
+    assert len(content.annotations) == 1
+    annotation = content.annotations[0]
+    assert annotation["type"] == "citation"
+    assert annotation["file_id"] == "file-xyz789"
+    assert annotation["url"] == "sample.txt"
+    assert annotation["additional_properties"]["annotation_index"] == 1
+    assert annotation["additional_properties"]["index"] == 15
 
 
 def test_streaming_annotation_added_with_container_file_citation() -> None:
-    """Test streaming annotation added event with container_file_citation type."""
+    """Streaming `container_file_citation` should attach as a text annotation."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -2756,13 +3047,19 @@ def test_streaming_annotation_added_with_container_file_citation() -> None:
 
     assert len(response.contents) == 1
     content = response.contents[0]
-    assert content.type == "hosted_file"
-    assert content.file_id == "file-container123"
-    assert content.additional_properties is not None
-    assert content.additional_properties.get("container_id") == "container-456"
-    assert content.additional_properties.get("filename") == "data.csv"
-    assert content.additional_properties.get("start_index") == 10
-    assert content.additional_properties.get("end_index") == 50
+    assert content.type == "text"
+    assert content.annotations is not None
+    assert len(content.annotations) == 1
+    annotation = content.annotations[0]
+    assert annotation["type"] == "citation"
+    assert annotation["file_id"] == "file-container123"
+    assert annotation["url"] == "data.csv"
+    assert annotation["additional_properties"]["container_id"] == "container-456"
+    assert annotation["annotated_regions"] is not None
+    assert len(annotation["annotated_regions"]) == 1
+    region = annotation["annotated_regions"][0]
+    assert region["start_index"] == 10
+    assert region["end_index"] == 50
 
 
 def test_streaming_annotation_added_with_url_citation() -> None:

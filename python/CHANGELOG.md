@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-04-29
+
+### Added
+- **agent-framework-azure-contentunderstanding**: New alpha package — Azure AI Content Understanding context provider that auto-analyzes file attachments (documents, images, audio, video) and injects structured results into the LLM context, with multi-document session state, configurable timeout, output filtering via `AnalysisSection`, and auto-registered `list_documents` / `get_analyzed_document` tools ([#4829](https://github.com/microsoft/agent-framework/pull/4829))
+- **agent-framework-foundry-hosting**: Add hosted Durable Workflow support — propagate full conversation history to workflow agents and wire `Workflow.as_agent()` end-to-end via the foundry hosting layer ([#5531](https://github.com/microsoft/agent-framework/pull/5531))
+
+### Changed
+- **agent-framework-orchestrations**: [BREAKING] Standardize orchestration terminal outputs as `AgentResponse` so `Workflow.as_agent()` returns the final answer only; aligns sequential-approval (`with_request_info`) and concurrent (`intermediate_outputs=True`) flows on the same output contract ([#5301](https://github.com/microsoft/agent-framework/pull/5301))
+- **agent-framework-core**, **agent-framework-declarative**: Preserve `Workflow.run()` shared state across calls so multi-turn `WorkflowAgent` invocations retain context, accept `list[Message]` input in the declarative start executor, and coerce `Enum` values when serializing PowerFx symbols ([#5531](https://github.com/microsoft/agent-framework/pull/5531))
+- **dependencies**: Update workspace package dependencies and preserve `mcp[ws]` / `uvicorn[standard]` extras through override-dependencies in `/python` ([#5555](https://github.com/microsoft/agent-framework/pull/5555))
+
+### Fixed
+- **agent-framework-core**: Fix observability spans not being correctly nested when using streaming ([#5552](https://github.com/microsoft/agent-framework/pull/5552))
+- **agent-framework-openai**: Fix `file_search` citations breaking the assistant-message history roundtrip — skip `hosted_file` content in the assistant role so the Responses API no longer rejects `input_file` ([#5557](https://github.com/microsoft/agent-framework/pull/5557))
+
+## [1.2.1] - 2026-04-28
+
+### Added
+- **agent-framework-foundry-hosting**: Add file data type support to hosted-agent Responses, refresh `foundry-hosted-agents` samples, and add response test coverage ([#5485](https://github.com/microsoft/agent-framework/pull/5485))
+- **samples**: Add `requirements.txt` and `.env.example` to the `a2a/` hosting sample for pip-based setup ([#5510](https://github.com/microsoft/agent-framework/pull/5510))
+
+### Changed
+- **dependencies**: Update `rich` requirement from `<15.0.0,>=13.7.1` to `>=13.7.1,<16.0.0` in `/python` ([#5227](https://github.com/microsoft/agent-framework/pull/5227))
+- **dependencies**: Bump `prek` from `0.3.8` to `0.3.9` in `/python` ([#5228](https://github.com/microsoft/agent-framework/pull/5228))
+- **dependencies**: Bump `python-multipart` from `0.0.22` to `0.0.26` in `/python` ([#5286](https://github.com/microsoft/agent-framework/pull/5286))
+- **dependencies**: Bump `pyasn1` from `0.6.2` to `0.6.3` in `/python` ([#4748](https://github.com/microsoft/agent-framework/pull/4748))
+- **dependencies**: Bump `pytest` from `9.0.2` to `9.0.3` in `/python/packages/ag-ui` ([#5461](https://github.com/microsoft/agent-framework/pull/5461))
+- **dependencies**: Bump `pytest` from `9.0.2` to `9.0.3` in `/python/packages/devui` ([#5492](https://github.com/microsoft/agent-framework/pull/5492))
+- **dependencies**: Bump `pytest` from `9.0.2` to `9.0.3` in `/python/packages/lab` ([#5470](https://github.com/microsoft/agent-framework/pull/5470))
+- **dependencies**: Bump `uv` from `0.11.3` to `0.11.6` in `/python/packages/lab` ([#5469](https://github.com/microsoft/agent-framework/pull/5469))
+- **dependencies**: Bump `vite` from `7.1.12` to `7.3.2` in `/python/packages/devui/frontend` ([#5127](https://github.com/microsoft/agent-framework/pull/5127))
+- **dependencies**: Bump `vite` from `7.1.12` to `7.3.2` in `/python/samples/05-end-to-end/chatkit-integration/frontend` ([#5126](https://github.com/microsoft/agent-framework/pull/5126))
+- **dependencies**: Bump `postcss` from `8.5.6` to `8.5.10` in `/python/packages/devui/frontend` ([#5484](https://github.com/microsoft/agent-framework/pull/5484))
+- **dependencies**: Bump `postcss` from `8.5.6` to `8.5.10` in `/python/samples/05-end-to-end/chatkit-integration/frontend` ([#5491](https://github.com/microsoft/agent-framework/pull/5491))
+- **dependencies**: Bump `postcss` from `8.5.6` to `8.5.12` in `/python/samples/05-end-to-end/ag_ui_workflow_handoff/frontend` ([#5527](https://github.com/microsoft/agent-framework/pull/5527))
+- **dependencies**: Bump `picomatch` from `4.0.3` to `4.0.4` in `/python/packages/devui/frontend` ([#4921](https://github.com/microsoft/agent-framework/pull/4921))
+- **dependencies**: Bump `picomatch` from `4.0.3` to `4.0.4` in `/python/samples/05-end-to-end/ag_ui_workflow_handoff/frontend` ([#4936](https://github.com/microsoft/agent-framework/pull/4936))
+
+### Fixed
+- **agent-framework-core**: Prevent `inner_exception` from being lost in `AgentFrameworkException` ([#5167](https://github.com/microsoft/agent-framework/pull/5167))
+
+## [1.2.0] - 2026-04-24
+
+### Added
+- **agent-framework-core**: Add functional workflow API ([#4238](https://github.com/microsoft/agent-framework/pull/4238))
+- **agent-framework-core**, **agent-framework-github-copilot**: Add OpenTelemetry integration for `GitHubCopilotAgent` ([#5142](https://github.com/microsoft/agent-framework/pull/5142))
+- **agent-framework-a2a**: Add Agent Framework to A2A bridge support ([#2403](https://github.com/microsoft/agent-framework/pull/2403))
+- **agent-framework-foundry**: Surface `oauth_consent_request` events from Responses API in Foundry clients ([#5070](https://github.com/microsoft/agent-framework/pull/5070))
+
+### Changed
+- **agent-framework-core**, **agent-framework-foundry**: Update `FoundryAgent` for hosted agent sessions ([#5447](https://github.com/microsoft/agent-framework/pull/5447))
+- **agent-framework-foundry-hosting**: Upgrade hosting server dependency and add more type support ([#5459](https://github.com/microsoft/agent-framework/pull/5459))
+
+### Fixed
+- **agent-framework-ag-ui**: Fix reasoning role and multimodal media parsing to follow specification ([#5389](https://github.com/microsoft/agent-framework/pull/5389))
+- **agent-framework-foundry**: Stop emitting `[TOOLBOXES]` warning for every `FoundryChatClient` call ([#5440](https://github.com/microsoft/agent-framework/pull/5440))
+- **agent-framework-anthropic**, **agent-framework-azure-ai-search**, **agent-framework-azure-cosmos**: Fix user agent prefix ([#5455](https://github.com/microsoft/agent-framework/pull/5455))
+
 ## [1.1.1] - 2026-04-23
 
 ### Added
@@ -26,8 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-openai**: Exclude null `file_id` from `input_image` payload to prevent schema 400 errors ([#5125](https://github.com/microsoft/agent-framework/pull/5125))
 - **agent-framework-foundry**: Reconcile Toolbox hosted-tool payloads with the Responses API ([#5414](https://github.com/microsoft/agent-framework/pull/5414))
 - **agent-framework-ag-ui**: Pass client `thread_id` as `session_id` when constructing `AgentSession` ([#5384](https://github.com/microsoft/agent-framework/pull/5384))
-- **agent-framework-hyperlight**: Thread-confine `WasmSandbox` interactions via per-entry `ThreadPoolExecutor` to eliminate the PyO3 `unsendable` panic when touched from asyncio worker threads
-  ([#5424](https://github.com/microsoft/agent-framework/pull/5424))
+- **agent-framework-hyperlight**: Thread-confine `WasmSandbox` interactions via per-entry `ThreadPoolExecutor` to eliminate the PyO3 `unsendable` panic when touched from asyncio worker threads ([#5424](https://github.com/microsoft/agent-framework/pull/5424))
 
 ## [1.1.0] - 2026-04-21
 
@@ -961,7 +1018,11 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.1.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.2.2...HEAD
+[1.2.2]: https://github.com/microsoft/agent-framework/compare/python-1.2.1...python-1.2.2
+[1.2.1]: https://github.com/microsoft/agent-framework/compare/python-1.2.0...python-1.2.1
+[1.2.0]: https://github.com/microsoft/agent-framework/compare/python-1.1.1...python-1.2.0
+[1.1.1]: https://github.com/microsoft/agent-framework/compare/python-1.1.0...python-1.1.1
 [1.1.0]: https://github.com/microsoft/agent-framework/compare/python-1.0.1...python-1.1.0
 [1.0.1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0...python-1.0.1
 [1.0.0]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc6...python-1.0.0

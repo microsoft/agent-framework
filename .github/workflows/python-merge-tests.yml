@@ -38,6 +38,7 @@ jobs:
       miscChanged: ${{ steps.filter.outputs.misc }}
       functionsChanged: ${{ steps.filter.outputs.functions }}
       foundryChanged: ${{ steps.filter.outputs.foundry }}
+      foundryHostingChanged: ${{ steps.filter.outputs.foundry_hosting }}
       cosmosChanged: ${{ steps.filter.outputs.cosmos }}
     steps:
       - uses: actions/checkout@v6
@@ -80,6 +81,8 @@ jobs:
               - 'python/packages/foundry/**'
               - 'python/samples/**/providers/foundry/**'
               - 'python/samples/02-agents/embeddings/foundry_embeddings.py'
+            foundry_hosting:
+              - 'python/packages/foundry_hosting/**'
             cosmos:
               - 'python/packages/azure-cosmos/**'
       # run only if 'python' files were changed
@@ -521,6 +524,67 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
+  # Foundry Hosting integration tests
+  python-tests-foundry-hosting:
+    name: Python Tests - Foundry Hosting Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.foundryHostingChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Azure CLI Login
+        if: github.event_name != 'pull_request'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Test with pytest (Foundry Hosting integration)
+        timeout-minutes: 15
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/foundry_hosting/tests
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+        working-directory: ./python
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/pytest.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: Foundry Hosting integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-foundry-hosting
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
   # TODO: Add python-tests-lab
 
   # Azure Cosmos integration tests
@@ -602,6 +666,7 @@ jobs:
         python-tests-misc-integration,
         python-tests-functions,
         python-tests-foundry,
+        python-tests-foundry-hosting,
         python-tests-cosmos,
       ]
     runs-on: ubuntu-latest
@@ -662,6 +727,7 @@ jobs:
         python-tests-misc-integration,
         python-tests-functions,
         python-tests-foundry,
+        python-tests-foundry-hosting,
         python-tests-cosmos,
       ]
     steps:

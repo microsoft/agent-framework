@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -15,7 +16,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 /// </summary>
 public sealed class AgentSkillsProviderTests : IDisposable
 {
-    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
+    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, sp, ct) => Task.FromResult<object?>(null);
     private readonly string _testRoot;
     private readonly TestAIAgent _agent = new();
 
@@ -462,7 +463,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Act — call UseFileScriptRunner AFTER UseFileSkill (the bug scenario)
         var provider = new AgentSkillsProviderBuilder()
             .UseFileSkill(this._testRoot)
-            .UseFileScriptRunner((skill, script, args, ct) =>
+            .UseFileScriptRunner((skill, script, args, sp, ct) =>
             {
                 executorCalled = true;
                 return Task.FromResult<object?>("executed");
@@ -485,6 +486,62 @@ public sealed class AgentSkillsProviderTests : IDisposable
         }));
 
         Assert.True(executorCalled);
+    }
+
+    [Fact]
+    public async Task RunSkillScript_ForwardsJsonArgumentsAndServiceProviderToRunnerAsync()
+    {
+        // Arrange — create a skill with a script file
+        string skillDir = Path.Combine(this._testRoot, "fwd-skill");
+        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: fwd-skill\ndescription: Forwarding test\n---\nBody.");
+        File.WriteAllText(
+            Path.Combine(skillDir, "scripts", "run.py"),
+            "print('ok')");
+
+        JsonElement? capturedArgs = null;
+        IServiceProvider? capturedServiceProvider = null;
+
+        var provider = new AgentSkillsProviderBuilder()
+            .UseFileSkill(this._testRoot)
+            .UseFileScriptRunner((skill, script, args, sp, ct) =>
+            {
+                capturedArgs = args;
+                capturedServiceProvider = sp;
+                return Task.FromResult<object?>("executed");
+            })
+            .Build();
+
+        var mockServiceProvider = new TestServiceProvider();
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var runScriptTool = result.Tools!.First(t => t.Name == "run_skill_script") as AIFunction;
+
+        // Act — invoke with JsonElement arguments and a service provider
+        using var argsJsonDoc = JsonDocument.Parse("""["arg1","arg2"]""");
+        var argsJson = argsJsonDoc.RootElement;
+        await runScriptTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+        {
+            ["skillName"] = "fwd-skill",
+            ["scriptName"] = "scripts/run.py",
+            ["arguments"] = argsJson,
+        })
+        {
+            Services = mockServiceProvider,
+        });
+
+        // Assert — JsonElement arguments and service provider are forwarded to the runner
+        Assert.NotNull(capturedArgs);
+        Assert.Equal(JsonValueKind.Array, capturedArgs!.Value.ValueKind);
+        Assert.Equal("""["arg1","arg2"]""", capturedArgs.Value.GetRawText());
+        Assert.Same(mockServiceProvider, capturedServiceProvider);
+    }
+
+    private sealed class TestServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
     }
 
     private static void CreateSkillIn(string root, string name, string description, string body)

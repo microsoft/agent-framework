@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -20,7 +21,6 @@ from agent_framework import (
     SupportsAgentRun,
     WorkflowAgent,
 )
-from agent_framework._telemetry import user_agent_prefix
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseEventStream,
@@ -29,13 +29,35 @@ from azure.ai.agentserver.responses import (
 )
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import (
+    ApplyPatchToolCallItemParam,
+    ApplyPatchToolCallOutputItemParam,
+    ComputerCallOutputItemParam,
     ComputerScreenshotContent,
     CreateResponse,
     FunctionCallOutputItemParam,
     FunctionShellAction,
+    FunctionShellCallItemParam,
     FunctionShellCallOutputContent,
     FunctionShellCallOutputExitOutcome,
+    FunctionShellCallOutputItemParam,
+    Item,
+    ItemCodeInterpreterToolCall,
+    ItemComputerToolCall,
+    ItemCustomToolCall,
+    ItemCustomToolCallOutput,
+    ItemFileSearchToolCall,
+    ItemFunctionToolCall,
+    ItemImageGenToolCall,
+    ItemLocalShellToolCall,
+    ItemLocalShellToolCallOutput,
+    ItemMcpApprovalRequest,
+    ItemMcpToolCall,
+    ItemMessage,
+    ItemOutputMessage,
+    ItemReasoningItem,
+    ItemWebSearchToolCall,
     LocalEnvironmentResource,
+    MCPApprovalResponse,
     MessageContent,
     MessageContentInputFileContent,
     MessageContentInputImageContent,
@@ -90,7 +112,6 @@ logger = logging.getLogger(__name__)
 class ResponsesHostServer(ResponsesAgentServerHost):
     """A responses server host for an agent."""
 
-    USER_AGENT_PREFIX = "foundry-hosting"
     # TODO(@taochen): Allow a different checkpoint storage that stores checkpoints externally
     CHECKPOINT_STORAGE_PATH = "/.checkpoints"
 
@@ -150,58 +171,48 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._is_workflow_agent = True
 
         self._agent = agent
-        self.response_handler(self._handler)  # pyright: ignore[reportUnknownMemberType]
+        self.response_handler(self._handle_response)  # pyright: ignore[reportUnknownMemberType]
 
-    @staticmethod
-    def _is_streaming_request(request: CreateResponse) -> bool:
-        """Check if the request is a streaming request."""
-        return request.stream is not None and request.stream is True
-
-    async def _handler(
+    async def _handle_response(
         self,
         request: CreateResponse,
         context: ResponseContext,
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
-        with user_agent_prefix(self.USER_AGENT_PREFIX):
-            async for event in self._handle_inner(request, context, cancellation_signal):
-                yield event
+        if self._is_workflow_agent:
+            # Workflow agents are handled differently because they require checkpoint restoration
+            return self._handle_inner_workflow(request, context)
+        return self._handle_inner_agent(request, context)
 
-    async def _handle_inner(
+    async def _handle_inner_agent(
         self,
         request: CreateResponse,
         context: ResponseContext,
-        cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
-        """Core handler logic."""
-        if self._is_workflow_agent:
-            # Workflow agents are handled differently because they require checkpoint restoration
-            async for event in self._handle_workflow_agent(request, context, cancellation_signal):
-                yield event
-            return
+        """Handle the creation of a response for a regular (non-workflow) agent."""
+        input_items = await context.get_input_items()
+        input_messages = _items_to_messages(input_items)
 
-        input_text = await context.get_input_text()
         history = await context.get_history()
-        messages: list[str | Content | Message] = [*_to_messages(history), input_text]
+        run_kwargs: dict[str, Any] = {"messages": [*_output_items_to_messages(history), *input_messages]}
+        is_streaming_request = request.stream is not None and request.stream is True
 
         chat_options, are_options_set = _to_chat_options(request)
 
-        is_streaming_request = self._is_streaming_request(request)
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
 
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
+        if are_options_set and not isinstance(self._agent, RawAgent):
+            logger.warning("Agent doesn't support runtime options. They will be ignored.")
+        else:
+            run_kwargs["options"] = chat_options
+
         if not is_streaming_request:
             # Run the agent in non-streaming mode
-            if isinstance(self._agent, RawAgent):
-                raw_agent = cast("RawAgent[Any]", self._agent)  # type: ignore[redundant-cast]  # pyright: ignore[reportUnknownMemberType]
-                response = await raw_agent.run(messages, stream=False, options=chat_options)
-            else:
-                if are_options_set:
-                    logger.warning("Agent doesn't support runtime options. They will be ignored.")
-                response = await self._agent.run(messages, stream=False)
+            response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
 
             for message in response.messages:
                 for content in message.contents:
@@ -211,20 +222,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             yield response_event_stream.emit_completed()
             return
 
-        # Run the agent in streaming mode
-        if isinstance(self._agent, RawAgent):
-            raw_agent = cast("RawAgent[Any]", self._agent)  # type: ignore[redundant-cast]  # pyright: ignore[reportUnknownMemberType]
-            response_stream = raw_agent.run(messages, stream=True, options=chat_options)
-        else:
-            if are_options_set:
-                logger.warning("Agent doesn't support runtime options. They will be ignored.")
-            response_stream = self._agent.run(messages, stream=True)
-
         # Track the current active output item builder for streaming;
         # lazily created on matching content, closed when a different type arrives.
         tracker = _OutputItemTracker(response_event_stream)
 
-        async for update in response_stream:
+        # Run the agent in streaming mode
+        async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
             for content in update.contents:
                 for event in tracker.handle(content):
                     yield event
@@ -239,11 +242,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         yield response_event_stream.emit_completed()
 
-    async def _handle_workflow_agent(
+    async def _handle_inner_workflow(
         self,
         request: CreateResponse,
         context: ResponseContext,
-        cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response for a workflow agent.
 
@@ -251,8 +253,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         The sandbox may be deactivated after some period of inactivity, and only data managed
         by the hosting infrastructure or files will be preserved upon deactivation.
         """
-        input_text = await context.get_input_text()
-        is_streaming_request = self._is_streaming_request(request)
+        input_items = await context.get_input_items()
+        input_messages = _items_to_messages(input_items)
+        is_streaming_request = request.stream is not None and request.stream is True
 
         _, are_options_set = _to_chat_options(request)
         if are_options_set:
@@ -269,60 +272,99 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if not isinstance(self._agent, WorkflowAgent):
             raise RuntimeError("Agent is not a workflow agent.")
 
-        # Restore from the latest checkpoint if available, otherwise start with an empty history
+        # Determine the latest checkpoint (if any) so we can resume the
+        # workflow's prior state for this turn. The directory is keyed by
+        # the inbound context id (conversation_id when set, otherwise
+        # previous_response_id). Multi-turn declarative workflows need the
+        # workflow's internal state (e.g. Conversation.messages,
+        # intermediate Local.* variables) to survive across user turns;
+        # the only place that state lives is the workflow checkpoint, so
+        # on every turn we restore the latest checkpoint and feed the new
+        # input back into the start executor as a continuation rather than
+        # a fresh run.
+        latest_checkpoint_id: str | None = None
+        restore_storage: FileCheckpointStorage | None = None
         if context_id is not None:
-            checkpoint_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
-            latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+            restore_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
+            latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
             if latest_checkpoint is not None:
-                if not is_streaming_request:
-                    _ = await self._agent.run(
-                        stream=False,
-                        checkpoint_id=latest_checkpoint.checkpoint_id,
-                        checkpoint_storage=checkpoint_storage,
-                    )
-                else:
-                    # Consume the streaming or the invocation will result in a no-op
-                    async for _ in self._agent.run(
-                        stream=True,
-                        checkpoint_id=latest_checkpoint.checkpoint_id,
-                        checkpoint_storage=checkpoint_storage,
-                    ):
-                        pass
+                latest_checkpoint_id = latest_checkpoint.checkpoint_id
+
+        # Storage that will receive checkpoints written during this turn.
+        # When the caller chains with previous_response_id, the next turn
+        # will reference the current response_id as its previous_response_id,
+        # so new checkpoints must land under the current response_id (or the
+        # conversation_id when set). When conversation_id is set, this
+        # matches restore_storage; when only previous_response_id was
+        # supplied, restore_storage points at the *prior* response's
+        # directory and write_storage points at the *current* response's.
+        write_context_id = context.conversation_id or context.response_id
+        write_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, write_context_id))
+
+        # Multi-turn pattern: when we have a prior checkpoint, restore it
+        # first (drive the workflow back to idle with prior state intact),
+        # then make a separate call that delivers the new user input. This
+        # depends on Workflow.run preserving shared state across calls. The
+        # restore-only call may yield events from any pending in-flight
+        # work in the checkpoint; we consume those internally here so they
+        # don't surface to the response stream as duplicates.
+        #
+        # If the restored checkpoint had pending request_info events, the
+        # restore-only call replays them through
+        # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
+        # and populates ``self._agent.pending_requests``. That is the correct
+        # state: those requests are genuinely outstanding, and the next
+        # ``run(input_messages, ...)`` call may contain ``function_call_output``
+        # items (carried as FunctionResult/FunctionApprovalResponse content)
+        # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
+        if latest_checkpoint_id is not None:
+            if is_streaming_request:
+                async for _ in self._agent.run(
+                    stream=True,
+                    checkpoint_id=latest_checkpoint_id,
+                    checkpoint_storage=restore_storage,
+                ):
+                    pass
+            else:
+                await self._agent.run(
+                    stream=False,
+                    checkpoint_id=latest_checkpoint_id,
+                    checkpoint_storage=restore_storage,
+                )
 
         # Now run the agent with the latest input
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
-
-        # Create a new checkpoint storage for this response based on the following rules:
-        # - If no previous response ID or conversation ID is provided, create a new checkpoint storage for this response
-        # - If a previous response ID is provided, create a new checkpoint storage for this response
-        # - If a conversation ID is provided, reuse the existing checkpoint storage for the conversation
-        context_id = context.conversation_id or context.response_id
-        checkpoint_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
 
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
         if not is_streaming_request:
-            # Run the agent in non-streaming mode
-            response = await self._agent.run(input_text, stream=False, checkpoint_storage=checkpoint_storage)
+            # Run the agent in non-streaming mode with the new user input.
+            response = await self._agent.run(
+                input_messages,
+                stream=False,
+                checkpoint_storage=write_storage,
+            )
 
             for message in response.messages:
                 for content in message.contents:
                     async for item in _to_outputs(response_event_stream, content):
                         yield item
 
-            await self._delete_not_latest_checkpoints(checkpoint_storage, self._agent.workflow.name)
+            await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
             yield response_event_stream.emit_completed()
             return
-
-        # Run the agent in streaming mode
-        response_stream = self._agent.run(input_text, stream=True, checkpoint_storage=checkpoint_storage)
 
         # Track the current active output item builder for streaming;
         # lazily created on matching content, closed when a different type arrives.
         tracker = _OutputItemTracker(response_event_stream)
 
-        async for update in response_stream:
+        # Run the workflow agent in streaming mode with the new user input.
+        async for update in self._agent.run(
+            input_messages,
+            stream=True,
+            checkpoint_storage=write_storage,
+        ):
             for content in update.contents:
                 for event in tracker.handle(content):
                     yield event
@@ -335,9 +377,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         for event in tracker.close():
             yield event
 
-        await self._delete_not_latest_checkpoints(checkpoint_storage, self._agent.workflow.name)
+        await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
         yield response_event_stream.emit_completed()
-        return
 
     @staticmethod
     async def _delete_not_latest_checkpoints(checkpoint_storage: FileCheckpointStorage, workflow_name: str) -> None:
@@ -540,7 +581,260 @@ def _to_chat_options(request: CreateResponse) -> tuple[ChatOptions, bool]:
 # region Input Message Conversion
 
 
-def _to_messages(history: Sequence[OutputItem]) -> list[Message]:
+def _items_to_messages(input_items: Sequence[Item]) -> list[Message]:
+    """Converts a sequence of input items to a list of Messages, one per item.
+
+    Args:
+        input_items: The input items to convert.
+
+    Returns:
+        A list of Messages, one per supported input item.
+    """
+    messages: list[Message] = []
+    for item in input_items:
+        messages.append(_item_to_message(item))
+    return messages
+
+
+def _item_to_message(item: Item) -> Message:
+    """Converts an Item to a Message.
+
+    Args:
+        item: The Item to convert.
+
+    Returns:
+        The converted Message.
+
+    Raises:
+        ValueError: If the Item type is not supported.
+    """
+    if item.type == "message":
+        msg = cast(ItemMessage, item)
+        if isinstance(msg.content, str):
+            return Message(role=msg.role, contents=[Content.from_text(msg.content)])
+        return Message(role=msg.role, contents=[_convert_message_content(part) for part in msg.content])
+
+    if item.type == "output_message":
+        output_msg = cast(ItemOutputMessage, item)
+        return Message(
+            role=output_msg.role, contents=[_convert_output_message_content(part) for part in output_msg.content]
+        )
+
+    if item.type == "function_call":
+        fc = cast(ItemFunctionToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
+        )
+
+    if item.type == "function_call_output":
+        fco = cast(FunctionCallOutputItemParam, item)
+        output = fco.output if isinstance(fco.output, str) else str(fco.output)
+        return Message(
+            role="tool",
+            contents=[Content.from_function_result(fco.call_id, result=output)],
+        )
+
+    if item.type == "reasoning":
+        reasoning = cast(ItemReasoningItem, item)
+        reason_contents: list[Content] = []
+        if reasoning.summary:
+            for summary in reasoning.summary:
+                reason_contents.append(Content.from_text(summary.text))
+        return Message(role="assistant", contents=reason_contents)
+
+    if item.type == "mcp_call":
+        mcp = cast(ItemMcpToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    mcp.id,
+                    mcp.name,
+                    server_name=mcp.server_label,
+                    arguments=mcp.arguments,
+                )
+            ],
+        )
+
+    if item.type == "mcp_approval_request":
+        mcp_req = cast(ItemMcpApprovalRequest, item)
+        mcp_call_content = Content.from_mcp_server_tool_call(
+            mcp_req.id,
+            mcp_req.name,
+            server_name=mcp_req.server_label,
+            arguments=mcp_req.arguments,
+        )
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_approval_request(mcp_req.id, mcp_call_content)],
+        )
+
+    if item.type == "mcp_approval_response":
+        mcp_resp = cast(MCPApprovalResponse, item)
+        placeholder_content = Content.from_function_call(mcp_resp.approval_request_id, "mcp_approval")
+        return Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(
+                    mcp_resp.approve, mcp_resp.approval_request_id, placeholder_content
+                )
+            ],
+        )
+
+    if item.type == "code_interpreter_call":
+        ci = cast(ItemCodeInterpreterToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[Content.from_code_interpreter_tool_call(call_id=ci.id)],
+        )
+
+    if item.type == "image_generation_call":
+        ig = cast(ItemImageGenToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[Content.from_image_generation_tool_call(image_id=ig.id)],
+        )
+
+    if item.type == "shell_call":
+        sc = cast(FunctionShellCallItemParam, item)
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_shell_tool_call(
+                    call_id=sc.call_id,
+                    commands=sc.action.commands,
+                    status=str(sc.status),
+                )
+            ],
+        )
+
+    if item.type == "shell_call_output":
+        sco = cast(FunctionShellCallOutputItemParam, item)
+        outputs = [
+            Content.from_shell_command_output(
+                stdout=out.stdout or "",
+                stderr=out.stderr or "",
+                exit_code=getattr(out.outcome, "exit_code", None) if hasattr(out, "outcome") else None,
+            )
+            for out in (sco.output or [])
+        ]
+        return Message(
+            role="tool",
+            contents=[
+                Content.from_shell_tool_result(
+                    call_id=sco.call_id,
+                    outputs=outputs,
+                    max_output_length=sco.max_output_length,
+                )
+            ],
+        )
+
+    if item.type == "local_shell_call":
+        lsc = cast(ItemLocalShellToolCall, item)
+        commands = lsc.action.command if hasattr(lsc.action, "command") and lsc.action.command else []
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_shell_tool_call(
+                    call_id=lsc.call_id,
+                    commands=commands,
+                    status=str(lsc.status),
+                )
+            ],
+        )
+
+    if item.type == "local_shell_call_output":
+        lsco = cast(ItemLocalShellToolCallOutput, item)
+        return Message(
+            role="tool",
+            contents=[
+                Content.from_shell_tool_result(
+                    call_id=lsco.id,
+                    outputs=[Content.from_shell_command_output(stdout=lsco.output)],
+                )
+            ],
+        )
+
+    if item.type == "file_search_call":
+        fs = cast(ItemFileSearchToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    fs.id,
+                    "file_search",
+                    arguments=json.dumps({"queries": fs.queries}),
+                )
+            ],
+        )
+
+    if item.type == "web_search_call":
+        ws = cast(ItemWebSearchToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_call(ws.id, "web_search")],
+        )
+
+    if item.type == "computer_call":
+        cc = cast(ItemComputerToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    cc.call_id,
+                    "computer_use",
+                    arguments=str(cc.action),
+                )
+            ],
+        )
+
+    if item.type == "computer_call_output":
+        cco = cast(ComputerCallOutputItemParam, item)
+        return Message(
+            role="tool",
+            contents=[Content.from_function_result(cco.call_id, result=str(cco.output))],
+        )
+
+    if item.type == "custom_tool_call":
+        ct = cast(ItemCustomToolCall, item)
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
+        )
+
+    if item.type == "custom_tool_call_output":
+        cto = cast(ItemCustomToolCallOutput, item)
+        output = cto.output if isinstance(cto.output, str) else str(cto.output)
+        return Message(
+            role="tool",
+            contents=[Content.from_function_result(cto.call_id, result=output)],
+        )
+
+    if item.type == "apply_patch_call":
+        ap = cast(ApplyPatchToolCallItemParam, item)
+        return Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    ap.call_id,
+                    "apply_patch",
+                    arguments=str(ap.operation),
+                )
+            ],
+        )
+
+    if item.type == "apply_patch_call_output":
+        apo = cast(ApplyPatchToolCallOutputItemParam, item)
+        return Message(
+            role="tool",
+            contents=[Content.from_function_result(apo.call_id, result=apo.output or "")],
+        )
+
+    raise ValueError(f"Unsupported Item type: {item.type}")
+
+
+def _output_items_to_messages(history: Sequence[OutputItem]) -> list[Message]:
     """Converts a sequence of OutputItem objects to a list of Message objects.
 
     Args:
@@ -551,11 +845,11 @@ def _to_messages(history: Sequence[OutputItem]) -> list[Message]:
     """
     messages: list[Message] = []
     for item in history:
-        messages.append(_to_message(item))
+        messages.append(_output_item_to_message(item))
     return messages
 
 
-def _to_message(item: OutputItem) -> Message:
+def _output_item_to_message(item: OutputItem) -> Message:
     """Converts an OutputItem to a Message.
 
     Args:
@@ -822,6 +1116,31 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     raise ValueError(f"Unsupported OutputMessageContent type: {content.type}")
 
 
+def _convert_file_data(data_uri: str, filename: str | None = None) -> Content:
+    """Convert a file_data data URI to a Content object.
+
+    For text/* MIME types, decodes the base64 content and returns it as text.
+    For other types, returns a URI-based Content with the filename preserved.
+    """
+    # Parse data URI: data:<media_type>;base64,<data>
+    if data_uri.startswith("data:") and ";base64," in data_uri:
+        header, encoded = data_uri.split(";base64,", 1)
+        media_type = header[len("data:") :]
+        if media_type.startswith("text/"):
+            try:
+                decoded_text = base64.b64decode(encoded).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                logger.warning(
+                    "Failed to decode text/* file_data as UTF-8, falling through to URI passthrough.",
+                    exc_info=True,
+                )
+            else:
+                prefix = f"[File: {filename}]\n" if filename else ""
+                return Content.from_text(f"{prefix}{decoded_text}")
+    additional_properties = {"filename": filename} if filename else None
+    return Content.from_uri(data_uri, additional_properties=additional_properties)
+
+
 def _convert_message_content(content: MessageContent) -> Content:
     """Converts a MessageContent to a Content object.
 
@@ -855,7 +1174,9 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content.type == "input_image":
         image = cast(MessageContentInputImageContent, content)
         if image.image_url:
-            return Content.from_uri(image.image_url)
+            if image.image_url.startswith("data:"):
+                return Content.from_uri(image.image_url)
+            return Content.from_uri(image.image_url, media_type="image/*")
         if image.file_id:
             return Content.from_hosted_file(image.file_id)
     if content.type == "input_file":
@@ -864,6 +1185,8 @@ def _convert_message_content(content: MessageContent) -> Content:
             return Content.from_uri(file.file_url)
         if file.file_id:
             return Content.from_hosted_file(file.file_id, name=file.filename)
+        if file.file_data:
+            return _convert_file_data(file.file_data, file.filename)
     if content.type == "computer_screenshot":
         screenshot = cast(ComputerScreenshotContent, content)
         return Content.from_uri(screenshot.image_url)
