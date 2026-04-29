@@ -312,15 +312,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # If the restored checkpoint had pending request_info events, the
         # restore-only call replays them through
         # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
-        # and populates ``self._agent.pending_requests``. That would route
-        # the subsequent ``run(input_messages, ...)`` call through
-        # :meth:`WorkflowAgent._process_pending_requests`, which expects
-        # function-response content and rejects plain text. The host's
-        # contract for plain-text user input is "treat as new turn", not
-        # "respond to outstanding request_info", so we clear
-        # ``pending_requests`` after the restore-only pre-pass. State
-        # (Conversation.*, Inputs.*, Local.*) lives in the workflow
-        # checkpoint and is unaffected by this clear.
+        # and populates ``self._agent.pending_requests``. That is the correct
+        # state: those requests are genuinely outstanding, and the next
+        # ``run(input_messages, ...)`` call may contain ``function_call_output``
+        # items (carried as FunctionResult/FunctionApprovalResponse content)
+        # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
         if latest_checkpoint_id is not None:
             if is_streaming_request:
                 async for _ in self._agent.run(
@@ -335,7 +331,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     checkpoint_id=latest_checkpoint_id,
                     checkpoint_storage=restore_storage,
                 )
-            self._agent.pending_requests.clear()
 
         # Now run the agent with the latest input
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
