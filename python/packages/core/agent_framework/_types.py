@@ -3047,9 +3047,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 update = hooked
         return update
 
+    async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
+        """Resolve the underlying stream while activating any registered pull context managers.
+
+        Used by ``__await__`` and ``get_final_response`` so that any spans/contexts created
+        during stream resolution (e.g. when the source is an Awaitable that internally
+        creates child telemetry spans) inherit the same active context as iterator pulls.
+        ``__anext__`` resolves the stream inside its own ExitStack and so calls ``_get_stream``
+        directly.
+        """
+        if self._stream is not None:
+            return await self._get_stream()
+        with contextlib.ExitStack() as stack:
+            for factory in self._pull_context_manager_factories:
+                stack.enter_context(factory())
+            return await self._get_stream()
+
     def __await__(self) -> Any:
         async def _wrap() -> ResponseStream[UpdateT, FinalT]:
-            await self._get_stream()
+            await self._resolve_stream_with_pull_contexts()
             return self
 
         return _wrap().__await__()
@@ -3073,10 +3089,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         """
         if self._wrap_inner:
             if self._inner_stream is None:
-                # Use _get_stream() to resolve the awaitable - this properly handles
+                # Use _resolve_stream_with_pull_contexts() so that any spans/contexts
+                # created while resolving the awaitable (e.g. inner telemetry spans)
+                # inherit the same active context as iterator pulls. This also handles
                 # the case where _stream_source and _inner_stream_source are the same
                 # coroutine (e.g., from from_awaitable), avoiding double-await errors.
-                await self._get_stream()
+                await self._resolve_stream_with_pull_contexts()
             if self._inner_stream is None:
                 raise RuntimeError("Inner stream not available")
             if not self._finalized and not self._consumed:

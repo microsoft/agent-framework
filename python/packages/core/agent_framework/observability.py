@@ -1301,18 +1301,23 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
 
-            result_stream = cast(
-                ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-                super_get_response(
-                    messages=messages,
-                    stream=True,
-                    options=opts,
-                    compaction_strategy=compaction_strategy,
-                    tokenizer=tokenizer,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=merged_client_kwargs,
-                ),
-            )
+            try:
+                result_stream = cast(
+                    ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                    super_get_response(
+                        messages=messages,
+                        stream=True,
+                        options=opts,
+                        compaction_strategy=compaction_strategy,
+                        tokenizer=tokenizer,
+                        function_invocation_kwargs=function_invocation_kwargs,
+                        client_kwargs=merged_client_kwargs,
+                    ),
+                )
+            except Exception as exception:
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
+                _close_span()
+                raise
 
             async def _finalize_stream() -> None:
                 from ._types import ChatResponse
@@ -1576,7 +1581,8 @@ class AgentTelemetryLayer:
                     result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
                 else:
                     raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
-            except Exception:
+            except Exception as exception:
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
                 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                 INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
                 _close_span()

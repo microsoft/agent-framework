@@ -3603,3 +3603,197 @@ async def test_http_span_nested_under_chat_span(span_exporter: InMemorySpanExpor
     assert http_span.parent is not None
     assert http_span.parent.span_id == chat_span.context.span_id
     assert http_span.context.trace_id == chat_span.context.trace_id
+
+
+# region Test ResponseStream.with_pull_context_manager
+
+
+async def test_with_pull_context_manager_enters_and_exits_per_pull():
+    """The registered factory is entered and exited symmetrically around each iterator pull."""
+    import contextlib
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def cm():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    async def src() -> AsyncIterable[int]:
+        yield 1
+        yield 2
+
+    stream: ResponseStream[int, list[int]] = ResponseStream(src(), finalizer=lambda updates: list(updates))
+    stream.with_pull_context_manager(cm)
+
+    pulled = [u async for u in stream]
+
+    assert pulled == [1, 2]
+    # Enter/exit must be balanced and there must be at least one pair per yielded update.
+    assert events.count("enter") == events.count("exit")
+    assert events.count("enter") >= 2
+    # Verify symmetric ordering (no overlapping pairs).
+    for i in range(0, len(events), 2):
+        assert events[i] == "enter"
+        assert events[i + 1] == "exit"
+
+
+async def test_with_pull_context_manager_exits_on_iteration_error():
+    """The pull context is exited even when the underlying stream raises mid-iteration."""
+    import contextlib
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def cm():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    async def src() -> AsyncIterable[int]:
+        yield 1
+        raise RuntimeError("boom")
+
+    stream: ResponseStream[int, list[int]] = ResponseStream(src(), finalizer=lambda updates: list(updates))
+    stream.with_pull_context_manager(cm)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async for _ in stream:
+            pass
+
+    # Enter/exit balanced even on the failing pull.
+    assert events.count("enter") == events.count("exit")
+    assert events.count("enter") >= 2
+
+
+async def test_with_pull_context_manager_wraps_stream_resolution_via_await():
+    """Awaiting a ``from_awaitable`` stream resolves the inner stream under the pull contexts."""
+    import contextlib
+
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def cm():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    async def inner() -> AsyncIterable[int]:
+        yield 1
+
+    async def make_stream() -> ResponseStream[int, list[int]]:
+        # Record that we resolve while a pull context is active.
+        events.append("resolving")
+        return ResponseStream(inner(), finalizer=lambda updates: list(updates))
+
+    stream: ResponseStream[int, list[int]] = ResponseStream.from_awaitable(make_stream())
+    stream.with_pull_context_manager(cm)
+
+    await stream  # Triggers _resolve_stream_with_pull_contexts via __await__
+
+    assert "resolving" in events
+    resolve_index = events.index("resolving")
+    assert events[resolve_index - 1] == "enter"  # Pull context active during resolution
+
+
+# region Test streaming telemetry error paths
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_streaming_super_failure_closes_span(span_exporter: InMemorySpanExporter, enable_sensitive_data):
+    """If the underlying client raises synchronously when constructing the stream, the chat
+    span is ended and the exception is recorded (no span leak)."""
+
+    class FailingClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            raise RuntimeError("inner failed")
+
+    span_exporter.clear()
+    client = FailingClient()
+    with pytest.raises(RuntimeError, match="inner failed"):
+        client.get_response(stream=True, messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
+
+    spans = span_exporter.get_finished_spans()
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
+    assert len(chat_spans) == 1
+    assert chat_spans[0].status.status_code == StatusCode.ERROR
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvars(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """If ``execute()`` raises synchronously during streaming agent invocation, the agent span is
+    ended, the exception is recorded, and the telemetry contextvars are reset."""
+    from agent_framework.observability import (
+        INNER_ACCUMULATED_USAGE,
+        INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS,
+    )
+
+    class _FailingExecuteAgent:
+        AGENT_PROVIDER_NAME = "test_provider"
+
+        def __init__(self):
+            self._id = "failing_execute"
+            self._name = "Failing Execute"
+            self._description = "Agent whose stream call raises synchronously"
+            self._default_options: dict[str, Any] = {}
+
+        @property
+        def id(self):
+            return self._id
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def description(self):
+            return self._description
+
+        @property
+        def default_options(self):
+            return self._default_options
+
+        def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
+            if stream:
+                raise RuntimeError("execute failed")
+            raise NotImplementedError
+
+    class FailingExecuteAgent(AgentTelemetryLayer, _FailingExecuteAgent):
+        pass
+
+    # Sentinel values to detect that contextvars were reset to their pre-call state.
+    sentinel_fields: set[str] = set()
+    sentinel_usage: dict[str, Any] = {}
+    fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(sentinel_fields)
+    usage_token = INNER_ACCUMULATED_USAGE.set(sentinel_usage)
+    try:
+        agent = FailingExecuteAgent()
+        span_exporter.clear()
+        with pytest.raises(RuntimeError, match="execute failed"):
+            agent.run(messages="Hello", stream=True)
+
+        # Contextvars must be back to the sentinel values registered before the call.
+        assert INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.get() is sentinel_fields
+        assert INNER_ACCUMULATED_USAGE.get() is sentinel_usage
+    finally:
+        INNER_ACCUMULATED_USAGE.reset(usage_token)
+        INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(fields_token)
+
+    spans = span_exporter.get_finished_spans()
+    agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].status.status_code == StatusCode.ERROR
