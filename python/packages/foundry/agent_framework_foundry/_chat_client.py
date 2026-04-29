@@ -8,14 +8,16 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     ChatMiddlewareLayer,
+    ChatResponseUpdate,
     Content,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
+from agent_framework._feature_stage import ExperimentalFeature, experimental
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -32,6 +34,10 @@ from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
+from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
+
+from ._tools import _sanitize_foundry_response_tool, fetch_toolbox  # pyright: ignore[reportPrivateUsage]
+
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
 else:
@@ -46,7 +52,8 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
-    from agent_framework import ChatAndFunctionMiddlewareTypes
+    from agent_framework import ChatAndFunctionMiddlewareTypes, ToolTypes
+    from azure.ai.projects.models import ToolboxVersionObject
 
 logger: logging.Logger = logging.getLogger("agent_framework.foundry")
 
@@ -194,15 +201,19 @@ class RawFoundryChatClient(  # type: ignore[misc]
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": project_endpoint,
                 "credential": credential,  # type: ignore[arg-type]
-                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+                "user_agent": get_user_agent(),
             }
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             project_client = AIProjectClient(**project_client_kwargs)
 
+        openai_kwargs: dict[str, Any] = {}
+        if default_headers:
+            openai_kwargs["default_headers"] = default_headers
+
         super().__init__(
             model=resolved_model,
-            async_client=project_client.get_openai_client(),
+            async_client=project_client.get_openai_client(**openai_kwargs),
             default_headers=default_headers,
             instruction_role=instruction_role,
             compaction_strategy=compaction_strategy,
@@ -217,6 +228,35 @@ class RawFoundryChatClient(  # type: ignore[misc]
             if not self.model:
                 raise ValueError("model must be a non-empty string")
             options["model"] = self.model
+
+    @override
+    def _prepare_tools_for_openai(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+    ) -> list[Any]:
+        """Prepare tools for Foundry Responses API calls.
+
+        Foundry toolbox reads can surface MCP tool objects with extra fields
+        (for example ``name``) that are accepted by the toolbox API but rejected
+        by the Responses API. Sanitize those hosted-tool payloads before sending
+        them downstream.
+        """
+        response_tools = super()._prepare_tools_for_openai(tools)
+        return [_sanitize_foundry_response_tool(tool_item) for tool_item in response_tools]
+
+    @override
+    def _parse_chunk_from_openai(
+        self,
+        event: Any,
+        options: dict[str, Any],
+        function_call_ids: dict[int, tuple[str, str]],
+        seen_reasoning_delta_item_ids: set[str] | None = None,
+    ) -> ChatResponseUpdate:
+        """Parse streaming event, intercepting oauth_consent_request items."""
+        update = try_parse_oauth_consent_event(event, self.model)
+        if update is not None:
+            return update
+        return super()._parse_chunk_from_openai(event, options, function_call_ids, seen_reasoning_delta_item_ids)
 
     async def configure_azure_monitor(
         self,
@@ -436,8 +476,18 @@ class RawFoundryChatClient(  # type: ignore[misc]
 
         Returns:
             An MCPTool configuration ready to pass to an Agent.
+
+        Raises:
+            ValueError: If neither ``url`` nor ``project_connection_id`` is supplied
+                — one is required by the Foundry Responses API.
         """
-        mcp = FoundryMCPTool(server_label=name.replace(" ", "_"), server_url=url or "", **kwargs)
+        if not url and not project_connection_id:
+            raise ValueError("MCP tool requires either 'url' or 'project_connection_id' to be specified.")
+
+        mcp_kwargs: dict[str, Any] = {"server_label": name.replace(" ", "_"), **kwargs}
+        if url:
+            mcp_kwargs["server_url"] = url
+        mcp = FoundryMCPTool(**mcp_kwargs)
 
         if description:
             mcp["server_description"] = description
@@ -459,6 +509,37 @@ class RawFoundryChatClient(  # type: ignore[misc]
         return mcp
 
     # endregion
+
+    # region Toolbox methods (instance methods — these hit the network)
+
+    @experimental(feature_id=ExperimentalFeature.TOOLBOXES)
+    async def get_toolbox(
+        self,
+        name: str,
+        *,
+        version: str | None = None,
+    ) -> ToolboxVersionObject:
+        """Fetch a Foundry toolbox by name.
+
+        If ``version`` is omitted, resolves the toolbox's current default version
+        (two requests). If ``version`` is specified, fetches that version directly
+        (single request).
+
+        Args:
+            name: The name of the toolbox.
+
+        Keyword Args:
+            version: Optional immutable version identifier to pin to.
+
+        Returns:
+            A ``ToolboxVersionObject``. Pass its ``tools`` attribute to
+            ``Agent(tools=toolbox.tools)``.
+
+        Raises:
+            azure.core.exceptions.ResourceNotFoundError: If the toolbox or
+                the requested version does not exist.
+        """
+        return await fetch_toolbox(self.project_client, name, version)
 
 
 class FoundryChatClient(  # type: ignore[misc]

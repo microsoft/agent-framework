@@ -4,6 +4,13 @@
 # Install the relevant packages for full type support.
 
 from agent_framework_anthropic import AnthropicFoundryClient, RawAnthropicFoundryClient
+from agent_framework_azure_contentunderstanding import (  # pyright: ignore[reportMissingImports]
+    AnalysisSection,  # pyright: ignore[reportUnknownVariableType]
+    ContentUnderstandingContextProvider,  # pyright: ignore[reportUnknownVariableType]
+    DocumentStatus,  # pyright: ignore[reportUnknownVariableType]
+    FileSearchBackend,  # pyright: ignore[reportUnknownVariableType]
+    FileSearchConfig,  # pyright: ignore[reportUnknownVariableType]
+)
 from agent_framework_foundry import (
     FoundryAgent,
     FoundryChatClient,
@@ -12,6 +19,7 @@ from agent_framework_foundry import (
     FoundryEmbeddingOptions,
     FoundryEmbeddingSettings,
     FoundryEvals,
+    FoundryHostedToolType,
     FoundryMemoryProvider,
     RawFoundryAgent,
     RawFoundryAgentChatClient,
@@ -19,6 +27,9 @@ from agent_framework_foundry import (
     RawFoundryEmbeddingClient,
     evaluate_foundry_target,
     evaluate_traces,
+    get_toolbox_tool_name,
+    get_toolbox_tool_type,
+    select_toolbox_tools,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -27,7 +38,12 @@ from agent_framework_foundry_local import (
 )
 
 __all__ = [
+    "AnalysisSection",
     "AnthropicFoundryClient",
+    "ContentUnderstandingContextProvider",
+    "DocumentStatus",
+    "FileSearchBackend",
+    "FileSearchConfig",
     "FoundryAgent",
     "FoundryChatClient",
     "FoundryChatOptions",
@@ -35,6 +51,7 @@ __all__ = [
     "FoundryEmbeddingOptions",
     "FoundryEmbeddingSettings",
     "FoundryEvals",
+    "FoundryHostedToolType",
     "FoundryLocalChatOptions",
     "FoundryLocalClient",
     "FoundryLocalSettings",
@@ -46,4 +63,7 @@ __all__ = [
     "RawFoundryEmbeddingClient",
     "evaluate_foundry_target",
     "evaluate_traces",
+    "get_toolbox_tool_name",
+    "get_toolbox_tool_type",
+    "select_toolbox_tools",
 ]

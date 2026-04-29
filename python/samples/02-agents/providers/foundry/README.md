@@ -26,6 +26,8 @@ This folder contains Azure AI Foundry and Foundry Local samples for Agent Framew
 | [`foundry_chat_client_with_hosted_mcp.py`](foundry_chat_client_with_hosted_mcp.py) | Foundry Chat Client with hosted MCP |
 | [`foundry_chat_client_with_local_mcp.py`](foundry_chat_client_with_local_mcp.py) | Foundry Chat Client with local MCP |
 | [`foundry_chat_client_with_session.py`](foundry_chat_client_with_session.py) | Foundry Chat Client with session management |
+| [`foundry_chat_client_with_toolbox.py`](foundry_chat_client_with_toolbox.py) | Foundry Chat Client with Foundry toolbox loading and multi-toolbox composition |
+| [`foundry_chat_client_with_toolbox_mcp.py`](foundry_chat_client_with_toolbox_mcp.py) | Foundry Chat Client connected to a toolbox via its MCP endpoint using `MCPStreamableHTTPTool` |
 
 ## FoundryLocalClient Samples
 

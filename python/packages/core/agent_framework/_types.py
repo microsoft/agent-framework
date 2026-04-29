@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import logging
 import re
@@ -351,6 +352,8 @@ ContentType = Literal[
     "image_generation_tool_result",
     "mcp_server_tool_call",
     "mcp_server_tool_result",
+    "search_tool_call",
+    "search_tool_result",
     "shell_tool_call",
     "shell_tool_result",
     "shell_command_output",
@@ -859,6 +862,56 @@ class Content:
             result=text_result,
             items=items_list,
             exception=exception,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_search_tool_call(
+        cls: type[ContentT],
+        call_id: str,
+        *,
+        tool_name: str,
+        arguments: str | Mapping[str, Any] | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create search tool call content."""
+        return cls(
+            "search_tool_call",
+            call_id=call_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            status=status,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_search_tool_result(
+        cls: type[ContentT],
+        call_id: str,
+        *,
+        tool_name: str,
+        result: Any = None,
+        items: Sequence[Content] | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create search tool result content."""
+        return cls(
+            "search_tool_result",
+            call_id=call_id,
+            tool_name=tool_name,
+            result=result,
+            items=list(items) if items is not None else None,
+            status=status,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1478,7 +1531,7 @@ class Content:
         return span.lower() == top_level_media_type.lower()
 
     def parse_arguments(self) -> dict[str, Any | None] | None:
-        """Parse arguments from function_call or mcp_server_tool_call content.
+        """Parse arguments from function_call, mcp_server_tool_call, or search_tool_call content.
 
         If arguments cannot be parsed as JSON or the result is not a dict,
         they are returned as a dictionary with a single key "raw".
@@ -2838,6 +2891,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
         self._map_update: Callable[[Any], UpdateT | Awaitable[UpdateT]] | None = None
+        self._pull_context_manager_factories: list[Callable[[], contextlib.AbstractContextManager[Any]]] = []
 
     def map(
         self,
@@ -2956,11 +3010,18 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         return self
 
     async def __anext__(self) -> UpdateT:
-        if self._iterator is None:
-            stream = await self._get_stream()
-            self._iterator = stream.__aiter__()
         try:
-            update: UpdateT = await self._iterator.__anext__()
+            with contextlib.ExitStack() as stack:
+                for factory in self._pull_context_manager_factories:
+                    stack.enter_context(factory())
+                # Resolve the underlying stream inside the pull contexts so that any
+                # spans/contexts created during stream resolution (e.g. inner chat
+                # completion spans created on the first pull of a wrapped agent stream)
+                # inherit the active context (e.g. an outer agent invoke span).
+                if self._iterator is None:
+                    stream = await self._get_stream()
+                    self._iterator = stream.__aiter__()
+                update: UpdateT = await self._iterator.__anext__()
         except StopAsyncIteration:
             self._consumed = True
             await self._run_cleanup_hooks()
@@ -2986,9 +3047,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 update = hooked
         return update
 
+    async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
+        """Resolve the underlying stream while activating any registered pull context managers.
+
+        Used by ``__await__`` and ``get_final_response`` so that any spans/contexts created
+        during stream resolution (e.g. when the source is an Awaitable that internally
+        creates child telemetry spans) inherit the same active context as iterator pulls.
+        ``__anext__`` resolves the stream inside its own ExitStack and so calls ``_get_stream``
+        directly.
+        """
+        if self._stream is not None:
+            return await self._get_stream()
+        with contextlib.ExitStack() as stack:
+            for factory in self._pull_context_manager_factories:
+                stack.enter_context(factory())
+            return await self._get_stream()
+
     def __await__(self) -> Any:
         async def _wrap() -> ResponseStream[UpdateT, FinalT]:
-            await self._get_stream()
+            await self._resolve_stream_with_pull_contexts()
             return self
 
         return _wrap().__await__()
@@ -3012,10 +3089,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         """
         if self._wrap_inner:
             if self._inner_stream is None:
-                # Use _get_stream() to resolve the awaitable - this properly handles
+                # Use _resolve_stream_with_pull_contexts() so that any spans/contexts
+                # created while resolving the awaitable (e.g. inner telemetry spans)
+                # inherit the same active context as iterator pulls. This also handles
                 # the case where _stream_source and _inner_stream_source are the same
                 # coroutine (e.g., from from_awaitable), avoiding double-await errors.
-                await self._get_stream()
+                await self._resolve_stream_with_pull_contexts()
             if self._inner_stream is None:
                 raise RuntimeError("Inner stream not available")
             if not self._finalized and not self._consumed:
@@ -3123,6 +3202,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     ) -> ResponseStream[UpdateT, FinalT]:
         """Register a cleanup hook executed after stream consumption (before finalizer)."""
         self._cleanup_hooks.append(hook)
+        return self
+
+    def with_pull_context_manager(
+        self,
+        cm_factory: Callable[[], contextlib.AbstractContextManager[Any]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a context manager factory invoked around each underlying iterator pull.
+
+        The factory is called once per ``__anext__`` and the returned context manager wraps
+        the await of the underlying iterator. This is useful for state that needs to be
+        active while the inner async work runs - for example, attaching an OpenTelemetry
+        span to the current context so child spans created by inner code (HTTP clients,
+        tool execution) are correctly parented.
+
+        Because the context manager is entered and exited within the same ``__anext__``
+        invocation, attach/detach style operations remain symmetric in the same async
+        context regardless of where the stream is iterated.
+        """
+        self._pull_context_manager_factories.append(cm_factory)
         return self
 
     async def _run_cleanup_hooks(self) -> None:

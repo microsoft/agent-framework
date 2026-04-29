@@ -2,9 +2,10 @@
 
 """Evaluate an agent using Azure AI Foundry's built-in evaluators.
 
-This sample demonstrates two patterns:
+This sample demonstrates three patterns:
 1. evaluate_agent(responses=...) — Evaluate a response you already have.
 2. evaluate_agent(queries=...) — Run the agent against test queries and evaluate in one call.
+3. Similarity — Compare agent output against ground-truth reference answers.
 
 See ``evaluate_tool_calls_sample.py`` for tool-call accuracy evaluation.
 
@@ -138,6 +139,41 @@ async def main() -> None:
         ],
         evaluators=evals,
         conversation_split=ConversationSplit.FULL,  # overrides evaluator defaults
+    )
+
+    for r in results:
+        print(f"Status: {r.status}")
+        print(f"Results: {r.passed}/{r.total} passed")
+        print(f"Portal: {r.report_url}")
+        if r.all_passed:
+            print("[PASS] All passed")
+        else:
+            print(f"[FAIL] {r.failed} failed")
+
+    # =========================================================================
+    # Pattern 3: Similarity — compare agent output to ground-truth answers
+    # =========================================================================
+    print()
+    print("=" * 60)
+    print("Pattern 3: Similarity evaluation with ground truth")
+    print("=" * 60)
+
+    # Similarity requires expected_output — a reference answer per query
+    # that the evaluator compares against the agent's actual response.
+    results = await evaluate_agent(
+        agent=agent,
+        queries=[
+            "What's the weather like in Seattle?",
+            "How much does a flight from Seattle to Paris cost?",
+        ],
+        expected_output=[
+            "62°F, cloudy with a chance of rain",
+            "Flights from Seattle to Paris: $450 round-trip",
+        ],
+        evaluators=FoundryEvals(
+            client=chat_client,
+            evaluators=[FoundryEvals.SIMILARITY],
+        ),
     )
 
     for r in results:

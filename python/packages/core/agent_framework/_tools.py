@@ -12,6 +12,7 @@ from collections.abc import (
     AsyncIterable,
     Awaitable,
     Callable,
+    Iterable,
     Mapping,
     Sequence,
 )
@@ -92,6 +93,33 @@ SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+
+
+class _SkipParsingSentinel:
+    """Sentinel signaling that :meth:`FunctionTool.invoke` should return the raw value.
+
+    When passed as ``result_parser`` to :class:`FunctionTool` (or the ``@tool`` decorator),
+    the default :meth:`FunctionTool.parse_result` is bypassed and the wrapped function's
+    return value is returned unchanged from :meth:`FunctionTool.invoke`. Callers may also
+    request the raw value on a per-call basis by passing ``skip_parsing=True`` to
+    :meth:`FunctionTool.invoke`.
+
+    Use the module-level ``SKIP_PARSING`` singleton — do not instantiate this class.
+    """
+
+    _instance: ClassVar[_SkipParsingSentinel | None] = None
+
+    def __new__(cls) -> _SkipParsingSentinel:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "SKIP_PARSING"
+
+
+SKIP_PARSING: Final[_SkipParsingSentinel] = _SkipParsingSentinel()
+"""Sentinel for ``FunctionTool(result_parser=...)`` meaning "do not parse the result"."""
 
 # region Helpers
 
@@ -278,7 +306,7 @@ class FunctionTool(SerializationMixin):
         additional_properties: dict[str, Any] | None = None,
         func: Callable[..., Any] | None = None,
         input_model: type[BaseModel] | Mapping[str, Any] | None = None,
-        result_parser: Callable[[Any], str | list[Content]] | None = None,
+        result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the FunctionTool.
@@ -326,9 +354,11 @@ class FunctionTool(SerializationMixin):
             result_parser: An optional callable with signature ``Callable[[Any], str]`` that
                 overrides the default result parsing behavior. When provided, this callable
                 is used to convert the raw function return value to a string instead of the
-                built-in :meth:`parse_result` logic. Depending on your function, it may be
-                easiest to just do the serialization directly in the function body rather
-                than providing a custom ``result_parser``.
+                built-in :meth:`parse_result` logic. Pass the :data:`SKIP_PARSING` sentinel
+                instead of a callable to opt out of parsing entirely; in that case
+                :meth:`invoke` returns the wrapped function's raw return value. Depending
+                on your function, it may be easiest to just do the serialization directly
+                in the function body rather than providing a custom ``result_parser``.
             **kwargs: Additional keyword arguments.
         """
         # Core attributes (formerly from BaseTool)
@@ -507,31 +537,65 @@ class FunctionTool(SerializationMixin):
             self.invocation_exception_count += 1
             raise
 
+    @overload
     async def invoke(
         self,
         *,
         arguments: BaseModel | Mapping[str, Any] | None = None,
         context: FunctionInvocationContext | None = None,
         tool_call_id: str | None = None,
+        skip_parsing: Literal[True],
         **kwargs: Any,
-    ) -> list[Content]:
+    ) -> Any: ...
+
+    @overload
+    async def invoke(
+        self,
+        *,
+        arguments: BaseModel | Mapping[str, Any] | None = None,
+        context: FunctionInvocationContext | None = None,
+        tool_call_id: str | None = None,
+        skip_parsing: Literal[False] = False,
+        **kwargs: Any,
+    ) -> list[Content]: ...
+
+    async def invoke(
+        self,
+        *,
+        arguments: BaseModel | Mapping[str, Any] | None = None,
+        context: FunctionInvocationContext | None = None,
+        tool_call_id: str | None = None,
+        skip_parsing: bool = False,
+        **kwargs: Any,
+    ) -> list[Content] | Any:
         """Run the AI function with the provided arguments as a Pydantic model.
 
         The raw return value of the wrapped function is automatically parsed into a
         ``list[Content]`` using :meth:`parse_result` or the custom ``result_parser``
-        if one was provided.  Every result — text, rich media, or serialized objects —
-        is represented uniformly as Content items.
+        configured on the tool. Every result — text, rich media, or serialized
+        objects — is represented uniformly as Content items.
+
+        Parsing can be skipped in two ways: configure the tool with
+        ``result_parser=SKIP_PARSING`` to always skip parsing, or pass
+        ``skip_parsing=True`` per call. Either way the wrapped function's raw value
+        is returned. This is intended for callers (e.g. sandboxed runtimes) that
+        consume the value from Python directly and would otherwise undo the
+        ``Content`` wrapping.
 
         Keyword Args:
             arguments: A mapping or model instance containing the arguments for the function.
             context: Explicit function invocation context carrying runtime kwargs.
             tool_call_id: Optional tool call identifier used for telemetry and tracing.
+            skip_parsing: When ``True``, bypass parsing and return the wrapped function's
+                raw value instead of a ``list[Content]``. Defaults to ``False``.
             kwargs: Direct function argument values. When provided, every keyword
                 must match a declared tool parameter. Runtime data must be passed
                 via ``context``.
 
         Returns:
-            A list of Content items representing the tool output.
+            ``list[Content]`` by default. The raw function return value (``Any``) when
+            ``skip_parsing=True`` (or the tool was constructed with
+            ``result_parser=SKIP_PARSING``).
 
         Raises:
             TypeError: If arguments is not mapping-like or fails schema checks.
@@ -543,7 +607,9 @@ class FunctionTool(SerializationMixin):
         from ._types import Content
         from .observability import OBSERVABILITY_SETTINGS
 
-        parser = self.result_parser or FunctionTool.parse_result
+        configured_parser = self.result_parser
+        skip_parsing = skip_parsing or configured_parser is SKIP_PARSING
+        parser = configured_parser if callable(configured_parser) else FunctionTool.parse_result
 
         parameter_names = set(self.parameters().get("properties", {}).keys())
         direct_argument_kwargs = (
@@ -615,6 +681,10 @@ class FunctionTool(SerializationMixin):
             logger.debug(f"Function arguments: {observable_kwargs}")
             res = self.__call__(**call_kwargs)
             result = await res if inspect.isawaitable(res) else res
+            if skip_parsing:
+                logger.info(f"Function {self.name} succeeded.")
+                logger.debug(f"Function result: {type(result).__name__}")
+                return result
             try:
                 parsed = parser(result)
             except Exception:
@@ -670,6 +740,13 @@ class FunctionTool(SerializationMixin):
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:
+                if skip_parsing:
+                    logger.info(f"Function {self.name} succeeded.")
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                        result_str = str(result)
+                        span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
+                        logger.debug(f"Function result: {result_str}")
+                    return result
                 try:
                     parsed = parser(result)
                 except Exception:
@@ -859,6 +936,15 @@ def normalize_tools(
     Returns:
         A normalized list where callable inputs are converted to ``FunctionTool``
         using :func:`tool`, and existing tool objects are passed through unchanged.
+
+    Tool-collection wrappers are flattened in two forms:
+
+    - non-tool, non-callable iterables
+    - mapping-like objects that expose a ``.tools`` collection (for example
+      ``ToolboxVersionObject`` from azure-ai-projects)
+
+    This lets callers write ``tools=[toolbox, my_func]`` and have the
+    toolbox's contents spread in alongside individual tools.
     """
     if not tools:
         return []
@@ -882,6 +968,24 @@ def normalize_tools(
             continue
         if callable(tool_item):  # type: ignore[reportUnknownArgumentType]
             normalized.append(tool(tool_item))
+            continue
+        # Mapping-like tool collections (for example ToolboxVersionObject) are
+        # not flattened by the generic Iterable branch below because they are
+        # also Mapping instances. If they expose a ``tools`` collection, spread
+        # that collection into the normalized list.
+        collection_tools = getattr(tool_item, "tools", None)  # type: ignore[reportUnknownArgumentType]
+        if isinstance(collection_tools, Iterable) and not isinstance(
+            collection_tools, (str, bytes, bytearray, Mapping)
+        ):
+            normalized.extend(normalize_tools(list(collection_tools)))  # type: ignore[reportUnknownArgumentType]
+            continue
+        # Tool-collection wrapper (e.g. FoundryToolbox): a non-tool, non-callable
+        # iterable. Flatten its contents so ``tools=[toolbox, my_func]`` works.
+        # Strings, mappings, and Pydantic BaseModel are excluded — BaseModel
+        # instances iterate over (field, value) tuples, not tools, so they
+        # should pass through as leaf tool specs (handled below).
+        if isinstance(tool_item, Iterable) and not isinstance(tool_item, (str, bytes, bytearray, Mapping, BaseModel)):
+            normalized.extend(normalize_tools(list(tool_item)))  # type: ignore[reportUnknownArgumentType]
             continue
         normalized.append(tool_item)  # type: ignore[reportUnknownArgumentType]
     return normalized
@@ -1039,7 +1143,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str | list[Content]] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
 ) -> FunctionTool: ...
 
 
@@ -1055,7 +1159,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str | list[Content]] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
 ) -> Callable[[Callable[..., Any]], FunctionTool]: ...
 
 
@@ -1070,7 +1174,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str | list[Content]] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
 ) -> FunctionTool | Callable[[Callable[..., Any]], FunctionTool]:
     """Decorate a function to turn it into a FunctionTool that can be passed to models and executed automatically.
 

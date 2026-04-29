@@ -12,6 +12,7 @@ The remaining files are supporting modules used by the server:
 
 | File | Description |
 |------|-------------|
+| [`agent_framework_to_a2a.py`](agent_framework_to_a2a.py) | Exposes an agent_framework agent as an A2A-compliant server. Demonstrates how to wrap an agent_framework agent and expose it as an A2A service that other A2A clients can discover and communicate with. |
 | [`agent_definitions.py`](agent_definitions.py) | Agent and AgentCard factory definitions for invoice, policy, and logistics agents. |
 | [`agent_executor.py`](agent_executor.py) | Bridges the a2a-sdk `AgentExecutor` interface to Agent Framework agents. |
 | [`invoice_data.py`](invoice_data.py) | Mock invoice data and tool functions for the invoice agent. |
@@ -41,7 +42,32 @@ All commands below should be run from this directory:
 cd python/samples/04-hosting/a2a
 ```
 
+### 0. Install Dependencies
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```powershell
+copy .env.example .env
+```
+
+**Option A — pip (standard):**
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1      # Windows
+# source .venv/bin/activate     # macOS / Linux
+pip install -r requirements.txt
+```
+
+**Option B — uv:**
+
+```powershell
+uv run python a2a_server.py --agent-type policy
+```
+
 ### 1. Start the A2A Server
+
+> **Note (Option A — pip users):** Replace `uv run python` with `python` in all `uv run` commands below (e.g. `python a2a_server.py ...`). `uv` is not required once the virtual environment is activated.
 
 Pick an agent type and start the server (each in its own terminal):
 
@@ -60,6 +86,9 @@ In a separate terminal (from the same directory), point the client at a running 
 ```powershell
 $env:A2A_AGENT_HOST = "http://localhost:5001/"
 uv run python agent_with_a2a.py
+
+# A2A server exposing an agent_framework agent
+uv run python agent_framework_to_a2a.py
 ```
 
 ### 3. Run the Function Tools Sample

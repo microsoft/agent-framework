@@ -49,7 +49,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
 
     public async ValueTask ResumeAsync(IWorkflowContext context, ExternalInputResponse response, CancellationToken cancellationToken)
     {
-        await context.SetLastMessageAsync(response.Messages.Last()).ConfigureAwait(false);
+        ChatMessage? lastMessage = response.Messages.LastOrDefault();
+        if (lastMessage is not null)
+        {
+            await context.SetLastMessageAsync(lastMessage).ConfigureAwait(false);
+        }
         await this.InvokeAgentAsync(context, response.Messages, cancellationToken).ConfigureAwait(false);
     }
 
@@ -85,15 +89,19 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
         await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
 
         // Attempt to parse the last message as JSON and assign to the response object variable.
-        try
+        string? lastMessageText = agentResponse.Messages.LastOrDefault()?.Text;
+        if (!string.IsNullOrEmpty(lastMessageText))
         {
-            JsonDocument jsonDocument = JsonDocument.Parse(agentResponse.Messages.Last().Text);
-            Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
-            await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Not valid json, skip assignment.
+            try
+            {
+                using JsonDocument jsonDocument = JsonDocument.Parse(lastMessageText);
+                Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
+                await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
+            }
+            catch (JsonException)
+            {
+                // Not valid json, skip assignment.
+            }
         }
 
         if (this.Model.Input?.ExternalLoop?.When is not null)

@@ -37,7 +37,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         {
             Name = "Test Agent",
             Description = "A test agent for unit testing",
-            Url = "http://test-endpoint/agent"
+            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
         });
 
         // Act
@@ -60,15 +60,15 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         // Arrange
         this._handler.ResponsesToReturn.Enqueue(new AgentCard
         {
-            Url = "http://test-endpoint/agent"
+            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
         });
-        this._handler.ResponsesToReturn.Enqueue(new AgentMessage
+        this._handler.ResponsesToReturn.Enqueue(new Message
         {
-            Role = MessageRole.Agent,
-            Parts = [new TextPart { Text = "Response" }],
+            Role = Role.Agent,
+            Parts = [Part.FromText("Response")],
         });
 
-        var agent = await this._resolver.GetAIAgentAsync(this._httpClient);
+        var agent = await this._resolver.GetAIAgentAsync(httpClient: this._httpClient);
 
         // Act
         await agent.RunAsync("Test input");
@@ -76,6 +76,41 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         // Assert
         Assert.Equal(2, this._handler.CapturedUris.Count); // One for getting the card, one for sending the message to the agent
         Assert.Equal(new Uri("http://test-endpoint/agent"), this._handler.CapturedUris[1]);
+    }
+
+    [Fact]
+    public async Task GetAIAgentAsync_WithOptions_PassesOptionsToFactoryAsync()
+    {
+        // Arrange
+        this._handler.ResponsesToReturn.Enqueue(new AgentCard
+        {
+            Name = "Options Agent",
+            Description = "Agent with multiple interfaces",
+            SupportedInterfaces =
+            [
+                new AgentInterface { Url = "http://httpjson/agent", ProtocolBinding = ProtocolBindingNames.HttpJson },
+                new AgentInterface { Url = "http://jsonrpc/agent", ProtocolBinding = ProtocolBindingNames.JsonRpc },
+            ]
+        });
+        this._handler.ResponsesToReturn.Enqueue(new Message
+        {
+            Role = Role.Agent,
+            Parts = [Part.FromText("Response")],
+        });
+
+        var options = new A2AClientOptions
+        {
+            PreferredBindings = [ProtocolBindingNames.JsonRpc]
+        };
+
+        var agent = await this._resolver.GetAIAgentAsync(httpClient: this._httpClient, options: options);
+
+        // Act
+        await agent.RunAsync("Test input");
+
+        // Assert
+        Assert.Equal(2, this._handler.CapturedUris.Count);
+        Assert.Equal(new Uri("http://jsonrpc/agent"), this._handler.CapturedUris[1]);
     }
 
     public void Dispose()
@@ -104,13 +139,18 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
                     Content = new StringContent(json, Encoding.UTF8, "application/json")
                 };
             }
-            else if (response is AgentMessage message)
+            else if (response is Message message)
             {
-                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", message);
+                var sendMessageResponse = new SendMessageResponse { Message = message };
+                var jsonRpcResponse = new JsonRpcResponse
+                {
+                    Id = "response-id",
+                    Result = JsonSerializer.SerializeToNode(sendMessageResponse, A2AJsonUtilities.DefaultOptions)
+                };
 
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(JsonSerializer.Serialize(jsonRpcResponse), Encoding.UTF8, "application/json")
+                    Content = new StringContent(JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions), Encoding.UTF8, "application/json")
                 };
             }
 
