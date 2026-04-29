@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -136,7 +136,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         // Conversation id resolution prefers state already persisted by a prior turn,
         // so multi-turn invocations reuse the same backend conversation rather than
         // creating a fresh one each turn.
-        string? conversationId = context.GetWorkflowConversation();
+        string? conversationId = declarativeContext.GetWorkflowConversation();
         if (string.IsNullOrWhiteSpace(conversationId))
         {
             conversationId = options.ConversationId;
@@ -149,7 +149,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
             conversationCreated = true;
         }
 
-        if (conversationCreated || !string.Equals(context.GetWorkflowConversation(), conversationId, StringComparison.Ordinal))
+        if (conversationCreated || !string.Equals(declarativeContext.GetWorkflowConversation(), conversationId, StringComparison.Ordinal))
         {
             await declarativeContext.QueueConversationUpdateAsync(conversationId!, isExternal: true, cancellationToken).ConfigureAwait(false);
         }
