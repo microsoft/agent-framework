@@ -1820,7 +1820,7 @@ def get_function_span(
 
 
 @contextlib.contextmanager
-def _activate_span(span: trace.Span) -> Generator[None, None, None]:
+def _activate_span(span: trace.Span) -> Generator[None]:
     """Attach ``span`` as the current span in the OpenTelemetry context.
 
     Designed to be used as a per-pull context manager registered on a
