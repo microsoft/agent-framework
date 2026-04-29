@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -429,14 +430,26 @@ internal sealed class WorkflowSession : AgentSession
 
                 case ExecutorFailedEvent executorFailed:
                     Exception? executorException = executorFailed.Data;
-                    if (executorException is TargetInvocationException etie && etie.InnerException != null)
+                    while (executorException is TargetInvocationException etie && etie.InnerException != null)
                     {
                         executorException = etie.InnerException;
                     }
 
-                    string executorMessage = this._includeExceptionDetails && executorException != null
-                                          ? $"Executor '{executorFailed.ExecutorId}' failed: {executorException.Message}"
-                                          : $"Executor '{executorFailed.ExecutorId}' failed.";
+                    string executorMessage;
+                    if (this._includeExceptionDetails && executorException != null)
+                    {
+                        StringBuilder messageBuilder = new($"Executor '{executorFailed.ExecutorId}' failed: {executorException.GetType().Name}: {executorException.Message}");
+                        for (Exception? inner = executorException.InnerException; inner != null; inner = inner.InnerException)
+                        {
+                            messageBuilder.Append(" -> ").Append(inner.GetType().Name).Append(": ").Append(inner.Message);
+                        }
+
+                        executorMessage = messageBuilder.ToString();
+                    }
+                    else
+                    {
+                        executorMessage = $"Executor '{executorFailed.ExecutorId}' failed.";
+                    }
 
                     yield return this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
                     break;
