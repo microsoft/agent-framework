@@ -3,10 +3,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Text.Json;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
+using SdkTextContent = Azure.AI.AgentServer.Responses.Models.TextContent;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -152,43 +154,23 @@ internal static class InputConverter
                 case MessageContentInputTextContent textContent:
                     contents.Add(new MeaiTextContent(textContent.Text));
                     break;
+                case SdkTextContent textContent:
+                    contents.Add(new MeaiTextContent(textContent.Text));
+                    break;
+                case SummaryTextContent summary:
+                    contents.Add(new MeaiTextContent(summary.Text));
+                    break;
+                case MessageContentReasoningTextContent reasoning:
+                    contents.Add(new TextReasoningContent(reasoning.Text));
+                    break;
                 case MessageContentInputImageContent imageContent:
-                    if (imageContent.ImageUrl is not null)
-                    {
-                        var url = imageContent.ImageUrl.ToString();
-                        if (url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-                        {
-                            contents.Add(new DataContent(url, "image/*"));
-                        }
-                        else
-                        {
-                            contents.Add(new UriContent(imageContent.ImageUrl, "image/*"));
-                        }
-                    }
-                    else if (!string.IsNullOrEmpty(imageContent.FileId))
-                    {
-                        contents.Add(new HostedFileContent(imageContent.FileId));
-                    }
-
+                    AppendImageContent(contents, imageContent.ImageUrl, imageContent.FileId);
                     break;
                 case MessageContentInputFileContent fileContent:
-                    if (fileContent.FileUrl is not null)
-                    {
-                        contents.Add(new UriContent(fileContent.FileUrl, "application/octet-stream"));
-                    }
-                    else if (!string.IsNullOrEmpty(fileContent.FileData))
-                    {
-                        contents.Add(new DataContent(fileContent.FileData, "application/octet-stream"));
-                    }
-                    else if (!string.IsNullOrEmpty(fileContent.FileId))
-                    {
-                        contents.Add(new HostedFileContent(fileContent.FileId));
-                    }
-                    else if (!string.IsNullOrEmpty(fileContent.Filename))
-                    {
-                        contents.Add(new MeaiTextContent($"[File: {fileContent.Filename}]"));
-                    }
-
+                    AppendFileContent(contents, fileContent.FileUrl, fileContent.FileData, fileContent.FileId, fileContent.Filename);
+                    break;
+                case ComputerScreenshotContent screenshot:
+                    AppendImageContent(contents, screenshot.ImageUrl, screenshot.FileId);
                     break;
             }
         }
@@ -258,46 +240,26 @@ internal static class InputConverter
                 case MessageContentOutputTextContent textContent:
                     contents.Add(new MeaiTextContent(textContent.Text));
                     break;
+                case SdkTextContent textContent:
+                    contents.Add(new MeaiTextContent(textContent.Text));
+                    break;
+                case SummaryTextContent summary:
+                    contents.Add(new MeaiTextContent(summary.Text));
+                    break;
+                case MessageContentReasoningTextContent reasoning:
+                    contents.Add(new TextReasoningContent(reasoning.Text));
+                    break;
                 case MessageContentRefusalContent refusal:
                     contents.Add(new MeaiTextContent($"[Refusal: {refusal.Refusal}]"));
                     break;
                 case MessageContentInputImageContent imageContent:
-                    if (imageContent.ImageUrl is not null)
-                    {
-                        var url = imageContent.ImageUrl.ToString();
-                        if (url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-                        {
-                            contents.Add(new DataContent(url, "image/*"));
-                        }
-                        else
-                        {
-                            contents.Add(new UriContent(imageContent.ImageUrl, "image/*"));
-                        }
-                    }
-                    else if (!string.IsNullOrEmpty(imageContent.FileId))
-                    {
-                        contents.Add(new HostedFileContent(imageContent.FileId));
-                    }
-
+                    AppendImageContent(contents, imageContent.ImageUrl, imageContent.FileId);
                     break;
                 case MessageContentInputFileContent fileContent:
-                    if (fileContent.FileUrl is not null)
-                    {
-                        contents.Add(new UriContent(fileContent.FileUrl, "application/octet-stream"));
-                    }
-                    else if (!string.IsNullOrEmpty(fileContent.FileData))
-                    {
-                        contents.Add(new DataContent(fileContent.FileData, "application/octet-stream"));
-                    }
-                    else if (!string.IsNullOrEmpty(fileContent.FileId))
-                    {
-                        contents.Add(new HostedFileContent(fileContent.FileId));
-                    }
-                    else if (!string.IsNullOrEmpty(fileContent.Filename))
-                    {
-                        contents.Add(new MeaiTextContent($"[File: {fileContent.Filename}]"));
-                    }
-
+                    AppendFileContent(contents, fileContent.FileUrl, fileContent.FileData, fileContent.FileId, fileContent.Filename);
+                    break;
+                case ComputerScreenshotContent screenshot:
+                    AppendImageContent(contents, screenshot.ImageUrl, screenshot.FileId);
                     break;
             }
         }
@@ -308,6 +270,116 @@ internal static class InputConverter
         }
 
         return new ChatMessage(role, contents);
+    }
+
+    private static void AppendImageContent(List<AIContent> contents, Uri? imageUrl, string? fileId)
+    {
+        if (imageUrl is not null)
+        {
+            var url = imageUrl.ToString();
+            if (url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                contents.Add(new DataContent(url, "image/*"));
+            }
+            else
+            {
+                contents.Add(new UriContent(imageUrl, "image/*"));
+            }
+        }
+        else if (!string.IsNullOrEmpty(fileId))
+        {
+            contents.Add(new HostedFileContent(fileId));
+        }
+    }
+
+    private static void AppendFileContent(List<AIContent> contents, Uri? fileUrl, string? fileData, string? fileId, string? filename)
+    {
+        if (fileUrl is not null)
+        {
+            var content = new UriContent(fileUrl, "application/octet-stream");
+            if (!string.IsNullOrEmpty(filename))
+            {
+                content.AdditionalProperties = new AdditionalPropertiesDictionary { ["filename"] = filename };
+            }
+            contents.Add(content);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(fileData))
+        {
+            // Mirror python's _convert_file_data: if the data URI carries text/* content,
+            // decode it inline as TextContent so {System.LastMessageText} (and other
+            // text-only consumers) sees the file's body rather than an opaque blob.
+            if (TryDecodeTextDataUri(fileData, filename, out var decodedText))
+            {
+                contents.Add(new MeaiTextContent(decodedText));
+            }
+            else
+            {
+                var dataContent = new DataContent(fileData, "application/octet-stream");
+                if (!string.IsNullOrEmpty(filename))
+                {
+                    dataContent.AdditionalProperties = new AdditionalPropertiesDictionary { ["filename"] = filename };
+                }
+                contents.Add(dataContent);
+            }
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(fileId))
+        {
+            var hosted = new HostedFileContent(fileId);
+            if (!string.IsNullOrEmpty(filename))
+            {
+                hosted.AdditionalProperties = new AdditionalPropertiesDictionary { ["filename"] = filename };
+            }
+            contents.Add(hosted);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(filename))
+        {
+            contents.Add(new MeaiTextContent($"[File: {filename}]"));
+        }
+    }
+
+    private static bool TryDecodeTextDataUri(string dataUri, string? filename, out string text)
+    {
+        text = string.Empty;
+        if (!dataUri.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        const string Marker = ";base64,";
+        int markerIndex = dataUri.IndexOf(Marker, StringComparison.OrdinalIgnoreCase);
+        if (markerIndex < 0)
+        {
+            return false;
+        }
+
+        string mediaType = dataUri.Substring("data:".Length, markerIndex - "data:".Length);
+        if (!mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string encoded = dataUri.Substring(markerIndex + Marker.Length);
+        try
+        {
+            byte[] bytes = Convert.FromBase64String(encoded);
+            string decoded = Encoding.UTF8.GetString(bytes);
+            text = string.IsNullOrEmpty(filename) ? decoded : $"[File: {filename}]\n{decoded}";
+            return true;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+        catch (DecoderFallbackException)
+        {
+            return false;
+        }
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing function call arguments from SDK output history.")]
