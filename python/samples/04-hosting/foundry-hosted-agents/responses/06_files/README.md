@@ -46,7 +46,7 @@ $env:TOOLBOX_NAME="<your-toolbox-name>"
 Send a POST request to the server with a JSON body containing an `"input"` field to interact with the agent. For example:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Find the quauterly report under `{cwd}/resources` and tell me the difference of revenue between q1 2026 and q1 2025?"}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Find the quarterly report under `{cwd}/resources` and tell me the difference of revenue between q1 2026 and q1 2025?"}'
 ```
 
 The server will respond with a JSON object containing the response text and a response ID. You can use this response ID to continue the conversation in subsequent requests.
