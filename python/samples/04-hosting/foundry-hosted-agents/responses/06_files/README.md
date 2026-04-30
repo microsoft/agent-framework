@@ -83,7 +83,7 @@ azd ai agent invoke --new-session "Hi!"
 Run the following command to upload a file to the hosted agent session:
 
 ```bash
-azd ai agent files upload -f <path-to-contoso-q1-2026-report.text>
+azd ai agent files upload -f <path-to-contoso_q1_2026_report.txt>
 ```
 
 > The above command will automatically detect the last active session and upload the file to that session without requiring you to explicitly provide a session ID. It is also possible to specify a particular session ID to upload the file to a specific hosted agent session by using the `--session-id` flag. Run `azd ai agent files upload -h` to see the full list of options and flags available for the `upload` command.
