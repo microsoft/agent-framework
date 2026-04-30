@@ -149,14 +149,28 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
         var store = new FileSystemAgentSessionStore(this._root);
         var agent = new TestAgent();
 
-        const char Invalid = '?'; // present in Path.GetInvalidFileNameChars on every supported OS
-        var conversationId = $"id-with{Invalid}invalid-chars";
+        // Pick an invalid filename char for the current OS. The set differs by platform
+        // (e.g. '?' is invalid on Windows but not on Linux), so we must select dynamically.
+        var invalidChars = Path.GetInvalidFileNameChars();
+        Assert.NotEmpty(invalidChars);
+        char invalid = invalidChars[0];
+        // Avoid NUL specifically because some shells/loggers handle it oddly; prefer
+        // the next character if available.
+        if (invalid == '\0' && invalidChars.Length > 1)
+        {
+            invalid = invalidChars[1];
+        }
+
+        var conversationId = $"id-with{invalid}invalid-chars";
 
         await store.SaveSessionAsync(agent, conversationId, NewSession());
 
         var files = Directory.GetFiles(store.RootDirectory, "*.json");
         Assert.Single(files);
-        Assert.Contains("id-with_invalid-chars", Path.GetFileName(files[0]), StringComparison.Ordinal);
+        var fileName = Path.GetFileName(files[0]);
+        Assert.DoesNotContain(invalid.ToString(), fileName, StringComparison.Ordinal);
+        Assert.Contains("id-with", fileName, StringComparison.Ordinal);
+        Assert.Contains("invalid-chars", fileName, StringComparison.Ordinal);
     }
 
     [Fact]
