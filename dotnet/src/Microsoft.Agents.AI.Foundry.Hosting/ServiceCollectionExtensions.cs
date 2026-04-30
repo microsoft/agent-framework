@@ -11,7 +11,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Shared.DiagnosticIds;
-using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
