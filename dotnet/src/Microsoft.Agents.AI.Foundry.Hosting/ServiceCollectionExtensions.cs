@@ -236,10 +236,7 @@ public static class FoundryHostingExtensions
     /// </remarks>
     internal static AIAgent TryApplyUserAgent(AIAgent agent)
     {
-        if (agent is null)
-        {
-            return agent!;
-        }
+        ArgumentNullException.ThrowIfNull(agent);
 
         var chatClient = agent.GetService<IChatClient>();
         if (chatClient is null)

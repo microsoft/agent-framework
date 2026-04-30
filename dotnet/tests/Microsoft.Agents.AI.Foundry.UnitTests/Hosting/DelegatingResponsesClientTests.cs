@@ -27,11 +27,14 @@ namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 /// Covers both the Azure-flavored <see cref="ProjectResponsesClient"/> and the native OpenAI
 /// <see cref="ResponsesClient"/>.
 /// </summary>
-public sealed class DelegatingResponsesClientTests
+public sealed partial class DelegatingResponsesClientTests
 {
     private const string TestEndpoint = "https://fake-foundry.example.com/api/projects/fake-prj";
     private const string OpenAIEndpoint = "https://fake-openai.example.com/v1";
     private const string Deployment = "fake-deployment";
+
+    [System.Text.RegularExpressions.GeneratedRegex("foundry-hosting/agent-framework-dotnet")]
+    private static partial System.Text.RegularExpressions.Regex SupplementRegex();
 
     [Fact]
     public async Task Polyfill_NonStreaming_PreservesAppId_ThroughCustomTransport_AddsSupplementAsync()
@@ -241,6 +244,57 @@ public sealed class DelegatingResponsesClientTests
         var req = Assert.Single(handler.Requests);
         Assert.Contains("MY_APP_ID", req.UserAgent);
         Assert.Contains("foundry-hosting/agent-framework-dotnet", req.UserAgent);
+    }
+
+    [Fact]
+    public async Task Polyfill_RetryWithinCall_DoesNotDuplicateSupplementInUserAgentAsync()
+    {
+        // Arrange: a custom retry policy that re-runs the inner pipeline on the SAME message,
+        // so the per-call HostedAgentUserAgentPolicy fires multiple times against the same headers.
+        // The policy's Contains-guard must prevent the supplement from appearing twice.
+        var retryPolicy = new CountingRetryPolicy(extraAttempts: 2);
+        using var handler = new RecordingHandler(MinimalResponseJson());
+#pragma warning disable CA5399
+        using var httpClient = new HttpClient(handler);
+#pragma warning restore CA5399
+        var inner = BuildInner(httpClient, userAgentApplicationId: "MY_APP_ID", retryPolicy: retryPolicy);
+        var chat = MakeWithDelegating(inner);
+
+        // Act
+        _ = await chat.GetResponseAsync("hello");
+
+        // Assert: each retry attempt must have exactly ONE foundry-hosting segment, never two.
+        Assert.Equal(3, handler.Requests.Count);
+        foreach (var req in handler.Requests)
+        {
+            int matches = SupplementRegex().Matches(req.UserAgent).Count;
+            Assert.True(matches == 1, $"Expected exactly one foundry-hosting segment per retry attempt, got {matches}. UA: {req.UserAgent}");
+        }
+    }
+
+    [Fact]
+    public async Task TryApplyUserAgent_CalledTwiceOnSameAgent_DoesNotDoubleWrapAsync()
+    {
+        // Arrange: build a real ChatClientAgent whose IChatClient resolves to MEAI's
+        // OpenAIResponsesChatClient → ProjectResponsesClient (with a fake transport).
+        using var handler = new RecordingHandler(MinimalResponseJson());
+#pragma warning disable CA5399
+        using var httpClient = new HttpClient(handler);
+#pragma warning restore CA5399
+        var inner = BuildInner(httpClient, userAgentApplicationId: "MY_APP_ID");
+        IChatClient chatClient = inner.AsIChatClient(Deployment);
+        AIAgent agent = new ChatClientAgent(chatClient);
+
+        // Act: apply twice.
+        FoundryHostingExtensions.TryApplyUserAgent(agent);
+        FoundryHostingExtensions.TryApplyUserAgent(agent);
+
+        // Assert: invoking the agent produces exactly ONE outbound request whose UA contains
+        // the supplement EXACTLY ONCE (would be twice if the wrapper were nested).
+        _ = await chatClient.GetResponseAsync("hello");
+        var req = Assert.Single(handler.Requests);
+        int matches = SupplementRegex().Matches(req.UserAgent).Count;
+        Assert.True(matches == 1, $"Expected exactly one foundry-hosting segment, got {matches}. UA: {req.UserAgent}");
     }
 
     [Fact]
