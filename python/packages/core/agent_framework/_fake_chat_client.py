@@ -14,14 +14,8 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, ClassVar
 
-from agent_framework import (
-    BaseChatClient,
-    ChatResponse,
-    ChatResponseUpdate,
-    Content,
-    Message,
-    ResponseStream,
-)
+from ._clients import BaseChatClient, ResponseStream
+from ._types import ChatResponse, ChatResponseUpdate, Content, Message
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore[import-untyped]
@@ -46,8 +40,7 @@ class FakeChatClient(BaseChatClient):
     Examples:
         Non-streaming usage::
 
-            from agent_framework import Message
-            from agent_framework._fake_chat_client import FakeChatClient
+            from agent_framework import FakeChatClient, Message
 
             client = FakeChatClient(responses=["Hello!", "How can I help?"])
             response = await client.get_response([Message(role="user", contents=["Hi"])])
@@ -99,7 +92,7 @@ class FakeChatClient(BaseChatClient):
             **kwargs: Additional keyword arguments passed to BaseChatClient.
 
         Raises:
-            ValueError: If repeat is not "last" or "loop".
+            ValueError: If repeat is not "last" or "loop", or if responses is empty.
         """
         super().__init__(**kwargs)
         if repeat not in ("last", "loop"):
@@ -110,6 +103,8 @@ class FakeChatClient(BaseChatClient):
 
         if responses is None:
             responses = ["Hello!"]
+        elif len(responses) == 0:
+            raise ValueError("responses must not be empty")
 
         self._responses: list[ChatResponse] = []
         for r in responses:
@@ -157,7 +152,7 @@ class FakeChatClient(BaseChatClient):
         response = self._get_next_response()
 
         if not stream:
-            # Return a copy to avoid mutation issues across calls
+
             async def _get_response() -> ChatResponse:
                 return response
 
@@ -168,18 +163,22 @@ class FakeChatClient(BaseChatClient):
         if response.messages:
             response_text = response.messages[-1].text or ""
 
+        # Propagate metadata from the configured response
+        response_id = response.response_id
+        model = response.model or "fake-model"
+
         async def _stream() -> AsyncIterable[ChatResponseUpdate]:
             for char in response_text:
                 yield ChatResponseUpdate(
                     contents=[Content.from_text(char)],
                     role="assistant",
-                    response_id=response.response_id,
-                    model=response.model or "fake-model",
+                    response_id=response_id,
+                    model=model,
                 )
                 if self._stream_delay_seconds > 0:
                     await asyncio.sleep(self._stream_delay_seconds)
 
         return ResponseStream(
             _stream(),
-            finalizer=lambda updates: ChatResponse.from_updates(updates),
+            finalizer=lambda updates: response,
         )
