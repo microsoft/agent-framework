@@ -200,9 +200,7 @@ class _FileSkillResource(SkillResource):
 
     Stores a pre-resolved absolute file path and reads content directly,
     consistent with the .NET ``AgentFileSkillResource`` and the sibling
-    :class:`FileSkillScript`.  Security validation (path-traversal and
-    symlink guards) is performed at discovery time by
-    :meth:`_FileSkillsSource._discover_resource_files`.
+    :class:`FileSkillScript`.
 
     Attributes:
         name: Resource identifier (relative path within the skill directory).
@@ -225,14 +223,12 @@ class _FileSkillResource(SkillResource):
             description: Optional human-readable summary.
 
         Raises:
-            ValueError: If ``full_path`` is empty or not an absolute path.
+            ValueError: If ``full_path`` is empty.
         """
         super().__init__(name=name, description=description)
 
         if not full_path or not full_path.strip():
             raise ValueError("full_path cannot be empty.")
-        if not os.path.isabs(full_path):
-            raise ValueError(f"full_path must be an absolute path, got: '{full_path}'")
 
         self._full_path = full_path
 
@@ -1552,7 +1548,8 @@ class SkillsProvider(ContextProvider):
             return "Error: Script name cannot be empty."
 
         skill = self._find_skill(skills, skill_name)
-        if not skill:            return f"Error: Skill '{skill_name}' not found."
+        if not skill:
+            return f"Error: Skill '{skill_name}' not found."
 
         script = next((s for s in skill.scripts if s.name.lower() == script_name.lower()), None)
         if not script:
@@ -1612,80 +1609,7 @@ class SkillsProvider(ContextProvider):
 
 # endregion
 
-# region Module-level helper functions
-
-
-def _normalize_resource_path(path: str) -> str:
-    """Normalize a relative resource path to a canonical forward-slash form.
-
-    Converts backslashes to forward slashes and strips leading ``./``
-    prefixes so that ``./refs/doc.md`` and ``refs/doc.md`` resolve
-    identically.
-
-    Args:
-        path: The relative path to normalize.
-
-    Returns:
-        A clean forward-slash-separated path string.
-    """
-    return PurePosixPath(path.replace("\\", "/")).as_posix()
-
-
-def _is_path_within_directory(path: str, directory: str) -> bool:
-    """Return whether *path* resides under *directory*.
-
-    Comparison uses :meth:`pathlib.Path.is_relative_to`, which respects
-    per-platform case-sensitivity rules.
-
-    Args:
-        path: Absolute path to check.
-        directory: Directory that must be an ancestor of *path*.
-
-    Returns:
-        ``True`` if *path* is a descendant of *directory*.
-    """
-    try:
-        return Path(path).is_relative_to(directory)
-    except (ValueError, OSError):
-        return False
-
-
-def _has_symlink_in_path(path: str, directory: str) -> bool:
-    """Detect symlinks in the portion of *path* below *directory*.
-
-    Only segments below *directory* are inspected; the directory itself
-    and anything above it are not checked.
-
-    **Precondition:** *path* must be a descendant of *directory*.
-    Call :func:`_is_path_within_directory` first to verify containment.
-
-    Args:
-        path: Absolute path to inspect.
-        directory: Root directory; segments above it are not checked.
-
-    Returns:
-        ``True`` if any intermediate segment below *directory* is a symlink.
-
-    Raises:
-        ValueError: If *path* is not relative to *directory*.
-    """
-    dir_path = Path(directory)
-    try:
-        relative = Path(path).relative_to(dir_path)
-    except ValueError as exc:
-        raise ValueError(f"path {path!r} does not start with directory {directory!r}") from exc
-
-    current = dir_path
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            return True
-    return False
-
-
 # endregion
-
-# region Instruction and prompt helpers
 
 
 def _create_script_element(script: SkillScript) -> str:
@@ -1844,7 +1768,7 @@ class _FileSkillsSource(SkillsSource):
 
             # Discover and attach file-based resources
             for rn in _FileSkillsSource._discover_resource_files(skill_path, self._resource_extensions):
-                resource_full_path = os.path.normpath(os.path.join(skill_path, rn))  # noqa: ASYNC240
+                resource_full_path = _FileSkillsSource._get_validated_resource_path(skill_path, rn)
                 file_skill.resources.append(_FileSkillResource(name=rn, full_path=resource_full_path))
 
             # Discover and attach file-based scripts as SkillScript instances
@@ -1859,6 +1783,74 @@ class _FileSkillsSource(SkillsSource):
 
         logger.info("Successfully loaded %d skills", len(skills))
         return list(skills.values())
+
+    @staticmethod
+    def _normalize_resource_path(path: str) -> str:
+        """Normalize a relative resource path to a canonical forward-slash form.
+
+        Converts backslashes to forward slashes and strips leading ``./``
+        prefixes so that ``./refs/doc.md`` and ``refs/doc.md`` resolve
+        identically.
+
+        Args:
+            path: The relative path to normalize.
+
+        Returns:
+            A clean forward-slash-separated path string.
+        """
+        return PurePosixPath(path.replace("\\", "/")).as_posix()
+
+    @staticmethod
+    def _is_path_within_directory(path: str, directory: str) -> bool:
+        """Return whether *path* resides under *directory*.
+
+        Comparison uses :meth:`pathlib.Path.is_relative_to`, which respects
+        per-platform case-sensitivity rules.
+
+        Args:
+            path: Absolute path to check.
+            directory: Directory that must be an ancestor of *path*.
+
+        Returns:
+            ``True`` if *path* is a descendant of *directory*.
+        """
+        try:
+            return Path(path).is_relative_to(directory)
+        except (ValueError, OSError):
+            return False
+
+    @staticmethod
+    def _has_symlink_in_path(path: str, directory: str) -> bool:
+        """Detect symlinks in the portion of *path* below *directory*.
+
+        Only segments below *directory* are inspected; the directory itself
+        and anything above it are not checked.
+
+        **Precondition:** *path* must be a descendant of *directory*.
+        Call :meth:`_is_path_within_directory` first to verify containment.
+
+        Args:
+            path: Absolute path to inspect.
+            directory: Root directory; segments above it are not checked.
+
+        Returns:
+            ``True`` if any intermediate segment below *directory* is a symlink.
+
+        Raises:
+            ValueError: If *path* is not relative to *directory*.
+        """
+        dir_path = Path(directory)
+        try:
+            relative = Path(path).relative_to(dir_path)
+        except ValueError as exc:
+            raise ValueError(f"path {path!r} does not start with directory {directory!r}") from exc
+
+        current = dir_path
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                return True
+        return False
 
     @staticmethod
     def _discover_resource_files(
@@ -1897,7 +1889,7 @@ class _FileSkillsSource(SkillsSource):
 
             resource_full_path = str(Path(os.path.normpath(resource_file)).absolute())
 
-            if not _is_path_within_directory(resource_full_path, root_directory_path):
+            if not _FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
                 logger.warning(
                     "Skipping resource '%s': resolves outside skill directory '%s'",
                     resource_file,
@@ -1905,7 +1897,7 @@ class _FileSkillsSource(SkillsSource):
                 )
                 continue
 
-            if _has_symlink_in_path(resource_full_path, root_directory_path):
+            if _FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
                 logger.warning(
                     "Skipping resource '%s': symlink detected in path under skill directory '%s'",
                     resource_file,
@@ -1914,7 +1906,7 @@ class _FileSkillsSource(SkillsSource):
                 continue
 
             rel_path = resource_file.relative_to(skill_dir)
-            resources.append(_normalize_resource_path(str(rel_path)))
+            resources.append(_FileSkillsSource._normalize_resource_path(str(rel_path)))
 
         return resources
 
@@ -1951,7 +1943,7 @@ class _FileSkillsSource(SkillsSource):
 
             script_full_path = str(Path(os.path.normpath(script_file)).absolute())
 
-            if not _is_path_within_directory(script_full_path, root_directory_path):
+            if not _FileSkillsSource._is_path_within_directory(script_full_path, root_directory_path):
                 logger.warning(
                     "Skipping script '%s': resolves outside skill directory '%s'",
                     script_file,
@@ -1959,7 +1951,7 @@ class _FileSkillsSource(SkillsSource):
                 )
                 continue
 
-            if _has_symlink_in_path(script_full_path, root_directory_path):
+            if _FileSkillsSource._has_symlink_in_path(script_full_path, root_directory_path):
                 logger.warning(
                     "Skipping script '%s': symlink detected in path under skill directory '%s'",
                     script_file,
@@ -1968,9 +1960,51 @@ class _FileSkillsSource(SkillsSource):
                 continue
 
             rel_path = script_file.relative_to(skill_dir)
-            scripts.append(_normalize_resource_path(str(rel_path)))
+            scripts.append(_FileSkillsSource._normalize_resource_path(str(rel_path)))
 
         return scripts
+
+    @staticmethod
+    def _get_validated_resource_path(skill_dir: str, resource_name: str) -> str:
+        """Resolve and validate a resource file path within a skill directory.
+
+        Normalizes *resource_name*, resolves it against *skill_dir*, and
+        validates that the result stays within the skill directory and does
+        not traverse any symlinks.
+
+        Args:
+            skill_dir: Absolute path to the owning skill directory.
+            resource_name: Relative path of the resource within the skill directory.
+
+        Returns:
+            The validated absolute path to the resource file.
+
+        Raises:
+            ValueError: If *skill_dir* is not an absolute path, the resolved path
+                escapes the skill directory, the file does not exist, or a symlink
+                is detected in the path.
+        """
+        if not os.path.isabs(skill_dir):
+            raise ValueError(f"skill_dir must be an absolute path, got: '{skill_dir}'")
+
+        resource_name = _FileSkillsSource._normalize_resource_path(resource_name)
+
+        resource_full_path = os.path.normpath(Path(skill_dir) / resource_name)
+        root_directory_path = os.path.normpath(skill_dir)
+
+        if not _FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
+            raise ValueError(f"Resource file '{resource_name}' references a path outside the skill directory.")
+
+        if not Path(resource_full_path).is_file():
+            raise ValueError(f"Resource file '{resource_name}' not found in skill directory '{skill_dir}'.")
+
+        if _FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
+            raise ValueError(
+                f"Resource file '{resource_name}' "
+                "has a symlink in its path; symlinks are not allowed."
+            )
+
+        return resource_full_path
 
     @staticmethod
     def _validate_skill_metadata(

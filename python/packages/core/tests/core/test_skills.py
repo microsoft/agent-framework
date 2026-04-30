@@ -32,9 +32,6 @@ from agent_framework._skills import (
     _create_script_element,
     _FileSkillResource,
     _FileSkillsSource,
-    _has_symlink_in_path,
-    _is_path_within_directory,
-    _normalize_resource_path,
 )
 
 pytestmark = pytest.mark.filterwarnings(r"ignore:\[SKILLS\].*:FutureWarning")
@@ -174,16 +171,16 @@ class TestNormalizeResourcePath:
     """Tests for _normalize_resource_path."""
 
     def test_strips_dot_slash_prefix(self) -> None:
-        assert _normalize_resource_path("./refs/doc.md") == "refs/doc.md"
+        assert _FileSkillsSource._normalize_resource_path("./refs/doc.md") == "refs/doc.md"
 
     def test_replaces_backslashes(self) -> None:
-        assert _normalize_resource_path("refs\\doc.md") == "refs/doc.md"
+        assert _FileSkillsSource._normalize_resource_path("refs\\doc.md") == "refs/doc.md"
 
     def test_strips_dot_slash_and_replaces_backslashes(self) -> None:
-        assert _normalize_resource_path(".\\refs\\doc.md") == "refs/doc.md"
+        assert _FileSkillsSource._normalize_resource_path(".\\refs\\doc.md") == "refs/doc.md"
 
     def test_no_change_for_clean_path(self) -> None:
-        assert _normalize_resource_path("refs/doc.md") == "refs/doc.md"
+        assert _FileSkillsSource._normalize_resource_path("refs/doc.md") == "refs/doc.md"
 
 
 class TestDiscoverResourceFiles:
@@ -480,10 +477,6 @@ class TestReadSkillResource:
         with pytest.raises(ValueError, match="full_path cannot be empty"):
             _FileSkillResource(name="test.md", full_path="")
 
-    def test_constructor_rejects_relative_full_path(self) -> None:
-        with pytest.raises(ValueError, match="full_path must be an absolute path"):
-            _FileSkillResource(name="test.md", full_path="relative/path.md")
-
     def test_path_traversal_blocked_at_discovery(self, tmp_path: Path) -> None:
         """Path traversal is blocked by _discover_resource_files, not at read time."""
         skill_dir = tmp_path / "skill"
@@ -749,7 +742,7 @@ class TestSymlinkDetection:
 
         full_path = str(symlink_path)
         directory_path = str(skill_dir) + os.sep
-        assert _has_symlink_in_path(full_path, directory_path) is True
+        assert _FileSkillsSource._has_symlink_in_path(full_path, directory_path) is True
 
     def test_detects_symlinked_directory(self, tmp_path: Path) -> None:
         """A symlink to a directory outside should be detected for paths through it."""
@@ -765,7 +758,7 @@ class TestSymlinkDetection:
 
         full_path = str(skill_dir / "linked-dir" / "data.txt")
         directory_path = str(skill_dir) + os.sep
-        assert _has_symlink_in_path(full_path, directory_path) is True
+        assert _FileSkillsSource._has_symlink_in_path(full_path, directory_path) is True
 
     def test_returns_false_for_regular_files(self, tmp_path: Path) -> None:
         """Regular (non-symlinked) files should not be flagged."""
@@ -777,7 +770,7 @@ class TestSymlinkDetection:
 
         full_path = str(regular_file)
         directory_path = str(skill_dir) + os.sep
-        assert _has_symlink_in_path(full_path, directory_path) is False
+        assert _FileSkillsSource._has_symlink_in_path(full_path, directory_path) is False
 
     async def test_discover_skips_symlinked_resource(self, tmp_path: Path) -> None:
         """get_skills() should skip a symlinked resource but keep the skill."""
@@ -1443,20 +1436,20 @@ class TestIsPathWithinDirectory:
 
     def test_path_inside_directory(self, tmp_path: Path) -> None:
         child = str(tmp_path / "sub" / "file.txt")
-        assert _is_path_within_directory(child, str(tmp_path)) is True
+        assert _FileSkillsSource._is_path_within_directory(child, str(tmp_path)) is True
 
     def test_path_outside_directory(self, tmp_path: Path) -> None:
         outside = str(tmp_path.parent / "other" / "file.txt")
-        assert _is_path_within_directory(outside, str(tmp_path)) is False
+        assert _FileSkillsSource._is_path_within_directory(outside, str(tmp_path)) is False
 
     def test_path_is_directory_itself(self, tmp_path: Path) -> None:
-        assert _is_path_within_directory(str(tmp_path), str(tmp_path)) is True
+        assert _FileSkillsSource._is_path_within_directory(str(tmp_path), str(tmp_path)) is True
 
     def test_similar_prefix_not_matched(self, tmp_path: Path) -> None:
         """'skill-a-evil' is not inside 'skill-a'."""
         dir_a = str(tmp_path / "skill-a")
         evil = str(tmp_path / "skill-a-evil" / "file.txt")
-        assert _is_path_within_directory(evil, dir_a) is False
+        assert _FileSkillsSource._is_path_within_directory(evil, dir_a) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1470,11 +1463,11 @@ class TestHasSymlinkInPathEdgeCases:
     def test_raises_when_path_not_relative(self, tmp_path: Path) -> None:
         unrelated = str(tmp_path.parent / "other" / "file.txt")
         with pytest.raises(ValueError, match="does not start with directory"):
-            _has_symlink_in_path(unrelated, str(tmp_path))
+            _FileSkillsSource._has_symlink_in_path(unrelated, str(tmp_path))
 
     def test_returns_false_for_empty_relative(self, tmp_path: Path) -> None:
         """When path equals directory, relative is empty so no symlinks."""
-        assert _has_symlink_in_path(str(tmp_path), str(tmp_path)) is False
+        assert _FileSkillsSource._has_symlink_in_path(str(tmp_path), str(tmp_path)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1695,10 +1688,6 @@ class TestReadFileSkillResourceEdgeCases:
         with pytest.raises(ValueError, match="full_path cannot be empty"):
             _FileSkillResource(name="some-file.md", full_path="   ")
 
-    def test_constructor_rejects_relative_path(self) -> None:
-        with pytest.raises(ValueError, match="full_path must be an absolute path"):
-            _FileSkillResource(name="some-file.md", full_path="relative/path.md")
-
     def test_full_path_property(self) -> None:
         resource = _FileSkillResource(name="doc.md", full_path=f"{_ABS}/doc.md")
         assert resource.full_path == f"{_ABS}/doc.md"
@@ -1712,6 +1701,47 @@ class TestReadFileSkillResourceEdgeCases:
             await resource.read()
 
 
+class TestGetValidatedResourcePath:
+    """Tests for _FileSkillsSource._get_validated_resource_path security validation."""
+
+    def test_returns_valid_path(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "skill"
+        skill_dir.mkdir()
+        (skill_dir / "doc.md").write_text("hello")
+        result = _FileSkillsSource._get_validated_resource_path(str(skill_dir), "doc.md")
+        assert Path(result).is_file()
+
+    def test_rejects_relative_skill_dir(self) -> None:
+        with pytest.raises(ValueError, match="skill_dir must be an absolute path"):
+            _FileSkillsSource._get_validated_resource_path("relative/path", "doc.md")
+
+    def test_rejects_path_outside_skill_dir(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "skill"
+        skill_dir.mkdir()
+        outside_file = tmp_path / "secret.md"
+        outside_file.write_text("secret")
+        with pytest.raises(ValueError, match="outside the skill directory"):
+            _FileSkillsSource._get_validated_resource_path(str(skill_dir), "../secret.md")
+
+    def test_rejects_nonexistent_file(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "skill"
+        skill_dir.mkdir()
+        with pytest.raises(ValueError, match="not found"):
+            _FileSkillsSource._get_validated_resource_path(str(skill_dir), "missing.md")
+
+    @pytest.mark.skipif(os.name == "nt", reason="symlinks require elevated privileges on Windows")
+    def test_rejects_symlink_in_path(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "skill"
+        skill_dir.mkdir()
+        real_subdir = tmp_path / "external"
+        real_subdir.mkdir()
+        (real_subdir / "data.md").write_text("external data")
+        link = skill_dir / "linked"
+        link.symlink_to(real_subdir)
+        with pytest.raises(ValueError, match="symlink"):
+            _FileSkillsSource._get_validated_resource_path(str(skill_dir), "linked/data.md")
+
+
 # ---------------------------------------------------------------------------
 # Tests: _normalize_resource_path edge cases
 # ---------------------------------------------------------------------------
@@ -1721,16 +1751,16 @@ class TestNormalizeResourcePathEdgeCases:
     """Additional edge-case tests for _normalize_resource_path."""
 
     def test_bare_filename(self) -> None:
-        assert _normalize_resource_path("file.md") == "file.md"
+        assert _FileSkillsSource._normalize_resource_path("file.md") == "file.md"
 
     def test_deeply_nested_path(self) -> None:
-        assert _normalize_resource_path("a/b/c/d.md") == "a/b/c/d.md"
+        assert _FileSkillsSource._normalize_resource_path("a/b/c/d.md") == "a/b/c/d.md"
 
     def test_mixed_separators(self) -> None:
-        assert _normalize_resource_path("a\\b/c\\d.md") == "a/b/c/d.md"
+        assert _FileSkillsSource._normalize_resource_path("a\\b/c\\d.md") == "a/b/c/d.md"
 
     def test_dot_prefix_only(self) -> None:
-        assert _normalize_resource_path("./file.md") == "file.md"
+        assert _FileSkillsSource._normalize_resource_path("./file.md") == "file.md"
 
 
 # ---------------------------------------------------------------------------
