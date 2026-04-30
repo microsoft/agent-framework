@@ -18,7 +18,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 /// <summary>
 /// Integration tests that verify workflow execution through the

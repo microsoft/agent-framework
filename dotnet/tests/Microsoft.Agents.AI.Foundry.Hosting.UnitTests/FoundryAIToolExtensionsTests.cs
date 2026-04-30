@@ -3,7 +3,7 @@
 using System;
 using Microsoft.Agents.AI.Foundry.Hosting;
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 public class FoundryAIToolExtensionsTests
 {

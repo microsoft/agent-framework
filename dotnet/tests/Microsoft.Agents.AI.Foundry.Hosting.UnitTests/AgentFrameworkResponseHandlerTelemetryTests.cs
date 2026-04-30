@@ -19,7 +19,7 @@ using OpenTelemetry;
 using OpenTelemetry.Trace;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 /// <summary>
 /// Tests that verify OTel spans are actually emitted and captured through the

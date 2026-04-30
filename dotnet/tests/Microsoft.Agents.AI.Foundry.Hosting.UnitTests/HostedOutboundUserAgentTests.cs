@@ -18,7 +18,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 #pragma warning disable OPENAI001, SCME0001, SCME0002, MEAI001
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 /// <summary>
 /// End-to-end tests that exercise the FULL hosted ASP.NET Core pipeline:

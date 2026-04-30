@@ -2,7 +2,7 @@
 
 using System.IO;
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 /// <summary>
 /// Utility class for loading toolbox-related test data files.

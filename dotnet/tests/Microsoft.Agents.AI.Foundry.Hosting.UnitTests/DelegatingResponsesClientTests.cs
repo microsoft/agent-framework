@@ -18,7 +18,7 @@ using OpenAI.Responses;
 
 #pragma warning disable OPENAI001, SCME0001, SCME0002, MEAI001
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 /// <summary>
 /// Verifies that <see cref="DelegatingResponsesClient"/> preserves user-supplied client options

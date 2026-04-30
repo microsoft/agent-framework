@@ -9,7 +9,7 @@ using Azure.Core;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Moq;
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 public class FoundryToolboxBearerTokenHandlerTests
 {

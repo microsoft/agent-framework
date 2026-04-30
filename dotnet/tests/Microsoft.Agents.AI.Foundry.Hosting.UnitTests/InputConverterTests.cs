@@ -7,7 +7,7 @@ using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 public class InputConverterTests
 {

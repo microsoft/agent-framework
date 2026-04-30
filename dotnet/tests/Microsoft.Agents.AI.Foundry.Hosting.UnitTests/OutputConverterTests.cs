@@ -13,7 +13,7 @@ using Microsoft.Extensions.AI;
 using Moq;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 public class OutputConverterTests
 {

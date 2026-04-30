@@ -15,7 +15,7 @@ using Microsoft.Extensions.AI;
 #pragma warning disable OPENAI001
 #pragma warning disable AAIP001
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 /// <summary>
 /// Unit tests for the <see cref="FoundryToolbox"/> class.
