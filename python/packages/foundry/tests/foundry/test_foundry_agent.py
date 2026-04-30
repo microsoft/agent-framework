@@ -269,6 +269,39 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_model_for_ho
     assert result["extra_body"]["agent_session_id"] == "agent-session-123"
 
 
+async def test_raw_foundry_agent_chat_client_prepare_options_preserves_model_for_resp_continuation() -> None:
+    """Test that model is preserved when conversation_id is a resp_* continuation (HostedAgent v1 / v2-no-session)."""
+
+    mock_project = MagicMock()
+    mock_openai = MagicMock()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={
+            "model": "gpt-4.1",
+            "previous_response_id": "resp_abc123",
+        },
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"conversation_id": "resp_abc123"},
+        )
+
+    # model preserved — resp_* is standard Responses API continuity, not a hosted session
+    assert result["model"] == "gpt-4.1"
+    # previous_response_id preserved — not stripped outside hosted session path
+    assert result["previous_response_id"] == "resp_abc123"
+    # no agent_session_id injected
+    assert "extra_body" not in result or "agent_session_id" not in result.get("extra_body", {})
+
+
 async def test_raw_foundry_agent_chat_client_prepare_options_maps_agent_session_id_to_extra_body() -> None:
     """Test that service_session_id is forwarded as agent_session_id for hosted sessions."""
 
