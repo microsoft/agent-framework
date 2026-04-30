@@ -30,6 +30,7 @@ internal static class OutputConverter
     /// </summary>
     /// <param name="updates">The agent response updates to convert.</param>
     /// <param name="stream">The SDK event stream builder.</param>
+    /// <param name="stateBag">Optional session state bag used to persist tool-approval id mappings across turns.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>An async enumerable of SDK response stream events (excluding lifecycle events).</returns>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call arguments dictionary.")]
@@ -37,6 +38,7 @@ internal static class OutputConverter
     public static async IAsyncEnumerable<ResponseStreamEvent> ConvertUpdatesToEventsAsync(
         IAsyncEnumerable<AgentResponseUpdate> updates,
         ResponseEventStream stream,
+        AgentSessionStateBag? stateBag = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ResponseUsage? accumulatedUsage = null;
@@ -168,6 +170,55 @@ internal static class OutputConverter
                         yield return reasoningBuilder.EmitDone();
                         break;
                     }
+
+                    case ToolApprovalRequestContent approvalRequest when approvalRequest.ToolCall is FunctionCallContent approvalFunctionCall:
+                    {
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        {
+                            yield return evt;
+                        }
+
+                        currentTextBuilder = null;
+                        currentMessageBuilder = null;
+                        accumulatedText = null;
+                        previousMessageId = null;
+
+                        // The Responses API only standardizes the MCP-flavored approval primitive.
+                        // We emit the AF tool-approval request as `mcp_approval_request` with
+                        // server_label="agent_framework" — declaring the AF runtime as the virtual
+                        // server holding this call. The SDK requires a strict {prefix}_{50hex}
+                        // wire-id format, so we hash the AF RequestId and persist the
+                        // wireId↔afRequestId mapping in the session state bag for later lookup
+                        // when the matching `mcp_approval_response` arrives on a subsequent turn.
+                        var wireId = ToolApprovalIdMap.ComputeWireId(approvalRequest.RequestId);
+                        ToolApprovalIdMap.Record(stateBag, wireId, approvalRequest.RequestId);
+
+                        var approvalArguments = approvalFunctionCall.Arguments is not null
+                            ? JsonSerializer.Serialize(approvalFunctionCall.Arguments)
+                            : "{}";
+
+                        var approvalItem = new OutputItemMcpApprovalRequest(
+                            wireId,
+                            "agent_framework",
+                            approvalFunctionCall.Name,
+                            approvalArguments);
+
+                        var approvalBuilder = stream.AddOutputItem<OutputItemMcpApprovalRequest>(wireId);
+                        yield return approvalBuilder.EmitAdded(approvalItem);
+                        yield return approvalBuilder.EmitDone(approvalItem);
+                        break;
+                    }
+
+                    case ToolApprovalRequestContent:
+                        // Non-function tool calls (e.g. MCP calls) are not emitted here.
+                        // Mirrors the OpenAI Hosting layer's ToolApprovalRequestEventGenerator,
+                        // which also only handles FunctionCallContent.
+                        break;
+
+                    case ToolApprovalResponseContent:
+                        // Approval responses originate from the client and travel inbound; the
+                        // workflow does not re-emit them. Skip silently if encountered.
+                        break;
 
                     case UsageContent usageContent when usageContent.Details is not null:
                     {

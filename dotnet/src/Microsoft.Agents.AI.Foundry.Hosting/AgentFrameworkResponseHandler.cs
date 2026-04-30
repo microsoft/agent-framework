@@ -81,19 +81,19 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
         if (history.Count > 0)
         {
-            messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history));
+            messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag));
         }
 
         // Load and convert current input items
         var inputItems = await context.GetInputItemsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         if (inputItems.Count > 0)
         {
-            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems));
+            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems, session?.StateBag));
         }
         else
         {
             // Fall back to raw request input
-            messages.AddRange(InputConverter.ConvertInputToMessages(request));
+            messages.AddRange(InputConverter.ConvertInputToMessages(request, session?.StateBag));
         }
 
         // 5. Build chat options
@@ -191,6 +191,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var enumerator = OutputConverter.ConvertUpdatesToEventsAsync(
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
+            session?.StateBag,
             cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
         {

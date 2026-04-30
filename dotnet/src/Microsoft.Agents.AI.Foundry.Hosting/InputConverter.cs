@@ -21,14 +21,15 @@ internal static class InputConverter
     /// Converts the SDK <see cref="CreateResponse"/> request input items into a list of <see cref="ChatMessage"/>.
     /// </summary>
     /// <param name="request">The create response request from the SDK.</param>
+    /// <param name="stateBag">Optional session state bag carrying the tool-approval id mapping.</param>
     /// <returns>A list of chat messages representing the request input.</returns>
-    public static List<ChatMessage> ConvertInputToMessages(CreateResponse request)
+    public static List<ChatMessage> ConvertInputToMessages(CreateResponse request, AgentSessionStateBag? stateBag = null)
     {
         var messages = new List<ChatMessage>();
 
         foreach (var item in request.GetInputExpanded())
         {
-            var message = ConvertInputItemToMessage(item);
+            var message = ConvertInputItemToMessage(item, stateBag);
             if (message is not null)
             {
                 messages.Add(message);
@@ -42,14 +43,15 @@ internal static class InputConverter
     /// Converts resolved SDK <see cref="Item"/> input items into <see cref="ChatMessage"/> instances.
     /// </summary>
     /// <param name="items">The resolved input items from the SDK context.</param>
+    /// <param name="stateBag">Optional session state bag carrying the tool-approval id mapping.</param>
     /// <returns>A list of chat messages.</returns>
-    public static List<ChatMessage> ConvertItemsToMessages(IReadOnlyList<Item> items)
+    public static List<ChatMessage> ConvertItemsToMessages(IReadOnlyList<Item> items, AgentSessionStateBag? stateBag = null)
     {
         var messages = new List<ChatMessage>();
 
         foreach (var item in items)
         {
-            var message = ConvertInputItemToMessage(item);
+            var message = ConvertInputItemToMessage(item, stateBag);
             if (message is not null)
             {
                 messages.Add(message);
@@ -63,14 +65,15 @@ internal static class InputConverter
     /// Converts resolved SDK <see cref="OutputItem"/> history/input items into <see cref="ChatMessage"/> instances.
     /// </summary>
     /// <param name="items">The resolved output items from the SDK context.</param>
+    /// <param name="stateBag">Optional session state bag carrying the tool-approval id mapping.</param>
     /// <returns>A list of chat messages.</returns>
-    public static List<ChatMessage> ConvertOutputItemsToMessages(IReadOnlyList<OutputItem> items)
+    public static List<ChatMessage> ConvertOutputItemsToMessages(IReadOnlyList<OutputItem> items, AgentSessionStateBag? stateBag = null)
     {
         var messages = new List<ChatMessage>();
 
         foreach (var item in items)
         {
-            var message = ConvertOutputItemToMessage(item);
+            var message = ConvertOutputItemToMessage(item, stateBag);
             if (message is not null)
             {
                 messages.Add(message);
@@ -130,13 +133,15 @@ internal static class InputConverter
         return markers;
     }
 
-    private static ChatMessage? ConvertInputItemToMessage(Item item)
+    private static ChatMessage? ConvertInputItemToMessage(Item item, AgentSessionStateBag? stateBag)
     {
         return item switch
         {
             ItemMessage msg => ConvertItemMessage(msg),
             FunctionCallOutputItemParam funcOutput => ConvertFunctionCallOutput(funcOutput),
             ItemFunctionToolCall funcCall => ConvertItemFunctionToolCall(funcCall),
+            ItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments),
+            MCPApprovalResponse approvalResponse => ConvertMcpApprovalResponse(approvalResponse.ApprovalRequestId, approvalResponse.Approve, stateBag),
             ItemReferenceParam => null,
             _ => null
         };
@@ -213,13 +218,65 @@ internal static class InputConverter
             [new FunctionCallContent(funcCall.CallId, funcCall.Name, arguments)]);
     }
 
-    private static ChatMessage? ConvertOutputItemToMessage(OutputItem item)
+    /// <summary>
+    /// Converts an inbound <c>mcp_approval_request</c> wire item (from history replay
+    /// or fresh-input) to a <see cref="ToolApprovalRequestContent"/> wrapping a
+    /// <see cref="FunctionCallContent"/>. Mirrors python's
+    /// <c>foundry_hosting/_responses.py</c> mapping.
+    /// </summary>
+    private static ChatMessage ConvertMcpApprovalRequest(string id, string name, string? arguments)
+    {
+        var functionCall = new FunctionCallContent(id, name, TryParseArguments(arguments));
+        return new ChatMessage(
+            ChatRole.Assistant,
+            [new ToolApprovalRequestContent(id, functionCall)]);
+    }
+
+    /// <summary>
+    /// Converts an inbound <c>mcp_approval_response</c> wire item to a
+    /// <see cref="ToolApprovalResponseContent"/>. Looks up the original AF request id
+    /// via <see cref="ToolApprovalIdMap"/>; falls back to the wire id when the mapping
+    /// is unavailable. Carries a placeholder <see cref="FunctionCallContent"/> because
+    /// the original tool-call details are not echoed by clients in the response item
+    /// (matches python's behavior).
+    /// </summary>
+    private static ChatMessage ConvertMcpApprovalResponse(string approvalRequestId, bool approve, AgentSessionStateBag? stateBag)
+    {
+        var afRequestId = ToolApprovalIdMap.Resolve(stateBag, approvalRequestId);
+        var placeholderFunctionCall = new FunctionCallContent(afRequestId, "mcp_approval");
+        return new ChatMessage(
+            ChatRole.User,
+            [new ToolApprovalResponseContent(afRequestId, approve, placeholderFunctionCall)]);
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing tool-call arguments from SDK input.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing tool-call arguments from SDK input.")]
+    private static Dictionary<string, object?>? TryParseArguments(string? arguments)
+    {
+        if (string.IsNullOrWhiteSpace(arguments))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(arguments);
+        }
+        catch (JsonException)
+        {
+            return new Dictionary<string, object?> { ["_raw"] = arguments };
+        }
+    }
+
+    private static ChatMessage? ConvertOutputItemToMessage(OutputItem item, AgentSessionStateBag? stateBag)
     {
         return item switch
         {
             OutputItemMessage msg => ConvertOutputItemMessageToChat(msg),
             OutputItemFunctionToolCall funcCall => ConvertOutputItemFunctionCall(funcCall),
             OutputItemFunctionToolCallOutput funcOutput => ConvertFunctionToolCallOutput(funcOutput),
+            OutputItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments),
+            OutputItemMcpApprovalResponseResource approvalResponse => ConvertMcpApprovalResponse(approvalResponse.ApprovalRequestId, approvalResponse.Approve, stateBag),
             OutputItemReasoningItem => null,
             _ => null
         };
