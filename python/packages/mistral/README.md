@@ -1,6 +1,6 @@
 # Get Started with Microsoft Agent Framework Mistral AI
 
-Please install this package as the extra for `agent-framework`:
+Please install this package:
 
 ```bash
 pip install agent-framework-mistral --pre

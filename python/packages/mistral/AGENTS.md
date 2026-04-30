@@ -13,6 +13,7 @@ Integration with Mistral AI for embedding generation.
 ```python
 from agent_framework_mistral import MistralEmbeddingClient
 
+# Requires MISTRAL_API_KEY environment variable (or pass api_key= directly)
 client = MistralEmbeddingClient(model="mistral-embed")
 result = await client.get_embeddings(["Hello, world!"])
 print(result[0].vector)
