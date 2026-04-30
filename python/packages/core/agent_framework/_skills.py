@@ -45,7 +45,7 @@ import logging
 import os
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeVar, runtime_checkable
@@ -1082,8 +1082,14 @@ class SkillsProvider(ContextProvider):
 
         Keyword Args:
             instruction_template: Custom system-prompt template for
-                advertising skills.  Must contain a ``{skills}`` placeholder for the
-                generated skills list.  Uses a built-in template when ``None``.
+                advertising skills. Must contain a ``{skills}`` placeholder for the
+                generated skills list. If the provider includes file-based script
+                execution instructions, the template must also contain
+                ``{runner_instructions}``. If the provider includes resource-reading
+                instructions, the template must also contain
+                ``{resource_instructions}``. Omitting any placeholder required by
+                the resolved skills configuration can raise :class:`ValueError` at
+                runtime. Uses a built-in template when ``None``.
             require_script_approval: When ``True``, skill script execution
                 requires explicit user approval before running. Instead of
                 executing immediately, the agent pauses and returns a
@@ -1116,7 +1122,7 @@ class SkillsProvider(ContextProvider):
         self._disable_caching = disable_caching
 
         # Lazy-initialized via _get_or_create_context / _create_context
-        self._cached_context: tuple[dict[str, Skill], str | None, list[FunctionTool]] | None = None
+        self._cached_context: tuple[Sequence[Skill], str | None, list[FunctionTool]] | None = None
 
     @classmethod
     def from_paths(
@@ -1190,7 +1196,7 @@ class SkillsProvider(ContextProvider):
     @staticmethod
     def _create_instructions(
         prompt_template: str | None,
-        skills: Mapping[str, Skill],
+        skills: Sequence[Skill],
         include_script_runner_instructions: bool = False,
         include_resource_instructions: bool = False,
     ) -> str | None:
@@ -1207,7 +1213,7 @@ class SkillsProvider(ContextProvider):
             prompt_template: Custom template string with ``{skills}`` and
                 optional ``{runner_instructions}`` and ``{resource_instructions}``
                 placeholders, or ``None`` to use the built-in default.
-            skills: Registered skills keyed by name.
+            skills: Registered skills.
             include_script_runner_instructions: When ``True``, include
                 script-runner instructions in the generated prompt.
                 Defaults to ``False``.
@@ -1262,7 +1268,7 @@ class SkillsProvider(ContextProvider):
 
         lines: list[str] = []
         # Sort by name for deterministic output
-        for skill in sorted(skills.values(), key=lambda s: s.name):
+        for skill in sorted(skills, key=lambda s: s.name):
             lines.append("  <skill>")
             lines.append(f"    <name>{xml_escape(skill.name)}</name>")
             lines.append(f"    <description>{xml_escape(skill.description)}</description>")
@@ -1274,23 +1280,22 @@ class SkillsProvider(ContextProvider):
             resource_instructions=resource_instructions or "",
         )
 
-    async def _create_context(self) -> tuple[dict[str, Skill], str | None, list[FunctionTool]]:
+    async def _create_context(self) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
         """Build skills, instructions, and tools from the source.
 
         Always performs a fresh build by querying the source and
         constructing the instruction prompt and tool definitions.
 
         Returns:
-            A tuple of ``(skills_dict, instructions, tools)``.
+            A tuple of ``(skills, instructions, tools)``.
         """
-        skills_list = await self._source.get_skills()
-        skills = {s.name: s for s in skills_list}
+        skills = await self._source.get_skills()
 
         if not skills:
             return skills, None, []
 
-        has_scripts = any(s.scripts for s in skills.values())
-        has_resources = any(s.resources for s in skills.values())
+        has_scripts = any(s.scripts for s in skills)
+        has_resources = any(s.resources for s in skills)
 
         instructions = self._create_instructions(
             prompt_template=self._instruction_template,
@@ -1308,7 +1313,7 @@ class SkillsProvider(ContextProvider):
 
         return skills, instructions, tools
 
-    async def _get_or_create_context(self) -> tuple[dict[str, Skill], str | None, list[FunctionTool]]:
+    async def _get_or_create_context(self) -> tuple[Sequence[Skill], str | None, list[FunctionTool]]:
         """Return the cached context, building it on first call.
 
         On the first call, delegates to :meth:`_create_context` and caches
@@ -1317,7 +1322,7 @@ class SkillsProvider(ContextProvider):
         retries.
 
         Returns:
-            A tuple of ``(skills_dict, instructions, tools)``.
+            A tuple of ``(skills, instructions, tools)``.
         """
         if self._cached_context is not None:
             return self._cached_context
@@ -1370,7 +1375,7 @@ class SkillsProvider(ContextProvider):
 
     def _create_tools(
         self,
-        skills: Mapping[str, Skill],
+        skills: Sequence[Skill],
         include_script_runner_tool: bool,
         include_resource_tool: bool,
         require_script_approval: bool = False,
@@ -1383,7 +1388,7 @@ class SkillsProvider(ContextProvider):
         ``True``).
 
         Args:
-            skills: The skills dictionary to bind to tool handlers.
+            skills: The skills to bind to tool handlers.
             include_script_runner_tool: Whether to include the
                 ``run_skill_script`` tool in the returned list.
             include_resource_tool: Whether to include the
@@ -1481,14 +1486,20 @@ class SkillsProvider(ContextProvider):
 
         return tools
 
-    def _load_skill(self, skills: Mapping[str, Skill], skill_name: str) -> str:
+    @staticmethod
+    def _find_skill(skills: Sequence[Skill], name: str) -> Skill | None:
+        """Find a skill by name (case-insensitive linear scan)."""
+        name_lower = name.lower()
+        return next((s for s in skills if s.name.lower() == name_lower), None)
+
+    def _load_skill(self, skills: Sequence[Skill], skill_name: str) -> str:
         """Return the full content for the named skill.
 
         Delegates to the skill's :attr:`~Skill.content` property, which
         handles format differences between file-based and code-defined skills.
 
         Args:
-            skills: The skills dictionary to look up the skill from.
+            skills: The skills to look up the skill from.
             skill_name: The name of the skill to load.
 
         Returns:
@@ -1498,7 +1509,7 @@ class SkillsProvider(ContextProvider):
         if not skill_name or not skill_name.strip():
             return "Error: Skill name cannot be empty."
 
-        skill = skills.get(skill_name)
+        skill = self._find_skill(skills, skill_name)
         if skill is None:
             return f"Error: Skill '{skill_name}' not found."
 
@@ -1508,7 +1519,7 @@ class SkillsProvider(ContextProvider):
 
     async def _run_skill_script(
         self,
-        skills: Mapping[str, Skill],
+        skills: Sequence[Skill],
         skill_name: str,
         script_name: str,
         args: dict[str, Any] | None = None,
@@ -1520,7 +1531,7 @@ class SkillsProvider(ContextProvider):
         to :meth:`SkillScript.run`.
 
         Args:
-            skills: The skills dictionary to look up the skill from.
+            skills: The skills to look up the skill from.
             skill_name: The name of the owning skill.
             script_name: The script name to look up (case-insensitive).
             args: Optional keyword arguments for the script, provided by the
@@ -1540,9 +1551,8 @@ class SkillsProvider(ContextProvider):
         if not script_name or not script_name.strip():
             return "Error: Script name cannot be empty."
 
-        skill = skills.get(skill_name)
-        if not skill:
-            return f"Error: Skill '{skill_name}' not found."
+        skill = self._find_skill(skills, skill_name)
+        if not skill:            return f"Error: Skill '{skill_name}' not found."
 
         script = next((s for s in skill.scripts if s.name.lower() == script_name.lower()), None)
         if not script:
@@ -1555,7 +1565,7 @@ class SkillsProvider(ContextProvider):
             return f"Error: Failed to run script '{script_name}' in skill '{skill_name}'."
 
     async def _read_skill_resource(
-        self, skills: Mapping[str, Skill], skill_name: str, resource_name: str, **kwargs: Any
+        self, skills: Sequence[Skill], skill_name: str, resource_name: str, **kwargs: Any
     ) -> Any:
         """Read a named resource from a skill.
 
@@ -1564,7 +1574,7 @@ class SkillsProvider(ContextProvider):
         (awaited if async).
 
         Args:
-            skills: The skills dictionary to look up the skill from.
+            skills: The skills to look up the skill from.
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
             **kwargs: Runtime keyword arguments forwarded to resource functions
@@ -1581,7 +1591,7 @@ class SkillsProvider(ContextProvider):
         if not resource_name or not resource_name.strip():
             return "Error: Resource name cannot be empty."
 
-        skill = skills.get(skill_name)
+        skill = self._find_skill(skills, skill_name)
         if skill is None:
             return f"Error: Skill '{skill_name}' not found."
 

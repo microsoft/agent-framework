@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -58,10 +59,22 @@ async def _init_provider(provider: SkillsProvider) -> SkillsProvider:
 
 
 def _ctx(provider: SkillsProvider) -> tuple[dict[str, Skill], str | None, list[Any]]:
-    """Return the cached context, asserting it was initialized."""
+    """Return the cached context, asserting it was initialized.
+
+    Converts the skills sequence to a dict keyed by name for convenient
+    test assertions.
+    """
     ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
     assert ctx is not None, "_init_provider() must be called before accessing context"
-    return ctx
+    skills, instructions, tools = ctx
+    return {s.name: s for s in skills}, instructions, tools
+
+
+def _raw_skills(provider: SkillsProvider) -> Sequence[Skill]:
+    """Return the raw skills sequence from the cached context."""
+    ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
+    assert ctx is not None, "_init_provider() must be called before accessing context"
+    return ctx[0]
 
 
 def _symlinks_supported(tmp: Path) -> bool:
@@ -489,12 +502,12 @@ class TestBuildSkillsInstructionPrompt:
     """Tests for _create_instructions."""
 
     def test_returns_none_for_empty_skills(self) -> None:
-        assert SkillsProvider._create_instructions(None, {}) is None
+        assert SkillsProvider._create_instructions(None, []) is None
 
     def test_default_prompt_contains_skills(self) -> None:
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description="Does stuff.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description="Does stuff.", instructions="Body"),
+        ]
         prompt = SkillsProvider._create_instructions(None, skills)
         assert prompt is not None
         assert "<name>my-skill</name>" in prompt
@@ -502,10 +515,10 @@ class TestBuildSkillsInstructionPrompt:
         assert "load_skill" in prompt
 
     def test_skills_sorted_alphabetically(self) -> None:
-        skills = {
-            "zebra": InlineSkill(name="zebra", description="Z skill.", instructions="Body"),
-            "alpha": InlineSkill(name="alpha", description="A skill.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="zebra", description="Z skill.", instructions="Body"),
+            InlineSkill(name="alpha", description="A skill.", instructions="Body"),
+        ]
         prompt = SkillsProvider._create_instructions(None, skills)
         assert prompt is not None
         alpha_pos = prompt.index("alpha")
@@ -513,18 +526,18 @@ class TestBuildSkillsInstructionPrompt:
         assert alpha_pos < zebra_pos
 
     def test_xml_escapes_metadata(self) -> None:
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description='Uses <tags> & "quotes"', instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description='Uses <tags> & "quotes"', instructions="Body"),
+        ]
         prompt = SkillsProvider._create_instructions(None, skills)
         assert prompt is not None
         assert "&lt;tags&gt;" in prompt
         assert "&amp;" in prompt
 
     def test_custom_prompt_template(self) -> None:
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description="Does stuff.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description="Does stuff.", instructions="Body"),
+        ]
         custom = "Custom header:\n{skills}\nCustom footer."
         prompt = SkillsProvider._create_instructions(custom, skills)
         assert prompt is not None
@@ -532,16 +545,16 @@ class TestBuildSkillsInstructionPrompt:
         assert prompt.endswith("Custom footer.")
 
     def test_invalid_prompt_template_raises(self) -> None:
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description="Does stuff.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description="Does stuff.", instructions="Body"),
+        ]
         with pytest.raises(ValueError, match="valid format string"):
             SkillsProvider._create_instructions("{invalid}", skills)
 
     def test_positional_placeholder_raises(self) -> None:
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description="Does stuff.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description="Does stuff.", instructions="Body"),
+        ]
         with pytest.raises(ValueError, match="valid format string"):
             SkillsProvider._create_instructions("Header {0} footer", skills)
 
@@ -614,7 +627,7 @@ class TestSkillsProvider:
         _write_skill(tmp_path, "my-skill", body="Skill body content.")
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "my-skill")
+        result = provider._load_skill(_raw_skills(provider), "my-skill")
         assert "Skill body content." in result
 
     async def test_load_skill_preserves_file_skill_content(self, tmp_path: Path) -> None:
@@ -626,19 +639,19 @@ class TestSkillsProvider:
         )
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "my-skill")
+        result = provider._load_skill(_raw_skills(provider), "my-skill")
         assert "See [doc](refs/FAQ.md)." in result
 
     async def test_load_skill_unknown_returns_error(self, tmp_path: Path) -> None:
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "nonexistent")
+        result = provider._load_skill(_raw_skills(provider), "nonexistent")
         assert result.startswith("Error:")
 
     async def test_load_skill_empty_name_returns_error(self, tmp_path: Path) -> None:
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "")
+        result = provider._load_skill(_raw_skills(provider), "")
         assert result.startswith("Error:")
 
     async def test_read_skill_resource_returns_content(self, tmp_path: Path) -> None:
@@ -650,27 +663,27 @@ class TestSkillsProvider:
         )
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "refs/FAQ.md")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "refs/FAQ.md")
         assert result == "FAQ content"
 
     async def test_read_skill_resource_unknown_skill_returns_error(self, tmp_path: Path) -> None:
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "nonexistent", "file.md")
+        result = await provider._read_skill_resource(_raw_skills(provider), "nonexistent", "file.md")
         assert result.startswith("Error:")
 
     async def test_read_skill_resource_empty_name_returns_error(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "")
         assert result.startswith("Error:")
 
     async def test_read_skill_resource_unknown_resource_returns_error(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "nonexistent.md")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "nonexistent.md")
         assert result.startswith("Error:")
 
     async def test_skills_sorted_in_prompt(self, tmp_path: Path) -> None:
@@ -888,7 +901,6 @@ class TestSkillResource:
         assert resource.name == "func"
         assert resource.content is None
         assert resource.function is my_func
-
     def test_with_description(self) -> None:
         resource = InlineSkillResource(name="ref", description="A reference doc.", content="data")
         assert resource.description == "A reference doc."
@@ -997,6 +1009,7 @@ class TestInlineSkill:
         assert len(skill.resources) == 1
         assert skill.resources[0].name == "get_schema"
         assert skill.resources[0].description == "Get the database schema."
+        assert isinstance(skill.resources[0], InlineSkillResource)
         assert skill.resources[0].function is get_schema
 
     def test_resource_decorator_with_args(self) -> None:
@@ -1045,6 +1058,7 @@ class TestInlineSkill:
             return "async data"
 
         assert len(skill.resources) == 1
+        assert isinstance(skill.resources[0], InlineSkillResource)
         assert skill.resources[0].function is get_async_data
 
 
@@ -1066,7 +1080,7 @@ class TestSkillsProviderCodeSkill:
         skill = InlineSkill(name="prog-skill", description="A skill.", instructions="Code-defined instructions.")
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "prog-skill")
+        result = provider._load_skill(_raw_skills(provider), "prog-skill")
         assert "<name>prog-skill</name>" in result
         assert "<description>A skill.</description>" in result
         assert "<instructions>\nCode-defined instructions.\n</instructions>" in result
@@ -1084,7 +1098,7 @@ class TestSkillsProviderCodeSkill:
         )
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "prog-skill")
+        result = provider._load_skill(_raw_skills(provider), "prog-skill")
         assert "<name>prog-skill</name>" in result
         assert "<description>A skill.</description>" in result
         assert "Do things." in result
@@ -1096,7 +1110,7 @@ class TestSkillsProviderCodeSkill:
         skill = InlineSkill(name="prog-skill", description="A skill.", instructions="Body only.")
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "prog-skill")
+        result = provider._load_skill(_raw_skills(provider), "prog-skill")
         assert "Body only." in result
         assert "<resources>" not in result
 
@@ -1109,7 +1123,7 @@ class TestSkillsProviderCodeSkill:
         )
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "ref")
+        result = await provider._read_skill_resource(_raw_skills(provider), "prog-skill", "ref")
         assert result == "static content"
 
     async def test_read_callable_resource_sync(self) -> None:
@@ -1121,7 +1135,7 @@ class TestSkillsProviderCodeSkill:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "get_schema")
+        result = await provider._read_skill_resource(_raw_skills(provider), "prog-skill", "get_schema")
         assert result == "CREATE TABLE users"
 
     async def test_read_callable_resource_async(self) -> None:
@@ -1133,7 +1147,7 @@ class TestSkillsProviderCodeSkill:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "get_data")
+        result = await provider._read_skill_resource(_raw_skills(provider), "prog-skill", "get_data")
         assert result == "async data"
 
     async def test_read_resource_case_insensitive(self) -> None:
@@ -1145,14 +1159,14 @@ class TestSkillsProviderCodeSkill:
         )
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "myref")
+        result = await provider._read_skill_resource(_raw_skills(provider), "prog-skill", "myref")
         assert result == "content"
 
     async def test_read_unknown_resource_returns_error(self) -> None:
         skill = InlineSkill(name="prog-skill", description="A skill.", instructions="Body")
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "nonexistent")
+        result = await provider._read_skill_resource(_raw_skills(provider), "prog-skill", "nonexistent")
         assert result.startswith("Error:")
 
     async def test_read_callable_resource_sync_with_kwargs(self) -> None:
@@ -1166,7 +1180,7 @@ class TestSkillsProviderCodeSkill:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._read_skill_resource(
-            _ctx(provider)[0], "prog-skill", "get_user_config", user_id="user_123"
+            _raw_skills(provider), "prog-skill", "get_user_config", user_id="user_123"
         )
         assert result == "config for user_123"
 
@@ -1180,7 +1194,7 @@ class TestSkillsProviderCodeSkill:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "get_user_data", auth_token="abc")
+        result = await provider._read_skill_resource(_raw_skills(provider), "prog-skill", "get_user_data", auth_token="abc")
         assert result == "data with token=abc"
 
     async def test_read_callable_resource_without_kwargs_ignores_extra_args(self) -> None:
@@ -1194,7 +1208,7 @@ class TestSkillsProviderCodeSkill:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._read_skill_resource(
-            _ctx(provider)[0], "prog-skill", "static_resource", user_id="ignored"
+            _raw_skills(provider), "prog-skill", "static_resource", user_id="ignored"
         )
         assert result == "static content"
 
@@ -1208,7 +1222,7 @@ class TestSkillsProviderCodeSkill:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "get_config")
+        result = await provider._read_skill_resource(_raw_skills(provider), "prog-skill", "get_config")
         assert result == {"max_retries": 3, "timeout": 30}
 
     async def test_read_callable_resource_returns_list(self) -> None:
@@ -1221,7 +1235,7 @@ class TestSkillsProviderCodeSkill:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "get_items")
+        result = await provider._read_skill_resource(_raw_skills(provider), "prog-skill", "get_items")
         assert result == [1, 2, 3]
 
     async def test_read_callable_resource_returns_none(self) -> None:
@@ -1234,7 +1248,7 @@ class TestSkillsProviderCodeSkill:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "get_nothing")
+        result = await provider._read_skill_resource(_raw_skills(provider), "prog-skill", "get_nothing")
         assert result is None
 
     async def test_before_run_injects_code_skills(self) -> None:
@@ -1354,7 +1368,7 @@ class TestLoadSkillFormatting:
         _write_skill(tmp_path, "my-skill", body="Do the thing.")
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "my-skill")
+        result = provider._load_skill(_raw_skills(provider), "my-skill")
         assert "Do the thing." in result
         assert "<name>" not in result
         assert "<instructions>" not in result
@@ -1364,7 +1378,7 @@ class TestLoadSkillFormatting:
         skill = InlineSkill(name="prog-skill", description="A skill.", instructions="Do stuff.")
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "prog-skill")
+        result = provider._load_skill(_raw_skills(provider), "prog-skill")
         assert "<name>prog-skill</name>" in result
         assert "<description>A skill.</description>" in result
         assert "<instructions>\nDo stuff.\n</instructions>" in result
@@ -1379,7 +1393,7 @@ class TestLoadSkillFormatting:
         )
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "prog-skill")
+        result = provider._load_skill(_raw_skills(provider), "prog-skill")
         assert '<resource name="data"/>' in result
         assert "description=" not in result
 
@@ -1784,13 +1798,13 @@ class TestCreateInstructionsEdgeCases:
     """Additional edge-case tests for _create_instructions."""
 
     def test_custom_template_with_empty_skills_returns_none(self) -> None:
-        result = SkillsProvider._create_instructions("Custom: {skills}", {})
+        result = SkillsProvider._create_instructions("Custom: {skills}", [])
         assert result is None
 
     def test_custom_template_with_literal_braces(self) -> None:
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
+        ]
         template = "Header {{literal}} {skills} footer."
         result = SkillsProvider._create_instructions(template, skills)
         assert result is not None
@@ -1798,11 +1812,11 @@ class TestCreateInstructionsEdgeCases:
         assert "my-skill" in result
 
     def test_multiple_skills_generates_sorted_xml(self) -> None:
-        skills = {
-            "charlie": InlineSkill(name="charlie", description="C.", instructions="Body"),
-            "alpha": InlineSkill(name="alpha", description="A.", instructions="Body"),
-            "bravo": InlineSkill(name="bravo", description="B.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="charlie", description="C.", instructions="Body"),
+            InlineSkill(name="alpha", description="A.", instructions="Body"),
+            InlineSkill(name="bravo", description="B.", instructions="Body"),
+        ]
         result = SkillsProvider._create_instructions(None, skills)
         assert result is not None
         alpha_pos = result.index("alpha")
@@ -1812,45 +1826,45 @@ class TestCreateInstructionsEdgeCases:
 
     def test_custom_template_missing_runner_instructions_raises(self) -> None:
         """Custom template without {runner_instructions} raises when scripts are enabled."""
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
+        ]
         template = "Skills: {skills}"
         with pytest.raises(ValueError, match="runner_instructions"):
             SkillsProvider._create_instructions(template, skills, include_script_runner_instructions=True)
 
     def test_custom_template_missing_resource_instructions_raises(self) -> None:
         """Custom template without {resource_instructions} raises when resources exist."""
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
+        ]
         template = "Skills: {skills}"
         with pytest.raises(ValueError, match="resource_instructions"):
             SkillsProvider._create_instructions(template, skills, include_resource_instructions=True)
 
     def test_include_resource_instructions_true_adds_resource_text(self) -> None:
         """When include_resource_instructions is True, resource instructions appear in the prompt."""
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
+        ]
         result = SkillsProvider._create_instructions(None, skills, include_resource_instructions=True)
         assert result is not None
         assert "read_skill_resource" in result
 
     def test_include_resource_instructions_false_omits_resource_text(self) -> None:
         """When include_resource_instructions is False, resource instructions do not appear."""
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
+        ]
         result = SkillsProvider._create_instructions(None, skills, include_resource_instructions=False)
         assert result is not None
         assert "read_skill_resource" not in result
 
     def test_custom_template_with_unknown_placeholder_raises(self) -> None:
         """Template with an unknown placeholder raises ValueError."""
-        skills = {
-            "my-skill": InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
-        }
+        skills = [
+            InlineSkill(name="my-skill", description="Skill.", instructions="Body"),
+        ]
         template = "Skills: {skills} {unknown_key}"
         with pytest.raises(ValueError, match="valid format string"):
             SkillsProvider._create_instructions(template, skills)
@@ -1874,7 +1888,7 @@ class TestSkillsProviderEdgeCases:
         _write_skill(tmp_path, "my-skill")
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "   ")
+        result = provider._load_skill(_raw_skills(provider), "   ")
         assert result.startswith("Error:")
         assert "empty" in result
 
@@ -1882,7 +1896,7 @@ class TestSkillsProviderEdgeCases:
         skill = InlineSkill(name="my-skill", description="A skill.", instructions="Body")
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "   ", "ref")
+        result = await provider._read_skill_resource(_raw_skills(provider), "   ", "ref")
         assert result.startswith("Error:")
         assert "empty" in result
 
@@ -1890,7 +1904,7 @@ class TestSkillsProviderEdgeCases:
         skill = InlineSkill(name="my-skill", description="A skill.", instructions="Body")
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "   ")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "   ")
         assert result.startswith("Error:")
         assert "empty" in result
 
@@ -1903,7 +1917,7 @@ class TestSkillsProviderEdgeCases:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "exploding_resource")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "exploding_resource")
         assert result.startswith("Error:")
         assert "Failed to read resource" in result
 
@@ -1916,14 +1930,14 @@ class TestSkillsProviderEdgeCases:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "async_exploding")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "async_exploding")
         assert result.startswith("Error:")
 
     async def test_load_code_skill_xml_escapes_metadata(self) -> None:
         skill = InlineSkill(name="my-skill", description='Uses <tags> & "quotes"', instructions="Body")
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "my-skill")
+        result = provider._load_skill(_raw_skills(provider), "my-skill")
         assert "&lt;tags&gt;" in result
         assert "&amp;" in result
 
@@ -2246,6 +2260,7 @@ class TestSkillScriptDecorator:
         assert len(skill.scripts) == 1
         assert skill.scripts[0].name == "analyze"
         assert skill.scripts[0].description == "Run analysis."
+        assert isinstance(skill.scripts[0], InlineSkillScript)
         assert skill.scripts[0].function is analyze
 
     def test_parameterized_decorator(self) -> None:
@@ -2258,6 +2273,7 @@ class TestSkillScriptDecorator:
         assert len(skill.scripts) == 1
         assert skill.scripts[0].name == "custom-name"
         assert skill.scripts[0].description == "Custom desc"
+        assert isinstance(skill.scripts[0], InlineSkillScript)
         assert skill.scripts[0].function is my_func
 
     def test_multiple_scripts(self) -> None:
@@ -2285,6 +2301,7 @@ class TestSkillScriptDecorator:
 
         assert len(skill.scripts) == 1
         assert skill.scripts[0].name == "fetch_data"
+        assert isinstance(skill.scripts[0], InlineSkillScript)
         assert skill.scripts[0].function is fetch_data
 
     def test_decorator_returns_original_function(self) -> None:
@@ -2738,7 +2755,7 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._run_skill_script(
-            _ctx(provider)[0], "my-skill", "greet", args={"name": "Alice"}, user_id="u42"
+            _raw_skills(provider), "my-skill", "greet", args={"name": "Alice"}, user_id="u42"
         )
         assert result == "Hello Alice (user=u42)"
 
@@ -2753,7 +2770,7 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._run_skill_script(
-            _ctx(provider)[0], "my-skill", "fetch", args={"url": "http://x"}, auth_token="abc"
+            _raw_skills(provider), "my-skill", "fetch", args={"url": "http://x"}, auth_token="abc"
         )
         assert result == "fetched http://x with token=abc"
 
@@ -2768,7 +2785,7 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._run_skill_script(
-            _ctx(provider)[0], "my-skill", "simple", args={"query": "test"}, user_id="ignored"
+            _raw_skills(provider), "my-skill", "simple", args={"query": "test"}, user_id="ignored"
         )
         assert result == "result: test"
 
@@ -2782,7 +2799,7 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._run_skill_script(_ctx(provider)[0],
+        result = await provider._run_skill_script(_raw_skills(provider),
             "my-skill", "process", args={"mode": "llm-value"}, mode="runtime-value"
         )
         assert "Error" in result
@@ -3056,14 +3073,14 @@ class TestCreateInstructionsWithScripts:
         skill = InlineSkill(name="my-skill", description="test", instructions="body")
         skill.scripts.append(InlineSkillScript(name="s1", function=lambda: None))
 
-        result = SkillsProvider._create_instructions(None, {"my-skill": skill})
+        result = SkillsProvider._create_instructions(None, [skill])
         assert result is not None
         assert "<scripts>" not in result
 
     def test_no_scripts_element_when_empty(self) -> None:
         skill = InlineSkill(name="my-skill", description="test", instructions="body")
 
-        result = SkillsProvider._create_instructions(None, {"my-skill": skill})
+        result = SkillsProvider._create_instructions(None, [skill])
         assert result is not None
         assert "<scripts>" not in result
 
@@ -3082,7 +3099,7 @@ class TestLoadSkillWithScripts:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "my-skill")
+        result = provider._load_skill(_raw_skills(provider), "my-skill")
 
         assert "<scripts>" in result
         assert 'name="analyze"' in result
@@ -3092,7 +3109,7 @@ class TestLoadSkillWithScripts:
         skill = InlineSkill(name="my-skill", description="test", instructions="body")
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "my-skill")
+        result = provider._load_skill(_raw_skills(provider), "my-skill")
         assert "<scripts>" not in result
 
     async def test_code_skill_scripts_element_contains_parameters(self) -> None:
@@ -3105,7 +3122,7 @@ class TestLoadSkillWithScripts:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = provider._load_skill(_ctx(provider)[0], "my-skill")
+        result = provider._load_skill(_raw_skills(provider), "my-skill")
 
         assert "<scripts>" in result
         assert 'name="analyze"' in result
@@ -3122,7 +3139,7 @@ class TestReadSkillResourceWithScripts:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "generate.py")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "generate.py")
         # Scripts are not returned via _read_skill_resource
         assert "not found" in result
 
@@ -3132,7 +3149,7 @@ class TestReadSkillResourceWithScripts:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "run.py")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "run.py")
         # Scripts are separate from resources
         assert "not found" in result
 
@@ -3145,7 +3162,7 @@ class TestReadSkillResourceWithScripts:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "run.py")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "run.py")
         assert "not found" in result
 
     async def test_script_case_insensitive_not_in_resources(self) -> None:
@@ -3154,7 +3171,7 @@ class TestReadSkillResourceWithScripts:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "generate.py")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "generate.py")
         assert "not found" in result
 
     async def test_resource_takes_priority_over_script(self) -> None:
@@ -3164,7 +3181,7 @@ class TestReadSkillResourceWithScripts:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "data.py")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "data.py")
         assert result == "resource content"
 
     async def test_script_function_error_not_exposed_via_resources(self) -> None:
@@ -3176,7 +3193,7 @@ class TestReadSkillResourceWithScripts:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "my-skill", "bad.py")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "bad.py")
         assert "not found" in result
 
 
@@ -3883,23 +3900,24 @@ class TestDisableCaching:
         skill = InlineSkill(name="test-skill", description="Test", instructions="Body")
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        first_skills = _ctx(provider)[0]
+        first_ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
+        assert first_ctx is not None
 
         # Calling _get_or_create_context again should return cached result
         skills, _, _ = await provider._get_or_create_context()
-        assert skills is first_skills  # Same object reference
+        assert skills is first_ctx[0]  # Same object reference
 
     async def test_disable_caching_rebuilds_on_every_call(self) -> None:
         """With disable_caching=True, _create_context rebuilds every time."""
         skill = InlineSkill(name="test-skill", description="Test", instructions="Body")
         provider = SkillsProvider([skill], disable_caching=True)
         await _init_provider(provider)
-        first_skills = _ctx(provider)[0]
+        first_ctx = provider._cached_context  # pyright: ignore[reportPrivateUsage]
+        assert first_ctx is not None
 
         # Calling _create_context again should rebuild
         skills, _, _ = await provider._create_context()
-        assert skills is not first_skills  # Different object
-        assert skills == first_skills  # Same content
+        assert skills is not first_ctx[0]  # Different object
 
     async def test_disable_caching_via_constructor(self) -> None:
         """disable_caching works via the primary constructor."""
