@@ -1,16 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
-
 import pytest
 
 from agent_framework import (
     Agent,
     ChatResponse,
     ChatResponseUpdate,
+    FakeChatClient,
     Message,
 )
-from agent_framework._fake_chat_client import FakeChatClient
 
 
 # region Basic functionality
@@ -70,6 +68,12 @@ def test_invalid_repeat_mode():
         FakeChatClient(repeat="invalid")
 
 
+def test_empty_responses_raises():
+    """Empty responses sequence raises ValueError."""
+    with pytest.raises(ValueError, match="responses must not be empty"):
+        FakeChatClient(responses=[])
+
+
 # region Message and ChatResponse inputs
 
 
@@ -126,8 +130,8 @@ async def test_streaming_with_delay():
     assert chunks == ["A", "B"]
 
 
-async def test_streaming_finalizer():
-    """Streaming response finalizer produces a valid ChatResponse."""
+async def test_streaming_finalizer_returns_original_response():
+    """Streaming finalizer returns the original configured response."""
     client = FakeChatClient(responses=["Hello"])
     stream = client.get_response(
         [Message(role="user", contents=["Hi"])],
