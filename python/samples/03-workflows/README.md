@@ -34,40 +34,40 @@ Once comfortable with these, explore the rest of the samples below.
 
 Write workflows as plain Python async functions — no graph concepts, no executor classes, no edges. Use native control flow (`if`/`else`, loops, `asyncio.gather`) for branching and parallelism.
 
-| Sample | File | Concepts |
-|---|---|---|
-| Basic Pipeline | [functional/basic_pipeline.py](./functional/basic_pipeline.py) | Sequential steps as plain async functions |
-| Basic Streaming Pipeline | [functional/basic_streaming_pipeline.py](./functional/basic_streaming_pipeline.py) | Stream workflow events in real time with `run(stream=True)` |
-| Parallel Pipeline | [functional/parallel_pipeline.py](./functional/parallel_pipeline.py) | Fan-out/fan-in with `asyncio.gather` |
-| Steps and Checkpointing | [functional/steps_and_checkpointing.py](./functional/steps_and_checkpointing.py) | `@step` decorator for per-step checkpointing and observability |
-| Human-in-the-Loop Review | [functional/hitl_review.py](./functional/hitl_review.py) | HITL with `ctx.request_info()` and replay |
-| Agent Integration | [functional/agent_integration.py](./functional/agent_integration.py) | Calling agents inside workflow steps |
-| Naive Group Chat | [functional/naive_group_chat.py](./functional/naive_group_chat.py) | Simple round-robin group chat as a plain loop |
+| Sample                   | File                                                                               | Concepts                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Basic Pipeline           | [functional/basic_pipeline.py](./functional/basic_pipeline.py)                     | Sequential steps as plain async functions                      |
+| Basic Streaming Pipeline | [functional/basic_streaming_pipeline.py](./functional/basic_streaming_pipeline.py) | Stream workflow events in real time with `run(stream=True)`    |
+| Parallel Pipeline        | [functional/parallel_pipeline.py](./functional/parallel_pipeline.py)               | Fan-out/fan-in with `asyncio.gather`                           |
+| Steps and Checkpointing  | [functional/steps_and_checkpointing.py](./functional/steps_and_checkpointing.py)   | `@step` decorator for per-step checkpointing and observability |
+| Human-in-the-Loop Review | [functional/hitl_review.py](./functional/hitl_review.py)                           | HITL with `ctx.request_info()` and replay                      |
+| Agent Integration        | [functional/agent_integration.py](./functional/agent_integration.py)               | Calling agents inside workflow steps                           |
+| Naive Group Chat         | [functional/naive_group_chat.py](./functional/naive_group_chat.py)                 | Simple round-robin group chat as a plain loop                  |
 
 ### agents
 
-| Sample                                 | File                                                                                                           | Concepts                                                                                             |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Azure Chat Agents (Streaming)          | [agents/azure_chat_agents_streaming.py](./agents/azure_chat_agents_streaming.py)                               | Add Azure Chat agents as edges and handle streaming events                                           |
-| Azure AI Agents (Streaming)            | [agents/azure_ai_agents_streaming.py](./agents/azure_ai_agents_streaming.py)                                   | Add Azure AI agents as edges and handle streaming events                                             |
-| Azure AI Agents (Shared Thread)        | [agents/azure_ai_agents_with_shared_session.py](./agents/azure_ai_agents_with_shared_session.py)                 | Share a common message session between multiple Azure AI agents in a workflow                        |
-| Custom Agent Executors                 | [agents/custom_agent_executors.py](./agents/custom_agent_executors.py)                                         | Create executors to handle agent run methods                                                         |
-| Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py)             | Wrap a workflow so it can behave like an agent (reflection pattern)                                  |
-| Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)               | Extend workflow-as-agent with human-in-the-loop capability                                           |
-| Workflow as Agent with Session         | [agents/workflow_as_agent_with_session.py](./agents/workflow_as_agent_with_session.py)                           | Use AgentSession to maintain conversation history across workflow-as-agent invocations                |
-| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
+| Sample                                 | File                                                                                               | Concepts                                                                                            |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Azure Chat Agents (Streaming)          | [agents/azure_chat_agents_streaming.py](./agents/azure_chat_agents_streaming.py)                   | Add Azure Chat agents as edges and handle streaming events                                          |
+| Azure AI Agents (Streaming)            | [agents/azure_ai_agents_streaming.py](./agents/azure_ai_agents_streaming.py)                       | Add Azure AI agents as edges and handle streaming events                                            |
+| Azure AI Agents (Shared Thread)        | [agents/azure_ai_agents_with_shared_session.py](./agents/azure_ai_agents_with_shared_session.py)   | Share a common message session between multiple Azure AI agents in a workflow                       |
+| Custom Agent Executors                 | [agents/custom_agent_executors.py](./agents/custom_agent_executors.py)                             | Create executors to handle agent run methods                                                        |
+| Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py) | Wrap a workflow so it can behave like an agent (reflection pattern)                                 |
+| Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)   | Extend workflow-as-agent with human-in-the-loop capability                                          |
+| Workflow as Agent with Session         | [agents/workflow_as_agent_with_session.py](./agents/workflow_as_agent_with_session.py)             | Use AgentSession to maintain conversation history across workflow-as-agent invocations              |
+| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                         | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to `@tool` functions |
 
 ### checkpoint
 
-| Sample                         | File                                                                                                                       | Concepts                                                                                           |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Checkpoint & Resume            | [checkpoint/checkpoint_with_resume.py](./checkpoint/checkpoint_with_resume.py)                                             | Create checkpoints, inspect them, and resume execution                                             |
-| Checkpoint & HITL Resume       | [checkpoint/checkpoint_with_human_in_the_loop.py](./checkpoint/checkpoint_with_human_in_the_loop.py)                       | Combine checkpointing with human approvals and resume pending HITL requests                        |
-| Checkpointed Sub-Workflow      | [checkpoint/sub_workflow_checkpoint.py](./checkpoint/sub_workflow_checkpoint.py)                                           | Save and resume a sub-workflow that pauses for human approval                                      |
-| Handoff + Tool Approval Resume | [orchestrations/handoff_with_tool_approval_checkpoint_resume.py](./orchestrations/handoff_with_tool_approval_checkpoint_resume.py) | Handoff workflow that captures tool-call approvals in checkpoints and resumes with human decisions |
-| Workflow as Agent Checkpoint   | [checkpoint/workflow_as_agent_checkpoint.py](./checkpoint/workflow_as_agent_checkpoint.py)                                 | Enable checkpointing when using workflow.as_agent() with checkpoint_storage parameter              |
-| Cosmos DB Checkpoint Storage   | [checkpoint/cosmos_workflow_checkpointing.py](./checkpoint/cosmos_workflow_checkpointing.py)                               | Use `CosmosCheckpointStorage` for durable workflow checkpointing backed by Azure Cosmos DB NoSQL   |
-| Cosmos DB + Foundry Checkpoint | [checkpoint/cosmos_workflow_checkpointing_foundry.py](./checkpoint/cosmos_workflow_checkpointing_foundry.py)               | Multi-agent workflow using `FoundryChatClient` with `CosmosCheckpointStorage` for durable pause/resume |
+| Sample                         | File                                                                                                                               | Concepts                                                                                               |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Checkpoint & Resume            | [checkpoint/checkpoint_with_resume.py](./checkpoint/checkpoint_with_resume.py)                                                     | Create checkpoints, inspect them, and resume execution                                                 |
+| Checkpoint & HITL Resume       | [checkpoint/checkpoint_with_human_in_the_loop.py](./checkpoint/checkpoint_with_human_in_the_loop.py)                               | Combine checkpointing with human approvals and resume pending HITL requests                            |
+| Checkpointed Sub-Workflow      | [checkpoint/sub_workflow_checkpoint.py](./checkpoint/sub_workflow_checkpoint.py)                                                   | Save and resume a sub-workflow that pauses for human approval                                          |
+| Handoff + Tool Approval Resume | [orchestrations/handoff_with_tool_approval_checkpoint_resume.py](./orchestrations/handoff_with_tool_approval_checkpoint_resume.py) | Handoff workflow that captures tool-call approvals in checkpoints and resumes with human decisions     |
+| Workflow as Agent Checkpoint   | [checkpoint/workflow_as_agent_checkpoint.py](./checkpoint/workflow_as_agent_checkpoint.py)                                         | Enable checkpointing when using workflow.as_agent() with checkpoint_storage parameter                  |
+| Cosmos DB Checkpoint Storage   | [checkpoint/cosmos_workflow_checkpointing.py](./checkpoint/cosmos_workflow_checkpointing.py)                                       | Use `CosmosCheckpointStorage` for durable workflow checkpointing backed by Azure Cosmos DB NoSQL       |
+| Cosmos DB + Foundry Checkpoint | [checkpoint/cosmos_workflow_checkpointing_foundry.py](./checkpoint/cosmos_workflow_checkpointing_foundry.py)                       | Multi-agent workflow using `FoundryChatClient` with `CosmosCheckpointStorage` for durable pause/resume |
 
 ### composition
 
@@ -92,10 +92,10 @@ Write workflows as plain Python async functions — no graph concepts, no execut
 
 ### human-in-the-loop
 
-| Sample                                     | File                                                                                                         | Concepts                                                                                              |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| Human-In-The-Loop (Guessing Game)          | [human-in-the-loop/guessing_game_with_human_input.py](./human-in-the-loop/guessing_game_with_human_input.py) | Interactive request/response prompts with a human via `ctx.request_info()`                            |
-| Agents with Approval Requests in Workflows | [human-in-the-loop/agents_with_approval_requests.py](./human-in-the-loop/agents_with_approval_requests.py)   | Agents that create approval requests during workflow execution and wait for human approval to proceed |
+| Sample                                     | File                                                                                                                 | Concepts                                                                                              |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Human-In-The-Loop (Guessing Game)          | [human-in-the-loop/guessing_game_with_human_input.py](./human-in-the-loop/guessing_game_with_human_input.py)         | Interactive request/response prompts with a human via `ctx.request_info()`                            |
+| Agents with Approval Requests in Workflows | [human-in-the-loop/agents_with_approval_requests.py](./human-in-the-loop/agents_with_approval_requests.py)           | Agents that create approval requests during workflow execution and wait for human approval to proceed |
 | Agents with Declaration-Only Tools         | [human-in-the-loop/agents_with_declaration_only_tools.py](./human-in-the-loop/agents_with_declaration_only_tools.py) | Workflow pauses when agent calls a client-side tool (`func=None`), caller supplies the result         |
 
 Builder-oriented request-info samples are maintained in the orchestration sample set
@@ -107,8 +107,8 @@ Builder-based tool approval samples are maintained in the orchestration sample s
 
 ### observability
 
-| Sample                   | File                                                                                   | Concepts                                                                                                               |
-| ------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Sample                   | File                                                                                   | Concepts                                                                                                                                                                           |
+| ------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Executor I/O Observation | [observability/executor_io_observation.py](./observability/executor_io_observation.py) | Observe executor input/output data via executor_invoked events (type='executor_invoked') and executor_completed events (type='executor_completed') without modifying executor code |
 
 For additional observability samples in Agent Framework, see the [observability concept samples](../02-agents/observability/README.md). The [workflow observability sample](../02-agents/observability/workflow_observability.py) demonstrates integrating observability into workflows.
@@ -128,12 +128,11 @@ Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magen
 
 ### state-management
 
-| Sample                           | File                                                                                             | Concepts                                                          |
-| -------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| State with Agents                | [state-management/state_with_agents.py](./state-management/state_with_agents.py) | Store in state once and later reuse across agents                 |
-| Workflow Kwargs - Global Context | [state-management/workflow_kwargs_global.py](./state-management/workflow_kwargs_global.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools in all agents |
-| Workflow Kwargs - Per Agent | [state-management/workflow_kwargs_per_agent.py](./state-management/workflow_kwargs_per_agent.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools in individual agents |
-
+| Sample                           | File                                                                                             | Concepts                                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| State with Agents                | [state-management/state_with_agents.py](./state-management/state_with_agents.py)                 | Store in state once and later reuse across agents                                        |
+| Workflow Kwargs - Global Context | [state-management/workflow_kwargs_global.py](./state-management/workflow_kwargs_global.py)       | Pass custom context (data, user tokens) via kwargs to `@tool` tools in all agents        |
+| Workflow Kwargs - Per Agent      | [state-management/workflow_kwargs_per_agent.py](./state-management/workflow_kwargs_per_agent.py) | Pass custom context (data, user tokens) via kwargs to `@tool` tools in individual agents |
 
 ### visualization
 
@@ -145,18 +144,18 @@ Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magen
 
 YAML-based declarative workflows allow you to define multi-agent orchestration patterns without writing Python code. See the [declarative workflows README](./declarative/README.md) for more details on YAML workflow syntax and available actions.
 
-| Sample | File | Concepts |
-|---|---|---|
-| Agent to Function Tool | [declarative/agent_to_function_tool/](./declarative/agent_to_function_tool/) | Chain agent output to InvokeFunctionTool actions |
-| Conditional Workflow | [declarative/conditional_workflow/](./declarative/conditional_workflow/) | Nested conditional branching based on user input |
-| Customer Support | [declarative/customer_support/](./declarative/customer_support/) | Multi-agent customer support with routing |
-| Deep Research | [declarative/deep_research/](./declarative/deep_research/) | Research workflow with planning, searching, and synthesis |
-| Function Tools | [declarative/function_tools/](./declarative/function_tools/) | Invoking Python functions from declarative workflows |
-| Human-in-Loop | [declarative/human_in_loop/](./declarative/human_in_loop/) | Interactive workflows that request user input |
-| Invoke Function Tool | [declarative/invoke_function_tool/](./declarative/invoke_function_tool/) | Call registered Python functions with InvokeFunctionTool |
-| Marketing | [declarative/marketing/](./declarative/marketing/) | Marketing content generation workflow |
-| Simple Workflow | [declarative/simple_workflow/](./declarative/simple_workflow/) | Basic workflow with variable setting, conditionals, and loops |
-| Student Teacher | [declarative/student_teacher/](./declarative/student_teacher/) | Student-teacher interaction pattern |
+| Sample                 | File                                                                         | Concepts                                                      |
+| ---------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Agent to Function Tool | [declarative/agent_to_function_tool/](./declarative/agent_to_function_tool/) | Chain agent output to InvokeFunctionTool actions              |
+| Conditional Workflow   | [declarative/conditional_workflow/](./declarative/conditional_workflow/)     | Nested conditional branching based on user input              |
+| Customer Support       | [declarative/customer_support/](./declarative/customer_support/)             | Multi-agent customer support with routing                     |
+| Deep Research          | [declarative/deep_research/](./declarative/deep_research/)                   | Research workflow with planning, searching, and synthesis     |
+| Function Tools         | [declarative/function_tools/](./declarative/function_tools/)                 | Invoking Python functions from declarative workflows          |
+| Human-in-Loop          | [declarative/human_in_loop/](./declarative/human_in_loop/)                   | Interactive workflows that request user input                 |
+| Invoke Function Tool   | [declarative/invoke_function_tool/](./declarative/invoke_function_tool/)     | Call registered Python functions with InvokeFunctionTool      |
+| Marketing              | [declarative/marketing/](./declarative/marketing/)                           | Marketing content generation workflow                         |
+| Simple Workflow        | [declarative/simple_workflow/](./declarative/simple_workflow/)               | Basic workflow with variable setting, conditionals, and loops |
+| Student Teacher        | [declarative/student_teacher/](./declarative/student_teacher/)               | Student-teacher interaction pattern                           |
 
 ### resources
 
