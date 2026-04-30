@@ -40,9 +40,9 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class FileAccessProvider : AIContextProvider
+public class FileAccessProvider : AIContextProvider
 {
-    private const string DefaultInstructions =
+    private const string FallbackDefaultInstructions =
         """
         ## File Access
         You have access to a shared file storage area via the `FileAccess_*` tools for reading, writing, and managing files.
@@ -52,8 +52,7 @@ public sealed class FileAccessProvider : AIContextProvider
         - Never delete or overwrite existing files unless the user has explicitly asked you to do so.
         """;
 
-    private readonly AgentFileStore _fileStore;
-    private readonly string _instructions;
+    private readonly string? _instructionsOverride;
     private AITool[]? _tools;
 
     /// <summary>
@@ -69,9 +68,24 @@ public sealed class FileAccessProvider : AIContextProvider
     {
         Throw.IfNull(fileStore);
 
-        this._fileStore = fileStore;
-        this._instructions = options?.Instructions ?? DefaultInstructions;
+        this.FileStore = fileStore;
+        this._instructionsOverride = options?.Instructions;
     }
+
+    /// <summary>
+    /// Gets the default instructions surfaced to the agent when no override is supplied via <see cref="FileAccessProviderOptions.Instructions"/>.
+    /// </summary>
+    /// <remarks>
+    /// Override this property in a derived class to provide subclass-specific default instructions
+    /// (for example, instructions describing a higher-fidelity coding-workspace surface).
+    /// </remarks>
+    protected virtual string DefaultInstructions => FallbackDefaultInstructions;
+
+    /// <summary>
+    /// Gets the file store backing this provider. Available to derived classes that need direct access
+    /// for additional operations beyond the base universal contract.
+    /// </summary>
+    protected AgentFileStore FileStore { get; }
 
     /// <inheritdoc />
     public override IReadOnlyList<string> StateKeys => [];
@@ -81,7 +95,7 @@ public sealed class FileAccessProvider : AIContextProvider
     {
         return new ValueTask<AIContext>(new AIContext
         {
-            Instructions = this._instructions,
+            Instructions = this._instructionsOverride ?? this.DefaultInstructions,
             Tools = this._tools ??= this.CreateTools(),
         });
     }
@@ -99,12 +113,12 @@ public sealed class FileAccessProvider : AIContextProvider
     {
         string path = StorePaths.NormalizeRelativePath(fileName);
 
-        if (!overwrite && await this._fileStore.FileExistsAsync(path, cancellationToken).ConfigureAwait(false))
+        if (!overwrite && await this.FileStore.FileExistsAsync(path, cancellationToken).ConfigureAwait(false))
         {
             return $"File '{fileName}' already exists. To replace it, save again with overwrite set to true.";
         }
 
-        await this._fileStore.WriteFileAsync(path, content, cancellationToken).ConfigureAwait(false);
+        await this.FileStore.WriteFileAsync(path, content, cancellationToken).ConfigureAwait(false);
         return $"File '{fileName}' saved.";
     }
 
@@ -118,7 +132,7 @@ public sealed class FileAccessProvider : AIContextProvider
     private async Task<string> ReadFileAsync(string fileName, CancellationToken cancellationToken = default)
     {
         string path = StorePaths.NormalizeRelativePath(fileName);
-        string? content = await this._fileStore.ReadFileAsync(path, cancellationToken).ConfigureAwait(false);
+        string? content = await this.FileStore.ReadFileAsync(path, cancellationToken).ConfigureAwait(false);
         return content ?? $"File '{fileName}' not found.";
     }
 
@@ -132,7 +146,7 @@ public sealed class FileAccessProvider : AIContextProvider
     private async Task<string> DeleteFileAsync(string fileName, CancellationToken cancellationToken = default)
     {
         string path = StorePaths.NormalizeRelativePath(fileName);
-        bool deleted = await this._fileStore.DeleteFileAsync(path, cancellationToken).ConfigureAwait(false);
+        bool deleted = await this.FileStore.DeleteFileAsync(path, cancellationToken).ConfigureAwait(false);
         return deleted ? $"File '{fileName}' deleted." : $"File '{fileName}' not found.";
     }
 
@@ -144,7 +158,7 @@ public sealed class FileAccessProvider : AIContextProvider
     [Description("List all file names.")]
     private async Task<List<string>> ListFilesAsync(CancellationToken cancellationToken = default)
     {
-        IReadOnlyList<string> fileNames = await this._fileStore.ListFilesAsync(string.Empty, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string> fileNames = await this.FileStore.ListFilesAsync(string.Empty, cancellationToken).ConfigureAwait(false);
         return new List<string>(fileNames);
     }
 
@@ -160,11 +174,16 @@ public sealed class FileAccessProvider : AIContextProvider
     private async Task<List<FileSearchResult>> SearchFilesAsync(string regexPattern, string? filePattern = null, CancellationToken cancellationToken = default)
     {
         string? pattern = string.IsNullOrWhiteSpace(filePattern) ? null : filePattern;
-        IReadOnlyList<FileSearchResult> results = await this._fileStore.SearchFilesAsync(string.Empty, regexPattern, pattern, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<FileSearchResult> results = await this.FileStore.SearchFilesAsync(string.Empty, regexPattern, pattern, cancellationToken).ConfigureAwait(false);
         return new List<FileSearchResult>(results);
     }
 
-    private AITool[] CreateTools()
+    /// <summary>
+    /// Builds the list of tools this provider exposes to the agent. The base implementation returns
+    /// the five universal file-access tools (Save/Read/Delete/List/Search). Override in a derived class
+    /// to add or replace tools — typically by appending to <c>base.CreateTools()</c>.
+    /// </summary>
+    protected virtual AITool[] CreateTools()
     {
         var serializerOptions = AgentJsonUtilities.DefaultOptions;
 

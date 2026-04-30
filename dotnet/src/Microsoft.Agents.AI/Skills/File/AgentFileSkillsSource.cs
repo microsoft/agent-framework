@@ -333,7 +333,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
             // Directory-level symlink check: skip if targetDirectory (or any intermediate
             // segment) is a reparse point. The root directory is excluded — it's a caller-supplied
             // trusted path, and the security boundary guards files within it, not the path itself.
-            if (!isRootDirectory && HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
+            if (!isRootDirectory && FileSystemPathSecurity.HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
             {
                 if (this._logger.IsEnabled(LogLevel.Warning))
                 {
@@ -382,7 +382,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
                 // Path containment: reject if the resolved path escapes the target directory.
                 // e.g. "/etc/shadow".StartsWith("/skills/myskill/references/") → false → skip
-                if (!resolvedFilePath.StartsWith(targetDirectory, StringComparison.OrdinalIgnoreCase))
+                if (!FileSystemPathSecurity.IsPathWithinDirectory(resolvedFilePath, targetDirectory))
                 {
                     if (this._logger.IsEnabled(LogLevel.Warning))
                     {
@@ -394,7 +394,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
                 // Per-file symlink check: detects if the file (or any intermediate segment)
                 // is a reparse point. e.g. "references/secret.md" → symlink to "/etc/shadow"
-                if (HasSymlinkInPath(resolvedFilePath, targetDirectory))
+                if (FileSystemPathSecurity.HasSymlinkInPath(resolvedFilePath, targetDirectory))
                 {
                     if (this._logger.IsEnabled(LogLevel.Warning))
                     {
@@ -446,7 +446,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
             // Directory-level symlink check: skip if targetDirectory (or any intermediate
             // segment) is a reparse point. The root directory is excluded — it's a caller-supplied
             // trusted path, and the security boundary guards files within it, not the path itself.
-            if (!isRootDirectory && HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
+            if (!isRootDirectory && FileSystemPathSecurity.HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
             {
                 if (this._logger.IsEnabled(LogLevel.Warning))
                 {
@@ -482,7 +482,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
                 // Path containment: reject if the resolved path escapes the target directory.
                 // e.g. "/etc/shadow".StartsWith("/skills/myskill/scripts/") → false → skip
-                if (!resolvedFilePath.StartsWith(targetDirectory, StringComparison.OrdinalIgnoreCase))
+                if (!FileSystemPathSecurity.IsPathWithinDirectory(resolvedFilePath, targetDirectory))
                 {
                     if (this._logger.IsEnabled(LogLevel.Warning))
                     {
@@ -494,7 +494,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
                 // Per-file symlink check: detects if the file (or any intermediate segment)
                 // is a reparse point. e.g. "scripts/run.py" → symlink to "/etc/shadow"
-                if (HasSymlinkInPath(resolvedFilePath, targetDirectory))
+                if (FileSystemPathSecurity.HasSymlinkInPath(resolvedFilePath, targetDirectory))
                 {
                     if (this._logger.IsEnabled(LogLevel.Warning))
                     {
@@ -513,31 +513,6 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         }
 
         return scripts;
-    }
-
-    /// <summary>
-    /// Checks whether any segment in the path (relative to the directory) is a symlink.
-    /// </summary>
-    private static bool HasSymlinkInPath(string pathToCheck, string trustedBasePath)
-    {
-        string relativePath = pathToCheck.Substring(trustedBasePath.Length);
-        string[] segments = relativePath.Split(
-            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-            StringSplitOptions.RemoveEmptyEntries);
-
-        string currentPath = trustedBasePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-        foreach (string segment in segments)
-        {
-            currentPath = Path.Combine(currentPath, segment);
-
-            if ((File.GetAttributes(currentPath) & FileAttributes.ReparsePoint) != 0)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>

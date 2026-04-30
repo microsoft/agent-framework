@@ -26,6 +26,15 @@ namespace Microsoft.Agents.AI;
 /// or absolute paths) are rejected with an <see cref="ArgumentException"/>.
 /// </para>
 /// <para>
+/// By default, paths whose resolution traverses or terminates at a symbolic link / reparse point
+/// are also rejected to prevent escaping the root via filesystem indirection. This can be disabled
+/// via <see cref="FileSystemAgentFileStoreOptions.RejectSymlinks"/>.
+/// </para>
+/// <para>
+/// An optional glob denylist (<see cref="FileSystemAgentFileStoreOptions.Denylist"/>) blocks
+/// access to matching paths even when they resolve to a safe location.
+/// </para>
+/// <para>
 /// The root directory is created automatically if it does not already exist.
 /// </para>
 /// </remarks>
@@ -36,6 +45,19 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
     /// The canonical full path of the root directory, always ending with a directory separator.
     /// </summary>
     private readonly string _rootPath;
+    private readonly bool _rejectSymlinks;
+    private readonly IReadOnlyList<string> _denylist;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FileSystemAgentFileStore"/> class with default options.
+    /// </summary>
+    /// <param name="rootDirectory">
+    /// The root directory under which all files are stored. Created if it does not exist.
+    /// </param>
+    public FileSystemAgentFileStore(string rootDirectory)
+        : this(rootDirectory, options: null)
+    {
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FileSystemAgentFileStore"/> class.
@@ -43,7 +65,8 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
     /// <param name="rootDirectory">
     /// The root directory under which all files are stored. Created if it does not exist.
     /// </param>
-    public FileSystemAgentFileStore(string rootDirectory)
+    /// <param name="options">Optional settings controlling security behavior. When <see langword="null"/>, defaults are used.</param>
+    public FileSystemAgentFileStore(string rootDirectory, FileSystemAgentFileStoreOptions? options)
     {
         _ = Throw.IfNullOrWhitespace(rootDirectory);
 
@@ -56,6 +79,8 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
         }
 
         this._rootPath = fullRoot;
+        this._rejectSymlinks = options?.RejectSymlinks ?? true;
+        this._denylist = options?.Denylist ?? [];
         Directory.CreateDirectory(fullRoot);
     }
 
@@ -238,6 +263,20 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
         // Normalize and validate the relative path (rejects rooted, traversal, etc.).
         string normalized = StorePaths.NormalizeRelativePath(relativePath);
 
+        // Apply the optional denylist against the normalized forward-slash path.
+        if (this._denylist.Count > 0)
+        {
+            foreach (string pattern in this._denylist)
+            {
+                if (FileSystemTool.MatchGlob(normalized, pattern))
+                {
+                    throw new ArgumentException(
+                        $"Invalid path: '{relativePath}'. The path is blocked by the store's denylist.",
+                        nameof(relativePath));
+                }
+            }
+        }
+
         // Convert to OS-native separators before combining.
         string nativePath = normalized.Replace('/', Path.DirectorySeparatorChar);
         string combined = Path.Combine(this._rootPath, nativePath);
@@ -247,6 +286,15 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
         {
             throw new ArgumentException(
                 $"Invalid path: '{relativePath}'. The resolved path escapes the root directory.",
+                nameof(relativePath));
+        }
+
+        // Reject any symlink/reparse-point in the resolved path components to prevent
+        // filesystem-level escapes (e.g., a symlink under the root that points outside it).
+        if (this._rejectSymlinks && FileSystemPathSecurity.HasSymlinkInPath(fullPath, this._rootPath))
+        {
+            throw new ArgumentException(
+                $"Invalid path: '{relativePath}'. The path traverses or terminates at a symbolic link.",
                 nameof(relativePath));
         }
 

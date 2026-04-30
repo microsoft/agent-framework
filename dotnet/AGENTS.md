@@ -17,6 +17,9 @@ See `./.github/skills/project-structure/SKILL.md` for an overview of the project
 - `ChatClientAgent`: An `AIAgent` implementation that uses an `IChatClient` to send messages to an AI provider and receive responses.
 - `IChatClient`: Interface for sending messages to an AI provider and receiving responses. Used by `ChatClientAgent` and implemented by provider-specific packages.
 - `FunctionInvokingChatClient`: Decorator for `IChatClient` that adds function invocation capabilities.
+- `FileSystemTool`: Sandboxed file operations exposed as AI tools; destructive operations require approval and discovery respects denylist/gitignore policy.
+- `FileAccessProvider`: Universal `AIContextProvider` that surfaces five backend-pluggable file-access tools (`FileAccess_SaveFile`/`ReadFile`/`DeleteFile`/`ListFiles`/`SearchFiles`) over an `AgentFileStore`. Use when the backend is in-memory, remote blob storage, or any non-filesystem store.
+- `FileSystemToolProvider` (`: FileAccessProvider`): On-disk subclass that adds high-fidelity `fs_*` tools (line-range view, unique-match edit, atomic multi-edit, gitignore-aware glob/grep, recursive list) and approval-gates destructive operations. Use when the agent operates on a real filesystem workspace and benefits from line-precise reads/edits and ripgrep-backed search.
 - `AITool`: Represents a tool that an agent/AI provider can use, with metadata and an execution delegate.
 - `AIFunction`: A specific type of `AITool` that represents a local function the agent/AI provider can call, with parameters and return types defined.
 - `ChatMessage`: Represents a message in a conversation.

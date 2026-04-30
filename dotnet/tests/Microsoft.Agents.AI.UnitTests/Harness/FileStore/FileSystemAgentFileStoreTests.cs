@@ -334,4 +334,147 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     }
 
     #endregion
+
+    #region Denylist
+
+    [Fact]
+    public async Task Denylist_BlocksMatchingPathsAsync()
+    {
+        // Arrange
+        string root = Path.Combine(Path.GetTempPath(), "FsStoreDenylist_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new FileSystemAgentFileStore(root, new FileSystemAgentFileStoreOptions
+            {
+                Denylist = ["*.secret", "config/*"],
+            });
+
+            // Act & Assert — denylist patterns reject before any I/O
+            await Assert.ThrowsAsync<ArgumentException>(() => store.WriteFileAsync("token.secret", "shh"));
+            await Assert.ThrowsAsync<ArgumentException>(() => store.WriteFileAsync("config/app.json", "{}"));
+
+            // A non-matching path still works
+            await store.WriteFileAsync("ok.txt", "fine");
+            Assert.True(await store.FileExistsAsync("ok.txt"));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) { Directory.Delete(root, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task Denylist_DefaultsToEmptyAsync()
+    {
+        // Arrange — default options means an empty denylist, so .env, *.pem, etc are NOT blocked.
+        string root = Path.Combine(Path.GetTempPath(), "FsStoreDefaultDeny_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new FileSystemAgentFileStore(root, options: null);
+
+            // Act
+            await store.WriteFileAsync(".env", "SECRET=1");
+
+            // Assert
+            Assert.True(await store.FileExistsAsync(".env"));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) { Directory.Delete(root, recursive: true); }
+        }
+    }
+
+    #endregion
+
+    #region Symlink rejection
+
+#if NET8_0_OR_GREATER
+    [Fact]
+    public async Task RejectSymlinks_BlocksTraversalThroughSymlinkAsync()
+    {
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        string root = Path.Combine(Path.GetTempPath(), "FsStoreSymlink_" + Guid.NewGuid().ToString("N"));
+        string outside = Path.Combine(Path.GetTempPath(), "FsStoreSymlinkOutside_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            Directory.CreateDirectory(outside);
+
+            string linkPath = Path.Combine(root, "link");
+            try
+            {
+                Directory.CreateSymbolicLink(linkPath, outside);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Creating symlinks may require elevated privileges; skip when unavailable.
+                return;
+            }
+            catch (IOException)
+            {
+                return;
+            }
+
+            var store = new FileSystemAgentFileStore(root);
+
+            // Act & Assert — default RejectSymlinks=true blocks traversal through 'link'.
+            await Assert.ThrowsAsync<ArgumentException>(() => store.WriteFileAsync("link/leaked.txt", "x"));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) { Directory.Delete(root, recursive: true); }
+            if (Directory.Exists(outside)) { Directory.Delete(outside, recursive: true); }
+        }
+    }
+
+    [Fact]
+    public async Task RejectSymlinks_OptOut_AllowsSymlinkAsync()
+    {
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        string root = Path.Combine(Path.GetTempPath(), "FsStoreSymlinkOff_" + Guid.NewGuid().ToString("N"));
+        string outside = Path.Combine(Path.GetTempPath(), "FsStoreSymlinkOff_outside_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(root);
+            Directory.CreateDirectory(outside);
+
+            string linkPath = Path.Combine(root, "link");
+            try
+            {
+                Directory.CreateSymbolicLink(linkPath, outside);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return;
+            }
+            catch (IOException)
+            {
+                return;
+            }
+
+            var store = new FileSystemAgentFileStore(root, new FileSystemAgentFileStoreOptions { RejectSymlinks = false });
+
+            // Act — opt-out allows write through symlink (write lands inside 'outside').
+            await store.WriteFileAsync("link/passthrough.txt", "x");
+
+            // Assert — file exists at the target location.
+            Assert.True(File.Exists(Path.Combine(outside, "passthrough.txt")));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) { Directory.Delete(root, recursive: true); }
+            if (Directory.Exists(outside)) { Directory.Delete(outside, recursive: true); }
+        }
+    }
+#endif
+
+    #endregion
 }
