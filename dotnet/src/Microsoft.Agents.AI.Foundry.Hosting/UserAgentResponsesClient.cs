@@ -33,11 +33,11 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// never expected to run; the throwing transport surfaces any unexpected escape route loudly.
 /// </para>
 /// </remarks>
-internal sealed class DelegatingResponsesClient : ResponsesClient
+internal sealed class UserAgentResponsesClient : ResponsesClient
 {
     private readonly ResponsesClient _inner;
 
-    public DelegatingResponsesClient(ResponsesClient inner)
+    public UserAgentResponsesClient(ResponsesClient inner)
         : base(BuildDummyPipeline(), new OpenAIClientOptions { Endpoint = inner?.Endpoint })
     {
         this._inner = inner ?? throw new ArgumentNullException(nameof(inner));
@@ -104,7 +104,7 @@ internal sealed class DelegatingResponsesClient : ResponsesClient
     private sealed class ThrowingTransport : PipelineTransport
     {
         private const string Message =
-            "DelegatingResponsesClient transport invoked bypassed the override-and-delegate design. This exception should be unreachable and should never be thrown following the correct usage of DelegatingResponsesClient.";
+            "UserAgentResponsesClient transport invoked bypassed the override-and-delegate design. This exception should be unreachable and should never be thrown following the correct usage of UserAgentResponsesClient.";
 
         protected override PipelineMessage CreateMessageCore() => throw new InvalidOperationException(Message);
         protected override void ProcessCore(PipelineMessage message) => throw new InvalidOperationException(Message);
