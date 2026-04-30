@@ -19,6 +19,7 @@ __version__: Final[str] = _version
 
 from ._agents import Agent, BaseAgent, RawAgent, SupportsAgentRun
 from ._clients import (
+    FakeChatClient,
     BaseChatClient,
     BaseEmbeddingClient,
     SupportsChatGetResponse,
@@ -292,6 +293,7 @@ __all__ = [
     "Annotation",
     "BaseAgent",
     "BaseChatClient",
+    "FakeChatClient",
     "BaseEmbeddingClient",
     "Case",
     "CharacterEstimatorTokenizer",
