@@ -313,13 +313,19 @@ jobs:
           done
           # Pull models with retry for transient 429 rate limits
           for model in qwen2.5:1.5b nomic-embed-text; do
+            pulled=false
             for attempt in 1 2 3; do
               if ollama pull "$model"; then
+                pulled=true
                 break
               fi
               echo "Retry $attempt for $model (waiting 15s)..."
               sleep 15
             done
+            if [ "$pulled" != "true" ]; then
+              echo "ERROR: Failed to pull $model after 3 attempts"
+              exit 1
+            fi
           done
         working-directory: .
       - name: Start local MCP server
