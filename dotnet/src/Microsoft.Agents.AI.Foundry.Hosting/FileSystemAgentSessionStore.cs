@@ -161,24 +161,52 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         const int StackLimit = 256;
         char[] invalid = Path.GetInvalidFileNameChars();
 
+        string sanitized;
         if (value.Length <= StackLimit)
         {
             Span<char> buffer = stackalloc char[value.Length];
             SanitizeCore(value, invalid, buffer);
-            return new string(buffer);
+            sanitized = new string(buffer);
+        }
+        else
+        {
+            char[] rented = ArrayPool<char>.Shared.Rent(value.Length);
+            try
+            {
+                Span<char> buffer = rented.AsSpan(0, value.Length);
+                SanitizeCore(value, invalid, buffer);
+                sanitized = new string(buffer);
+            }
+            finally
+            {
+                ArrayPool<char>.Shared.Return(rented);
+            }
         }
 
-        char[] rented = ArrayPool<char>.Shared.Rent(value.Length);
-        try
+        // Defense-in-depth: Path.GetInvalidFileNameChars() on Linux only contains NUL and '/',
+        // so the segments "." and ".." would otherwise pass through and could resolve to the
+        // current/parent directory when used as a bare path component (e.g. agent.Name).
+        // Neutralize any segment composed entirely of dots so the result can never escape
+        // its parent directory.
+        if (sanitized.Length > 0 && IsAllDots(sanitized))
         {
-            Span<char> buffer = rented.AsSpan(0, value.Length);
-            SanitizeCore(value, invalid, buffer);
-            return new string(buffer);
+            return new string('_', sanitized.Length);
         }
-        finally
+
+        return sanitized;
+    }
+
+    private static bool IsAllDots(string value)
+    {
+        for (int i = 0; i < value.Length; i++)
         {
-            ArrayPool<char>.Shared.Return(rented);
+            if (value[i] != '.')
+            {
+                return false;
+            }
         }
+
+        return true;
     }
 
     private static void SanitizeCore(string value, char[] invalid, Span<char> buffer)

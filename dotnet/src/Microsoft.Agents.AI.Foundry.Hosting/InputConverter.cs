@@ -402,6 +402,12 @@ internal static class InputConverter
 
     private static bool TryDecodeTextDataUri(string dataUri, string? filename, out string text)
     {
+        // Cap the encoded payload so an oversized client-supplied data URI cannot
+        // trigger an unbounded allocation in Convert.FromBase64String. 16 MiB
+        // encoded → ~12 MiB decoded, well above any realistic text/* file we'd
+        // want to inline as content while still bounding the worst case.
+        const int MaxEncodedLength = 16 * 1024 * 1024;
+
         text = string.Empty;
         if (!dataUri.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
         {
@@ -422,6 +428,11 @@ internal static class InputConverter
         }
 
         string encoded = dataUri.Substring(markerIndex + Marker.Length);
+        if (encoded.Length > MaxEncodedLength)
+        {
+            return false;
+        }
+
         try
         {
             byte[] bytes = Convert.FromBase64String(encoded);

@@ -180,6 +180,31 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
         Assert.Empty(leftoverTempFiles);
     }
 
+    [Theory]
+    [InlineData(".")]
+    [InlineData("..")]
+    [InlineData("...")]
+    public async Task SaveSessionAsync_AgentNameIsDotSegment_DoesNotEscapeRootAsync(string agentName)
+    {
+        // Defense-in-depth: Path.GetInvalidFileNameChars() on Linux only contains NUL and '/',
+        // so segments composed entirely of dots would otherwise resolve to the parent of root.
+        var store = new FileSystemAgentSessionStore(this._root);
+        var agent = new TestAgent(name: agentName);
+
+        await store.SaveSessionAsync(agent, "conv-dots", NewSession());
+
+        // The session file must land inside RootDirectory, not in (or above) it as a sibling.
+        var allFiles = Directory.GetFiles(store.RootDirectory, "*.json", SearchOption.AllDirectories);
+        Assert.Single(allFiles);
+        var fullPath = Path.GetFullPath(allFiles[0]);
+        Assert.StartsWith(Path.GetFullPath(this._root) + Path.DirectorySeparatorChar, fullPath, StringComparison.Ordinal);
+
+        // The bucket directory name must not be a navigable dot-segment.
+        var bucketName = Path.GetFileName(Path.GetDirectoryName(fullPath)!);
+        Assert.NotEmpty(bucketName);
+        Assert.DoesNotContain(bucketName, c => c == '.');
+    }
+
     private static TestSession NewSession() => new();
 
     private sealed class TestSession : AgentSession

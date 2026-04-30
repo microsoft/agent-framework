@@ -1178,4 +1178,46 @@ public class InputConverterTests
         var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
         Assert.Equal("sdk text", text.Text);
     }
+
+    [Fact]
+    public void ConvertInputToMessages_OversizedTextDataUri_FallsBackToDataContent()
+    {
+        // The decoder must reject oversized base64 payloads so a malicious or
+        // misconfigured client cannot trigger a multi-megabyte allocation.
+        // We construct a base64 payload whose encoded length exceeds the 16 MiB cap
+        // (using a tiny but valid base64 unit repeated to keep the test fast).
+        const int OverLimit = (16 * 1024 * 1024) + 4;
+        var encoded = new string('A', OverLimit);
+        var dataUri = "data:text/plain;base64," + encoded;
+
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_oversize",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new
+                    {
+                        type = "input_file",
+                        file_data = dataUri,
+                        filename = "huge.txt",
+                    }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        // Should NOT have decoded into a TextContent (which would have allocated).
+        Assert.DoesNotContain(messages[0].Contents, c => c is MeaiTextContent t && t.Text.Length > 1024);
+        // Should have fallen back to DataContent (carrying the original opaque blob).
+        Assert.Contains(messages[0].Contents, c => c is DataContent);
+    }
 }
