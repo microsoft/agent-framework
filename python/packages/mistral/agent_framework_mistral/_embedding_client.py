@@ -156,14 +156,15 @@ class RawMistralEmbeddingClient(
             raise ValueError("model is required")
 
         kwargs: dict[str, Any] = {"model": model, "inputs": list(values)}
-        if dimensions := opts.get("dimensions"):
-            kwargs["output_dimension"] = dimensions
+        if "dimensions" in opts:
+            kwargs["output_dimension"] = opts["dimensions"]
 
         response = await self.client.embeddings.create_async(**kwargs)
 
         embeddings: list[Embedding[list[float]]] = []
         if response and response.data:
-            for item in response.data:
+            items = sorted(response.data, key=lambda d: d.index if d.index is not None else 0)
+            for item in items:
                 vector = list(item.embedding) if item.embedding else []
                 embeddings.append(
                     Embedding(
