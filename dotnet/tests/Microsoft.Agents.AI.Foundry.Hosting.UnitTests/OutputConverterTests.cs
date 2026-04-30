@@ -1141,6 +1141,49 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[0]);
     }
 
+    // D1: WorkflowEvent in RawRepresentation but Contents is non-empty → fall through to content path.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_WorkflowEventWithTextContent_FlowsThroughContentPathAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_workflow_text",
+            RawRepresentation = new ExecutorInvokedEvent("exec_x", "invoked"),
+            Contents = [new MeaiTextContent("payload from workflow event")],
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Content path must have been taken: a text-delta event must be emitted from the payload.
+        Assert.Contains(events, e => e is ResponseTextDeltaEvent);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_WorkflowEventWithErrorContent_EmitsFailedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            RawRepresentation = new ExecutorFailedEvent("exec_y", new InvalidOperationException("boom")),
+            Contents = [new ErrorContent("boom")],
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // ErrorContent should drive a failed event rather than being swallowed by the workflow branch.
+        Assert.Contains(events, e => e is ResponseFailedEvent);
+    }
+
     private sealed class RawToolCallContent : ToolCallContent
     {
         public RawToolCallContent(string callId) : base(callId) { }

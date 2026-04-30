@@ -1043,4 +1043,139 @@ public class InputConverterTests
         Assert.NotNull(hosted.AdditionalProperties);
         Assert.Equal("doc.pdf", hosted.AdditionalProperties!["filename"]);
     }
+
+    // ── C2: SDK content types passing through ItemMessage / OutputItemMessage ──
+
+    [Fact]
+    public void ConvertItemsToMessages_SdkTextContent_ProducesTextContent()
+    {
+        var msg = new ItemMessage(
+            MessageRole.User,
+            new MessageContent[] { new Azure.AI.AgentServer.Responses.Models.TextContent("plain text") });
+
+        var messages = InputConverter.ConvertItemsToMessages([msg]);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("plain text", text.Text);
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_SummaryTextContent_ProducesTextContent()
+    {
+        var msg = new ItemMessage(
+            MessageRole.Assistant,
+            new MessageContent[] { new SummaryTextContent("a summary") });
+
+        var messages = InputConverter.ConvertItemsToMessages([msg]);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("a summary", text.Text);
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_ReasoningTextContent_ProducesTextReasoningContent()
+    {
+        var msg = new ItemMessage(
+            MessageRole.Assistant,
+            new MessageContent[] { new MessageContentReasoningTextContent("internal reasoning") });
+
+        var messages = InputConverter.ConvertItemsToMessages([msg]);
+
+        var reasoning = Assert.IsType<TextReasoningContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("internal reasoning", reasoning.Text);
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_ComputerScreenshotContent_HttpUrl_ProducesUriContent()
+    {
+        var screenshot = new ComputerScreenshotContent(
+            imageUrl: new Uri("https://example.com/screen.png"),
+            fileId: null!,
+            detail: default);
+        var msg = new ItemMessage(MessageRole.User, new MessageContent[] { screenshot });
+
+        var messages = InputConverter.ConvertItemsToMessages([msg]);
+
+        var uri = Assert.IsType<UriContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("https://example.com/screen.png", uri.Uri.ToString());
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_ComputerScreenshotContent_DataUri_ProducesDataContent()
+    {
+        var screenshot = new ComputerScreenshotContent(
+            imageUrl: new Uri("data:image/png;base64,iVBORw0KGgo="),
+            fileId: null!,
+            detail: default);
+        var msg = new ItemMessage(MessageRole.User, new MessageContent[] { screenshot });
+
+        var messages = InputConverter.ConvertItemsToMessages([msg]);
+
+        var data = Assert.IsType<DataContent>(Assert.Single(messages[0].Contents));
+        Assert.StartsWith("data:image", data.Uri);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_SummaryTextContent_ProducesTextContent()
+    {
+        var outputMsg = new OutputItemMessage(
+            id: "out_summary",
+            role: MessageRole.Assistant,
+            content: new MessageContent[] { new SummaryTextContent("output summary") },
+            status: MessageStatus.Completed);
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([outputMsg]);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("output summary", text.Text);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_ReasoningTextContent_ProducesTextReasoningContent()
+    {
+        var outputMsg = new OutputItemMessage(
+            id: "out_reasoning",
+            role: MessageRole.Assistant,
+            content: new MessageContent[] { new MessageContentReasoningTextContent("output reasoning") },
+            status: MessageStatus.Completed);
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([outputMsg]);
+
+        var reasoning = Assert.IsType<TextReasoningContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("output reasoning", reasoning.Text);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_ComputerScreenshotContent_ProducesUriContent()
+    {
+        var screenshot = new ComputerScreenshotContent(
+            imageUrl: new Uri("https://example.com/output-screen.png"),
+            fileId: null!,
+            detail: default);
+        var outputMsg = new OutputItemMessage(
+            id: "out_screenshot",
+            role: MessageRole.Assistant,
+            content: new MessageContent[] { screenshot },
+            status: MessageStatus.Completed);
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([outputMsg]);
+
+        var uri = Assert.IsType<UriContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("https://example.com/output-screen.png", uri.Uri.ToString());
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_SdkTextContent_ProducesTextContent()
+    {
+        var outputMsg = new OutputItemMessage(
+            id: "out_text",
+            role: MessageRole.Assistant,
+            content: new MessageContent[] { new Azure.AI.AgentServer.Responses.Models.TextContent("sdk text") },
+            status: MessageStatus.Completed);
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([outputMsg]);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("sdk text", text.Text);
+    }
 }
