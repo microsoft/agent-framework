@@ -102,7 +102,7 @@ Similar to using the `azd` CLI, you must invoke the agent first to create a sess
 
 ![alt text](./resources/start-a-session.png)
 
-Once the session is created, you can grad the session ID and use `azd ai agent files upload --session-id <session-id>` to upload files to that specific hosted agent session.
+Once the session is created, you can grab the session ID and use `azd ai agent files upload --session-id <session-id>` to upload files to that specific hosted agent session.
 
 ![alt text](./resources/session-started.png)
 
