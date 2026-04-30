@@ -9,7 +9,6 @@ using System.Text;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
 
 #pragma warning disable OPENAI001

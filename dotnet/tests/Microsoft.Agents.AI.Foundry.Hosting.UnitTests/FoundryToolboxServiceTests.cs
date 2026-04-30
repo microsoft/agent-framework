@@ -4,7 +4,6 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
-using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.Options;
 using Moq;
 

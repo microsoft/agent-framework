@@ -3,7 +3,6 @@
 using System;
 using System.Linq;
 using Azure.AI.AgentServer.Responses;
-using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
