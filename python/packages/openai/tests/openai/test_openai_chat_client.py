@@ -4272,6 +4272,12 @@ def test_with_callable_api_key() -> None:
             True,
             id="tool_choice_required",
         ),
+        param(
+            "tool_choice",
+            {"mode": "auto", "allowed_tools": ["get_weather"]},
+            True,
+            id="tool_choice_allowed_tools",
+        ),
         param("response_format", OutputStruct, True, id="response_format_pydantic"),
         param(
             "response_format",
@@ -4820,6 +4826,90 @@ async def test_prepare_options_excludes_continuation_token() -> None:
     assert "continuation_token" not in run_options
     assert "background" in run_options
     assert run_options["background"] is True
+
+
+async def test_prepare_options_allowed_tools() -> None:
+    """Test that _prepare_options converts allowed_tools to OpenAI API format."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    @tool
+    def search_docs(query: str) -> str:
+        """Search documentation."""
+        return f"Results for {query}"
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+    options: dict[str, Any] = {
+        "model": "test-model",
+        "tools": [get_weather, search_docs],
+        "tool_choice": {"mode": "auto", "allowed_tools": ["get_weather"]},
+    }
+
+    run_options = await client._prepare_options(messages, options)
+
+    assert run_options["tool_choice"] == {
+        "type": "allowed_tools",
+        "mode": "auto",
+        "tools": [{"type": "function", "name": "get_weather"}],
+    }
+
+
+async def test_prepare_options_allowed_tools_multiple() -> None:
+    """Test that _prepare_options converts multiple allowed_tools correctly."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    @tool
+    def search_docs(query: str) -> str:
+        """Search documentation."""
+        return f"Results for {query}"
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+    options: dict[str, Any] = {
+        "model": "test-model",
+        "tools": [get_weather, search_docs],
+        "tool_choice": {"mode": "auto", "allowed_tools": ["get_weather", "search_docs"]},
+    }
+
+    run_options = await client._prepare_options(messages, options)
+
+    assert run_options["tool_choice"] == {
+        "type": "allowed_tools",
+        "mode": "auto",
+        "tools": [
+            {"type": "function", "name": "get_weather"},
+            {"type": "function", "name": "search_docs"},
+        ],
+    }
+
+
+async def test_prepare_options_auto_without_allowed_tools() -> None:
+    """Test that auto mode without allowed_tools still returns plain 'auto' string."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+    options: dict[str, Any] = {
+        "model": "test-model",
+        "tools": [get_weather],
+        "tool_choice": {"mode": "auto"},
+    }
+
+    run_options = await client._prepare_options(messages, options)
+
+    assert run_options["tool_choice"] == "auto"
 
 
 # endregion

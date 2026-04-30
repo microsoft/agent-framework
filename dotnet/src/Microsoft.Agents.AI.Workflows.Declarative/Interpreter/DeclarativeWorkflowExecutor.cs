@@ -43,7 +43,11 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         await declarativeContext.QueueConversationUpdateAsync(conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 
         ChatMessage inputMessage = await options.AgentProvider.CreateMessageAsync(conversationId, input, cancellationToken).ConfigureAwait(false);
-        await declarativeContext.SetLastMessageAsync(inputMessage).ConfigureAwait(false);
+
+        // Use the original input for System.LastMessage to ensure Text is preserved (the
+        // service may strip text on round-trip), but substitute server-side media references
+        // (e.g., HostedFileContent) so subsequent actions don't re-upload large blobs.
+        await declarativeContext.SetLastMessageAsync(input.MergeForLastMessage(inputMessage)).ConfigureAwait(false);
 
         await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }

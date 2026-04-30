@@ -1296,6 +1296,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             "type": "function",
                             "name": func_name,
                         }
+                    elif mode == "auto" and (allowed := tool_mode.get("allowed_tools")) is not None:
+                        run_options["tool_choice"] = {
+                            "type": "allowed_tools",
+                            "mode": "auto",
+                            "tools": [{"type": "function", "name": name} for name in allowed],
+                        }
                     else:
                         run_options["tool_choice"] = mode
         else:
