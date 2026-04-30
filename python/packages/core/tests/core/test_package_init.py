@@ -11,13 +11,11 @@ import agent_framework
 
 
 def test_version_is_importable() -> None:
+def test_version_is_present_and_a_non_empty_string() -> None:
     version = getattr(agent_framework, "__version__", None)
-    assert version is not None, (
+
+    assert isinstance(version, str), (
         "agent_framework.__version__ is missing — another installed package likely "
         "overwrote agent_framework/__init__.py with an empty file"
     )
-
-
-def test_version_is_a_non_empty_string() -> None:
-    assert isinstance(agent_framework.__version__, str)
-    assert agent_framework.__version__
+    assert version
