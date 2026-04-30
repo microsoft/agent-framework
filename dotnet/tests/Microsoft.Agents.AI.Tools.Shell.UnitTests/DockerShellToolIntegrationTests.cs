@@ -1,0 +1,195 @@
+// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading.Tasks;
+using Microsoft.Agents.AI.Tools.Shell;
+
+namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
+
+/// <summary>
+/// End-to-end tests that exercise <see cref="DockerShellTool"/> against a live
+/// Docker (or Podman) daemon. Tests auto-skip when no daemon is available, so
+/// they're safe to run in CI.
+/// </summary>
+/// <remarks>
+/// To run only these tests locally:
+/// <code>
+/// dotnet test --filter "Category=Integration&amp;FullyQualifiedName~DockerShellToolIntegrationTests"
+/// </code>
+/// or run the test exe directly with the trait filter.
+/// </remarks>
+[Trait("Category", "Integration")]
+public sealed class DockerShellToolIntegrationTests
+{
+    // Small, fast image that has bash. Pulled lazily on first run.
+    // Alpine ships only busybox sh, which the persistent shell session can't use.
+    private const string TestImage = "debian:stable-slim";
+
+    private static async Task<bool> EnsureDockerOrSkipAsync()
+    {
+        if (!await DockerShellTool.IsAvailableAsync().ConfigureAwait(false))
+        {
+            Assert.Skip("Docker (or Podman) daemon is not available on this machine.");
+            return false; // unreachable
+        }
+        return true;
+    }
+
+    [Fact]
+    public async Task IsAvailableAsync_ReturnsTrue_WhenDaemonRunning()
+    {
+        await EnsureDockerOrSkipAsync();
+        Assert.True(await DockerShellTool.IsAvailableAsync());
+    }
+
+    [Fact]
+    public async Task Persistent_RunsBasicCommand()
+    {
+        await EnsureDockerOrSkipAsync();
+
+        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Persistent);
+        await tool.StartAsync();
+
+        var result = await tool.RunAsync("echo hello-from-docker");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("hello-from-docker", result.Stdout);
+    }
+
+    [Fact]
+    public async Task Persistent_PreservesStateAcrossCalls()
+    {
+        await EnsureDockerOrSkipAsync();
+
+        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Persistent);
+        await tool.StartAsync();
+
+        var set = await tool.RunAsync("export DEMO=persisted-12345");
+        Assert.Equal(0, set.ExitCode);
+
+        var get = await tool.RunAsync("echo $DEMO");
+        Assert.Equal(0, get.ExitCode);
+        Assert.Contains("persisted-12345", get.Stdout);
+    }
+
+    [Fact]
+    public async Task NetworkNone_BlocksOutboundConnections()
+    {
+        await EnsureDockerOrSkipAsync();
+
+        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Persistent /* network defaults to "none" */);
+        await tool.StartAsync();
+
+        // Try to resolve a hostname; with --network none, even DNS should fail.
+        // Use getent (always present on debian) so we don't depend on optional tools.
+        var result = await tool.RunAsync("getent hosts example.com 2>&1; echo MARKER:$?");
+
+        Assert.Contains("MARKER:", result.Stdout);
+        // Non-zero status from wget proves network was blocked.
+        Assert.DoesNotContain("MARKER:0", result.Stdout);
+    }
+
+    [Fact]
+    public async Task ReadOnlyRoot_PreventsWritesOutsideTmp()
+    {
+        await EnsureDockerOrSkipAsync();
+
+        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Persistent);
+        await tool.StartAsync();
+
+        var rootWrite = await tool.RunAsync("touch /should-not-exist 2>&1; echo CODE:$?");
+        Assert.Contains("CODE:", rootWrite.Stdout);
+        Assert.DoesNotContain("CODE:0", rootWrite.Stdout);
+
+        var tmpWrite = await tool.RunAsync("touch /tmp/ok && echo TMP_OK");
+        Assert.Equal(0, tmpWrite.ExitCode);
+        Assert.Contains("TMP_OK", tmpWrite.Stdout);
+    }
+
+    [Fact]
+    public async Task NonRootUser_RunsAsNobody()
+    {
+        await EnsureDockerOrSkipAsync();
+
+        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Persistent);
+        await tool.StartAsync();
+
+        var result = await tool.RunAsync("id -u");
+
+        Assert.Equal(0, result.ExitCode);
+        // Default user is 65534:65534
+        Assert.Contains("65534", result.Stdout);
+    }
+
+    [Fact]
+    public async Task Stateless_RunsEachCommandInFreshContainer()
+    {
+        await EnsureDockerOrSkipAsync();
+
+        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Stateless);
+
+        var first = await tool.RunAsync("echo first; export STATE=set");
+        Assert.Equal(0, first.ExitCode);
+        Assert.Contains("first", first.Stdout);
+
+        // Stateless: env var must NOT survive
+        var second = await tool.RunAsync("echo \"second:[${STATE:-unset}]\"");
+        Assert.Equal(0, second.ExitCode);
+        Assert.Contains("second:[unset]", second.Stdout);
+    }
+
+    [Fact]
+    public async Task HostWorkdir_MountsAndIsReadOnlyByDefault()
+    {
+        await EnsureDockerOrSkipAsync();
+
+        var hostDir = Path.Combine(Path.GetTempPath(), "af-docker-shell-it-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(hostDir);
+        var sentinel = Path.Combine(hostDir, "from-host.txt");
+        await File.WriteAllTextAsync(sentinel, "host-content");
+
+        try
+        {
+            await using var tool = new DockerShellTool(
+                image: TestImage,
+                mode: ShellMode.Persistent,
+                hostWorkdir: hostDir,
+                mountReadonly: true);
+            await tool.StartAsync();
+
+            var read = await tool.RunAsync("cat /workspace/from-host.txt");
+            Assert.Equal(0, read.ExitCode);
+            Assert.Contains("host-content", read.Stdout);
+
+            // Read-only mount: write must fail
+            var write = await tool.RunAsync("echo bad > /workspace/should-fail 2>&1; echo CODE:$?");
+            Assert.DoesNotContain("CODE:0", write.Stdout);
+        }
+        finally
+        {
+            try { Directory.Delete(hostDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    [Fact]
+    public async Task EnvironmentVariables_ArePassedThrough()
+    {
+        await EnsureDockerOrSkipAsync();
+
+        await using var tool = new DockerShellTool(
+            image: TestImage,
+            mode: ShellMode.Persistent,
+            environment: new Dictionary<string, string>
+            {
+                ["INJECTED_VAR"] = "injected-value-7777",
+            });
+        await tool.StartAsync();
+
+        var result = await tool.RunAsync("echo $INJECTED_VAR");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("injected-value-7777", result.Stdout);
+    }
+}
