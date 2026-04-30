@@ -11,7 +11,8 @@ import agent_framework
 
 
 def test_version_is_importable() -> None:
-    assert hasattr(agent_framework, "__version__"), (
+    version = getattr(agent_framework, "__version__", None)
+    assert version is not None, (
         "agent_framework.__version__ is missing — another installed package likely "
         "overwrote agent_framework/__init__.py with an empty file"
     )
