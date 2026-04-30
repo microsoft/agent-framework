@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -308,7 +308,7 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecut
             {
                 await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is InvalidOperationException || ex is System.ComponentModel.Win32Exception)
+            catch (Exception ex) when (ex is InvalidOperationException || ex is Win32Exception)
             {
                 // Best-effort shutdown after timeout — process may already be reaped.
             }
@@ -403,23 +403,6 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecut
         if (session is not null)
         {
             await session.DisposeAsync().ConfigureAwait(false);
-        }
-    }
-
-    private static void AppendBounded(StringBuilder sb, string line, int hardCap)
-    {
-        if (sb.Length >= hardCap)
-        {
-            return;
-        }
-        var remaining = hardCap - sb.Length;
-        if (line.Length + 1 <= remaining)
-        {
-            _ = sb.AppendLine(line);
-        }
-        else
-        {
-            _ = sb.Append(line, 0, Math.Min(line.Length, remaining));
         }
     }
 
@@ -572,7 +555,7 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecut
         {
             // Process already exited.
         }
-        catch (System.ComponentModel.Win32Exception)
+        catch (Win32Exception)
         {
             // Best-effort tree-kill — child has likely already exited.
         }

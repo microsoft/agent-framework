@@ -1,10 +1,9 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Tools.Shell;
 
 namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 
@@ -38,14 +37,14 @@ public sealed class DockerShellToolIntegrationTests
     }
 
     [Fact]
-    public async Task IsAvailableAsync_ReturnsTrue_WhenDaemonRunning()
+    public async Task IsAvailableAsync_ReturnsTrue_WhenDaemonRunningAsync()
     {
         await EnsureDockerOrSkipAsync();
         Assert.True(await DockerShellTool.IsAvailableAsync());
     }
 
     [Fact]
-    public async Task Persistent_RunsBasicCommand()
+    public async Task Persistent_RunsBasicCommandAsync()
     {
         await EnsureDockerOrSkipAsync();
 
@@ -59,7 +58,7 @@ public sealed class DockerShellToolIntegrationTests
     }
 
     [Fact]
-    public async Task Persistent_PreservesStateAcrossCalls()
+    public async Task Persistent_PreservesStateAcrossCallsAsync()
     {
         await EnsureDockerOrSkipAsync();
 
@@ -75,7 +74,7 @@ public sealed class DockerShellToolIntegrationTests
     }
 
     [Fact]
-    public async Task NetworkNone_BlocksOutboundConnections()
+    public async Task NetworkNone_BlocksOutboundConnectionsAsync()
     {
         await EnsureDockerOrSkipAsync();
 
@@ -92,7 +91,7 @@ public sealed class DockerShellToolIntegrationTests
     }
 
     [Fact]
-    public async Task ReadOnlyRoot_PreventsWritesOutsideTmp()
+    public async Task ReadOnlyRoot_PreventsWritesOutsideTmpAsync()
     {
         await EnsureDockerOrSkipAsync();
 
@@ -109,7 +108,7 @@ public sealed class DockerShellToolIntegrationTests
     }
 
     [Fact]
-    public async Task NonRootUser_RunsAsNobody()
+    public async Task NonRootUser_RunsAsNobodyAsync()
     {
         await EnsureDockerOrSkipAsync();
 
@@ -124,7 +123,7 @@ public sealed class DockerShellToolIntegrationTests
     }
 
     [Fact]
-    public async Task Stateless_RunsEachCommandInFreshContainer()
+    public async Task Stateless_RunsEachCommandInFreshContainerAsync()
     {
         await EnsureDockerOrSkipAsync();
 
@@ -141,7 +140,7 @@ public sealed class DockerShellToolIntegrationTests
     }
 
     [Fact]
-    public async Task HostWorkdir_MountsAndIsReadOnlyByDefault()
+    public async Task HostWorkdir_MountsAndIsReadOnlyByDefaultAsync()
     {
         await EnsureDockerOrSkipAsync();
 
@@ -174,7 +173,7 @@ public sealed class DockerShellToolIntegrationTests
     }
 
     [Fact]
-    public async Task EnvironmentVariables_ArePassedThrough()
+    public async Task EnvironmentVariables_ArePassedThroughAsync()
     {
         await EnsureDockerOrSkipAsync();
 

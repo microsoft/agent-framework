@@ -1,10 +1,9 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -63,7 +62,6 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
     private const int DefaultMaxOutputBytes = 64 * 1024;
 
     private readonly string _image;
-    private readonly string _containerName;
     private readonly ShellMode _mode;
     private readonly string? _hostWorkdir;
     private readonly string _containerWorkdir;
@@ -79,8 +77,6 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
     private readonly TimeSpan? _timeout;
     private readonly int _maxOutputBytes;
     private readonly Action<string>? _onCommand;
-    private readonly string _binary;
-
     private ShellSession? _session;
     private bool _containerStarted;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
@@ -132,7 +128,7 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
         }
 
         this._image = image ?? throw new ArgumentNullException(nameof(image));
-        this._containerName = containerName ?? GenerateContainerName();
+        this.ContainerName = containerName ?? GenerateContainerName();
         this._mode = mode;
         this._hostWorkdir = hostWorkdir;
         this._containerWorkdir = containerWorkdir ?? DefaultContainerWorkdir;
@@ -148,14 +144,14 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
         this._timeout = timeout ?? TimeSpan.FromSeconds(30);
         this._maxOutputBytes = maxOutputBytes;
         this._onCommand = onCommand;
-        this._binary = dockerBinary ?? "docker";
+        this.DockerBinary = dockerBinary ?? "docker";
     }
 
     /// <summary>Gets the container name (auto-generated when not specified at construction).</summary>
-    public string ContainerName => this._containerName;
+    public string ContainerName { get; }
 
     /// <summary>Gets the docker binary path.</summary>
-    public string DockerBinary => this._binary;
+    public string DockerBinary { get; }
 
     /// <summary>Eagerly start the container (and inner shell session in persistent mode).</summary>
     public async Task StartAsync(CancellationToken cancellationToken = default)
@@ -171,7 +167,7 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
             this._containerStarted = true;
             if (this._mode == ShellMode.Persistent)
             {
-                var execArgv = BuildExecArgv(this._binary, this._containerName, interactive: true);
+                var execArgv = BuildExecArgv(this.DockerBinary, this.ContainerName, interactive: true);
                 // ShellSession needs a ResolvedShell. Stitch one together: the
                 // 'binary' is `docker`, the 'kind' is bash (because the inner
                 // shell is bash), and ExtraArgv carries the docker-exec prefix
@@ -425,7 +421,7 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
     private async Task StartContainerAsync(CancellationToken cancellationToken)
     {
         var argv = BuildRunArgv(
-            this._binary, this._image, this._containerName, this._user, this._network,
+            this.DockerBinary, this._image, this.ContainerName, this._user, this._network,
             this._memory, this._pidsLimit, this._containerWorkdir, this._hostWorkdir,
             this._mountReadonly, this._readOnlyRoot, this._env, this._extraRunArgs);
 
@@ -439,7 +435,7 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
 
     private async Task StopContainerAsync()
     {
-        var argv = new[] { this._binary, "rm", "-f", this._containerName };
+        var argv = new[] { this.DockerBinary, "rm", "-f", this.ContainerName };
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -454,7 +450,7 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
     private async Task<ShellResult> RunStatelessAsync(string command, CancellationToken cancellationToken)
     {
         var perCallName = GenerateContainerName();
-        var argv = new List<string>(BuildRunArgvStateless(perCallName));
+        var argv = new List<string>(this.BuildRunArgvStateless(perCallName));
         argv.Add(this._image);
         argv.Add("bash");
         argv.Add("-c");
@@ -481,7 +477,7 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
         try { _ = proc.Start(); }
         catch (Win32Exception ex)
         {
-            throw new ShellExecutionException($"Failed to launch '{this._binary}': {ex.Message}", ex);
+            throw new ShellExecutionException($"Failed to launch '{this.DockerBinary}': {ex.Message}", ex);
         }
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
@@ -503,7 +499,7 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
             {
                 using var killCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 _ = await RunDockerCommandAsync(
-                    new[] { this._binary, "kill", "--signal", "KILL", perCallName }, killCts.Token).ConfigureAwait(false);
+                    new[] { this.DockerBinary, "kill", "--signal", "KILL", perCallName }, killCts.Token).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is OperationCanceledException || ex is Win32Exception || ex is InvalidOperationException)
             {
@@ -530,7 +526,7 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
     {
         var argv = new List<string>
         {
-            this._binary,
+            this.DockerBinary,
             "run", "--rm", "-i",
             "--name", perCallName,
             "--user", this._user,

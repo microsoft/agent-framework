@@ -1,10 +1,8 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Tools.Shell;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
@@ -53,7 +51,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task RunAsync_EchoCommand_RoundtripsStdoutAndExitCode()
+    public async Task RunAsync_EchoCommand_RoundtripsStdoutAndExitCodeAsync()
     {
         await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         // Use an OS-appropriate echo. On Windows the resolved shell is PowerShell.
@@ -64,7 +62,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task RunAsync_RejectedCommand_ThrowsShellCommandRejected()
+    public async Task RunAsync_RejectedCommand_ThrowsShellCommandRejectedAsync()
     {
         await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         await Assert.ThrowsAsync<ShellCommandRejectedException>(
@@ -72,7 +70,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task RunAsync_NonZeroExit_PropagatesExitCode()
+    public async Task RunAsync_NonZeroExit_PropagatesExitCodeAsync()
     {
         await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         // Exit-1 phrasing portable across bash and PowerShell.
@@ -84,7 +82,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task RunAsync_Timeout_FlagsTimedOutAndKillsProcess()
+    public async Task RunAsync_Timeout_FlagsTimedOutAndKillsProcessAsync()
     {
         await using var shell = new LocalShellTool(mode: ShellMode.Stateless, timeout: TimeSpan.FromMilliseconds(250));
         var sleepCmd = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -135,7 +133,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task OnCommand_HookFiredForAllowedCommandsOnly()
+    public async Task OnCommand_HookFiredForAllowedCommandsOnlyAsync()
     {
         var calls = new System.Collections.Generic.List<string>();
         await using var shell = new LocalShellTool(mode: ShellMode.Stateless, onCommand: cmd => calls.Add(cmd));
@@ -144,7 +142,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task Persistent_CarriesWorkingDirectory_AcrossCalls()
+    public async Task Persistent_CarriesWorkingDirectory_AcrossCallsAsync()
     {
         await using var shell = new LocalShellTool(
             mode: ShellMode.Persistent,
@@ -167,7 +165,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task Persistent_CarriesEnvironment_AcrossCalls()
+    public async Task Persistent_CarriesEnvironment_AcrossCallsAsync()
     {
         await using var shell = new LocalShellTool(
             mode: ShellMode.Persistent,
@@ -184,7 +182,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task Persistent_Timeout_ReturnsExitCode124()
+    public async Task Persistent_Timeout_ReturnsExitCode124Async()
     {
         await using var shell = new LocalShellTool(
             mode: ShellMode.Persistent,
@@ -200,7 +198,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task Stateless_OutputTruncation_UsesHeadTailFormat()
+    public async Task Stateless_OutputTruncation_UsesHeadTailFormatAsync()
     {
         // 2KB cap, emit ~10KB → must be truncated and contain the head+tail marker.
         await using var shell = new LocalShellTool(
@@ -247,7 +245,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task Persistent_ConfineWorkdir_ReanchorsAfterCdAway()
+    public async Task Persistent_ConfineWorkdir_ReanchorsAfterCdAwayAsync()
     {
         var rootDir = System.IO.Path.GetTempPath();
         var subDir = System.IO.Path.Combine(rootDir, "af-shell-confine-" + Guid.NewGuid().ToString("N")[..8]);
@@ -281,7 +279,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task Persistent_ConfineDisabled_AllowsCdToLeak()
+    public async Task Persistent_ConfineDisabled_AllowsCdToLeakAsync()
     {
         var rootDir = System.IO.Path.GetTempPath();
         var subDir = System.IO.Path.Combine(rootDir, "af-shell-noconfine-" + Guid.NewGuid().ToString("N")[..8]);
@@ -311,7 +309,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task Stateless_CleanEnvironment_StripsCustomVar()
+    public async Task Stateless_CleanEnvironment_StripsCustomVarAsync()
     {
         Environment.SetEnvironmentVariable("AF_SHELL_PARENT_VAR", "should-not-leak");
         try

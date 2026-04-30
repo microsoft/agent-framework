@@ -1,11 +1,10 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -49,13 +48,13 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 internal sealed class ShellSession : IAsyncDisposable
 {
     private const int ReadChunk = 64 * 1024;
-    private static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan s_shutdownGrace = TimeSpan.FromSeconds(2);
     // Brief quiescence to let late stderr drain after the sentinel is seen.
-    private static readonly TimeSpan StderrQuiescence = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan s_stderrQuiescence = TimeSpan.FromMilliseconds(50);
     // Time window to wait for the sentinel after we've sent SIGINT / Ctrl+C
     // to the shell. If the sentinel still doesn't land we fall back to a
     // hard close-and-respawn.
-    private static readonly TimeSpan InterruptGrace = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan s_interruptGrace = TimeSpan.FromMilliseconds(500);
 
     private readonly ResolvedShell _shell;
     private readonly string? _workingDirectory;
@@ -231,7 +230,7 @@ internal sealed class ShellSession : IAsyncDisposable
                 catch (IOException) { /* pipe may already be closed */ }
                 catch (ObjectDisposedException) { }
 
-                using var cts = new CancellationTokenSource(ShutdownGrace);
+                using var cts = new CancellationTokenSource(s_shutdownGrace);
                 try
                 {
                     await proc.WaitForExitAsync(cts.Token).ConfigureAwait(false);
@@ -336,18 +335,18 @@ internal sealed class ShellSession : IAsyncDisposable
             // works the session survives — `cd` and exported variables from
             // earlier calls are preserved across the timeout.
             await this.InterruptCurrentCommandAsync().ConfigureAwait(false);
-            using var graceCts = new CancellationTokenSource(InterruptGrace);
+            using var graceCts = new CancellationTokenSource(s_interruptGrace);
             try
             {
                 using var graceLink = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, graceCts.Token);
                 var (postIdx, _, postTimedOut, postOverflow) = await this.WaitForSentinelAsync(
-                    needle, stdoutOffset, hardCap, InterruptGrace, graceLink.Token).ConfigureAwait(false);
+                    needle, stdoutOffset, hardCap, s_interruptGrace, graceLink.Token).ConfigureAwait(false);
                 if (!postTimedOut && !postOverflow && postIdx >= 0)
                 {
                     sentinelIdx = postIdx;
                     // Treat a successfully-interrupted command as a timeout
                     // for the result envelope but keep the session alive.
-                    await Task.Delay(StderrQuiescence, cancellationToken).ConfigureAwait(false);
+                    await Task.Delay(s_stderrQuiescence, cancellationToken).ConfigureAwait(false);
                     stopwatch.Stop();
                     byte[] stdoutRawI;
                     byte[] stderrRawI;
@@ -397,7 +396,7 @@ internal sealed class ShellSession : IAsyncDisposable
 
         // Let stderr quiesce briefly — late writes from the completing command
         // otherwise leak into the next run().
-        await Task.Delay(StderrQuiescence, cancellationToken).ConfigureAwait(false);
+        await Task.Delay(s_stderrQuiescence, cancellationToken).ConfigureAwait(false);
 
         stopwatch.Stop();
         byte[] stdoutRaw;
@@ -648,8 +647,8 @@ internal sealed class ShellSession : IAsyncDisposable
     private static class NativeMethods
     {
         internal const int SIGINT = 2;
-        [System.Runtime.InteropServices.DllImport("libc", SetLastError = true)]
-        [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
+        [DllImport("libc", SetLastError = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         internal static extern int killpg(int pgrp, int sig);
     }
 
