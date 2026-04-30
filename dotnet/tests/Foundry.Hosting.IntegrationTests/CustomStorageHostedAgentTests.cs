@@ -36,13 +36,13 @@ public sealed class CustomStorageHostedAgentTests(CustomStorageHostedAgentFixtur
     {
         // Arrange
         var agent = this._fixture.Agent;
+        var session = await agent.CreateSessionAsync();
 
         // Act
-        var first = await agent.RunAsync("My favorite city is Lisbon. Acknowledge briefly.");
+        var first = await agent.RunAsync("My favorite city is Lisbon. Acknowledge briefly.", session);
         Assert.False(string.IsNullOrWhiteSpace(first.Text));
 
-        var session = await agent.CreateSessionAsync();
-        var second = await agent.RunAsync("What city did I just tell you?", session, new ChatClientAgentRunOptions());
+        var second = await agent.RunAsync("What city did I just tell you?", session);
 
         // Assert
         Assert.Contains("Lisbon", second.Text, StringComparison.OrdinalIgnoreCase);

@@ -39,17 +39,17 @@ public sealed class ToolCallingApprovalHostedAgentTests(ToolCallingApprovalHoste
     {
         // Arrange
         var agent = this._fixture.Agent;
-        var first = await agent.RunAsync("Run the SendEmail tool with subject='ok' to test@example.com.");
+        var session = await agent.CreateSessionAsync();
+        var first = await agent.RunAsync("Run the SendEmail tool with subject='ok' to test@example.com.", session);
         var approvalRequest = first.Messages
             .SelectMany(m => m.Contents.OfType<ToolApprovalRequestContent>())
             .First();
 
-        var session = await agent.CreateSessionAsync();
         var approvalResponse = approvalRequest.CreateResponse(approved: true);
         var followUp = new ChatMessage(ChatRole.User, [approvalResponse]);
 
         // Act
-        var second = await agent.RunAsync([followUp], session, new ChatClientAgentRunOptions());
+        var second = await agent.RunAsync([followUp], session);
 
         // Assert: model received the tool result and produced a final response.
         Assert.False(string.IsNullOrWhiteSpace(second.Text));
@@ -64,17 +64,17 @@ public sealed class ToolCallingApprovalHostedAgentTests(ToolCallingApprovalHoste
     {
         // Arrange
         var agent = this._fixture.Agent;
-        var first = await agent.RunAsync("Run the SendEmail tool with subject='no' to test@example.com.");
+        var session = await agent.CreateSessionAsync();
+        var first = await agent.RunAsync("Run the SendEmail tool with subject='no' to test@example.com.", session);
         var approvalRequest = first.Messages
             .SelectMany(m => m.Contents.OfType<ToolApprovalRequestContent>())
             .First();
 
-        var session = await agent.CreateSessionAsync();
         var approvalResponse = approvalRequest.CreateResponse(approved: false);
         var followUp = new ChatMessage(ChatRole.User, [approvalResponse]);
 
         // Act
-        var second = await agent.RunAsync([followUp], session, new ChatClientAgentRunOptions());
+        var second = await agent.RunAsync([followUp], session);
 
         // Assert: no FunctionResultContent for SendEmail in the response.
         Assert.False(string.IsNullOrWhiteSpace(second.Text));

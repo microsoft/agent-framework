@@ -50,10 +50,21 @@ if (-not (Test-Path $TestContainerProject)) {
     throw "Test container project not found at '$TestContainerProject'."
 }
 
-# Hash the test container source so the tag tracks content. If nothing changed, ACR keeps
-# the existing image and `docker push` is a no op.
-$sourceFiles = git -c core.quotepath=false ls-files $TestContainerProject
-$shaInput = $sourceFiles | git hash-object --stdin
+# Strip any scheme/trailing slash from the registry, then derive the ACR short name.
+$Registry = $Registry -replace '^https?://', '' -replace '/+$', ''
+$registryHost = $Registry.Split('.')[0]
+if ([string]::IsNullOrWhiteSpace($registryHost)) {
+    throw "Could not derive ACR short name from -Registry '$Registry'."
+}
+
+# Hash the test container source content (not just the path list) so any edit produces a
+# new tag. ACR keeps the existing image and `docker push` is a no op when the digest matches.
+$sourceFiles = @(git -c core.quotepath=false ls-files -- $TestContainerProject)
+if ($sourceFiles.Count -eq 0) {
+    throw "No tracked files found under '$TestContainerProject'."
+}
+$fileHashes = git hash-object -- $sourceFiles
+$shaInput = ($fileHashes -join "`n" | git hash-object --stdin).Trim()
 $tag = $shaInput.Substring(0, 12)
 $image = "$Registry/$Repository`:$tag"
 
@@ -75,7 +86,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Pushing $image ..." -ForegroundColor Cyan
-$registryHost = $Registry.Split('.')[0]
 az acr login -n $registryHost | Out-Host
 if ($LASTEXITCODE -ne 0) {
     throw "az acr login failed with exit code $LASTEXITCODE."

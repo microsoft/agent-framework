@@ -157,7 +157,7 @@ public abstract class HostedAgentFixture : IAsyncLifetime
         var activeVersion = await WaitForActiveAsync(this._adminClient, version.Value, this.ProvisioningTimeout).ConfigureAwait(false);
         this._agentVersion = activeVersion.Version;
 
-        var record = await this._projectClient.AgentAdministrationClient.GetAgentAsync(this._agentName).ConfigureAwait(false);
+        var record = await this._adminClient.GetAgentAsync(this._agentName).ConfigureAwait(false);
         this._agent = this._projectClient.AsAIAgent(record.Value);
     }
 
@@ -228,14 +228,22 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     {
         public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
         {
-            message.Request.Headers.Add(FoundryFeaturesHeader, features);
+            SetHeader(message);
             ProcessNext(message, pipeline, currentIndex);
         }
 
         public override async ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
         {
-            message.Request.Headers.Add(FoundryFeaturesHeader, features);
+            SetHeader(message);
             await ProcessNextAsync(message, pipeline, currentIndex).ConfigureAwait(false);
+        }
+
+        private void SetHeader(PipelineMessage message)
+        {
+            // Set rather than Add to avoid duplicate headers if the pipeline reprocesses
+            // the request (retries) or if multiple policies attempt to set the same key.
+            message.Request.Headers.Remove(FoundryFeaturesHeader);
+            message.Request.Headers.Add(FoundryFeaturesHeader, features);
         }
     }
 }

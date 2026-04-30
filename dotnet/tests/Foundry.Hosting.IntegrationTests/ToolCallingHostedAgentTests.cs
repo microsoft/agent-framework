@@ -52,13 +52,13 @@ public sealed class ToolCallingHostedAgentTests(ToolCallingHostedAgentFixture fi
     {
         // Arrange
         var agent = this._fixture.Agent;
+        var session = await agent.CreateSessionAsync();
 
         // Act
-        var first = await agent.RunAsync("Multiply 6 by 7 using the Multiply tool. Reply with the result.");
+        var first = await agent.RunAsync("Multiply 6 by 7 using the Multiply tool. Reply with the result.", session);
         Assert.Contains("42", first.Text);
 
-        var session = await agent.CreateSessionAsync();
-        var second = await agent.RunAsync("What was the result of the last multiplication?", session, new ChatClientAgentRunOptions());
+        var second = await agent.RunAsync("What was the result of the last multiplication?", session);
 
         // Assert
         Assert.Contains("42", second.Text);

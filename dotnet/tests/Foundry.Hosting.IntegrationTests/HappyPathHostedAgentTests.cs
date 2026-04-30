@@ -60,13 +60,13 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
     {
         // Arrange
         var agent = this._fixture.Agent;
+        var session = await agent.CreateSessionAsync();
 
         // Act
-        var first = await agent.RunAsync("My favorite number is 42. Acknowledge briefly.");
+        var first = await agent.RunAsync("My favorite number is 42. Acknowledge briefly.", session);
         Assert.False(string.IsNullOrWhiteSpace(first.Text));
 
-        var session = await agent.CreateSessionAsync();
-        var second = await agent.RunAsync("What number did I just tell you?", session, new ChatClientAgentRunOptions());
+        var second = await agent.RunAsync("What number did I just tell you?", session);
 
         // Assert
         Assert.Contains("42", second.Text);
@@ -125,13 +125,12 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
     {
         // Arrange
         var agent = this._fixture.Agent;
+        var session = await agent.CreateSessionAsync();
 
         // Turn 1 is stored so the chain head exists.
-        var first = await agent.RunAsync("Remember the number 73. Acknowledge briefly.");
-        var firstResponseId = first.ResponseId!;
+        var first = await agent.RunAsync("Remember the number 73. Acknowledge briefly.", session);
 
-        // Turn 2 is stored=false but reads from turn 1.
-        var session = await agent.CreateSessionAsync();
+        // Turn 2 is stored=false but reads from turn 1 via the same session.
         var optionsNoStore = new ChatClientAgentRunOptions(new ChatOptions
         {
             RawRepresentationFactory = _ => new CreateResponseOptions { StoredOutputEnabled = false }
