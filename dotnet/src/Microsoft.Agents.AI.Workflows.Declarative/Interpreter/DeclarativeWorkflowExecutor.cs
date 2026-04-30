@@ -70,22 +70,25 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     {
         Type tInput = typeof(TInput);
 
-        if (tInput != typeof(string))
+        // Use IsAssignableFrom rather than exact equality so that a broader TInput (e.g.
+        // object or an interface that already accepts ChatMessage) does not get its
+        // inherited inputTransform shadowed by a more-specific handler we register here.
+        if (!tInput.IsAssignableFrom(typeof(string)))
         {
             routeBuilder.AddHandler<string>(this.HandleStringAsync);
         }
 
-        if (tInput != typeof(ChatMessage))
+        if (!tInput.IsAssignableFrom(typeof(ChatMessage)))
         {
             routeBuilder.AddHandler<ChatMessage>(this.HandleChatMessageAsync);
         }
 
-        if (tInput != typeof(IEnumerable<ChatMessage>))
+        if (!tInput.IsAssignableFrom(typeof(IEnumerable<ChatMessage>)))
         {
             routeBuilder.AddHandler<IEnumerable<ChatMessage>>(this.HandleChatMessagesAsync);
         }
 
-        if (tInput != typeof(ChatMessage[]))
+        if (!tInput.IsAssignableFrom(typeof(ChatMessage[])))
         {
             routeBuilder.AddHandler<ChatMessage[]>(this.HandleChatMessageArrayAsync);
         }
@@ -102,21 +105,35 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     {
         return this.AdvanceAsync(message, context, cancellationToken);
     }
-
-    private ValueTask HandleChatMessagesAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
+    private async ValueTask HandleChatMessagesAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        ChatMessage? trailing = null;
-        foreach (ChatMessage message in messages)
+        // Materialize so we can detect the last message and only finalize the turn once.
+        // The host (WorkflowSession) sends the entire turn (history + new user message)
+        // as one batch; previously we kept only the trailing message which silently
+        // dropped replayed history and multi-message turns.
+        var list = messages as IList<ChatMessage> ?? new List<ChatMessage>(messages);
+        if (list.Count == 0)
         {
-            trailing = message;
+            return;
         }
 
-        return trailing is null ? default : this.AdvanceAsync(trailing, context, cancellationToken);
+        for (int i = 0; i < list.Count; i++)
+        {
+            await this.AdvanceAsync(list[i], context, cancellationToken, finalizeTurn: i == list.Count - 1).ConfigureAwait(false);
+        }
     }
 
-    private ValueTask HandleChatMessageArrayAsync(ChatMessage[] messages, IWorkflowContext context, CancellationToken cancellationToken)
+    private async ValueTask HandleChatMessageArrayAsync(ChatMessage[] messages, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        return messages.Length == 0 ? default : this.AdvanceAsync(messages[messages.Length - 1], context, cancellationToken);
+        if (messages.Length == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < messages.Length; i++)
+        {
+            await this.AdvanceAsync(messages[i], context, cancellationToken, finalizeTurn: i == messages.Length - 1).ConfigureAwait(false);
+        }
     }
 
     // The host sends a TurnToken after the message batch; the message has already
@@ -126,7 +143,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         return default;
     }
 
-    private async ValueTask AdvanceAsync(ChatMessage input, IWorkflowContext context, CancellationToken cancellationToken)
+    private async ValueTask AdvanceAsync(ChatMessage input, IWorkflowContext context, CancellationToken cancellationToken, bool finalizeTurn = true)
     {
         // No state to restore if we're starting from the beginning.
         state.SetInitialized();
@@ -161,6 +178,9 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         // (e.g., HostedFileContent) so subsequent actions don't re-upload large blobs.
         await declarativeContext.SetLastMessageAsync(input.MergeForLastMessage(inputMessage)).ConfigureAwait(false);
 
-        await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
+        if (finalizeTurn)
+        {
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
+        }
     }
 }

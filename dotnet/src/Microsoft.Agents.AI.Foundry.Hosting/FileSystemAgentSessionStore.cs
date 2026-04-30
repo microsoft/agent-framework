@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text.Json;
@@ -88,15 +89,25 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         Directory.CreateDirectory(this.RootDirectory);
 
         string path = this.GetSessionPath(agent, conversationId);
-        string tempPath = path + ".tmp";
+        // Unique temp filename so concurrent saves on the same conversation don't
+        // collide on the same temp file (which would either throw or lose updates).
+        string tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
 
-        using (FileStream stream = new(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
-        using (Utf8JsonWriter writer = new(stream))
+        try
         {
-            serialized.WriteTo(writer);
-        }
+            using (FileStream stream = new(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (Utf8JsonWriter writer = new(stream))
+            {
+                serialized.WriteTo(writer);
+            }
 
-        File.Move(tempPath, path, overwrite: true);
+            File.Move(tempPath, path, overwrite: true);
+        }
+        catch
+        {
+            try { File.Delete(tempPath); } catch { /* best-effort cleanup */ }
+            throw;
+        }
     }
 
     /// <inheritdoc/>
@@ -125,24 +136,57 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 
     private string GetSessionPath(AIAgent agent, string conversationId)
     {
-        // Mirror python's _responses.py pattern: key by conversation/context id only.
-        // The agent home directory (/.checkpoints when hosted, cwd/.checkpoints locally)
-        // is already implicitly scoped to the owning agent process, so encoding the
-        // runtime-generated agent.Id into the file name would just break cross-process
-        // resumes (the Id changes each startup for in-memory-defined agents).
-        _ = agent;
-        return Path.Combine(this.RootDirectory, $"{Sanitize(conversationId)}.json");
+        // Mirror python's _responses.py pattern: when the agent home directory is already
+        // process-scoped (the hosted /.checkpoints case), keying by conversationId alone
+        // is sufficient. When multiple keyed agents share a single in-process default
+        // store (the local-dev case), bucket each agent into its own subdirectory using
+        // its stable Name so two agents that happen to receive the same conversationId
+        // don't overwrite each other's persisted state. agent.Id is intentionally NOT
+        // used because it is regenerated each startup for in-memory-defined agents.
+        string fileName = $"{Sanitize(conversationId)}.json";
+        if (string.IsNullOrEmpty(agent.Name))
+        {
+            return Path.Combine(this.RootDirectory, fileName);
+        }
+
+        string agentDir = Path.Combine(this.RootDirectory, Sanitize(agent.Name!));
+        Directory.CreateDirectory(agentDir);
+        return Path.Combine(agentDir, fileName);
     }
 
     private static string Sanitize(string value)
     {
-        Span<char> buffer = stackalloc char[value.Length];
+        // stackalloc is bounded so an externally-controlled length cannot crash the
+        // hosting process with StackOverflowException.
+        const int StackLimit = 256;
         char[] invalid = Path.GetInvalidFileNameChars();
+
+        if (value.Length <= StackLimit)
+        {
+            Span<char> buffer = stackalloc char[value.Length];
+            SanitizeCore(value, invalid, buffer);
+            return new string(buffer);
+        }
+
+        char[] rented = ArrayPool<char>.Shared.Rent(value.Length);
+        try
+        {
+            Span<char> buffer = rented.AsSpan(0, value.Length);
+            SanitizeCore(value, invalid, buffer);
+            return new string(buffer);
+        }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(rented);
+        }
+    }
+
+    private static void SanitizeCore(string value, char[] invalid, Span<char> buffer)
+    {
         for (int i = 0; i < value.Length; i++)
         {
             char c = value[i];
             buffer[i] = Array.IndexOf(invalid, c) >= 0 ? '_' : c;
         }
-        return new string(buffer);
     }
 }

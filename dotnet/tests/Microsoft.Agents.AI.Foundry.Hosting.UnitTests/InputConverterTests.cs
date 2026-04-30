@@ -861,4 +861,186 @@ public class InputConverterTests
         Assert.NotNull(fc.Arguments);
         Assert.Equal("not valid json", fc.Arguments!["_raw"]?.ToString());
     }
+
+    // ── input_file data-URI decoding (TryDecodeTextDataUri) ──
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithTextDataUri_DecodesToTextContent()
+    {
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("hello world"));
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_text_uri",
+                status = "completed",
+                role = "user",
+                content = new[] { new { type = "input_file", file_data = $"data:text/plain;base64,{encoded}" } }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("hello world", text.Text);
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithTextDataUriAndFilename_PrefixesFilenameInDecodedText()
+    {
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("body"));
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_text_uri_name",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new
+                    {
+                        type = "input_file",
+                        filename = "notes.txt",
+                        file_data = $"data:text/plain;base64,{encoded}"
+                    }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.StartsWith("[File: notes.txt]", text.Text, StringComparison.Ordinal);
+        Assert.Contains("body", text.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithNonTextDataUri_RemainsDataContent()
+    {
+        // image/png data URIs must NOT be decoded as text — only text/* is decoded inline.
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_image_uri",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new { type = "input_file", file_data = "data:image/png;base64,iVBORw0KGgo=" }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        Assert.IsType<DataContent>(Assert.Single(messages[0].Contents));
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithMalformedDataUri_FallsBackToDataContent()
+    {
+        // Missing ;base64, marker — TryDecodeTextDataUri should return false and the
+        // original payload survives as DataContent.
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_bad_uri",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new { type = "input_file", file_data = "data:text/plain,not-base64-payload" }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        Assert.IsType<DataContent>(Assert.Single(messages[0].Contents));
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithFileUrlAndFilename_PropagatesFilename()
+    {
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_url_name",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new
+                    {
+                        type = "input_file",
+                        file_url = "https://example.com/doc.pdf",
+                        filename = "doc.pdf"
+                    }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        var uri = Assert.IsType<UriContent>(Assert.Single(messages[0].Contents));
+        Assert.NotNull(uri.AdditionalProperties);
+        Assert.Equal("doc.pdf", uri.AdditionalProperties!["filename"]);
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithFileIdAndFilename_PropagatesFilename()
+    {
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_id_name",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new
+                    {
+                        type = "input_file",
+                        file_id = "file_abc123",
+                        filename = "doc.pdf"
+                    }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        var hosted = Assert.IsType<HostedFileContent>(Assert.Single(messages[0].Contents));
+        Assert.NotNull(hosted.AdditionalProperties);
+        Assert.Equal("doc.pdf", hosted.AdditionalProperties!["filename"]);
+    }
 }
