@@ -219,6 +219,22 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
         Assert.DoesNotContain(bucketName, c => c == '.');
     }
 
+    [Fact]
+    public async Task GetSessionAsync_NoExistingFile_DoesNotCreateAgentDirectoryAsync()
+    {
+        // Read operations must not have side effects on the file system.
+        // The previous implementation called Directory.CreateDirectory(agentDir)
+        // inside GetSessionPath, so a miss-on-read still left an empty bucket
+        // directory behind on disk.
+        var store = new FileSystemAgentSessionStore(this._root);
+        var agent = new TestAgent(name: "agent-with-bucket");
+
+        var session = await store.GetSessionAsync(agent, "missing-id");
+
+        Assert.NotNull(session);
+        Assert.False(Directory.Exists(this._root), "Read miss must not create the root directory.");
+    }
+
     private static TestSession NewSession() => new();
 
     private sealed class TestSession : AgentSession

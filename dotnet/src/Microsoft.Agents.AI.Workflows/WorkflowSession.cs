@@ -6,7 +6,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -429,27 +428,18 @@ internal sealed class WorkflowSession : AgentSession
                     break;
 
                 case ExecutorFailedEvent executorFailed:
+                    // Mirror WorkflowErrorEvent: never expose internal workflow graph
+                    // identifiers (executor ID) to the client. Surface the exception
+                    // message only when the host opts in via _includeExceptionDetails.
                     Exception? executorException = executorFailed.Data;
                     while (executorException is TargetInvocationException etie && etie.InnerException != null)
                     {
                         executorException = etie.InnerException;
                     }
 
-                    string executorMessage;
-                    if (this._includeExceptionDetails && executorException != null)
-                    {
-                        StringBuilder messageBuilder = new($"Executor '{executorFailed.ExecutorId}' failed: {executorException.GetType().Name}: {executorException.Message}");
-                        for (Exception? inner = executorException.InnerException; inner != null; inner = inner.InnerException)
-                        {
-                            messageBuilder.Append(" -> ").Append(inner.GetType().Name).Append(": ").Append(inner.Message);
-                        }
-
-                        executorMessage = messageBuilder.ToString();
-                    }
-                    else
-                    {
-                        executorMessage = $"Executor '{executorFailed.ExecutorId}' failed.";
-                    }
+                    string executorMessage = this._includeExceptionDetails && executorException != null
+                        ? executorException.Message
+                        : "An error occurred while executing the workflow.";
 
                     yield return this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
                     break;

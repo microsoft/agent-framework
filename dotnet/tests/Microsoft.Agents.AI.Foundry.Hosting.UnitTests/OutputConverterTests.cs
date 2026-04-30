@@ -1118,6 +1118,12 @@ public class OutputConverterTests
 
         Assert.DoesNotContain(events.OfType<ResponseOutputItemAddedEvent>(),
             e => e.Item is OutputItemMcpApprovalRequest);
+
+        // Defense in depth: only the terminal ResponseCompletedEvent should be emitted.
+        // No spurious output-item-added/output-item-done events should leak for the
+        // unsupported tool-call shape.
+        Assert.Single(events);
+        Assert.IsType<ResponseCompletedEvent>(events[0]);
     }
 
     [Fact]

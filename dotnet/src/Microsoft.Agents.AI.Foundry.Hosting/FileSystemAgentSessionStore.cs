@@ -89,6 +89,14 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         Directory.CreateDirectory(this.RootDirectory);
 
         string path = this.GetSessionPath(agent, conversationId);
+        // Ensure the per-agent bucket directory exists when a name is provided.
+        // GetSessionPath itself is read-side-effect-free; directory creation is
+        // a write concern and lives only on the save path.
+        string? parentDir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(parentDir))
+        {
+            Directory.CreateDirectory(parentDir);
+        }
         // Unique temp filename so concurrent saves on the same conversation don't
         // collide on the same temp file (which would either throw or lose updates).
         string tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
@@ -150,7 +158,6 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         }
 
         string agentDir = Path.Combine(this.RootDirectory, Sanitize(agent.Name!));
-        Directory.CreateDirectory(agentDir);
         return Path.Combine(agentDir, fileName);
     }
 
