@@ -38,11 +38,11 @@ File scripts are executed as **local Python subprocesses** via the
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  SkillsProvider(                                             │
-│      skill_paths="./skills",              # file skills      │
-│      skills=[volume_converter_skill],    # code skills      │
-│      script_runner=runner,                                    │
-│  )                                                           │
+│  SkillsProviderBuilder()                                     │
+│      .add_file_skills("./skills",          # file skills     │
+│          script_runner=runner)                                │
+│      .add_skill(volume_converter_skill)   # code skills     │
+│      .build()                                                │
 └─────────────┬───────────────────────────────────────────────┘
               │
               ▼

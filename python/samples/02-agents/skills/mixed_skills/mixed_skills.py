@@ -15,8 +15,8 @@ from typing import Any
 
 from agent_framework import (
     Agent,
-    Skill,
-    SkillsProvider,
+    InlineSkill,
+    SkillsProviderBuilder,
 )
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
@@ -63,10 +63,10 @@ load_dotenv()
 # 1. Define a code skill with @skill.script and @skill.resource decorators
 # ---------------------------------------------------------------------------
 
-volume_converter_skill = Skill(
+volume_converter_skill = InlineSkill(
     name="volume-converter",
     description="Convert between gallons and liters using a conversion factor",
-    content=dedent("""\
+    instructions=dedent("""\
         Use this skill when the user asks to convert between gallons and liters.
 
         1. Review the conversion-table resource to find the correct factor.
@@ -126,10 +126,11 @@ async def main() -> None:
     # The script_runner handles file-based scripts; code-defined scripts
     # (@skill.script) run in-process automatically.
     skills_dir = Path(__file__).parent / "skills"
-    skills_provider = SkillsProvider(
-        skill_paths=str(skills_dir),
-        skills=[volume_converter_skill],
-        script_runner=subprocess_script_runner,
+    skills_provider = (
+        SkillsProviderBuilder()
+        .add_file_skills(str(skills_dir), script_runner=subprocess_script_runner)
+        .add_skill(volume_converter_skill)
+        .build()
     )
 
     # Run the agent

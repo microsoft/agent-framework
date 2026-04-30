@@ -17,25 +17,21 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from agent_framework import Skill, SkillScript
+from agent_framework import FileSkill, FileSkillScript
 
 
-def subprocess_script_runner(skill: Skill, script: SkillScript, args: dict[str, Any] | None = None) -> str:
+def subprocess_script_runner(skill: FileSkill, script: FileSkillScript, args: dict[str, Any] | None = None) -> str:
     """Run a skill script as a local Python subprocess.
     Resolves the script's absolute path from the skill directory, converts
     the ``args`` dict to CLI flags, and returns captured output.
     Args:
-        skill: The skill that owns the script.
-        script: The script to run.
+        skill: The file-based skill that owns the script.
+        script: The file-based script to run.
         args: Optional arguments forwarded as CLI flags.
     Returns:
         The combined stdout/stderr output, or an error message.
     """
-    if not skill.path:
-        return f"Error: Skill '{skill.name}' has no directory path."
-    if not script.path:
-        return f"Error: Script '{script.name}' has no file path. Only file-based scripts can be executed locally."
-    script_path = Path(skill.path) / script.path
+    script_path = Path(script.full_path)
     if not script_path.is_file():
         return f"Error: Script file not found: {script_path}"
     cmd = [sys.executable, str(script_path)]

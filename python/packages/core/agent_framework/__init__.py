@@ -111,11 +111,18 @@ from ._sessions import (
 )
 from ._settings import SecretString, load_settings
 from ._skills import (
+    FileSkill,
+    FileSkillScript,
+    InlineSkill,
+    InlineSkillResource,
+    InlineSkillScript,
     Skill,
     SkillResource,
     SkillScript,
     SkillScriptRunner,
     SkillsProvider,
+    SkillsProviderBuilder,
+    SkillsSource,
 )
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -333,6 +340,8 @@ __all__ = [
     "FanOutEdgeGroup",
     "FileCheckpointStorage",
     "FileHistoryProvider",
+    "FileSkill",
+    "FileSkillScript",
     "FinalT",
     "FinishReason",
     "FinishReasonLiteral",
@@ -351,6 +360,9 @@ __all__ = [
     "InMemoryCheckpointStorage",
     "InMemoryHistoryProvider",
     "InProcRunnerContext",
+    "InlineSkill",
+    "InlineSkillResource",
+    "InlineSkillScript",
     "LocalEvaluator",
     "MCPStdioTool",
     "MCPStreamableHTTPTool",
@@ -379,6 +391,8 @@ __all__ = [
     "SkillScript",
     "SkillScriptRunner",
     "SkillsProvider",
+    "SkillsProviderBuilder",
+    "SkillsSource",
     "SlidingWindowStrategy",
     "StepWrapper",
     "SubWorkflowRequestMessage",
