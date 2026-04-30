@@ -4,8 +4,10 @@ using System;
 using System.Linq;
 using Azure.AI.AgentServer.Responses;
 using Microsoft.Agents.AI.Foundry.Hosting;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 
@@ -92,5 +94,56 @@ public class ServiceCollectionExtensionsTests
         var result = FoundryHostingExtensions.ApplyOpenTelemetry(instrumented);
 
         Assert.Same(instrumented, result);
+    }
+
+    [Fact]
+    public void TryApplyUserAgent_AgentWithoutChatClient_NoOp()
+    {
+        // Arrange: agent.GetService<IChatClient>() returns null.
+        var mockAgent = new Mock<AIAgent>();
+
+        // Act
+        var result = FoundryHostingExtensions.TryApplyUserAgent(mockAgent.Object);
+
+        // Assert
+        Assert.Same(mockAgent.Object, result);
+    }
+
+    [Fact]
+    public void TryApplyUserAgent_AgentWithNonMeaiChatClient_NoOp()
+    {
+        // Arrange: chat client that does not return MEAI's OpenAIResponsesChatClient via GetService.
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(c => c.GetService(It.IsAny<Type>(), It.IsAny<object?>())).Returns(null!);
+
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.GetService(typeof(IChatClient), It.IsAny<object?>())).Returns(mockChatClient.Object);
+
+        // Act
+        var result = FoundryHostingExtensions.TryApplyUserAgent(mockAgent.Object);
+
+        // Assert
+        Assert.Same(mockAgent.Object, result);
+    }
+
+    [Fact]
+    public void TryApplyUserAgent_NullAgent_ReturnsNullWithoutThrowing()
+    {
+        // Arrange + Act
+        var result = FoundryHostingExtensions.TryApplyUserAgent(null!);
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void MeaiOpenAIResponsesChatClient_TypeFullName_ReflectionGuard()
+    {
+        // Guards the polyfill's reflection target type-name.
+        var meaiType = typeof(MicrosoftExtensionsAIResponsesExtensions).Assembly
+            .GetType("Microsoft.Extensions.AI.OpenAIResponsesChatClient");
+        Assert.NotNull(meaiType);
+        Assert.True(typeof(IChatClient).IsAssignableFrom(meaiType!),
+            $"Expected MEAI {meaiType!.FullName} to implement IChatClient.");
     }
 }

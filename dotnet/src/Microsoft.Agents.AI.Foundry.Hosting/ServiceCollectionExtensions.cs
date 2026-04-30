@@ -1,21 +1,17 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel.Primitives;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
-using Azure.AI.Projects;
 using Azure.Core;
 using Azure.Identity;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Shared.DiagnosticIds;
+using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -39,7 +35,7 @@ public static class FoundryHostingExtensions
     /// <para>
     /// Example:
     /// <code>
-    /// builder.AddAIAgent("my-agent", ...);
+    /// builder.Services.AddKeyedSingleton&lt;AIAgent&gt;("my-agent", myAgent);
     /// builder.Services.AddFoundryResponses();
     ///
     /// var app = builder.Build();
@@ -52,7 +48,6 @@ public static class FoundryHostingExtensions
     public static IServiceCollection AddFoundryResponses(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        SetHostedUserAgent();
         services.AddResponsesServer();
         services.TryAddSingleton<AgentSessionStore, InMemoryAgentSessionStore>();
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
@@ -87,7 +82,6 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(agent);
-        SetHostedUserAgent();
 
         services.AddResponsesServer();
         agentSessionStore ??= new InMemoryAgentSessionStore();
@@ -186,33 +180,7 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         endpoints.MapResponsesServer(prefix);
-
-        if (endpoints is IApplicationBuilder app)
-        {
-            // Ensure the middleware is added to the pipeline
-            app.UseMiddleware<AgentFrameworkUserAgentMiddleware>();
-        }
-
         return endpoints;
-    }
-
-    /// <summary>
-    /// Adds a pipeline policy to <paramref name="options"/> that appends the hosted-agent
-    /// identifier (<c>foundry-hosting/agent-framework-dotnet/{version}</c>) to the
-    /// <c>User-Agent</c> header on every outgoing HTTP request.
-    /// </summary>
-    /// <remarks>
-    /// Call this method on the <see cref="AIProjectClientOptions"/> you pass to
-    /// <see cref="AIProjectClient"/> so that outgoing API calls to Azure AI Foundry
-    /// include the hosted-agent telemetry header.
-    /// </remarks>
-    /// <param name="options">The client options to configure.</param>
-    /// <returns>The same <paramref name="options"/> instance for chaining.</returns>
-    public static AIProjectClientOptions AddHostedAgentTelemetry(this AIProjectClientOptions options)
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        options.AddPolicy(new HostedUserAgentPolicy(GetHostedUserAgentValue()), PipelinePosition.BeforeTransport);
-        return options;
     }
 
     /// <summary>
@@ -241,113 +209,89 @@ public static class FoundryHostingExtensions
     }
 
     /// <summary>
-    /// Sets the global <see cref="HostedAgentContext.UserAgentSupplement"/> so that
-    /// <c>MeaiUserAgentPolicy</c> in the Foundry package appends the hosted-agent
-    /// identifier on code paths that use per-request <see cref="RequestOptions"/>.
-    /// Called once at service registration time.
+    /// Attempts to wrap the agent's underlying <see cref="ResponsesClient"/>
+    /// with a <see cref="DelegatingResponsesClient"/> so every outgoing Responses-API request
+    /// carries the hosted-agent <c>User-Agent</c> segment.
     /// </summary>
-    private static void SetHostedUserAgent()
+    /// <remarks>
+    /// <para>
+    /// Best-effort and idempotent. The method is a no-op when:
+    /// <list type="bullet">
+    /// <item><description><paramref name="agent"/> exposes no <see cref="IChatClient"/>;</description></item>
+    /// <item><description>the chat client is not backed by MEAI's internal <c>OpenAIResponsesChatClient</c> (e.g., a non-OpenAI provider or a custom impl);</description></item>
+    /// <item><description>the inner <see cref="ResponsesClient"/> is already a <see cref="DelegatingResponsesClient"/>.</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// Works for any <see cref="ResponsesClient"/>-derived inner client — both the Foundry-specific
+    /// <see cref="Azure.AI.Extensions.OpenAI.ProjectResponsesClient"/> and the native OpenAI
+    /// <see cref="ResponsesClient"/> obtained from <see cref="OpenAI.OpenAIClient"/>. The wrapper preserves
+    /// the inner client's pipeline (Transport, RetryPolicy, NetworkTimeout, OrganizationId / ProjectId /
+    /// UserAgentApplicationId, custom policies) because every override delegates to the inner instance.
+    /// </para>
+    /// <para>
+    /// Returns the same <paramref name="agent"/> instance unchanged. Mutation happens via
+    /// reflection on MEAI's private <c>_responseClient</c> field; the agent itself is not wrapped.
+    /// </para>
+    /// </remarks>
+    internal static AIAgent TryApplyUserAgent(AIAgent agent)
     {
-        HostedAgentContext.UserAgentSupplement ??= GetHostedUserAgentValue();
+        if (agent is null)
+        {
+            return agent!;
+        }
+
+        var chatClient = agent.GetService<IChatClient>();
+        if (chatClient is null)
+        {
+            return agent;
+        }
+
+        var meaiType = s_meaiResponsesChatClientType;
+        if (meaiType is null)
+        {
+            return agent;
+        }
+
+        var meaiInstance = chatClient.GetService(meaiType);
+        if (meaiInstance is null)
+        {
+            return agent;
+        }
+
+        var field = s_meaiResponseClientField;
+        if (field is null)
+        {
+            return agent;
+        }
+
+        var current = field.GetValue(meaiInstance) as ResponsesClient;
+        if (current is null or DelegatingResponsesClient)
+        {
+            return agent;
+        }
+
+        field.SetValue(meaiInstance, new DelegatingResponsesClient(current));
+        return agent;
     }
 
     /// <summary>
-    /// Computes the <c>"foundry-hosting/agent-framework-dotnet/{version}"</c> string
-    /// from the hosting assembly's informational version.
+    /// MEAI's internal <c>OpenAIResponsesChatClient</c> type, resolved once via reflection.
+    /// <see langword="null"/> if the type cannot be found (e.g., MEAI version drift).
     /// </summary>
-    private static string GetHostedUserAgentValue()
-    {
-        const string Name = "foundry-hosting/agent-framework-dotnet";
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "MEAI's OpenAIResponsesChatClient is referenced through MicrosoftExtensionsAIResponsesExtensions and survives trimming.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2073:RequiresUnreferencedCode",
+        Justification = "MEAI's OpenAIResponsesChatClient is referenced through MicrosoftExtensionsAIResponsesExtensions and survives trimming.")]
+    private static readonly Type? s_meaiResponsesChatClientType =
+        typeof(MicrosoftExtensionsAIResponsesExtensions).Assembly.GetType("Microsoft.Extensions.AI.OpenAIResponsesChatClient");
 
-        if (typeof(FoundryHostingExtensions).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion is string version)
-        {
-            int pos = version.IndexOf('+');
-            if (pos >= 0)
-            {
-                version = version.Substring(0, pos);
-            }
-
-            if (version.Length > 0)
-            {
-                return $"{Name}/{version}";
-            }
-        }
-
-        return Name;
-    }
-
-    /// <summary>Pipeline policy that appends the hosted-agent User-Agent segment to outgoing requests.</summary>
-    private sealed class HostedUserAgentPolicy(string userAgentValue) : PipelinePolicy
-    {
-        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
-        {
-            this.AppendUserAgent(message);
-            ProcessNext(message, pipeline, currentIndex);
-        }
-
-        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
-        {
-            this.AppendUserAgent(message);
-            return ProcessNextAsync(message, pipeline, currentIndex);
-        }
-
-        private void AppendUserAgent(PipelineMessage message)
-        {
-            if (message.Request.Headers.TryGetValue("User-Agent", out var existing) && !string.IsNullOrEmpty(existing))
-            {
-                // Guard against double-appending on retries.
-                if (!existing.Contains(userAgentValue, StringComparison.Ordinal))
-                {
-                    message.Request.Headers.Set("User-Agent", $"{existing} {userAgentValue}");
-                }
-            }
-            else
-            {
-                message.Request.Headers.Set("User-Agent", userAgentValue);
-            }
-        }
-    }
-
-    private sealed class AgentFrameworkUserAgentMiddleware(RequestDelegate next)
-    {
-        private static readonly string s_userAgentValue = CreateUserAgentValue();
-
-        public async Task InvokeAsync(HttpContext context)
-        {
-            var headers = context.Request.Headers;
-            var userAgent = headers.UserAgent.ToString();
-
-            if (string.IsNullOrEmpty(userAgent))
-            {
-                headers.UserAgent = s_userAgentValue;
-            }
-            else if (!userAgent.Contains(s_userAgentValue, StringComparison.OrdinalIgnoreCase))
-            {
-                headers.UserAgent = $"{userAgent} {s_userAgentValue}";
-            }
-
-            await next(context).ConfigureAwait(false);
-        }
-
-        private static string CreateUserAgentValue()
-        {
-            const string Name = "agent-framework-dotnet";
-
-            if (typeof(AgentFrameworkUserAgentMiddleware).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion is string version)
-            {
-                int pos = version.IndexOf('+');
-                if (pos >= 0)
-                {
-                    version = version.Substring(0, pos);
-                }
-
-                if (version.Length > 0)
-                {
-                    return $"{Name}/{version}";
-                }
-            }
-
-            return Name;
-        }
-    }
+    /// <summary>
+    /// MEAI's internal <c>_responseClient</c> field on <c>OpenAIResponsesChatClient</c>,
+    /// resolved once via reflection. <see langword="null"/> if the field cannot be found.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2080:RequiresDynamicallyAccessedMembers",
+        Justification = "OpenAIResponsesChatClient and its private fields are preserved by the polyfill design; MEAI does the same reflection internally.")]
+    private static readonly FieldInfo? s_meaiResponseClientField =
+        s_meaiResponsesChatClientType?.GetField("_responseClient", BindingFlags.NonPublic | BindingFlags.Instance);
 }
