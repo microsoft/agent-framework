@@ -49,6 +49,8 @@ Send a POST request to the server with a JSON body containing an `"input"` field
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Find the quarterly report under `{cwd}/resources` and tell me the difference of revenue between q1 2026 and q1 2025?"}'
 ```
 
+> When ruuning locally, it runs within the project directory, which contains the entire sample, so the `{cwd}/resources` path in the query above will allow the agent to locate the `resources` folder included with this sample and read the `contoso_q1_2026_report.txt` file from that folder.
+
 The server will respond with a JSON object containing the response text and a response ID. You can use this response ID to continue the conversation in subsequent requests.
 
 ## Deploying the Agent to Foundry
