@@ -1,31 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import os
 import subprocess
-from random import randint
-from typing import Annotated
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry import select_toolbox_tools
 from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
-from pydantic import Field
 
 # Load environment variables from .env file
 load_dotenv()
 
 
-@tool(approval_mode="never_require")
-def get_weather(
-    location: Annotated[str, Field(description="The location to get the weather for.")],
-) -> str:
-    """Get the weather for a given location."""
-    conditions = ["sunny", "cloudy", "rainy", "stormy"]
-    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
-
-
-@tool(approval_mode="never_require")
+@tool(
+    description="Execute a shell command for filesystem operations.",
+    approval_mode="never_require",
+)
 def run_bash(command: str) -> str:
     """Execute a shell command locally and return stdout, stderr, and exit code."""
     try:
@@ -49,17 +42,33 @@ def run_bash(command: str) -> str:
         return f"Error executing command: {e}"
 
 
-def main():
+async def main():
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=DefaultAzureCredential(),
     )
 
+    # Load the named toolbox from the Foundry project. Omitting `version`
+    # resolves the toolbox's current default version at runtime.
+    toolbox = await client.get_toolbox(os.environ["TOOLBOX_NAME"])
+    # The toolbox deployed has two tools: (see agent.manifest.yaml)
+    # - `code_interpreter`
+    # - `web_search`
+    # We only need the `code_interpreter` tool for this sample
+    selected_tools = select_toolbox_tools(
+        toolbox,
+        include_names=["code_interpreter"],
+    )
+
     agent = Agent(
         client=client,
-        instructions="You are a friendly assistant. Keep your answers brief.",
-        tools=[get_weather, run_bash],
+        instructions=(
+            "You are a friendly assistant. Keep your answers brief. "
+            "Make sure all mathematical calculations are performed using the code interpreter "
+            "instead of mental arithmetic."
+        ),
+        tools=[run_bash] + selected_tools,
         # History will be managed by the hosting infrastructure, thus there
         # is no need to store history by the service. Learn more at:
         # https://developers.openai.com/api/reference/resources/responses/methods/create
@@ -67,8 +76,8 @@ def main():
     )
 
     server = ResponsesHostServer(agent)
-    server.run()
+    await server.run_async()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

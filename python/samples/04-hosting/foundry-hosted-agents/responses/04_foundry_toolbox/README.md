@@ -16,8 +16,6 @@ You can also create a Foundry Toolbox in the Foundry portal. Read more about it 
 
 The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It loads a named Foundry Toolbox via `client.get_toolbox(name)` — the toolbox is a server-side bundle of tool configurations (e.g., `code_interpreter`, `web_search`) defined in the Foundry portal or by `azd provision`. Omitting `version` resolves the toolbox's current default version at runtime.
 
-The sample then narrows the toolbox to a subset of tool types via `select_toolbox_tools(toolbox, include_types=[...])` before handing it to the agent. This demonstrates how one toolbox can be reused across agents that each expose only the tools they need — here, the agent only sees `code_interpreter` even though the toolbox also includes `web_search`.
-
 See [main.py](main.py) for the full implementation.
 
 ### Agent Hosting
@@ -27,6 +25,18 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 ## Running the Agent Host
 
 Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
+
+An extra environoment variable `TOOLBOX_NAME` must be set to the name of the Foundry Toolbox that the agent should load at runtime. This allows the agent host to dynamically retrieve the correct toolbox from Foundry when it starts. Run the following:
+
+```bash
+export TOOLBOX_NAME="<your-toolbox-name>"
+```
+
+Or in PowerShell:
+
+```powershell
+$env:TOOLBOX_NAME="<your-toolbox-name>"
+```
 
 ## Interacting with the agent
 
