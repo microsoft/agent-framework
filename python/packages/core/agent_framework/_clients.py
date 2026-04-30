@@ -964,3 +964,12 @@ def _apply_get_response_docstrings() -> None:
 
 
 _apply_get_response_docstrings()
+
+# Append at end of _clients.py
+
+# Lazy import to avoid circular dependency
+def __getattr__(name: str) -> object:
+    if name == "FakeChatClient":
+        from ._fake_chat_client import FakeChatClient
+        return FakeChatClient
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
