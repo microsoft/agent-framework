@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -51,10 +52,16 @@ internal sealed class ShellSession : IAsyncDisposable
     private static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(2);
     // Brief quiescence to let late stderr drain after the sentinel is seen.
     private static readonly TimeSpan StderrQuiescence = TimeSpan.FromMilliseconds(50);
+    // Time window to wait for the sentinel after we've sent SIGINT / Ctrl+C
+    // to the shell. If the sentinel still doesn't land we fall back to a
+    // hard close-and-respawn.
+    private static readonly TimeSpan InterruptGrace = TimeSpan.FromMilliseconds(500);
 
     private readonly ResolvedShell _shell;
     private readonly string? _workingDirectory;
+    private readonly bool _confineWorkingDirectory;
     private readonly IReadOnlyDictionary<string, string?>? _environment;
+    private readonly bool _cleanEnvironment;
     private readonly int _maxOutputBytes;
     private readonly SemaphoreSlim _runLock = new(1, 1);
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
@@ -72,12 +79,16 @@ internal sealed class ShellSession : IAsyncDisposable
     public ShellSession(
         ResolvedShell shell,
         string? workingDirectory,
+        bool confineWorkingDirectory,
         IReadOnlyDictionary<string, string?>? environment,
+        bool cleanEnvironment,
         int maxOutputBytes)
     {
         this._shell = shell;
         this._workingDirectory = workingDirectory;
+        this._confineWorkingDirectory = confineWorkingDirectory;
         this._environment = environment;
+        this._cleanEnvironment = cleanEnvironment;
         this._maxOutputBytes = maxOutputBytes;
         // Cryptographically-random tag prevents a rogue command from echoing
         // a matching earlier sentinel.
@@ -128,6 +139,27 @@ internal sealed class ShellSession : IAsyncDisposable
             foreach (var arg in this._shell.PersistentArgv())
             {
                 startInfo.ArgumentList.Add(arg);
+            }
+
+            if (this._cleanEnvironment)
+            {
+                // Strip everything inherited; preserve only PATH / HOME / USER /
+                // USERPROFILE / SystemRoot so the shell itself can locate
+                // itself and basic tools. Mirrors Python's clean_env semantics.
+                var preserved = new[] { "PATH", "HOME", "USER", "USERNAME", "USERPROFILE", "SystemRoot", "TEMP", "TMP" };
+                var keep = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var name in preserved)
+                {
+                    if (startInfo.Environment.TryGetValue(name, out var v) && v is not null)
+                    {
+                        keep[name] = v;
+                    }
+                }
+                startInfo.Environment.Clear();
+                foreach (var kv in keep)
+                {
+                    startInfo.Environment[kv.Key] = kv.Value;
+                }
             }
 
             if (this._environment is not null)
@@ -289,13 +321,56 @@ internal sealed class ShellSession : IAsyncDisposable
         }
         catch (IOException ex)
         {
-            throw new InvalidOperationException("Persistent shell session is no longer alive.", ex);
+            throw new ShellExecutionException("Persistent shell session is no longer alive.", ex);
         }
 
         var needle = Encoding.UTF8.GetBytes(sentinel);
         var hardCap = this._maxOutputBytes * 4;
         var (sentinelIdx, exitCode, timedOut, overflow) = await this.WaitForSentinelAsync(
             needle, stdoutOffset, hardCap, timeout, cancellationToken).ConfigureAwait(false);
+
+        if (timedOut)
+        {
+            // Graceful path: interrupt the current command (SIGINT / Ctrl+C)
+            // and give the shell a moment to print its own sentinel. If that
+            // works the session survives — `cd` and exported variables from
+            // earlier calls are preserved across the timeout.
+            await this.InterruptCurrentCommandAsync().ConfigureAwait(false);
+            using var graceCts = new CancellationTokenSource(InterruptGrace);
+            try
+            {
+                using var graceLink = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, graceCts.Token);
+                var (postIdx, _, postTimedOut, postOverflow) = await this.WaitForSentinelAsync(
+                    needle, stdoutOffset, hardCap, InterruptGrace, graceLink.Token).ConfigureAwait(false);
+                if (!postTimedOut && !postOverflow && postIdx >= 0)
+                {
+                    sentinelIdx = postIdx;
+                    // Treat a successfully-interrupted command as a timeout
+                    // for the result envelope but keep the session alive.
+                    await Task.Delay(StderrQuiescence, cancellationToken).ConfigureAwait(false);
+                    stopwatch.Stop();
+                    byte[] stdoutRawI;
+                    byte[] stderrRawI;
+                    lock (this._bufferGate)
+                    {
+                        stdoutRawI = SnapshotRange(this._stdoutBuf, stdoutOffset, sentinelIdx - stdoutOffset);
+                        stderrRawI = SnapshotRange(this._stderrBuf, stderrOffset, this._stderrBuf.Count - stderrOffset);
+                    }
+                    var stdoutI = Encoding.UTF8.GetString(stdoutRawI).TrimEnd('\r', '\n');
+                    var stderrI = Encoding.UTF8.GetString(stderrRawI);
+                    var (soutI, soTI) = TruncateHeadTail(stdoutI, this._maxOutputBytes);
+                    var (serrI, seTI) = TruncateHeadTail(stderrI, this._maxOutputBytes);
+                    return new ShellResult(
+                        Stdout: soutI,
+                        Stderr: serrI,
+                        ExitCode: 124,
+                        Duration: stopwatch.Elapsed,
+                        Truncated: soTI || seTI,
+                        TimedOut: true);
+                }
+            }
+            catch (OperationCanceledException) { /* fall through to hard close */ }
+        }
 
         if (timedOut || overflow)
         {
@@ -460,12 +535,17 @@ internal sealed class ShellSession : IAsyncDisposable
 
     private string BuildScript(string command, string sentinel)
     {
+        // Idempotent re-anchor: in confined mode we prefix every command
+        // with a `cd` back to the configured workdir so a `cd` inside one
+        // command doesn't leak to the next. Mirrors Python's _maybe_reanchor.
+        var effective = this.MaybeReanchor(command);
+
         if (this._shell.Kind == ShellKind.PowerShell)
         {
             // Base64-encode the command so multi-line constructs don't stall
             // the pwsh parser. Sentinel is emitted via [Console]::WriteLine
             // so the pipeline formatter can't drop the newline.
-            var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(command));
+            var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(effective));
             return
                 "& {" +
                 " $__af_rc = 0;" +
@@ -501,9 +581,76 @@ internal sealed class ShellSession : IAsyncDisposable
         // its exit status, then print the sentinel on a line of its own.
         // ``set +e`` around the trailer prevents a prior ``set -e`` from
         // skipping the sentinel print.
-        return "{ " + command + "\n" +
+        return "{ " + effective + "\n" +
                "}; __af_rc=$?; set +e; " +
                $"printf '\\n{sentinel}_%s\\n' \"$__af_rc\"\n";
+    }
+
+    private string MaybeReanchor(string command)
+    {
+        if (!this._confineWorkingDirectory || string.IsNullOrEmpty(this._workingDirectory))
+        {
+            return command;
+        }
+        var quoted = this._workingDirectory!.Replace("\"", "\\\"", StringComparison.Ordinal);
+        return this._shell.Kind == ShellKind.PowerShell
+            ? $"Set-Location -LiteralPath \"{quoted}\"\n{command}"
+            : $"cd -- \"{quoted}\"\n{command}";
+    }
+
+    /// <summary>
+    /// Send SIGINT (POSIX) or Ctrl+Break (Windows) to the live shell so the
+    /// currently-running command is cancelled but the shell itself survives.
+    /// Used to honor a per-command timeout without losing session state.
+    /// </summary>
+    internal async Task InterruptCurrentCommandAsync()
+    {
+        var proc = this._proc;
+#pragma warning disable RCS1146
+        if (proc is null || proc.HasExited)
+#pragma warning restore RCS1146
+        {
+            return;
+        }
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                // pwsh hosted in -NoInteractive mode doesn't have a console
+                // group attached to it, so GenerateConsoleCtrlEvent typically
+                // can't reach it. Best we can do without ripping the session
+                // is to write Ctrl+C to stdin, which the pwsh REPL picks up
+                // for the in-flight pipeline. If that doesn't work the caller
+                // falls back to a hard close-and-respawn.
+                try
+                {
+                    await proc.StandardInput.WriteAsync("\u0003").ConfigureAwait(false);
+                    await proc.StandardInput.FlushAsync().ConfigureAwait(false);
+                }
+                catch (IOException) { }
+                catch (ObjectDisposedException) { }
+            }
+            else
+            {
+                // Send SIGINT to the process group so the shell + any direct
+                // child receive it. p/invoke killpg via libc.
+                var pid = proc.Id;
+                _ = NativeMethods.killpg(pid, NativeMethods.SIGINT);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException || ex is System.ComponentModel.Win32Exception)
+        {
+            // Best-effort interrupt — fall through to caller's hard-close path.
+        }
+        await Task.CompletedTask.ConfigureAwait(false);
+    }
+
+    private static class NativeMethods
+    {
+        internal const int SIGINT = 2;
+        [System.Runtime.InteropServices.DllImport("libc", SetLastError = true)]
+        [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
+        internal static extern int killpg(int pgrp, int sig);
     }
 
     private async Task WriteRawAsync(string text)

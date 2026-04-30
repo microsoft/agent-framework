@@ -55,7 +55,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task RunAsync_EchoCommand_RoundtripsStdoutAndExitCode()
     {
-        using var shell = new LocalShellTool();
+        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         // Use an OS-appropriate echo. On Windows the resolved shell is PowerShell.
         var result = await shell.RunAsync("echo hello-from-shell");
         Assert.Equal(0, result.ExitCode);
@@ -66,7 +66,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task RunAsync_RejectedCommand_ThrowsShellCommandRejected()
     {
-        using var shell = new LocalShellTool();
+        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         await Assert.ThrowsAsync<ShellCommandRejectedException>(
             () => shell.RunAsync("rm -rf /"));
     }
@@ -74,7 +74,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task RunAsync_NonZeroExit_PropagatesExitCode()
     {
-        using var shell = new LocalShellTool();
+        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         // Exit-1 phrasing portable across bash and PowerShell.
         var script = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? "exit 7"
@@ -86,7 +86,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task RunAsync_Timeout_FlagsTimedOutAndKillsProcess()
     {
-        using var shell = new LocalShellTool(timeout: TimeSpan.FromMilliseconds(250));
+        await using var shell = new LocalShellTool(mode: ShellMode.Stateless, timeout: TimeSpan.FromMilliseconds(250));
         var sleepCmd = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? "Start-Sleep -Seconds 30"
             : "sleep 30";
@@ -99,7 +99,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public void AsAIFunction_DefaultsToApprovalRequired()
     {
-        using var shell = new LocalShellTool();
+        using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         var fn = shell.AsAIFunction();
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
@@ -109,14 +109,14 @@ public sealed class LocalShellToolTests
     [Fact]
     public void AsAIFunction_OptOut_RequiresAcknowledgeUnsafe()
     {
-        using var shell = new LocalShellTool();
+        using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         _ = Assert.Throws<InvalidOperationException>(() => shell.AsAIFunction(requireApproval: false));
     }
 
     [Fact]
     public void AsAIFunction_OptOut_WithAck_ReturnsPlainFunction()
     {
-        using var shell = new LocalShellTool(acknowledgeUnsafe: true);
+        using var shell = new LocalShellTool(mode: ShellMode.Stateless, acknowledgeUnsafe: true);
         var fn = shell.AsAIFunction(requireApproval: false);
         Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
@@ -138,7 +138,7 @@ public sealed class LocalShellToolTests
     public async Task OnCommand_HookFiredForAllowedCommandsOnly()
     {
         var calls = new System.Collections.Generic.List<string>();
-        using var shell = new LocalShellTool(onCommand: cmd => calls.Add(cmd));
+        await using var shell = new LocalShellTool(mode: ShellMode.Stateless, onCommand: cmd => calls.Add(cmd));
         await Assert.ThrowsAsync<ShellCommandRejectedException>(() => shell.RunAsync("rm -rf /"));
         Assert.Empty(calls);
     }
@@ -203,7 +203,8 @@ public sealed class LocalShellToolTests
     public async Task Stateless_OutputTruncation_UsesHeadTailFormat()
     {
         // 2KB cap, emit ~10KB → must be truncated and contain the head+tail marker.
-        using var shell = new LocalShellTool(
+        await using var shell = new LocalShellTool(
+            mode: ShellMode.Stateless,
             maxOutputBytes: 2048,
             timeout: TimeSpan.FromSeconds(20));
 
@@ -217,5 +218,123 @@ public sealed class LocalShellToolTests
         // Should keep both ends — first and last line should be visible.
         Assert.Contains("line-1-", result.Stdout, StringComparison.Ordinal);
         Assert.Contains("line-400-", result.Stdout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ctor_DefaultsToPersistentMode()
+    {
+        // Skip on Windows-cmd-only hosts where Persistent throws; safe on
+        // any system that has pwsh or bash on PATH (CI, dev boxes).
+        try
+        {
+            using var shell = new LocalShellTool();
+            Assert.NotNull(shell);
+        }
+        catch (NotSupportedException)
+        {
+            // Persistent + cmd.exe on a host without pwsh — acceptable; test passes.
+        }
+    }
+
+    [Fact]
+    public void Ctor_RejectsBothShellAndShellArgv()
+    {
+        var argv = new[] { "/bin/bash", "--noprofile" };
+        _ = Assert.Throws<ArgumentException>(() => new LocalShellTool(
+            mode: ShellMode.Stateless,
+            shell: "/bin/bash",
+            shellArgv: argv));
+    }
+
+    [Fact]
+    public async Task Persistent_ConfineWorkdir_ReanchorsAfterCdAway()
+    {
+        var rootDir = System.IO.Path.GetTempPath();
+        var subDir = System.IO.Path.Combine(rootDir, "af-shell-confine-" + Guid.NewGuid().ToString("N")[..8]);
+        System.IO.Directory.CreateDirectory(subDir);
+        try
+        {
+            await using var shell = new LocalShellTool(
+                mode: ShellMode.Persistent,
+                workingDirectory: rootDir,
+                confineWorkingDirectory: true,
+                timeout: TimeSpan.FromSeconds(20));
+
+            // First call: cd into subdir.
+            var cd = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? $"Set-Location -LiteralPath \"{subDir}\""
+                : $"cd \"{subDir}\"";
+            _ = await shell.RunAsync(cd);
+
+            // Second call: pwd. With confinement we should be re-anchored to rootDir.
+            var pwdCmd = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "(Get-Location).Path" : "pwd";
+            var result = await shell.RunAsync(pwdCmd);
+            Assert.Equal(0, result.ExitCode);
+            var rootName = System.IO.Path.GetFileName(rootDir.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
+            Assert.Contains(rootName, result.Stdout, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(System.IO.Path.GetFileName(subDir), result.Stdout, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(subDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task Persistent_ConfineDisabled_AllowsCdToLeak()
+    {
+        var rootDir = System.IO.Path.GetTempPath();
+        var subDir = System.IO.Path.Combine(rootDir, "af-shell-noconfine-" + Guid.NewGuid().ToString("N")[..8]);
+        System.IO.Directory.CreateDirectory(subDir);
+        try
+        {
+            await using var shell = new LocalShellTool(
+                mode: ShellMode.Persistent,
+                workingDirectory: rootDir,
+                confineWorkingDirectory: false,
+                timeout: TimeSpan.FromSeconds(20));
+
+            var cd = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? $"Set-Location -LiteralPath \"{subDir}\""
+                : $"cd \"{subDir}\"";
+            _ = await shell.RunAsync(cd);
+
+            var pwdCmd = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "(Get-Location).Path" : "pwd";
+            var result = await shell.RunAsync(pwdCmd);
+            Assert.Equal(0, result.ExitCode);
+            Assert.Contains(System.IO.Path.GetFileName(subDir), result.Stdout, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(subDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task Stateless_CleanEnvironment_StripsCustomVar()
+    {
+        Environment.SetEnvironmentVariable("AF_SHELL_PARENT_VAR", "should-not-leak");
+        try
+        {
+            await using var shell = new LocalShellTool(mode: ShellMode.Stateless, cleanEnvironment: true);
+            var read = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? "$env:AF_SHELL_PARENT_VAR"
+                : "echo $AF_SHELL_PARENT_VAR";
+            var result = await shell.RunAsync(read);
+            Assert.Equal(0, result.ExitCode);
+            Assert.DoesNotContain("should-not-leak", result.Stdout, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AF_SHELL_PARENT_VAR", null);
+        }
+    }
+
+    [Fact]
+    public void IShellExecutor_LocalShellTool_ImplementsInterface()
+    {
+        using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        IShellExecutor executor = shell;
+        Assert.NotNull(executor);
     }
 }

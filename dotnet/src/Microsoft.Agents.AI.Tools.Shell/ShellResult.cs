@@ -64,10 +64,47 @@ public enum ShellMode
 
     /// <summary>
     /// A single long-lived shell subprocess is reused across calls so
-    /// <c>cd</c> and <c>export</c> persist between invocations. Commands are
-    /// executed via a sentinel protocol that brackets stdout to determine
-    /// completion. <b>Reserved for v2</b> — current build only supports
-    /// <see cref="Stateless"/>.
+    /// <c>cd</c> and exported / <c>$env:</c> variables persist between
+    /// invocations. Commands are executed via a sentinel protocol that
+    /// brackets stdout to determine completion. This is the recommended
+    /// default for coding agents because it eliminates the "agent runs cd
+    /// and then runs the wrong path" failure class.
     /// </summary>
     Persistent,
+}
+
+/// <summary>
+/// Thrown when a shell command exceeds its configured timeout.
+/// </summary>
+public sealed class ShellTimeoutException : Exception
+{
+    /// <summary>Initializes a new instance of the <see cref="ShellTimeoutException"/> class.</summary>
+    public ShellTimeoutException() { }
+
+    /// <summary>Initializes a new instance of the <see cref="ShellTimeoutException"/> class.</summary>
+    /// <param name="message">The exception message.</param>
+    public ShellTimeoutException(string message) : base(message) { }
+
+    /// <summary>Initializes a new instance of the <see cref="ShellTimeoutException"/> class.</summary>
+    /// <param name="message">The exception message.</param>
+    /// <param name="inner">The inner exception.</param>
+    public ShellTimeoutException(string message, Exception inner) : base(message, inner) { }
+}
+
+/// <summary>
+/// Thrown when a shell command fails to launch or the shell session is unrecoverable.
+/// </summary>
+public sealed class ShellExecutionException : Exception
+{
+    /// <summary>Initializes a new instance of the <see cref="ShellExecutionException"/> class.</summary>
+    public ShellExecutionException() { }
+
+    /// <summary>Initializes a new instance of the <see cref="ShellExecutionException"/> class.</summary>
+    /// <param name="message">The exception message.</param>
+    public ShellExecutionException(string message) : base(message) { }
+
+    /// <summary>Initializes a new instance of the <see cref="ShellExecutionException"/> class.</summary>
+    /// <param name="message">The exception message.</param>
+    /// <param name="inner">The inner exception.</param>
+    public ShellExecutionException(string message, Exception inner) : base(message, inner) { }
 }

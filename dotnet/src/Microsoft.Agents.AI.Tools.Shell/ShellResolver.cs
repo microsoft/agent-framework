@@ -51,14 +51,42 @@ internal static class ShellResolver
         return new ResolvedShell("/bin/sh", ShellKind.Bash);
     }
 
-    private static ResolvedShell ClassifyExplicit(string path)
+    /// <summary>
+    /// Resolve from an explicit argv list. The first element is treated as
+    /// the binary; the rest are passed as a launch-time prefix preceding
+    /// the standard <c>-c</c> / <c>-Command</c> / persistent suffix.
+    /// </summary>
+    public static ResolvedShell ResolveArgv(IReadOnlyList<string> shellArgv)
+    {
+        if (shellArgv is null)
+        {
+            throw new ArgumentNullException(nameof(shellArgv));
+        }
+        if (shellArgv.Count == 0)
+        {
+            throw new ArgumentException("shellArgv must contain at least the binary path.", nameof(shellArgv));
+        }
+        var binary = shellArgv[0];
+        var kind = ClassifyKind(binary);
+        var extra = shellArgv.Count > 1 ? new string[shellArgv.Count - 1] : Array.Empty<string>();
+        for (var i = 1; i < shellArgv.Count; i++)
+        {
+            extra[i - 1] = shellArgv[i];
+        }
+        return new ResolvedShell(binary, kind, ExtraArgv: extra);
+    }
+
+    private static ResolvedShell ClassifyExplicit(string path) =>
+        new(path, ClassifyKind(path));
+
+    private static ShellKind ClassifyKind(string path)
     {
         var name = Path.GetFileNameWithoutExtension(path).ToUpperInvariant();
         return name switch
         {
-            "PWSH" or "POWERSHELL" => new ResolvedShell(path, ShellKind.PowerShell),
-            "CMD" => new ResolvedShell(path, ShellKind.Cmd),
-            _ => new ResolvedShell(path, ShellKind.Bash),
+            "PWSH" or "POWERSHELL" => ShellKind.PowerShell,
+            "CMD" => ShellKind.Cmd,
+            _ => ShellKind.Bash,
         };
     }
 
@@ -108,37 +136,61 @@ internal enum ShellKind
     Cmd,
 }
 
-internal readonly record struct ResolvedShell(string Binary, ShellKind Kind)
+internal readonly record struct ResolvedShell(string Binary, ShellKind Kind, IReadOnlyList<string>? ExtraArgv = null)
 {
-    public IReadOnlyList<string> StatelessArgvForCommand(string command) => this.Kind switch
+    public IReadOnlyList<string> StatelessArgvForCommand(string command)
     {
-        ShellKind.PowerShell =>
-        [
-            "-NoProfile",
-            "-NoLogo",
-            "-NonInteractive",
-            "-Command",
-            command,
-        ],
-        ShellKind.Cmd => ["/d", "/c", command],
-        _ => ["--noprofile", "--norc", "-c", command],
-    };
+        var extra = this.ExtraArgv ?? Array.Empty<string>();
+        var suffix = this.Kind switch
+        {
+            ShellKind.PowerShell => new[]
+            {
+                "-NoProfile",
+                "-NoLogo",
+                "-NonInteractive",
+                "-Command",
+                command,
+            },
+            ShellKind.Cmd => new[] { "/d", "/c", command },
+            _ => new[] { "--noprofile", "--norc", "-c", command },
+        };
+        if (extra.Count == 0)
+        {
+            return suffix;
+        }
+        var combined = new string[extra.Count + suffix.Length];
+        for (var i = 0; i < extra.Count; i++) { combined[i] = extra[i]; }
+        for (var i = 0; i < suffix.Length; i++) { combined[extra.Count + i] = suffix[i]; }
+        return combined;
+    }
 
     /// <summary>
     /// Argv for launching a long-lived shell that reads commands from stdin.
     /// </summary>
-    public IReadOnlyList<string> PersistentArgv() => this.Kind switch
+    public IReadOnlyList<string> PersistentArgv()
     {
-        ShellKind.PowerShell =>
-        [
-            "-NoProfile",
-            "-NoLogo",
-            "-NonInteractive",
-            "-Command",
-            "-",
-        ],
-        ShellKind.Cmd => throw new NotSupportedException(
-            "Persistent mode is not supported for cmd.exe — use pwsh, powershell, or a POSIX shell."),
-        _ => ["--noprofile", "--norc"],
-    };
+        var extra = this.ExtraArgv ?? Array.Empty<string>();
+        var suffix = this.Kind switch
+        {
+            ShellKind.PowerShell => new[]
+            {
+                "-NoProfile",
+                "-NoLogo",
+                "-NonInteractive",
+                "-Command",
+                "-",
+            },
+            ShellKind.Cmd => throw new NotSupportedException(
+                "Persistent mode is not supported for cmd.exe — use pwsh, powershell, or a POSIX shell."),
+            _ => new[] { "--noprofile", "--norc" },
+        };
+        if (extra.Count == 0)
+        {
+            return suffix;
+        }
+        var combined = new string[extra.Count + suffix.Length];
+        for (var i = 0; i < extra.Count; i++) { combined[i] = extra[i]; }
+        for (var i = 0; i < suffix.Length; i++) { combined[extra.Count + i] = suffix[i]; }
+        return combined;
+    }
 }

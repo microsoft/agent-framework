@@ -38,7 +38,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// refuse to return a non-approval-gated function.
 /// </para>
 /// </remarks>
-public sealed class LocalShellTool : IDisposable, IAsyncDisposable
+public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecutor
 {
     private const int DefaultMaxOutputBytes = 64 * 1024;
 
@@ -48,7 +48,9 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable
     private readonly TimeSpan? _timeout;
     private readonly int _maxOutputBytes;
     private readonly string? _workingDirectory;
+    private readonly bool _confineWorkingDirectory;
     private readonly IReadOnlyDictionary<string, string?>? _environment;
+    private readonly bool _cleanEnvironment;
     private readonly Action<string>? _onCommand;
     private readonly bool _acknowledgeUnsafe;
     private ShellSession? _session;
@@ -57,12 +59,15 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable
     /// <summary>
     /// Initializes a new instance of the <see cref="LocalShellTool"/> class.
     /// </summary>
-    /// <param name="mode">Execution mode. Defaults to <see cref="ShellMode.Stateless"/>; use
-    /// <see cref="ShellMode.Persistent"/> for a long-lived shell that preserves <c>cd</c>,
-    /// exported variables, and function definitions across calls.</param>
-    /// <param name="shell">Override path to the shell binary. Falls back to the <c>AGENT_FRAMEWORK_SHELL</c> environment variable, then OS defaults.</param>
-    /// <param name="workingDirectory">Working directory for the spawned shell. Defaults to the current process directory.</param>
+    /// <param name="mode">Execution mode. Defaults to <see cref="ShellMode.Persistent"/> so
+    /// <c>cd</c>, exported variables, and function definitions persist across calls. Use
+    /// <see cref="ShellMode.Stateless"/> if you specifically need every call to start fresh.</param>
+    /// <param name="shell">Override path to the shell binary. Falls back to the <c>AGENT_FRAMEWORK_SHELL</c> environment variable, then OS defaults. Mutually exclusive with <paramref name="shellArgv"/>.</param>
+    /// <param name="shellArgv">Override argv for the shell launch. The first element is the binary; subsequent elements are passed as a launch-time prefix (e.g. <c>["/bin/bash", "--rcfile", "/path/to/rc"]</c>). Mutually exclusive with <paramref name="shell"/>.</param>
+    /// <param name="workingDirectory">Working directory for the spawned shell. Defaults to the current process directory. Required when <paramref name="confineWorkingDirectory"/> is <see langword="true"/>.</param>
+    /// <param name="confineWorkingDirectory">When <see langword="true"/> (the default) and a <paramref name="workingDirectory"/> is set, every command in persistent mode is prefixed with a <c>cd</c> back into that directory so a wandering <c>cd</c> in one call doesn't leak to the next. This is a re-anchor, not a hard confinement — a command that does <c>cd /tmp; rm -rf .</c> can still touch <c>/tmp</c>. Use a sandboxed executor for true isolation.</param>
     /// <param name="environment">Extra environment variables. Pass a <see langword="null"/> value to remove an inherited variable.</param>
+    /// <param name="cleanEnvironment">When <see langword="true"/>, the spawned shell does not inherit the parent process environment; only PATH/HOME/USER/USERNAME/USERPROFILE/SystemRoot/TEMP/TMP plus anything in <paramref name="environment"/> are visible.</param>
     /// <param name="policy">Optional <see cref="ShellPolicy"/>. Defaults to a policy seeded with <see cref="ShellPolicy.DefaultDenyList"/>.</param>
     /// <param name="timeout">Per-command timeout. <see langword="null"/> disables timeouts.</param>
     /// <param name="maxOutputBytes">Per-stream cap before head+tail truncation.</param>
@@ -74,10 +79,13 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable
     /// <see langword="false"/>, which makes accidentally bypassing approval impossible.
     /// </param>
     public LocalShellTool(
-        ShellMode mode = ShellMode.Stateless,
+        ShellMode mode = ShellMode.Persistent,
         string? shell = null,
+        IReadOnlyList<string>? shellArgv = null,
         string? workingDirectory = null,
+        bool confineWorkingDirectory = true,
         IReadOnlyDictionary<string, string?>? environment = null,
+        bool cleanEnvironment = false,
         ShellPolicy? policy = null,
         TimeSpan? timeout = null,
         int maxOutputBytes = DefaultMaxOutputBytes,
@@ -88,14 +96,20 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(maxOutputBytes));
         }
+        if (shell is not null && shellArgv is not null)
+        {
+            throw new ArgumentException("Pass either shell or shellArgv, not both.", nameof(shellArgv));
+        }
 
         this._mode = mode;
         this._policy = policy ?? new ShellPolicy();
-        this._shell = ShellResolver.Resolve(shell);
+        this._shell = shellArgv is not null ? ShellResolver.ResolveArgv(shellArgv) : ShellResolver.Resolve(shell);
         this._timeout = timeout ?? TimeSpan.FromSeconds(30);
         this._maxOutputBytes = maxOutputBytes;
         this._workingDirectory = workingDirectory;
+        this._confineWorkingDirectory = confineWorkingDirectory;
         this._environment = environment;
+        this._cleanEnvironment = cleanEnvironment;
         this._onCommand = onCommand;
         this._acknowledgeUnsafe = acknowledgeUnsafe;
 
@@ -142,11 +156,43 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable
         ShellSession session;
         lock (this._sessionGate)
         {
-            this._session ??= new ShellSession(this._shell, this._workingDirectory, this._environment, this._maxOutputBytes);
+            this._session ??= new ShellSession(
+                this._shell,
+                this._workingDirectory,
+                this._confineWorkingDirectory,
+                this._environment,
+                this._cleanEnvironment,
+                this._maxOutputBytes);
             session = this._session;
         }
         return await session.RunAsync(command, this._timeout, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <inheritdoc />
+    Task IShellExecutor.StartAsync(CancellationToken cancellationToken)
+    {
+        if (this._mode != ShellMode.Persistent)
+        {
+            return Task.CompletedTask;
+        }
+        ShellSession session;
+        lock (this._sessionGate)
+        {
+            this._session ??= new ShellSession(
+                this._shell,
+                this._workingDirectory,
+                this._confineWorkingDirectory,
+                this._environment,
+                this._cleanEnvironment,
+                this._maxOutputBytes);
+            session = this._session;
+        }
+        // Force a tiny no-op so the session spawns now rather than lazily.
+        return session.RunAsync(this._shell.Kind == ShellKind.PowerShell ? "$null" : ":", this._timeout, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    Task IShellExecutor.CloseAsync(CancellationToken cancellationToken) => this.DisposeAsync().AsTask();
 
     private async Task<ShellResult> RunStatelessAsync(string command, CancellationToken cancellationToken)
     {
@@ -164,6 +210,24 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable
         foreach (var arg in this._shell.StatelessArgvForCommand(command))
         {
             startInfo.ArgumentList.Add(arg);
+        }
+
+        if (this._cleanEnvironment)
+        {
+            var preserved = new[] { "PATH", "HOME", "USER", "USERNAME", "USERPROFILE", "SystemRoot", "TEMP", "TMP" };
+            var keep = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in preserved)
+            {
+                if (startInfo.Environment.TryGetValue(name, out var v) && v is not null)
+                {
+                    keep[name] = v;
+                }
+            }
+            startInfo.Environment.Clear();
+            foreach (var kv in keep)
+            {
+                startInfo.Environment[kv.Key] = kv.Value;
+            }
         }
 
         if (this._environment is not null)
@@ -209,7 +273,7 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable
         }
         catch (Win32Exception ex)
         {
-            throw new InvalidOperationException(
+            throw new ShellExecutionException(
                 $"Failed to launch shell '{this._shell.Binary}': {ex.Message}", ex);
         }
 
