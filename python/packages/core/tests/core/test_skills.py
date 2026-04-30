@@ -3997,6 +3997,16 @@ class TestSkillsProviderConstructorEdgeCases:
         with pytest.raises(ValueError, match="skills"):
             await _init_provider(provider)
 
+    def test_string_source_rejected_with_helpful_error(self) -> None:
+        """Passing a string (path) to SkillsProvider raises TypeError."""
+        with pytest.raises(TypeError, match="from_paths"):
+            SkillsProvider("./skills")  # type: ignore[arg-type]
+
+    def test_path_source_rejected_with_helpful_error(self) -> None:
+        """Passing a Path to SkillsProvider raises TypeError."""
+        with pytest.raises(TypeError, match="from_paths"):
+            SkillsProvider(Path("./skills"))  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # Tests: InlineSkill content caching

@@ -1105,6 +1105,12 @@ class SkillsProvider(ContextProvider):
         """
         super().__init__(source_id or self.DEFAULT_SOURCE_ID)
 
+        if isinstance(source, (str, Path)):
+            raise TypeError(
+                f"SkillsProvider does not accept path strings directly. "
+                f"Use SkillsProvider.from_paths({source!r}) for file-based skills."
+            )
+
         if isinstance(source, Skill):
             source = _DeduplicatingSkillsSource(_InMemorySkillsSource([source]))
         elif isinstance(source, SkillsSource):
