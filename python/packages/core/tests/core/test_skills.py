@@ -26,12 +26,12 @@ from agent_framework import (
 from agent_framework._skills import (
     DEFAULT_RESOURCE_EXTENSIONS,
     DEFAULT_SCRIPT_EXTENSIONS,
+    InlineSkillResource,
+    InlineSkillScript,
     _create_script_element,
     _FileSkillResource,
     _FileSkillsSource,
     _has_symlink_in_path,
-    InlineSkillResource,
-    InlineSkillScript,
     _is_path_within_directory,
     _normalize_resource_path,
 )
@@ -1165,7 +1165,9 @@ class TestSkillsProviderCodeSkill:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "get_user_config", user_id="user_123")
+        result = await provider._read_skill_resource(
+            _ctx(provider)[0], "prog-skill", "get_user_config", user_id="user_123"
+        )
         assert result == "config for user_123"
 
     async def test_read_callable_resource_async_with_kwargs(self) -> None:
@@ -1191,7 +1193,9 @@ class TestSkillsProviderCodeSkill:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_ctx(provider)[0], "prog-skill", "static_resource", user_id="ignored")
+        result = await provider._read_skill_resource(
+            _ctx(provider)[0], "prog-skill", "static_resource", user_id="ignored"
+        )
         assert result == "static content"
 
     async def test_read_callable_resource_returns_dict(self) -> None:
@@ -2733,7 +2737,9 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._run_skill_script(_ctx(provider)[0], "my-skill", "greet", args={"name": "Alice"}, user_id="u42")
+        result = await provider._run_skill_script(
+            _ctx(provider)[0], "my-skill", "greet", args={"name": "Alice"}, user_id="u42"
+        )
         assert result == "Hello Alice (user=u42)"
 
     async def test_run_skill_script_async_with_kwargs(self) -> None:
@@ -2746,7 +2752,9 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._run_skill_script(_ctx(provider)[0], "my-skill", "fetch", args={"url": "http://x"}, auth_token="abc")
+        result = await provider._run_skill_script(
+            _ctx(provider)[0], "my-skill", "fetch", args={"url": "http://x"}, auth_token="abc"
+        )
         assert result == "fetched http://x with token=abc"
 
     async def test_run_skill_script_without_kwargs_ignores_extra_args(self) -> None:
@@ -2759,7 +2767,9 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._run_skill_script(_ctx(provider)[0], "my-skill", "simple", args={"query": "test"}, user_id="ignored")
+        result = await provider._run_skill_script(
+            _ctx(provider)[0], "my-skill", "simple", args={"query": "test"}, user_id="ignored"
+        )
         assert result == "result: test"
 
     async def test_run_skill_script_conflicting_args_and_kwargs_raises(self) -> None:
@@ -2926,7 +2936,7 @@ class TestFileScriptDiscovery:
         script = skills["my-skill"].scripts[0]
         assert script.full_path is not None
         assert os.path.isabs(script.full_path)
-        expected = os.path.normpath(os.path.join(str(skill_dir), "scripts", "generate.py"))
+        expected = str(Path(str(skill_dir), "scripts", "generate.py"))
         assert script.full_path == expected
 
     async def test_discovers_nested_scripts(self, tmp_path: Path) -> None:
@@ -3284,7 +3294,9 @@ class TestCreateScriptElement:
         assert "&quot;" in elem
 
     def test_xml_escapes_description(self) -> None:
-        s = FileSkillScript(name="run.py", description='Uses <tags> & "quotes"', full_path=f"{_ABS}/test/scripts/run.py")
+        s = FileSkillScript(
+            name="run.py", description='Uses <tags> & "quotes"', full_path=f"{_ABS}/test/scripts/run.py"
+        )
         elem = _create_script_element(s)
         assert "&lt;tags&gt;" in elem
         assert "&amp;" in elem

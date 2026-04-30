@@ -50,6 +50,8 @@ from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeVar, runtime_checkable
 
+import anyio
+
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
 from ._tools import FunctionTool
@@ -251,11 +253,11 @@ class _FileSkillResource(SkillResource):
         Raises:
             ValueError: If the resource file does not exist.
         """
-        if not Path(self._full_path).is_file():
+        if not await anyio.Path(self._full_path).is_file():
             raise ValueError(f"Resource file '{self.name}' not found at '{self._full_path}'.")
 
         logger.info("Reading resource '%s' from '%s'", self.name, self._full_path)
-        return Path(self._full_path).read_text(encoding="utf-8")
+        return await anyio.Path(self._full_path).read_text(encoding="utf-8")
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
@@ -380,7 +382,7 @@ class InlineSkillScript(SkillScript):
         Returns:
             The script execution result.
         """
-        if self._accepts_kwargs:
+        if self._accepts_kwargs:  # noqa: SIM108
             result = self.function(**(args or {}), **kwargs)
         else:
             result = self.function(**(args or {}))
@@ -1412,8 +1414,12 @@ class SkillsProvider(ContextProvider):
             tools.append(
                 FunctionTool(
                     name="read_skill_resource",
-                    description="Reads a resource associated with a skill, such as references, assets, or dynamic data.",
-                    func=lambda skill_name, resource_name, **kwargs: self._read_skill_resource(skills, skill_name, resource_name, **kwargs),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+                    description=(
+                        "Reads a resource associated with a skill, such as references, assets, or dynamic data."
+                    ),
+                    func=lambda skill_name, resource_name, **kwargs: self._read_skill_resource(  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+                        skills, skill_name, resource_name, **kwargs  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+                    ),
                     input_model={
                         "type": "object",
                         "properties": {
@@ -1433,7 +1439,9 @@ class SkillsProvider(ContextProvider):
                 FunctionTool(
                     name="run_skill_script",
                     description="Runs a script associated with a skill.",
-                    func=lambda skill_name, script_name, args=None, **kwargs: self._run_skill_script(skills, skill_name, script_name, args, **kwargs),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+                    func=lambda skill_name, script_name, args=None, **kwargs: self._run_skill_script(  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+                        skills, skill_name, script_name, args, **kwargs   # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+                    ),
                     approval_mode="always_require" if require_script_approval else "never_require",
                     input_model={
                         "type": "object",
@@ -1493,7 +1501,12 @@ class SkillsProvider(ContextProvider):
         return skill.content
 
     async def _run_skill_script(
-        self, skills: Mapping[str, Skill], skill_name: str, script_name: str, args: dict[str, Any] | None = None, **kwargs: Any
+        self,
+        skills: Mapping[str, Skill],
+        skill_name: str,
+        script_name: str,
+        args: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> Any:
         """Run a named script from a skill.
 
@@ -1535,7 +1548,9 @@ class SkillsProvider(ContextProvider):
             logger.exception("Error running script '%s' in skill '%s'", script_name, skill_name)
             return f"Error: Failed to run script '{script_name}' in skill '{skill_name}'."
 
-    async def _read_skill_resource(self, skills: Mapping[str, Skill], skill_name: str, resource_name: str, **kwargs: Any) -> Any:
+    async def _read_skill_resource(
+        self, skills: Mapping[str, Skill], skill_name: str, resource_name: str, **kwargs: Any
+    ) -> Any:
         """Read a named resource from a skill.
 
         Resolves the resource by case-insensitive name lookup.  Static
@@ -1813,12 +1828,12 @@ class _FileSkillsSource(SkillsSource):
 
             # Discover and attach file-based resources
             for rn in _FileSkillsSource._discover_resource_files(skill_path, self._resource_extensions):
-                resource_full_path = os.path.normpath(os.path.join(skill_path, rn))
+                resource_full_path = os.path.normpath(os.path.join(skill_path, rn))  # noqa: ASYNC240
                 file_skill.resources.append(_FileSkillResource(name=rn, full_path=resource_full_path))
 
             # Discover and attach file-based scripts as SkillScript instances
             for sn in _FileSkillsSource._discover_script_files(skill_path, self._script_extensions):
-                script_full_path = os.path.normpath(os.path.join(skill_path, sn))
+                script_full_path = os.path.normpath(os.path.join(skill_path, sn))  # noqa: ASYNC240
                 file_skill.scripts.append(
                     FileSkillScript(name=sn, full_path=script_full_path, runner=self._script_runner)
                 )
