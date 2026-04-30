@@ -1411,13 +1411,17 @@ class SkillsProvider(ContextProvider):
         ]
 
         if include_resource_tool:
+
+            async def _read_resource(skill_name: str, resource_name: str, **kwargs: Any) -> Any:
+                return await self._read_skill_resource(skills, skill_name, resource_name, **kwargs)
+
             tools.append(
                 FunctionTool(
                     name="read_skill_resource",
                     description=(
                         "Reads a resource associated with a skill, such as references, assets, or dynamic data."
                     ),
-                    func=lambda skill_name, resource_name, **kwargs: self._read_skill_resource(skills, skill_name, resource_name, **kwargs),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+                    func=_read_resource,
                     input_model={
                         "type": "object",
                         "properties": {
@@ -1433,11 +1437,17 @@ class SkillsProvider(ContextProvider):
             )
 
         if include_script_runner_tool:
+
+            async def _run_script(
+                skill_name: str, script_name: str, args: dict[str, Any] | None = None, **kwargs: Any
+            ) -> Any:
+                return await self._run_skill_script(skills, skill_name, script_name, args, **kwargs)
+
             tools.append(
                 FunctionTool(
                     name="run_skill_script",
                     description="Runs a script associated with a skill.",
-                    func=lambda skill_name, script_name, args=None, **kwargs: self._run_skill_script(skills, skill_name, script_name, args, **kwargs),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+                    func=_run_script,
                     approval_mode="always_require" if require_script_approval else "never_require",
                     input_model={
                         "type": "object",
