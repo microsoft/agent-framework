@@ -67,6 +67,10 @@ from ._executors_external_input import (
     RequestExternalInputExecutor,
     WaitForInputExecutor,
 )
+from ._executors_http import (
+    HTTP_ACTION_EXECUTORS,
+    HttpRequestActionExecutor,
+)
 from ._executors_tools import (
     FUNCTION_TOOL_REGISTRY_KEY,
     TOOL_ACTION_EXECUTORS,
@@ -78,7 +82,13 @@ from ._executors_tools import (
     ToolApprovalState,
     ToolInvocationResult,
 )
-from ._factory import DeclarativeWorkflowError, WorkflowFactory
+from ._factory import DeclarativeActionError, DeclarativeWorkflowError, WorkflowFactory
+from ._http_handler import (
+    DefaultHttpRequestHandler,
+    HttpRequestHandler,
+    HttpRequestInfo,
+    HttpRequestResult,
+)
 from ._state import WorkflowState
 
 __all__ = [
@@ -90,6 +100,7 @@ __all__ = [
     "DECLARATIVE_STATE_KEY",
     "EXTERNAL_INPUT_EXECUTORS",
     "FUNCTION_TOOL_REGISTRY_KEY",
+    "HTTP_ACTION_EXECUTORS",
     "TOOL_ACTION_EXECUTORS",
     "TOOL_APPROVAL_STATE_KEY",
     "TOOL_REGISTRY_KEY",
@@ -106,12 +117,14 @@ __all__ = [
     "ContinueLoopExecutor",
     "ConversationData",
     "CreateConversationExecutor",
+    "DeclarativeActionError",
     "DeclarativeActionExecutor",
     "DeclarativeMessage",
     "DeclarativeStateData",
     "DeclarativeWorkflowBuilder",
     "DeclarativeWorkflowError",
     "DeclarativeWorkflowState",
+    "DefaultHttpRequestHandler",
     "EmitEventExecutor",
     "EndConversationExecutor",
     "EndWorkflowExecutor",
@@ -120,6 +133,10 @@ __all__ = [
     "ExternalLoopState",
     "ForeachInitExecutor",
     "ForeachNextExecutor",
+    "HttpRequestActionExecutor",
+    "HttpRequestHandler",
+    "HttpRequestInfo",
+    "HttpRequestResult",
     "InvokeAzureAgentExecutor",
     "InvokeFunctionToolExecutor",
     "JoinExecutor",
