@@ -3,9 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -31,259 +32,433 @@ internal sealed class HandoffAgentExecutorOptions
     public HandoffToolCallFilteringBehavior ToolCallFilteringBehavior { get; set; } = HandoffToolCallFilteringBehavior.HandoffOnly;
 }
 
-internal sealed class HandoffMessagesFilter
+internal struct AgentInvocationResult(AgentResponse agentResponse, string? handoffTargetId)
 {
-    private readonly HandoffToolCallFilteringBehavior _filteringBehavior;
+    public AgentResponse Response => agentResponse;
 
-    public HandoffMessagesFilter(HandoffToolCallFilteringBehavior filteringBehavior)
-    {
-        this._filteringBehavior = filteringBehavior;
-    }
+    public string? HandoffTargetId => handoffTargetId;
 
-    internal static bool IsHandoffFunctionName(string name)
-    {
-        return name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);
-    }
+    [MemberNotNullWhen(true, nameof(HandoffTargetId))]
+    public bool IsHandoffRequested => this.HandoffTargetId != null;
+}
 
-    public IEnumerable<ChatMessage> FilterMessages(List<ChatMessage> messages)
-    {
-        if (this._filteringBehavior == HandoffToolCallFilteringBehavior.None)
-        {
-            return messages;
-        }
+internal record HandoffAgentHostState(
+    HandoffState? IncomingState,
+    int ConversationBookmark)
+{
+    [MemberNotNullWhen(true, nameof(IncomingState))]
+    [JsonIgnore]
+    public bool IsTakingTurn => this.IncomingState != null;
+}
 
-        Dictionary<string, FilterCandidateState> filteringCandidates = new();
-        List<ChatMessage> filteredMessages = [];
-        HashSet<int> messagesToRemove = [];
+internal sealed record StateRef<TState>(string Key, string? ScopeName)
+{
+    public ValueTask InvokeWithStateAsync(Func<TState?, IWorkflowContext, CancellationToken, ValueTask<TState?>> invocation,
+                                          IWorkflowContext context,
+                                          CancellationToken cancellationToken)
+        => context.InvokeWithStateAsync(invocation, this.Key, this.ScopeName, cancellationToken);
 
-        bool filterHandoffOnly = this._filteringBehavior == HandoffToolCallFilteringBehavior.HandoffOnly;
-        foreach (ChatMessage unfilteredMessage in messages)
-        {
-            ChatMessage filteredMessage = unfilteredMessage.Clone();
-
-            // .Clone() is shallow, so we cannot modify the contents of the cloned message in place.
-            List<AIContent> contents = [];
-            contents.Capacity = unfilteredMessage.Contents?.Count ?? 0;
-            filteredMessage.Contents = contents;
-
-            // Because this runs after the role changes from assistant to user for the target agent, we cannot rely on tool calls
-            // originating only from messages with the Assistant role. Instead, we need to inspect the contents of all non-Tool (result)
-            // FunctionCallContent.
-            if (unfilteredMessage.Role != ChatRole.Tool)
-            {
-                for (int i = 0; i < unfilteredMessage.Contents!.Count; i++)
-                {
-                    AIContent content = unfilteredMessage.Contents[i];
-                    if (content is not FunctionCallContent fcc || (filterHandoffOnly && !IsHandoffFunctionName(fcc.Name)))
-                    {
-                        filteredMessage.Contents.Add(content);
-
-                        // Track non-handoff function calls so their tool results are preserved in HandoffOnly mode
-                        if (filterHandoffOnly && content is FunctionCallContent nonHandoffFcc)
-                        {
-                            filteringCandidates[nonHandoffFcc.CallId] = new FilterCandidateState(nonHandoffFcc.CallId)
-                            {
-                                IsHandoffFunction = false,
-                            };
-                        }
-                    }
-                    else if (filterHandoffOnly)
-                    {
-                        if (!filteringCandidates.TryGetValue(fcc.CallId, out FilterCandidateState? candidateState))
-                        {
-                            filteringCandidates[fcc.CallId] = new FilterCandidateState(fcc.CallId)
-                            {
-                                IsHandoffFunction = true,
-                            };
-                        }
-                        else
-                        {
-                            candidateState.IsHandoffFunction = true;
-                            (int messageIndex, int contentIndex) = candidateState.FunctionCallResultLocation!.Value;
-                            ChatMessage messageToFilter = filteredMessages[messageIndex];
-                            messageToFilter.Contents.RemoveAt(contentIndex);
-                            if (messageToFilter.Contents.Count == 0)
-                            {
-                                messagesToRemove.Add(messageIndex);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // All mode: strip all FunctionCallContent
-                    }
-                }
-            }
-            else
-            {
-                if (!filterHandoffOnly)
-                {
-                    continue;
-                }
-
-                for (int i = 0; i < unfilteredMessage.Contents!.Count; i++)
-                {
-                    AIContent content = unfilteredMessage.Contents[i];
-                    if (content is not FunctionResultContent frc
-                        || (filteringCandidates.TryGetValue(frc.CallId, out FilterCandidateState? candidateState)
-                            && candidateState.IsHandoffFunction is false))
-                    {
-                        // Either this is not a function result content, so we should let it through, or it is a FRC that
-                        // we know is not related to a handoff call. In either case, we should include it.
-                        filteredMessage.Contents.Add(content);
-                    }
-                    else if (candidateState is null)
-                    {
-                        // We haven't seen the corresponding function call yet, so add it as a candidate to be filtered later
-                        filteringCandidates[frc.CallId] = new FilterCandidateState(frc.CallId)
-                        {
-                            FunctionCallResultLocation = (filteredMessages.Count, filteredMessage.Contents.Count),
-                        };
-                    }
-                    // else we have seen the corresponding function call and it is a handoff, so we should filter it out.
-                }
-            }
-
-            if (filteredMessage.Contents.Count > 0)
-            {
-                filteredMessages.Add(filteredMessage);
-            }
-        }
-
-        return filteredMessages.Where((_, index) => !messagesToRemove.Contains(index));
-    }
-
-    private class FilterCandidateState(string callId)
-    {
-        public (int MessageIndex, int ContentIndex)? FunctionCallResultLocation { get; set; }
-
-        public string CallId => callId;
-
-        public bool? IsHandoffFunction { get; set; }
-    }
+    public ValueTask InvokeWithStateAsync(Func<TState?, IWorkflowContext, CancellationToken, ValueTask> invocation,
+                                                 IWorkflowContext context,
+                                                 CancellationToken cancellationToken)
+        => context.InvokeWithStateAsync<TState>(
+              async (state, ctx, ct) =>
+              {
+                  await invocation(state, ctx, ct).ConfigureAwait(false);
+                  return state;
+              }, this.Key, this.ScopeName, cancellationToken);
 }
 
 /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
-internal sealed class HandoffAgentExecutor(
-    AIAgent agent,
-    HandoffAgentExecutorOptions options) : Executor<HandoffState, HandoffState>(agent.GetDescriptiveId(), declareCrossRunShareable: true), IResettableExecutor
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
+internal sealed class HandoffAgentExecutor :
+    StatefulExecutor<HandoffAgentHostState, HandoffState>
 {
     private static readonly JsonElement s_handoffSchema = AIFunctionFactory.Create(
         ([Description("The reason for the handoff")] string? reasonForHandoff) => { }).JsonSchema;
 
-    private readonly AIAgent _agent = agent;
+    public static string IdFor(AIAgent agent) => agent.GetDescriptiveId();
+
+    private readonly AIAgent _agent;
+    private readonly ChatClientAgentRunOptions? _agentOptions;
+
+    private readonly HandoffAgentExecutorOptions _options;
+
     private readonly HashSet<string> _handoffFunctionNames = [];
     private readonly Dictionary<string, string> _handoffFunctionToAgentId = [];
-    private ChatClientAgentRunOptions? _agentOptions;
 
-    public void Initialize(
-        WorkflowBuilder builder,
-        Executor end,
-        Dictionary<string, HandoffAgentExecutor> executors,
-        HashSet<HandoffTarget> handoffs) =>
-        builder.AddSwitch(this, sb =>
-        {
-            if (handoffs.Count != 0)
-            {
-                Debug.Assert(this._agentOptions is null);
-                this._agentOptions = new()
-                {
-                    ChatOptions = new()
-                    {
-                        AllowMultipleToolCalls = false,
-                        Instructions = options.HandoffInstructions,
-                        Tools = [],
-                    },
-                };
+    private readonly StateRef<HandoffSharedState> _sharedStateRef = new(HandoffConstants.HandoffSharedStateKey,
+                                                                        HandoffConstants.HandoffSharedStateScope);
 
-                int index = 0;
-                foreach (HandoffTarget handoff in handoffs)
-                {
-                    index++;
-                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandoffWorkflowBuilder.FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
+    internal const string AgentSessionKey = nameof(AgentSession);
+    private AgentSession? _session;
 
-                    this._handoffFunctionNames.Add(handoffFunc.Name);
-                    this._handoffFunctionToAgentId[handoffFunc.Name] = handoff.Target.Id;
+    private static HandoffAgentHostState InitialStateFactory() => new(null, 0);
 
-                    this._agentOptions.ChatOptions.Tools.Add(handoffFunc);
-
-                    sb.AddCase<HandoffState>(state => state?.InvokedHandoff == handoffFunc.Name, executors[handoff.Target.Id]);
-                }
-            }
-
-            sb.WithDefault(end);
-        });
-
-    public override async ValueTask<HandoffState> HandleAsync(HandoffState message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public HandoffAgentExecutor(AIAgent agent, HashSet<HandoffTarget> handoffs, HandoffAgentExecutorOptions options)
+        : base(IdFor(agent), InitialStateFactory)
     {
-        string? requestedHandoff = null;
-        List<AgentResponseUpdate> updates = [];
-        List<ChatMessage> allMessages = message.Messages;
+        this._agent = agent;
+        this._options = options;
 
-        List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
+        this._agentOptions = CreateAgentHandoffContext(this._options.HandoffInstructions, handoffs, this._handoffFunctionNames, this._handoffFunctionToAgentId);
+    }
 
-        // If a handoff was invoked by a previous agent, filter out the handoff function
-        // call and tool result messages before sending to the underlying agent. These
-        // are internal workflow mechanics that confuse the target model into ignoring the
-        // original user question.
-        HandoffMessagesFilter handoffMessagesFilter = new(options.ToolCallFilteringBehavior);
-        IEnumerable<ChatMessage> messagesForAgent = message.InvokedHandoff is not null
-            ? handoffMessagesFilter.FilterMessages(allMessages)
-            : allMessages;
+    private static ChatClientAgentRunOptions? CreateAgentHandoffContext(string? handoffInstructions, HashSet<HandoffTarget> handoffs, HashSet<string> functionNames, Dictionary<string, string> functionToAgentId)
+    {
+        ChatClientAgentRunOptions? result = null;
 
-        await foreach (var update in this._agent.RunStreamingAsync(messagesForAgent,
-                                                                   options: this._agentOptions,
-                                                                   cancellationToken: cancellationToken)
-                                                .ConfigureAwait(false))
+        if (handoffs.Count != 0)
         {
-            await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
-
-            foreach (var fcc in update.Contents.OfType<FunctionCallContent>()
-                                               .Where(fcc => this._handoffFunctionNames.Contains(fcc.Name)))
+            result = new()
             {
-                requestedHandoff = fcc.Name;
-                await AddUpdateAsync(
-                        new AgentResponseUpdate
-                        {
-                            AgentId = this._agent.Id,
-                            AuthorName = this._agent.Name ?? this._agent.Id,
-                            Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
-                            CreatedAt = DateTimeOffset.UtcNow,
-                            MessageId = Guid.NewGuid().ToString("N"),
-                            Role = ChatRole.Tool,
-                        },
-                        cancellationToken
-                     )
-                    .ConfigureAwait(false);
+                ChatOptions = new()
+                {
+                    AllowMultipleToolCalls = false,
+                    Instructions = handoffInstructions,
+                    Tools = [],
+                },
+            };
+
+            int index = 0;
+            foreach (HandoffTarget handoff in handoffs)
+            {
+                index++;
+                var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandoffWorkflowBuilder.FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
+
+                functionNames.Add(handoffFunc.Name);
+                functionToAgentId[handoffFunc.Name] = handoff.Target.Id;
+
+                result.ChatOptions.Tools.Add(handoffFunc);
             }
         }
 
-        AgentResponse agentResponse = updates.ToAgentResponse();
+        return result;
+    }
 
-        if (options.EmitAgentResponseEvents)
+    private AIContentExternalHandler<ToolApprovalRequestContent, ToolApprovalResponseContent>? _userInputHandler;
+    private AIContentExternalHandler<FunctionCallContent, FunctionResultContent>? _functionCallHandler;
+
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+    {
+        return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder))
+                   .SendsMessage<HandoffState>();
+    }
+
+    private ProtocolBuilder ConfigureUserInputHandling(ProtocolBuilder protocolBuilder)
+    {
+        this._userInputHandler = new AIContentExternalHandler<ToolApprovalRequestContent, ToolApprovalResponseContent>(
+            ref protocolBuilder,
+            portId: $"{this.Id}_UserInput",
+            intercepted: false,
+            handler: this.HandleUserInputResponseAsync);
+
+        this._functionCallHandler = new AIContentExternalHandler<FunctionCallContent, FunctionResultContent>(
+            ref protocolBuilder,
+            portId: $"{this.Id}_FunctionCall",
+            intercepted: false, // TODO: Use this instead of manual function handling for handoff?
+            handler: this.HandleFunctionResultAsync);
+
+        return protocolBuilder;
+    }
+
+    private ValueTask HandleUserInputResponseAsync(
+        ToolApprovalResponseContent response,
+        IWorkflowContext context,
+        CancellationToken cancellationToken)
+    {
+        if (!this._userInputHandler!.MarkRequestAsHandled(response.RequestId))
         {
-            await context.YieldOutputAsync(agentResponse, cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException($"No pending ToolApprovalRequest found with id '{response.RequestId}'.");
         }
 
-        allMessages.AddRange(agentResponse.Messages);
+        // Merge the external response with any already-buffered regular messages so mixed-content
+        // resumes can be processed in one invocation.
+        return this.InvokeWithStateAsync((state, ctx, ct) =>
+        {
+            if (!state.IsTakingTurn)
+            {
+                throw new InvalidOperationException("Cannot process user responses when not taking a turn in Handoff Orchestration.");
+            }
+
+            ChatMessage userMessage = new(ChatRole.User, [response])
+            {
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+            };
+
+            return this.ContinueTurnAsync(state, [userMessage], ctx, ct);
+        }, context, skipCache: false, cancellationToken);
+    }
+
+    private ValueTask HandleFunctionResultAsync(
+        FunctionResultContent result,
+        IWorkflowContext context,
+        CancellationToken cancellationToken)
+    {
+        if (!this._functionCallHandler!.MarkRequestAsHandled(result.CallId))
+        {
+            throw new InvalidOperationException($"No pending FunctionCall found with id '{result.CallId}'.");
+        }
+
+        // Merge the external response with any already-buffered regular messages so mixed-content
+        // resumes can be processed in one invocation.
+        return this.InvokeWithStateAsync((state, ctx, ct) =>
+        {
+            if (!state.IsTakingTurn)
+            {
+                throw new InvalidOperationException("Cannot process user responses in when not taking a turn in Handoff Orchestration.");
+            }
+
+            ChatMessage toolMessage = new(ChatRole.Tool, [result])
+            {
+                AuthorName = this._agent.Name ?? this._agent.Id,
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+            };
+
+            return this.ContinueTurnAsync(state, [toolMessage], ctx, ct);
+        }, context, skipCache: false, cancellationToken);
+    }
+
+    private async ValueTask<HandoffAgentHostState?> ContinueTurnAsync(HandoffAgentHostState state, List<ChatMessage> incomingMessages, IWorkflowContext context, CancellationToken cancellationToken, bool skipAddIncoming = false)
+    {
+        if (!state.IsTakingTurn)
+        {
+            throw new InvalidOperationException("Cannot process user responses in when not taking a turn in Handoff Orchestration.");
+        }
+
+        // If a handoff was invoked by a previous agent, filter out the handoff function call and tool result messages
+        // before sending to the underlying agent. These are internal workflow mechanics that confuse the target model
+        // into ignoring the original user question.
+        //
+        // This will not filter out tool responses and approval responses that are part of this agent's turn, which is
+        // the expected behavior since those are part of the agent's reasoning process.
+        HandoffMessagesFilter handoffMessagesFilter = new(this._options.ToolCallFilteringBehavior);
+        IEnumerable<ChatMessage> messagesForAgent = state.IncomingState.RequestedHandoffTargetAgentId is not null
+                                                  ? handoffMessagesFilter.FilterMessages(incomingMessages)
+                                                  : incomingMessages;
+
+        List<ChatMessage>? roleChanges = messagesForAgent.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
+
+        bool emitUpdateEvents = state.IncomingState!.ShouldEmitStreamingEvents(this._options.EmitAgentResponseUpdateEvents);
+        AgentInvocationResult result = await this.InvokeAgentAsync(messagesForAgent, context, emitUpdateEvents, cancellationToken)
+                                                     .ConfigureAwait(false);
+
+        if (this.HasOutstandingRequests && result.IsHandoffRequested)
+        {
+            throw new InvalidOperationException("Cannot request a handoff while holding pending requests.");
+        }
 
         roleChanges.ResetUserToAssistantForChangedRoles();
 
-        string currentAgentId = requestedHandoff is not null && this._handoffFunctionToAgentId.TryGetValue(requestedHandoff, out string? targetAgentId)
-            ? targetAgentId
-            : this._agent.Id;
-
-        return new(message.TurnToken, requestedHandoff, allMessages, currentAgentId);
-
-        async Task AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
-        {
-            updates.Add(update);
-            if (message.TurnToken.ShouldEmitStreamingEvents(options.EmitAgentResponseUpdateEvents))
+        int newConversationBookmark = state.ConversationBookmark;
+        await this._sharedStateRef.InvokeWithStateAsync(
+            (sharedState, ctx, ct) =>
             {
-                await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
+                if (sharedState == null)
+                {
+                    throw new InvalidOperationException("Handoff Orchestration shared state was not properly initialized.");
+                }
+
+                if (!skipAddIncoming)
+                {
+                    sharedState.Conversation.AddMessages(incomingMessages);
+                }
+
+                newConversationBookmark = sharedState.Conversation.AddMessages(result.Response.Messages);
+
+                return new ValueTask();
+            },
+            context,
+            cancellationToken).ConfigureAwait(false);
+
+        // We send on the HandoffState even if handoff is not requested because we might be terminating the processing, but this only
+        // happens if we have no outstanding requests.
+        if (!this.HasOutstandingRequests)
+        {
+            HandoffState outgoingState = new(state.IncomingState.TurnToken, result.HandoffTargetId, this._agent.Id);
+
+            await context.SendMessageAsync(outgoingState, cancellationToken).ConfigureAwait(false);
+
+            // reset the state for the next handoff, making sure to keep track of the conversation bookmark, and avoid resetting the
+            // agent session. (return-to-current is modeled as a new handoff turn, as opposed to "HITL", which can be a bit confusing.)
+            return state with { IncomingState = null, ConversationBookmark = newConversationBookmark };
+        }
+
+        return state;
+    }
+
+    public override ValueTask HandleAsync(HandoffState message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        return this.InvokeWithStateAsync(InvokeContinueTurnAsync, context, skipCache: false, cancellationToken);
+
+        async ValueTask<HandoffAgentHostState?> InvokeContinueTurnAsync(HandoffAgentHostState state, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            // Check that we are not getting this message while in the middle of a turn
+            if (state.IsTakingTurn)
+            {
+                throw new InvalidOperationException("Cannot have multiple simultaneous conversations in Handoff Orchestration.");
             }
+
+            IEnumerable<ChatMessage> newConversationMessages = [];
+            int newConversationBookmark = 0;
+
+            await this._sharedStateRef.InvokeWithStateAsync(
+                (sharedState, ctx, ct) =>
+                {
+                    if (sharedState == null)
+                    {
+                        throw new InvalidOperationException("Handoff Orchestration shared state was not properly initialized.");
+                    }
+
+                    (newConversationMessages, newConversationBookmark) = sharedState.Conversation.CollectNewMessages(state.ConversationBookmark);
+
+                    return new ValueTask();
+                },
+                context,
+                cancellationToken).ConfigureAwait(false);
+
+            state = state with { IncomingState = message, ConversationBookmark = newConversationBookmark };
+
+            return await this.ContinueTurnAsync(state, newConversationMessages.ToList(), context, cancellationToken, skipAddIncoming: true)
+                             .ConfigureAwait(false);
         }
     }
 
-    public ValueTask ResetAsync() => default;
+    private const string UserInputRequestStateKey = nameof(_userInputHandler);
+    private const string FunctionCallRequestStateKey = nameof(_functionCallHandler);
+
+    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        Task userInputRequestsTask = this._userInputHandler?.OnCheckpointingAsync(UserInputRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
+        Task functionCallRequestsTask = this._functionCallHandler?.OnCheckpointingAsync(FunctionCallRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
+        Task agentSessionTask = CheckpointAgentSessionAsync();
+
+        Task baseTask = base.OnCheckpointingAsync(context, cancellationToken).AsTask();
+        await Task.WhenAll(userInputRequestsTask, functionCallRequestsTask, agentSessionTask, baseTask).ConfigureAwait(false);
+
+        async Task CheckpointAgentSessionAsync()
+        {
+            JsonElement? sessionState = this._session is not null ? await this._agent.SerializeSessionAsync(this._session, cancellationToken: cancellationToken).ConfigureAwait(false) : null;
+            await context.QueueStateUpdateAsync(AgentSessionKey, sessionState, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        Task userInputRestoreTask = this._userInputHandler?.OnCheckpointRestoredAsync(UserInputRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
+        Task functionCallRestoreTask = this._functionCallHandler?.OnCheckpointRestoredAsync(FunctionCallRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
+        Task agentSessionTask = RestoreAgentSessionAsync();
+
+        await Task.WhenAll(userInputRestoreTask, functionCallRestoreTask, agentSessionTask).ConfigureAwait(false);
+        await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+
+        async Task RestoreAgentSessionAsync()
+        {
+            JsonElement? sessionState = await context.ReadStateAsync<JsonElement?>(AgentSessionKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (sessionState.HasValue)
+            {
+                this._session = await this._agent.DeserializeSessionAsync(sessionState.Value, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+    private bool HasOutstandingRequests => (this._userInputHandler?.HasPendingRequests == true)
+                                        || (this._functionCallHandler?.HasPendingRequests == true);
+
+    private async ValueTask<AgentInvocationResult> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitUpdateEvents, CancellationToken cancellationToken = default)
+    {
+        AgentResponse response;
+
+        AIAgentUnservicedRequestsCollector collector = new(this._userInputHandler, this._functionCallHandler);
+
+        string? requestedHandoff = null;
+        List<AgentResponseUpdate> updates = [];
+        List<FunctionCallContent> candidateRequests = [];
+
+        await this.InvokeWithStateAsync(
+            async (state, ctx, ct) =>
+            {
+                this._session ??= await this._agent.CreateSessionAsync(ct).ConfigureAwait(false);
+
+                IAsyncEnumerable<AgentResponseUpdate> agentStream =
+                    this._agent.RunStreamingAsync(messages,
+                                                  this._session,
+                                                  options: this._agentOptions,
+                                                  cancellationToken: ct);
+
+                await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
+                {
+                    await AddUpdateAsync(update, ct).ConfigureAwait(false);
+
+                    collector.ProcessAgentResponseUpdate(update, CollectHandoffRequestsFilter);
+
+                    bool CollectHandoffRequestsFilter(FunctionCallContent candidateHandoffRequest)
+                    {
+                        bool isHandoffRequest = this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
+                        if (isHandoffRequest)
+                        {
+                            candidateRequests.Add(candidateHandoffRequest);
+                        }
+
+                        return !isHandoffRequest;
+                    }
+                }
+
+                return state;
+            },
+            context,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        if (candidateRequests.Count > 1)
+        {
+            string message = $"Duplicate handoff requests in single turn ([{string.Join(", ", candidateRequests.Select(request => request.Name))}]). Using last ({candidateRequests.Last().Name})";
+            await context.AddEventAsync(new WorkflowWarningEvent(message), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (candidateRequests.Count > 0)
+        {
+            FunctionCallContent handoffRequest = candidateRequests[candidateRequests.Count - 1];
+            requestedHandoff = handoffRequest.Name;
+
+            await AddUpdateAsync(
+                    new AgentResponseUpdate
+                    {
+                        AgentId = this._agent.Id,
+                        AuthorName = this._agent.Name ?? this._agent.Id,
+                        Contents = [CreateHandoffResult(handoffRequest.CallId)],
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        MessageId = Guid.NewGuid().ToString("N"),
+                        Role = ChatRole.Tool,
+                    },
+                    cancellationToken
+                 )
+                .ConfigureAwait(false);
+        }
+
+        response = updates.ToAgentResponse();
+
+        if (this._options.EmitAgentResponseEvents)
+        {
+            await context.YieldOutputAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+
+        await collector.SubmitAsync(context, cancellationToken).ConfigureAwait(false);
+
+        return new(response, LookupHandoffTarget(requestedHandoff));
+
+        ValueTask AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
+        {
+            updates.Add(update);
+
+            return emitUpdateEvents ? context.YieldOutputAsync(update, cancellationToken) : default;
+        }
+
+        string? LookupHandoffTarget(string? requestedHandoff)
+            => requestedHandoff != null
+             ? this._handoffFunctionToAgentId.TryGetValue(requestedHandoff, out string? targetId) ? targetId : null
+             : null;
+    }
+
+    internal static FunctionResultContent CreateHandoffResult(string requestCallId) => new(requestCallId, "Transferred.");
 }

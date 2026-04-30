@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -15,7 +16,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 /// </summary>
 public sealed class AgentSkillsProviderTests : IDisposable
 {
-    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
+    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, sp, ct) => Task.FromResult<object?>(null);
     private readonly string _testRoot;
     private readonly TestAIAgent _agent = new();
 
@@ -462,7 +463,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Act — call UseFileScriptRunner AFTER UseFileSkill (the bug scenario)
         var provider = new AgentSkillsProviderBuilder()
             .UseFileSkill(this._testRoot)
-            .UseFileScriptRunner((skill, script, args, ct) =>
+            .UseFileScriptRunner((skill, script, args, sp, ct) =>
             {
                 executorCalled = true;
                 return Task.FromResult<object?>("executed");
@@ -485,6 +486,62 @@ public sealed class AgentSkillsProviderTests : IDisposable
         }));
 
         Assert.True(executorCalled);
+    }
+
+    [Fact]
+    public async Task RunSkillScript_ForwardsJsonArgumentsAndServiceProviderToRunnerAsync()
+    {
+        // Arrange — create a skill with a script file
+        string skillDir = Path.Combine(this._testRoot, "fwd-skill");
+        Directory.CreateDirectory(Path.Combine(skillDir, "scripts"));
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: fwd-skill\ndescription: Forwarding test\n---\nBody.");
+        File.WriteAllText(
+            Path.Combine(skillDir, "scripts", "run.py"),
+            "print('ok')");
+
+        JsonElement? capturedArgs = null;
+        IServiceProvider? capturedServiceProvider = null;
+
+        var provider = new AgentSkillsProviderBuilder()
+            .UseFileSkill(this._testRoot)
+            .UseFileScriptRunner((skill, script, args, sp, ct) =>
+            {
+                capturedArgs = args;
+                capturedServiceProvider = sp;
+                return Task.FromResult<object?>("executed");
+            })
+            .Build();
+
+        var mockServiceProvider = new TestServiceProvider();
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var runScriptTool = result.Tools!.First(t => t.Name == "run_skill_script") as AIFunction;
+
+        // Act — invoke with JsonElement arguments and a service provider
+        using var argsJsonDoc = JsonDocument.Parse("""["arg1","arg2"]""");
+        var argsJson = argsJsonDoc.RootElement;
+        await runScriptTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+        {
+            ["skillName"] = "fwd-skill",
+            ["scriptName"] = "scripts/run.py",
+            ["arguments"] = argsJson,
+        })
+        {
+            Services = mockServiceProvider,
+        });
+
+        // Assert — JsonElement arguments and service provider are forwarded to the runner
+        Assert.NotNull(capturedArgs);
+        Assert.Equal(JsonValueKind.Array, capturedArgs!.Value.ValueKind);
+        Assert.Equal("""["arg1","arg2"]""", capturedArgs.Value.GetRawText());
+        Assert.Same(mockServiceProvider, capturedServiceProvider);
+    }
+
+    private sealed class TestServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
     }
 
     private static void CreateSkillIn(string root, string name, string description, string body)
@@ -851,6 +908,61 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.Contains("First instructions.", content!.ToString()!);
     }
 
+    [Fact]
+    public async Task Constructor_ClassSkillsParams_ProvidesSkillsAsync()
+    {
+        // Arrange
+        var skill = new TestClassSkill("class-a", "Class A", "Class instructions.");
+        var provider = new AgentSkillsProvider(skill);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("class-a", result.Instructions);
+    }
+
+    [Fact]
+    public async Task Constructor_ClassSkillsEnumerable_ProvidesSkillsAsync()
+    {
+        // Arrange
+        var skills = new List<AgentSkill>
+        {
+            new TestClassSkill("enum-class-a", "Class A", "Instructions A."),
+            new TestClassSkill("enum-class-b", "Class B", "Instructions B."),
+        };
+        var provider = new AgentSkillsProvider(skills);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("enum-class-a", result.Instructions);
+        Assert.Contains("enum-class-b", result.Instructions);
+    }
+
+    [Fact]
+    public async Task Constructor_ClassSkills_DeduplicatesAsync()
+    {
+        // Arrange — two class skills with the same name
+        var skill1 = new TestClassSkill("dup-class", "First", "First instructions.");
+        var skill2 = new TestClassSkill("dup-class", "Second", "Second instructions.");
+        var provider = new AgentSkillsProvider(skill1, skill2);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var loadSkillTool = result.Tools!.First(t => t.Name == "load_skill") as AIFunction;
+        var content = await loadSkillTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?> { ["skillName"] = "dup-class" }));
+
+        // Assert — only first occurrence survives
+        Assert.Contains("First instructions.", content!.ToString()!);
+    }
+
     /// <summary>
     /// A test skill source that counts how many times <see cref="GetSkillsAsync"/> is called.
     /// </summary>
@@ -871,5 +983,24 @@ public sealed class AgentSkillsProviderTests : IDisposable
             Interlocked.Increment(ref this._callCount);
             return Task.FromResult(this._skills);
         }
+    }
+
+    private sealed class TestClassSkill : AgentClassSkill<TestClassSkill>
+    {
+        private readonly string _instructions;
+
+        public TestClassSkill(string name, string description, string instructions)
+        {
+            this.Frontmatter = new AgentSkillFrontmatter(name, description);
+            this._instructions = instructions;
+        }
+
+        public override AgentSkillFrontmatter Frontmatter { get; }
+
+        protected override string Instructions => this._instructions;
+
+        public override IReadOnlyList<AgentSkillResource>? Resources => null;
+
+        public override IReadOnlyList<AgentSkillScript>? Scripts => null;
     }
 }

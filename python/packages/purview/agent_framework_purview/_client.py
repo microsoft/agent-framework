@@ -11,7 +11,7 @@ from typing import Any, Literal, TypeVar, Union, overload
 from uuid import uuid4
 
 import httpx
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import get_tracer
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -189,7 +189,7 @@ class PurviewClient:
         payload = model.model_dump(by_alias=True, exclude_none=True, mode="json")
         request_headers = {
             "Authorization": f"Bearer {token}",
-            "User-Agent": AGENT_FRAMEWORK_USER_AGENT,
+            "User-Agent": get_user_agent(),
             "Content-Type": "application/json",
         }
         if correlation_id:

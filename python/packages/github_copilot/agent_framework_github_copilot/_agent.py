@@ -7,40 +7,40 @@ import contextlib
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
+from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 from agent_framework import (
+    AgentMiddlewareLayer,
     AgentMiddlewareTypes,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
-    BaseContextProvider,
     Content,
+    ContextProvider,
+    HistoryProvider,
     Message,
     ResponseStream,
+    SessionContext,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
+from agent_framework.observability import AgentTelemetryLayer
 
 try:
-    from copilot import CopilotClient, CopilotSession
+    from copilot import CopilotClient, CopilotSession, SubprocessConfig
     from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
-    from copilot.types import (
-        CopilotClientOptions,
-        MCPServerConfig,
-        MessageOptions,
-        PermissionRequestResult,
-        ResumeSessionConfig,
-        SessionConfig,
-        SystemMessageConfig,
-        ToolInvocation,
-        ToolResult,
-    )
-    from copilot.types import Tool as CopilotTool
+    from copilot.session import MCPServerConfig, PermissionRequestResult, ProviderConfig, SystemMessageConfig
+    from copilot.tools import Tool as CopilotTool
+    from copilot.tools import ToolInvocation, ToolResult
 except ImportError as _copilot_import_error:
     raise ImportError(
         "GitHubCopilotAgent requires the 'github-copilot-sdk' package, which is only available on Python 3.11+. "
@@ -60,6 +60,14 @@ PermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], Permission
 """Type for permission request handlers."""
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+
+def _deny_all_permissions(
+    _request: PermissionRequest,
+    _invocation: dict[str, str],
+) -> PermissionRequestResult:
+    """Default permission handler that denies all requests."""
+    return PermissionRequestResult()
 
 
 class GitHubCopilotSettings(TypedDict, total=False):
@@ -119,6 +127,12 @@ class GitHubCopilotOptions(TypedDict, total=False):
     Supports both local (stdio) and remote (HTTP/SSE) servers.
     """
 
+    provider: ProviderConfig
+    """Custom API provider configuration for BYOK (Bring Your Own Key) scenarios.
+    Allows routing requests through your own OpenAI, Azure, or Anthropic endpoint
+    instead of the default GitHub Copilot backend.
+    """
+
 
 OptionsT = TypeVar(
     "OptionsT",
@@ -128,8 +142,11 @@ OptionsT = TypeVar(
 )
 
 
-class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
-    """A GitHub Copilot Agent.
+class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
+    """A GitHub Copilot Agent without telemetry layers.
+
+    This is the core GitHub Copilot agent implementation without OpenTelemetry instrumentation.
+    For most use cases, prefer :class:`GitHubCopilotAgent` which includes telemetry support.
 
     This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities
     within the Agent Framework. It supports both streaming and non-streaming responses,
@@ -142,7 +159,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         .. code-block:: python
 
-            async with GitHubCopilotAgent() as agent:
+            async with RawGitHubCopilotAgent() as agent:
                 response = await agent.run("Hello, world!")
                 print(response)
 
@@ -150,22 +167,11 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         .. code-block:: python
 
-            from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
+            from agent_framework_github_copilot import RawGitHubCopilotAgent, GitHubCopilotOptions
 
-            agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            agent: RawGitHubCopilotAgent[GitHubCopilotOptions] = RawGitHubCopilotAgent(
                 default_options={"model": "claude-sonnet-4", "timeout": 120}
             )
-
-        With tools:
-
-        .. code-block:: python
-
-            def get_weather(city: str) -> str:
-                return f"Weather in {city} is sunny"
-
-
-            async with GitHubCopilotAgent(tools=[get_weather]) as agent:
-                response = await agent.run("What's the weather in Seattle?")
     """
 
     AGENT_PROVIDER_NAME: ClassVar[str] = "github.copilot"
@@ -178,7 +184,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsT | None = None,
@@ -193,9 +199,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             client: Optional pre-configured CopilotClient instance. If not provided,
                 a new client will be created using the other parameters.
-            id: ID of the GitHubCopilotAgent.
-            name: Name of the GitHubCopilotAgent.
-            description: Description of the GitHubCopilotAgent.
+            id: ID of the RawGitHubCopilotAgent.
+            name: Name of the RawGitHubCopilotAgent.
+            description: Description of the RawGitHubCopilotAgent.
             context_providers: Context Providers, to be used by the agent.
             middleware: Agent middleware used by the agent.
             tools: Tools to use for the agent. Can be functions
@@ -231,6 +237,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         log_level = opts.pop("log_level", None)
         on_permission_request: PermissionHandlerType | None = opts.pop("on_permission_request", None)
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
+        provider: ProviderConfig | None = opts.pop("provider", None)
 
         self._settings = load_settings(
             GitHubCopilotSettings,
@@ -246,10 +253,11 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._tools = normalize_tools(tools)
         self._permission_handler = on_permission_request
         self._mcp_servers = mcp_servers
+        self._provider = provider
         self._default_options = opts
         self._started = False
 
-    async def __aenter__(self) -> GitHubCopilotAgent[OptionsT]:
+    async def __aenter__(self) -> Self:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -272,16 +280,13 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             return
 
         if self._client is None:
-            client_options: CopilotClientOptions = {}
-            cli_path = self._settings.get("cli_path")
-            if cli_path:
-                client_options["cli_path"] = cli_path
+            cli_path = self._settings.get("cli_path") or None
+            log_level = self._settings.get("log_level") or None
 
-            log_level = self._settings.get("log_level")
+            subprocess_kwargs: dict[str, Any] = {"cli_path": cli_path}
             if log_level:
-                client_options["log_level"] = log_level  # type: ignore[typeddict-item]
-
-            self._client = CopilotClient(client_options if client_options else None)
+                subprocess_kwargs["log_level"] = log_level
+            self._client = CopilotClient(SubprocessConfig(**subprocess_kwargs))
 
         try:
             await self._client.start()
@@ -302,6 +307,20 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         self._started = False
 
+    @property
+    def default_options(self) -> dict[str, Any]:
+        """Expose default options including model from settings.
+
+        Returns a merged dict of ``_default_options`` with the resolved ``model``
+        from settings injected under the ``model`` key. This is read by
+        :class:`AgentTelemetryLayer` to include the model name in span attributes.
+        """
+        opts = dict(self._default_options)
+        model = self._settings.get("model")
+        if model:
+            opts["model"] = model
+        return opts
+
     @overload
     def run(
         self,
@@ -309,7 +328,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
+        **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
     @overload
@@ -319,7 +340,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
+        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
@@ -328,7 +351,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         options: OptionsT | None = None,
+        **kwargs: Any,  # type: ignore[override]
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
@@ -342,7 +367,12 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
+            middleware: Not used by this agent directly. Accepted for interface
+                compatibility; pass middleware via :class:`GitHubCopilotAgent` which
+                forwards it through :class:`AgentTelemetryLayer`.
             options: Runtime options (model, timeout, etc.).
+            kwargs: Additional keyword arguments for compatibility with the shared agent
+                interface (e.g. compaction_strategy, tokenizer). Not used by this agent.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
@@ -351,14 +381,32 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Raises:
             AgentException: If the request fails.
         """
+        if middleware:
+            logger.warning(
+                "Per-run middleware is not supported by RawGitHubCopilotAgent: the GitHub Copilot SDK "
+                "handles tool execution internally, so chat/function middleware cannot be injected into "
+                "the tool call path. Use agent-level middleware via the GitHubCopilotAgent constructor instead."
+            )
         if stream:
+            ctx_holder: dict[str, Any] = {}
+
+            async def _after_run_hook(response: AgentResponse) -> None:
+                session_context = ctx_holder.get("session_context")
+                sess = ctx_holder.get("session")
+                if session_context is not None and sess is not None:
+                    session_context._response = response
+                    try:
+                        await self._run_after_providers(session=sess, context=session_context)
+                    except Exception:
+                        logger.exception("Error running after_run providers in streaming result hook")
 
             def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
                 return AgentResponse.from_updates(updates)
 
             return ResponseStream(
-                self._stream_updates(messages=messages, session=session, options=options),
+                self._stream_updates(messages=messages, session=session, options=options, _ctx_holder=ctx_holder),
                 finalizer=_finalize,
+                result_hooks=[_after_run_hook],
             )
         return self._run_impl(messages=messages, session=session, options=options)
 
@@ -377,15 +425,25 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
-        timeout = opts.pop("timeout", None) or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
+        timeout = opts.get("timeout") or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
 
-        copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
         input_messages = normalize_messages(messages)
-        prompt = "\n".join([message.text for message in input_messages])
-        message_options = cast(MessageOptions, {"prompt": prompt})
+
+        session_context = await self._run_before_providers(session=session, input_messages=input_messages, options=opts)
+
+        # NOTE: session is created after providers run so that future provider-contributed
+        # tools/config could be folded into runtime_options before session creation.
+        copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
+
+        # Build the prompt from the full set of messages in the session context,
+        # so that any context/history provider-injected messages are included.
+        context_messages = session_context.get_messages(include_input=True)
+        prompt = "\n".join([message.text for message in context_messages])
+        if session_context.instructions:
+            prompt = "\n".join(session_context.instructions) + "\n" + prompt
 
         try:
-            response_event = await copilot_session.send_and_wait(message_options, timeout=timeout)
+            response_event = await copilot_session.send_and_wait(prompt, timeout=timeout)
         except Exception as ex:
             raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
 
@@ -408,7 +466,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 )
             response_id = message_id
 
-        return AgentResponse(messages=response_messages, response_id=response_id)
+        response = AgentResponse(messages=response_messages, response_id=response_id)
+        session_context._response = response  # type: ignore[assignment]
+        await self._run_after_providers(session=session, context=session_context)
+        return response
 
     async def _stream_updates(
         self,
@@ -416,6 +477,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
+        _ctx_holder: dict[str, Any] | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal method to stream updates from GitHub Copilot.
 
@@ -425,6 +487,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
+            _ctx_holder: Internal dict populated with session_context and session
+                so that the caller (via a ResponseStream result_hook) can run
+                after_run providers without duplicating the updates buffer.
 
         Yields:
             AgentResponseUpdate items.
@@ -440,10 +505,23 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         opts: dict[str, Any] = dict(options) if options else {}
 
-        copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
         input_messages = normalize_messages(messages)
-        prompt = "\n".join([message.text for message in input_messages])
-        message_options = cast(MessageOptions, {"prompt": prompt})
+
+        session_context = await self._run_before_providers(session=session, input_messages=input_messages, options=opts)
+
+        # NOTE: session is created after providers run so that future provider-contributed
+        # tools/config could be folded into runtime_options before session creation.
+        copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
+
+        if _ctx_holder is not None:
+            _ctx_holder["session_context"] = session_context
+            _ctx_holder["session"] = session
+
+        # Build the prompt from the full session context so provider-injected messages are included.
+        context_messages = session_context.get_messages(include_input=True)
+        prompt = "\n".join([message.text for message in context_messages])
+        if session_context.instructions:
+            prompt = "\n".join(session_context.instructions) + "\n" + prompt
 
         queue: asyncio.Queue[AgentResponseUpdate | Exception | None] = asyncio.Queue()
 
@@ -504,7 +582,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         unsubscribe = copilot_session.on(event_handler)
 
         try:
-            await copilot_session.send(message_options)
+            await copilot_session.send(prompt)
 
             while (item := await queue.get()) is not None:
                 if isinstance(item, Exception):
@@ -512,6 +590,46 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 yield item
         finally:
             unsubscribe()
+
+    async def _run_before_providers(
+        self,
+        *,
+        session: AgentSession,
+        input_messages: list[Message],
+        options: dict[str, Any],
+    ) -> SessionContext:
+        """Run before_run on all context providers and return the session context.
+
+        Creates a SessionContext and invokes ``before_run`` on each provider in
+        forward order.  ``HistoryProvider`` instances with
+        ``load_messages=False`` are skipped.
+
+        Keyword Args:
+            session: The conversation session.
+            input_messages: The normalized input messages.
+            options: Runtime options dict.
+
+        Returns:
+            The SessionContext with provider context populated.
+        """
+        session_context = SessionContext(
+            session_id=session.session_id,
+            service_session_id=session.service_session_id,
+            input_messages=input_messages,
+            options=options,
+        )
+
+        for provider in self.context_providers:
+            if isinstance(provider, HistoryProvider) and not provider.load_messages:
+                continue
+            await provider.before_run(
+                agent=self,  # type: ignore[arg-type]
+                session=session,
+                context=session_context,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
+
+        return session_context
 
     @staticmethod
     def _prepare_system_message(
@@ -644,43 +762,132 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
         opts = runtime_options or {}
-        config: SessionConfig = {"streaming": streaming}
+        model = opts.get("model") or self._settings.get("model") or None
+        system_message = opts.get("system_message") or self._default_options.get("system_message") or None
+        permission_handler: PermissionHandlerType = (
+            opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
+        )
+        mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
+        provider = opts.get("provider") or self._provider or None
+        tools = self._prepare_tools(self._tools) if self._tools else None
 
-        model = opts.get("model") or self._settings.get("model")
-        if model:
-            config["model"] = model  # type: ignore[typeddict-item]
-
-        system_message = opts.get("system_message") or self._default_options.get("system_message")
-        if system_message:
-            config["system_message"] = system_message
-
-        if self._tools:
-            config["tools"] = self._prepare_tools(self._tools)
-
-        permission_handler = opts.get("on_permission_request") or self._permission_handler
-        if permission_handler:
-            config["on_permission_request"] = permission_handler
-
-        mcp_servers = opts.get("mcp_servers") or self._mcp_servers
-        if mcp_servers:
-            config["mcp_servers"] = mcp_servers
-
-        return await self._client.create_session(config)
+        return await self._client.create_session(
+            on_permission_request=permission_handler,
+            streaming=streaming,
+            model=model or None,
+            system_message=system_message or None,
+            tools=tools or None,
+            mcp_servers=mcp_servers or None,
+            provider=provider or None,
+        )
 
     async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:
         """Resume an existing Copilot session by ID."""
         if not self._client:
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
-        config: ResumeSessionConfig = {"streaming": streaming}
+        permission_handler: PermissionHandlerType = self._permission_handler or _deny_all_permissions
+        tools = self._prepare_tools(self._tools) if self._tools else None
 
-        if self._tools:
-            config["tools"] = self._prepare_tools(self._tools)
+        return await self._client.resume_session(
+            session_id,
+            on_permission_request=permission_handler,
+            streaming=streaming,
+            tools=tools or None,
+            mcp_servers=self._mcp_servers or None,
+            provider=self._provider or None,
+        )
 
-        if self._permission_handler:
-            config["on_permission_request"] = self._permission_handler
 
-        if self._mcp_servers:
-            config["mcp_servers"] = self._mcp_servers
+class GitHubCopilotAgent(  # type: ignore[misc]
+    AgentMiddlewareLayer,
+    AgentTelemetryLayer,
+    RawGitHubCopilotAgent[OptionsT],
+    Generic[OptionsT],
+):
+    """A GitHub Copilot Agent with full middleware and telemetry support.
 
-        return await self._client.resume_session(session_id, config)
+    This is the recommended agent class for most use cases. It includes
+    middleware support and OpenTelemetry-based telemetry for observability,
+    with middleware running outside the telemetry span so middleware execution
+    time is not captured in traces. For a minimal implementation without these
+    layers, use :class:`RawGitHubCopilotAgent`.
+
+    Examples:
+        Basic usage:
+
+        .. code-block:: python
+
+            async with GitHubCopilotAgent() as agent:
+                response = await agent.run("Hello, world!")
+                print(response)
+
+        With explicitly typed options:
+
+        .. code-block:: python
+
+            from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
+
+            agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+                default_options={"model": "claude-sonnet-4-5", "timeout": 120}
+            )
+
+        With observability:
+
+        .. code-block:: python
+
+            from agent_framework.observability import configure_otel_providers
+
+            configure_otel_providers()
+            async with GitHubCopilotAgent() as agent:
+                response = await agent.run("Hello, world!")
+    """
+
+    def __init__(
+        self,
+        instructions: str | None = None,
+        *,
+        client: CopilotClient | None = None,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        default_options: OptionsT | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize a GitHub Copilot Agent with full middleware and telemetry.
+
+        Args:
+            instructions: System message for the agent.
+
+        Keyword Args:
+            client: Optional pre-configured CopilotClient instance. If not provided,
+                a new client will be created using the other parameters.
+            id: ID of the agent.
+            name: Name of the agent.
+            description: Description of the agent.
+            context_providers: Context providers to be used by the agent.
+            middleware: Agent middleware used by the agent.
+            tools: Tools to use for the agent. Can be functions or tool definition dicts.
+                These are converted to Copilot SDK tools internally.
+            default_options: Default options for the agent. Can include cli_path, model,
+                timeout, log_level, etc.
+            env_file_path: Optional path to .env file for loading configuration.
+            env_file_encoding: Encoding of the .env file, defaults to 'utf-8'.
+        """
+        super().__init__(
+            instructions,
+            client=client,
+            id=id,
+            name=name,
+            description=description,
+            context_providers=context_providers,
+            middleware=middleware,
+            tools=tools,
+            default_options=default_options,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )

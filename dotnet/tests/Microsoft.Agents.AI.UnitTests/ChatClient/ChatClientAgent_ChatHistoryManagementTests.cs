@@ -520,7 +520,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
             agentOptions: new()
             {
                 ChatOptions = new() { Instructions = "Be helpful" },
-                PersistChatHistoryAtEndOfRun = false,
+                RequirePerServiceCallChatHistoryPersistence = true,
             },
             expectedServiceCallCount: 1,
             expectedHistory:
@@ -554,7 +554,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
             agentOptions: new()
             {
                 ChatOptions = new() { Tools = [tool] },
-                PersistChatHistoryAtEndOfRun = false,
+                RequirePerServiceCallChatHistoryPersistence = true,
             },
             expectedServiceCallCount: 2,
             expectedHistory:
@@ -583,7 +583,6 @@ public class ChatClientAgent_ChatHistoryManagementTests
             agentOptions: new()
             {
                 ChatOptions = new() { Instructions = "Be helpful" },
-                PersistChatHistoryAtEndOfRun = true,
             },
             expectedServiceCallCount: 1,
             expectedHistory:
@@ -615,7 +614,6 @@ public class ChatClientAgent_ChatHistoryManagementTests
             agentOptions: new()
             {
                 ChatOptions = new() { Tools = [tool] },
-                PersistChatHistoryAtEndOfRun = true,
             },
             expectedServiceCallCount: 2,
             expectedHistory:
@@ -644,7 +642,6 @@ public class ChatClientAgent_ChatHistoryManagementTests
             agentOptions: new()
             {
                 ChatOptions = new() { Instructions = "Be helpful" },
-                PersistChatHistoryAtEndOfRun = false,
             },
             expectedServiceCallCount: 1);
 

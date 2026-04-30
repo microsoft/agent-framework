@@ -14,6 +14,7 @@ from typing import Any, ClassVar, TypeVar, cast
 
 from agent_framework import (
     AgentResponse,
+    AgentResponseUpdate,
     AgentSession,
     Message,
     SupportsAgentRun,
@@ -604,14 +605,14 @@ class StandardMagenticManager(MagenticManagerBase):
         # Gather facts
         facts_user = Message(
             role="user",
-            text=self.task_ledger_facts_prompt.format(task=magentic_context.task),
+            contents=[self.task_ledger_facts_prompt.format(task=magentic_context.task)],
         )
         facts_msg = await self._complete([*magentic_context.chat_history, facts_user])
 
         # Create plan
         plan_user = Message(
             role="user",
-            text=self.task_ledger_plan_prompt.format(team=team_text),
+            contents=[self.task_ledger_plan_prompt.format(team=team_text)],
         )
         plan_msg = await self._complete([*magentic_context.chat_history, facts_user, facts_msg, plan_user])
 
@@ -628,7 +629,7 @@ class StandardMagenticManager(MagenticManagerBase):
             facts=facts_msg.text,
             plan=plan_msg.text,
         )
-        return Message(role="assistant", text=combined, author_name=MAGENTIC_MANAGER_NAME)
+        return Message(role="assistant", contents=[combined], author_name=MAGENTIC_MANAGER_NAME)
 
     async def replan(self, magentic_context: MagenticContext) -> Message:
         """Update facts and plan when stalling or looping has been detected."""
@@ -640,16 +641,18 @@ class StandardMagenticManager(MagenticManagerBase):
         # Update facts
         facts_update_user = Message(
             role="user",
-            text=self.task_ledger_facts_update_prompt.format(
-                task=magentic_context.task, old_facts=self.task_ledger.facts.text
-            ),
+            contents=[
+                self.task_ledger_facts_update_prompt.format(
+                    task=magentic_context.task, old_facts=self.task_ledger.facts.text
+                )
+            ],
         )
         updated_facts = await self._complete([*magentic_context.chat_history, facts_update_user])
 
         # Update plan
         plan_update_user = Message(
             role="user",
-            text=self.task_ledger_plan_update_prompt.format(team=team_text),
+            contents=[self.task_ledger_plan_update_prompt.format(team=team_text)],
         )
         updated_plan = await self._complete([
             *magentic_context.chat_history,
@@ -671,7 +674,7 @@ class StandardMagenticManager(MagenticManagerBase):
             facts=updated_facts.text,
             plan=updated_plan.text,
         )
-        return Message(role="assistant", text=combined, author_name=MAGENTIC_MANAGER_NAME)
+        return Message(role="assistant", contents=[combined], author_name=MAGENTIC_MANAGER_NAME)
 
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         """Use the model to produce a JSON progress ledger based on the conversation so far.
@@ -691,7 +694,7 @@ class StandardMagenticManager(MagenticManagerBase):
             team=team_text,
             names=names_csv,
         )
-        user_message = Message(role="user", text=prompt)
+        user_message = Message(role="user", contents=[prompt])
 
         # Include full context to help the model decide current stage, with small retry loop
         attempts = 0
@@ -718,12 +721,12 @@ class StandardMagenticManager(MagenticManagerBase):
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
         """Ask the model to produce the final answer addressed to the user."""
         prompt = self.final_answer_prompt.format(task=magentic_context.task)
-        user_message = Message(role="user", text=prompt)
+        user_message = Message(role="user", contents=[prompt])
         response = await self._complete([*magentic_context.chat_history, user_message])
         # Ensure role is assistant
         return Message(
             role="assistant",
-            text=response.text,
+            contents=[response.text],
             author_name=response.author_name or MAGENTIC_MANAGER_NAME,
         )
 
@@ -806,11 +809,11 @@ class MagenticPlanReviewResponse:
     def revise(feedback: str | list[str] | Message | list[Message]) -> "MagenticPlanReviewResponse":
         """Create a revision response with feedback."""
         if isinstance(feedback, str):
-            feedback = [Message(role="user", text=feedback)]
+            feedback = [Message(role="user", contents=[feedback])]
         elif isinstance(feedback, Message):
             feedback = [feedback]
         elif isinstance(feedback, list):
-            feedback = [Message(role="user", text=item) if isinstance(item, str) else item for item in feedback]
+            feedback = [Message(role="user", contents=[item]) if isinstance(item, str) else item for item in feedback]
 
         return MagenticPlanReviewResponse(review=feedback)
 
@@ -1055,7 +1058,9 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         if self._magentic_context is None:
             raise RuntimeError("Context not initialized")
         # Check limits first
-        within_limits = await self._check_within_limits_or_complete(cast(WorkflowContext[Never, list[Message]], ctx))
+        within_limits = await self._check_within_limits_or_complete(
+            cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx)
+        )
         if not within_limits:
             return
 
@@ -1090,7 +1095,7 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         # Check for task completion
         if self._progress_ledger.is_request_satisfied.answer:
             logger.info("Magentic Orchestrator: Task completed")
-            await self._prepare_final_answer(cast(WorkflowContext[Never, list[Message]], ctx))
+            await self._prepare_final_answer(cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx))
             return
 
         # Check for stalling or looping
@@ -1114,13 +1119,13 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
 
         if next_speaker not in self._participant_registry.participants:
             logger.warning(f"Invalid next speaker: {next_speaker}")
-            await self._prepare_final_answer(cast(WorkflowContext[Never, list[Message]], ctx))
+            await self._prepare_final_answer(cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx))
             return
 
         # Add instruction to conversation (assistant guidance)
         instruction_msg = Message(
             role="assistant",
-            text=str(instruction),
+            contents=[str(instruction)],
             author_name=MAGENTIC_MANAGER_NAME,
         )
         self._magentic_context.chat_history.append(instruction_msg)
@@ -1190,20 +1195,25 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         # Start inner loop
         await self._run_inner_loop(ctx)
 
-    async def _prepare_final_answer(self, ctx: WorkflowContext[Never, list[Message]]) -> None:
-        """Prepare the final answer using the manager."""
+    async def _prepare_final_answer(self, ctx: WorkflowContext[Never, AgentResponse | AgentResponseUpdate]) -> None:
+        """Yield the manager's synthesized final answer.
+
+        Mode-aware: streaming -> ``AgentResponseUpdate``, non-streaming → ``AgentResponse``.
+        See ``BaseGroupChatOrchestrator._yield_completion``.
+        """
         if self._magentic_context is None:
             raise RuntimeError("Context not initialized")
 
         logger.info("Magentic Orchestrator: Preparing final answer")
         final_answer = await self._manager.prepare_final_answer(self._magentic_context.clone(deep=True))
 
-        # Emit a completed event for the workflow
-        await ctx.yield_output([final_answer])
+        await self._yield_completion(ctx, final_answer)
 
         self._terminated = True
 
-    async def _check_within_limits_or_complete(self, ctx: WorkflowContext[Never, list[Message]]) -> bool:
+    async def _check_within_limits_or_complete(
+        self, ctx: WorkflowContext[Never, AgentResponse | AgentResponseUpdate]
+    ) -> bool:
         """Check if orchestrator is within operational limits.
 
         If limits are exceeded, yield a termination message and mark the workflow as terminated.
@@ -1227,15 +1237,12 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
             limit_type = "round" if hit_round_limit else "reset"
             logger.error(f"Magentic Orchestrator: Max {limit_type} count reached")
 
-            # Yield the full conversation with an indication of termination due to limits
-            await ctx.yield_output([
-                *self._magentic_context.chat_history,
-                Message(
-                    role="assistant",
-                    text=f"Workflow terminated due to reaching maximum {limit_type} count.",
-                    author_name=MAGENTIC_MANAGER_NAME,
-                ),
-            ])
+            termination_message = Message(
+                role="assistant",
+                contents=[f"Workflow terminated due to reaching maximum {limit_type} count."],
+                author_name=MAGENTIC_MANAGER_NAME,
+            )
+            await self._yield_completion(ctx, termination_message)
             self._terminated = True
 
             return False
@@ -1425,7 +1432,9 @@ class MagenticBuilder:
             max_round_count: Max total coordination rounds. None means unlimited.
             enable_plan_review: If True, requires human approval of the initial plan before proceeding.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
-            intermediate_outputs: If True, enables intermediate outputs from agent participants.
+            intermediate_outputs: If True, every participant's `yield_output` surfaces as a
+                workflow `output` event in addition to the orchestrator's. By default (False)
+                only the orchestrator's output surfaces.
         """
         self._participants: dict[str, SupportsAgentRun | Executor] = {}
 
@@ -1438,7 +1447,6 @@ class MagenticBuilder:
 
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
 
-        # Intermediate outputs
         self._intermediate_outputs = intermediate_outputs
 
         self._set_participants(participants)

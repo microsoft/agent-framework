@@ -23,10 +23,8 @@ jobs:
     environment: integration
     env:
       # Required configuration for get-started samples
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
     defaults:
       run:
         working-directory: python
@@ -43,10 +41,8 @@ jobs:
 
       - name: Create .env for samples
         run: |
-          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
-          echo "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
-          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
 
       - name: Run sample validation
         run: |
@@ -64,18 +60,19 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      # Foundry configuration
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__EMBEDDINGDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_EMBEDDING_MODEL: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME || vars.AZUREOPENAI__EMBEDDINGDEPLOYMENTNAME }}
       # OpenAI configuration
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       # GitHub MCP
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
@@ -97,15 +94,16 @@ jobs:
 
       - name: Create .env for samples
         run: |
-          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
-          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
           echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
-          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME=$AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_MODEL=$AZURE_OPENAI_MODEL" >> .env
+          echo "AZURE_OPENAI_CHAT_COMPLETION_MODEL=$AZURE_OPENAI_CHAT_COMPLETION_MODEL" >> .env
+          echo "AZURE_OPENAI_CHAT_MODEL=$AZURE_OPENAI_CHAT_MODEL" >> .env
+          echo "AZURE_OPENAI_EMBEDDING_MODEL=$AZURE_OPENAI_EMBEDDING_MODEL" >> .env
           echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
-          echo "OPENAI_CHAT_MODEL_ID=$OPENAI_CHAT_MODEL_ID" >> .env
-          echo "OPENAI_RESPONSES_MODEL_ID=$OPENAI_RESPONSES_MODEL_ID" >> .env
+          echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
+          echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
           echo "GITHUB_PAT=$GITHUB_PAT" >> .env
 
       - name: Run sample validation
@@ -125,8 +123,9 @@ jobs:
     environment: integration
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
     defaults:
       run:
         working-directory: python
@@ -144,8 +143,9 @@ jobs:
       - name: Create .env for samples
         run: |
           echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
-          echo "OPENAI_CHAT_MODEL_ID=$OPENAI_CHAT_MODEL_ID" >> .env
-          echo "OPENAI_RESPONSES_MODEL_ID=$OPENAI_RESPONSES_MODEL_ID" >> .env
+          echo "OPENAI_MODEL=$OPENAI_MODEL" >> .env
+          echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
+          echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
 
       - name: Run sample validation
         run: |
@@ -158,15 +158,14 @@ jobs:
           name: validation-report-02-agents-openai
           path: python/samples/sample_validation/reports/
 
-  validate-02-agents-azure-openai:
-    name: Validate 02-agents/providers/azure_openai
+  validate-02-agents-azure:
+    name: Validate 02-agents/providers/azure
     runs-on: ubuntu-latest
     environment: integration
     env:
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_API_VERSION: ${{ vars.AZURE_OPENAI_API_VERSION || '' }}
     defaults:
       run:
         working-directory: python
@@ -183,100 +182,19 @@ jobs:
 
       - name: Create .env for samples
         run: |
-          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
           echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
-          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_MODEL=$AZURE_OPENAI_MODEL" >> .env
+          echo "AZURE_OPENAI_API_VERSION=$AZURE_OPENAI_API_VERSION" >> .env
 
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure_openai --save-report --report-name 02-agents-azure-openai
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure --save-report --report-name 02-agents-azure
 
       - name: Upload validation report
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: validation-report-02-agents-azure-openai
-          path: python/samples/sample_validation/reports/
-
-  validate-02-agents-azure-ai:
-    name: Validate 02-agents/providers/azure_ai
-    runs-on: ubuntu-latest
-    environment: integration
-    env:
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_AI_CHAT_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__EMBEDDINGDEPLOYMENTNAME }}
-      BING_CONNECTION_ID: ${{ secrets.BING_CONNECTION_ID }}
-    defaults:
-      run:
-        working-directory: python
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup environment
-        uses: ./.github/actions/sample-validation-setup
-        with:
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          os: ${{ runner.os }}
-
-      - name: Create .env for samples
-        run: |
-          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
-          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_AI_CHAT_MODEL_DEPLOYMENT_NAME=$AZURE_AI_CHAT_MODEL_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME=$AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME" >> .env
-          echo "BING_CONNECTION_ID=$BING_CONNECTION_ID" >> .env
-
-      - name: Run sample validation
-        run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure_ai --save-report --report-name 02-agents-azure-ai
-
-      - name: Upload validation report
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: validation-report-02-agents-azure-ai
-          path: python/samples/sample_validation/reports/
-
-  validate-02-agents-azure-ai-agent:
-    name: Validate 02-agents/providers/azure_ai_agent
-    runs-on: ubuntu-latest
-    environment: integration
-    env:
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-    defaults:
-      run:
-        working-directory: python
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup environment
-        uses: ./.github/actions/sample-validation-setup
-        with:
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          os: ${{ runner.os }}
-
-      - name: Create .env for samples
-        run: |
-          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
-          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
-
-      - name: Run sample validation
-        run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure_ai_agent --save-report --report-name 02-agents-azure-ai-agent
-
-      - name: Upload validation report
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: validation-report-02-agents-azure-ai-agent
+          name: validation-report-02-agents-azure
           path: python/samples/sample_validation/reports/
 
   validate-02-agents-anthropic:
@@ -285,7 +203,7 @@ jobs:
     environment: integration
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ANTHROPIC_CHAT_MODEL_ID: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
+      ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
     defaults:
       run:
         working-directory: python
@@ -303,7 +221,7 @@ jobs:
       - name: Create .env for samples
         run: |
           echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> .env
-          echo "ANTHROPIC_CHAT_MODEL_ID=$ANTHROPIC_CHAT_MODEL_ID" >> .env
+          echo "ANTHROPIC_CHAT_MODEL=$ANTHROPIC_CHAT_MODEL" >> .env
 
       - name: Run sample validation
         run: |
@@ -351,7 +269,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      BEDROCK_CHAT_MODEL_ID: ${{ vars.BEDROCK__CHATMODELID }}
+      BEDROCK_CHAT_MODEL: ${{ vars.BEDROCK__CHATMODELID }}
     defaults:
       run:
         working-directory: python
@@ -409,11 +327,16 @@ jobs:
           name: validation-report-02-agents-ollama
           path: python/samples/sample_validation/reports/
 
-  validate-02-agents-foundry-local:
-    name: Validate 02-agents/providers/foundry_local
-    if: false # Temporarily disabled - requires local Foundry setup
+  validate-02-agents-foundry:
+    name: Validate 02-agents/providers/foundry
+    if: false # Temporarily disabled - provider folder also contains the local Foundry sample
     runs-on: ubuntu-latest
     environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_AGENT_NAME || '' }}
+      FOUNDRY_AGENT_VERSION: ${{ vars.FOUNDRY_AGENT_VERSION || '' }}
     defaults:
       run:
         working-directory: python
@@ -428,15 +351,22 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+          echo "FOUNDRY_AGENT_NAME=$FOUNDRY_AGENT_NAME" >> .env
+          echo "FOUNDRY_AGENT_VERSION=$FOUNDRY_AGENT_VERSION" >> .env
+
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/foundry_local --save-report --report-name 02-agents-foundry-local
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/foundry --save-report --report-name 02-agents-foundry
 
       - name: Upload validation report
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: validation-report-02-agents-foundry-local
+          name: validation-report-02-agents-foundry
           path: python/samples/sample_validation/reports/
 
   validate-02-agents-copilotstudio:
@@ -515,13 +445,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      # Azure OpenAI configuration
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
     defaults:
       run:
         working-directory: python
@@ -538,11 +463,8 @@ jobs:
 
       - name: Create .env for samples
         run: |
-          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
-          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
-          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME" >> .env
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
 
       - name: Run sample validation
         run: |
@@ -561,12 +483,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      # Azure OpenAI configuration
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # A2A configuration
       A2A_AGENT_HOST: http://localhost:5001/
     defaults:
@@ -600,19 +518,18 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure AI Search (for evaluation samples)
       AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
       AZURE_SEARCH_API_KEY: ${{ secrets.AZURE_SEARCH_API_KEY }}
       AZURE_SEARCH_INDEX_NAME: ${{ secrets.AZURE_SEARCH_INDEX_NAME }}
       # Evaluation sample
-      AZURE_AI_MODEL_DEPLOYMENT_NAME_WORKFLOW: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_MODEL_WORKFLOW: ${{ vars.FOUNDRY_MODEL_WORKFLOW || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_MODEL_EVAL: ${{ vars.FOUNDRY_MODEL_EVAL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
     defaults:
       run:
         working-directory: python
@@ -643,16 +560,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # OpenAI configuration
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
     defaults:
       run:
@@ -670,13 +586,13 @@ jobs:
 
       - name: Create .env for samples
         run: |
-          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
-          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
           echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
-          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_MODEL=$AZURE_OPENAI_MODEL" >> .env
           echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
-          echo "OPENAI_CHAT_MODEL_ID=$OPENAI_CHAT_MODEL_ID" >> .env
-          echo "OPENAI_RESPONSES_MODEL_ID=$OPENAI_RESPONSES_MODEL_ID" >> .env
+          echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
+          echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
 
       - name: Run sample validation
         run: |
@@ -694,18 +610,20 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      # Azure AI configuration
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      # Azure OpenAI configuration
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      # Azure OpenAI configuration for AF
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      # OpenAI configuration
+      AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      # Azure OpenAI configuration for SK
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
+      # OpenAI key
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      # OpenAI configuration for SK
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
       # Copilot Studio
       COPILOTSTUDIOAGENT__ENVIRONMENTID: ${{ secrets.COPILOTSTUDIOAGENT__ENVIRONMENTID }}
       COPILOTSTUDIOAGENT__SCHEMANAME: ${{ secrets.COPILOTSTUDIOAGENT__SCHEMANAME }}
@@ -727,14 +645,13 @@ jobs:
 
       - name: Create .env for samples
         run: |
-          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
-          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
           echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
-          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_MODEL=$AZURE_OPENAI_MODEL" >> .env
           echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
-          echo "OPENAI_CHAT_MODEL_ID=$OPENAI_CHAT_MODEL_ID" >> .env
-          echo "OPENAI_RESPONSES_MODEL_ID=$OPENAI_RESPONSES_MODEL_ID" >> .env
+          echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
+          echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
           echo "COPILOTSTUDIOAGENT__ENVIRONMENTID=$COPILOTSTUDIOAGENT__ENVIRONMENTID" >> .env
           echo "COPILOTSTUDIOAGENT__SCHEMANAME=$COPILOTSTUDIOAGENT__SCHEMANAME" >> .env
           echo "COPILOTSTUDIOAGENT__TENANTID=$COPILOTSTUDIOAGENT__TENANTID" >> .env
@@ -759,14 +676,12 @@ jobs:
       - validate-01-get-started
       - validate-02-agents
       - validate-02-agents-openai
-      - validate-02-agents-azure-openai
-      - validate-02-agents-azure-ai
-      - validate-02-agents-azure-ai-agent
+      - validate-02-agents-azure
       - validate-02-agents-anthropic
       - validate-02-agents-github-copilot
       - validate-02-agents-amazon
       - validate-02-agents-ollama
-      - validate-02-agents-foundry-local
+      - validate-02-agents-foundry
       - validate-02-agents-copilotstudio
       - validate-02-agents-custom
       - validate-03-workflows

@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
-    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative.AzureAI\Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative.Foundry\Microsoft.Agents.AI.Workflows.Declarative.Foundry.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative.Mcp\Microsoft.Agents.AI.Workflows.Declarative.Mcp.csproj" />
   </ItemGroup>
 
@@ -27,7 +27,7 @@
     <None Update="Agents\*.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="$(MSBuildThisFileDirectory)\..\..\..\workflow-samples\Setup\*.yaml" LinkBase="Agents">
+    <None Include="$(MSBuildThisFileDirectory)\..\..\..\declarative-agents\workflow-samples\Setup\*.yaml" LinkBase="Agents">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </None>
     <None Update="Testcases\*.json">

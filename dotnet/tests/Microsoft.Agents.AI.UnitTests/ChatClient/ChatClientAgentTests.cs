@@ -379,12 +379,10 @@ public partial class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync passes ChatOptions with null ConversationId when using regular AgentRunOptions.
-    /// When per-service-call persistence is active (default), the sentinel conversation ID is set on ChatOptions
-    /// and then stripped by ChatHistoryPersistingChatClient before reaching the inner client.
+    /// Verify that RunAsync passes null ChatOptions when using regular AgentRunOptions.
     /// </summary>
     [Fact]
-    public async Task RunAsyncPassesChatOptionsWithNullConversationIdWhenUsingRegularAgentRunOptionsAsync()
+    public async Task RunAsyncPassesNullChatOptionsWhenUsingRegularAgentRunOptionsAsync()
     {
         // Arrange
         ChatOptions? capturedOptions = null;
@@ -403,9 +401,8 @@ public partial class ChatClientAgentTests
         // Act
         await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
 
-        // Assert — the inner client receives ChatOptions with null ConversationId (sentinel was stripped)
-        Assert.NotNull(capturedOptions);
-        Assert.Null(capturedOptions!.ConversationId);
+        // Assert
+        Assert.Null(capturedOptions);
     }
 
     /// <summary>

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
 from typing_extensions import Never
@@ -529,11 +529,12 @@ class TestFunctionExecutor:
         assert "@handler on instance methods" in str(exc_info.value)
 
     async def test_async_staticmethod_detection_behavior(self):
-        """Document the behavior of asyncio.iscoroutinefunction with staticmethod descriptors.
+        """Document the behavior of inspect.iscoroutinefunction with staticmethod descriptors.
 
         This test explains why the unwrapping is necessary when decorators are stacked.
         """
         import asyncio
+        import inspect
 
         # When @staticmethod is applied, it creates a descriptor
         async def my_async_func():
@@ -544,19 +545,19 @@ class TestFunctionExecutor:
         static_wrapped = staticmethod(my_async_func)
 
         # Direct check on descriptor object fails (this is the bug)
-        assert not asyncio.iscoroutinefunction(static_wrapped)  # type: ignore[reportDeprecated]
+        assert not inspect.iscoroutinefunction(static_wrapped)
         assert isinstance(static_wrapped, staticmethod)
 
         # But unwrapping __func__ reveals the async function
         unwrapped = static_wrapped.__func__
-        assert asyncio.iscoroutinefunction(unwrapped)  # type: ignore[reportDeprecated]
+        assert inspect.iscoroutinefunction(unwrapped)
 
         # When accessed via class attribute, Python's descriptor protocol
         # automatically unwraps it, so it works:
         class C:
             async_static = static_wrapped
 
-        assert asyncio.iscoroutinefunction(C.async_static)  # type: ignore[reportDeprecated]  # Works via descriptor protocol
+        assert inspect.iscoroutinefunction(C.async_static)  # Works via descriptor protocol
 
 
 class TestExecutorExplicitTypes:
@@ -895,3 +896,73 @@ class TestExecutorExplicitTypes:
         assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
         assert int in exec_instance.output_types
         assert bool in exec_instance.workflow_output_types
+
+
+# region Tests for unresolved TypeVar rejection in function executor registration
+
+_FT = TypeVar("_FT")
+
+
+class TestFunctionExecutorTypeVarRejection:
+    """Tests that FunctionExecutor rejects unresolved TypeVar in message annotations."""
+
+    def test_function_executor_rejects_unresolved_typevar(self):
+        """Test that FunctionExecutor raises ValueError for unresolved TypeVar message annotation."""
+
+        def echo(message: _FT) -> _FT:
+            return message
+
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+            FunctionExecutor(echo, id="echo")
+
+    def test_function_executor_rejects_typevar_with_context(self):
+        """Test that FunctionExecutor raises ValueError for TypeVar even with WorkflowContext."""
+
+        async def echo(message: _FT, ctx: WorkflowContext) -> None:
+            pass
+
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+            FunctionExecutor(echo, id="echo")
+
+    def test_function_executor_explicit_input_bypasses_typevar_check(self):
+        """Test that explicit input= parameter bypasses TypeVar detection."""
+
+        async def echo(message: _FT, ctx: WorkflowContext) -> None:
+            pass
+
+        exec_instance = FunctionExecutor(echo, id="echo", input=str, output=str)
+        assert str in exec_instance.input_types
+
+    def test_function_executor_allows_concrete_types(self):
+        """Test that FunctionExecutor works normally with concrete type annotations."""
+
+        async def handle(message: str, ctx: WorkflowContext[str]) -> None:
+            pass
+
+        exec_instance = FunctionExecutor(handle, id="concrete")
+        assert str in exec_instance.input_types
+
+    def test_function_executor_error_recommends_explicit_types(self):
+        """Test that error message recommends @executor(input=..., output=...)."""
+
+        def echo(message: _FT) -> _FT:
+            return message
+
+        with pytest.raises(ValueError, match=r"@executor\(input=<concrete_type>, output=<concrete_type>\)"):
+            FunctionExecutor(echo, id="echo")
+
+
+# endregion: Tests for unresolved TypeVar rejection in function executor registration
+
+
+_FBT = TypeVar("_FBT", bound=str)
+
+
+def test_function_executor_rejects_bounded_typevar_in_message_annotation():
+    """Test that FunctionExecutor raises ValueError for a bounded TypeVar in message annotation."""
+
+    async def process(message: _FBT, ctx: WorkflowContext) -> None:
+        await ctx.send_message(message)
+
+    with pytest.raises(ValueError, match="unresolved TypeVar"):
+        FunctionExecutor(process, id="bounded")

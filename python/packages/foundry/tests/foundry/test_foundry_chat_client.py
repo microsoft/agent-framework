@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import json
 import os
 import sys
 from functools import wraps
@@ -13,9 +12,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import ChatResponse, Content, Message, SupportsChatGetResponse, tool
-from agent_framework._telemetry import AGENT_FRAMEWORK_USER_AGENT
+from agent_framework._telemetry import get_user_agent
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework_openai import OpenAIContentFilterException
+from agent_framework_openai._chat_client import RawOpenAIChatClient
+from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 from openai import BadRequestError
@@ -199,7 +200,7 @@ def test_init_with_project_endpoint_creates_project_client() -> None:
     assert factory.call_args.kwargs["endpoint"] == _TEST_FOUNDRY_PROJECT_ENDPOINT
     assert factory.call_args.kwargs["credential"] is credential
     assert factory.call_args.kwargs["allow_preview"] is True
-    assert factory.call_args.kwargs["user_agent"] == AGENT_FRAMEWORK_USER_AGENT
+    assert factory.call_args.kwargs["user_agent"] == get_user_agent()
 
 
 def test_init_with_empty_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -360,7 +361,7 @@ async def test_web_search_tool_with_location() -> None:
     assert web_search_tool.user_location.city == "Seattle"
     assert web_search_tool.user_location.country == "US"
     _, run_options, _ = await client._prepare_request(
-        messages=[Message(role="user", text="What's the weather?")],
+        messages=[Message(role="user", contents=["What's the weather?"])],
         options={"tools": [web_search_tool], "tool_choice": "auto"},
     )
 
@@ -388,7 +389,7 @@ async def test_code_interpreter_tool_variations() -> None:
     assert code_tool_with_files.container.file_ids == ["file1", "file2"]
 
     _, run_options, _ = await client._prepare_request(
-        messages=[Message(role="user", text="Process these files")],
+        messages=[Message(role="user", contents=["Process these files"])],
         options={"tools": [code_tool_with_files]},
     )
 
@@ -429,7 +430,7 @@ async def test_chat_message_parsing_with_function_calls() -> None:
     )
     function_result = Content.from_function_result(call_id="test-call-id", result="Function executed successfully")
     messages = [
-        Message(role="user", text="Call a function"),
+        Message(role="user", contents=["Call a function"]),
         Message(role="assistant", contents=[function_call]),
         Message(role="tool", contents=[function_result]),
     ]
@@ -472,7 +473,7 @@ async def test_content_filter_exception() -> None:
     client.client.responses.create.side_effect = mock_error
 
     with pytest.raises(OpenAIContentFilterException) as exc_info:
-        await client.get_response(messages=[Message(role="user", text="Test message")])
+        await client.get_response(messages=[Message(role="user", contents=["Test message"])])
 
     assert "content error" in str(exc_info.value)
 
@@ -496,7 +497,7 @@ async def test_response_format_parse_path() -> None:
     client.client.responses.parse = AsyncMock(return_value=mock_parsed_response)
 
     response = await client.get_response(
-        messages=[Message(role="user", text="Test message")],
+        messages=[Message(role="user", contents=["Test message"])],
         options={"response_format": OutputStruct, "store": True},
     )
     assert response.response_id == "parsed_response_123"
@@ -524,12 +525,54 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
     client.client.responses.parse = AsyncMock(return_value=mock_parsed_response)
 
     response = await client.get_response(
-        messages=[Message(role="user", text="Test message")],
+        messages=[Message(role="user", contents=["Test message"])],
         options={"response_format": OutputStruct, "store": True},
     )
     assert response.response_id == "parsed_response_123"
     assert response.conversation_id == "conversation_456"
     assert response.model == "test-model"
+
+
+async def test_response_format_dict_parse_path() -> None:
+    mock_openai_client = _make_mock_openai_client()
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    response_format = {"type": "object", "properties": {"answer": {"type": "string"}}}
+
+    mock_response = MagicMock()
+    mock_response.id = "response_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.metadata = {}
+    mock_response.output_parsed = None
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+
+    mock_message_content = MagicMock()
+    mock_message_content.type = "output_text"
+    mock_message_content.text = '{"answer": "Parsed"}'
+    mock_message_content.annotations = []
+    mock_message_content.logprobs = None
+
+    mock_message_item = MagicMock()
+    mock_message_item.type = "message"
+    mock_message_item.content = [mock_message_content]
+    mock_response.output = [mock_message_item]
+    client.client.responses.create = AsyncMock(return_value=mock_response)
+
+    response = await client.get_response(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={"response_format": response_format},
+    )
+
+    assert response.response_id == "response_123"
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["answer"] == "Parsed"
 
 
 async def test_bad_request_error_non_content_filter() -> None:
@@ -548,7 +591,7 @@ async def test_bad_request_error_non_content_filter() -> None:
 
     with pytest.raises(ChatClientException) as exc_info:
         await client.get_response(
-            messages=[Message(role="user", text="Test message")],
+            messages=[Message(role="user", contents=["Test message"])],
             options={"response_format": OutputStruct},
         )
 
@@ -565,6 +608,187 @@ def test_get_mcp_tool_with_project_connection_id() -> None:
     assert tool_config["project_connection_id"] == "conn-123"
     assert tool_config["allowed_tools"] == ["search_docs"]
     assert tool_config["server_label"] == "Docs_MCP"
+    # ``server_url`` should not be fabricated when only a project connection is supplied.
+    assert "server_url" not in tool_config
+
+
+def test_get_mcp_tool_requires_url_or_project_connection_id() -> None:
+    """Missing both ``url`` and ``project_connection_id`` is always invalid."""
+    with pytest.raises(ValueError, match="url.*project_connection_id"):
+        FoundryChatClient.get_mcp_tool(name="x")
+
+
+def test_prepare_tools_for_openai_strips_extraneous_name_from_foundry_mcp_tool() -> None:
+    """Toolbox-returned MCP tools may carry ``name``; Foundry Responses rejects it."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryMCPTool(
+        server_label="githubmcp",
+        server_url="https://api.githubcopilot.com/mcp",
+    )
+    tool["project_connection_id"] = "githubmcp"
+    tool["name"] = "githubmcp"
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    prepared = response_tools[0]
+    assert prepared["type"] == "mcp"
+    assert prepared["server_label"] == "githubmcp"
+    assert prepared["project_connection_id"] == "githubmcp"
+    assert "name" not in prepared
+
+
+def test_prepare_tools_for_openai_strips_read_model_fields_from_toolbox_code_interpreter() -> None:
+    """Toolbox-returned code interpreter tools may carry read-model-only name/description."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = {
+        "type": "code_interpreter",
+        "name": "code_interpreter_t6bbtm",
+        "description": "Toolbox read model description",
+        "container": {"file_ids": [], "type": "auto"},
+    }
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    prepared = response_tools[0]
+    assert prepared["type"] == "code_interpreter"
+    assert prepared["container"] == {"file_ids": [], "type": "auto"}
+    assert "name" not in prepared
+    assert "description" not in prepared
+
+
+def test_prepare_tools_for_openai_injects_default_container_for_code_interpreter_dict() -> None:
+    """Toolbox-returned code_interpreter without a container must get a default injected.
+
+    The Azure SDK treats ``container`` as optional, but the Responses API rejects
+    ``code_interpreter`` entries without one. The sanitizer backfills ``{"type": "auto"}``.
+    """
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = {
+        "type": "code_interpreter",
+        "name": "code_interpreter_t6bbtm",
+    }
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    prepared = response_tools[0]
+    assert prepared["type"] == "code_interpreter"
+    assert prepared["container"] == {"type": "auto"}
+    assert "name" not in prepared
+
+
+def test_prepare_tools_for_openai_injects_default_container_for_code_interpreter_sdk_instance() -> None:
+    """SDK ``CodeInterpreterTool`` instances without a container must also be backfilled.
+
+    Reproduces the toolbox creation path that calls
+    ``CodeInterpreterTool(name="code_interpreter")`` without a container.
+    """
+    from azure.ai.projects.models import CodeInterpreterTool
+
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response_tools = client._prepare_tools_for_openai([CodeInterpreterTool(name="code_interpreter")])
+
+    assert len(response_tools) == 1
+    prepared = response_tools[0]
+    assert prepared["type"] == "code_interpreter"
+    assert prepared["container"] == {"type": "auto"}
+    assert "name" not in prepared
+
+
+def test_prepare_tools_for_openai_preserves_existing_code_interpreter_container() -> None:
+    """An already-populated container must not be overwritten by the sanitizer."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    explicit_container = {"file_ids": ["file_123"], "type": "auto"}
+    tool = {"type": "code_interpreter", "container": explicit_container}
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert response_tools[0]["container"] == explicit_container
+
+
+def test_prepare_tools_for_openai_rejects_file_search_without_vector_store_ids() -> None:
+    """``file_search`` without ``vector_store_ids`` is always invalid — surface a clear error."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    with pytest.raises(ValueError, match="vector_store_ids"):
+        client._prepare_tools_for_openai([{"type": "file_search", "name": "fs"}])
+
+
+def test_prepare_tools_for_openai_rejects_mcp_without_server_destination() -> None:
+    """``mcp`` with neither ``server_url`` nor ``project_connection_id`` is always invalid."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryMCPTool(server_label="orphan")
+
+    with pytest.raises(ValueError, match="server_url.*project_connection_id"):
+        client._prepare_tools_for_openai([tool])
+
+
+def test_prepare_tools_for_openai_accepts_mcp_with_only_project_connection_id() -> None:
+    """MCP tools backed by a Foundry connection (no ``server_url``) must still pass validation."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryMCPTool(server_label="githubmcp")
+    tool["project_connection_id"] = "githubmcp"
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    assert response_tools[0]["project_connection_id"] == "githubmcp"
+    assert "server_url" not in response_tools[0]
+
+
+def test_prepare_tools_for_openai_strips_name_from_non_function_hosted_tool_dicts() -> None:
+    """All non-function hosted tool payloads should drop top-level read-model names."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response_tools = client._prepare_tools_for_openai([
+        {
+            "type": "file_search",
+            "name": "file_search_tool_123",
+            "description": "toolbox decoration",
+            "vector_store_ids": ["vs_123"],
+        },
+        {
+            "type": "web_search",
+            "name": "web_search_tool_456",
+            "description": "toolbox decoration",
+        },
+    ])
+
+    assert len(response_tools) == 2
+    assert response_tools[0]["type"] == "file_search"
+    assert response_tools[0]["vector_store_ids"] == ["vs_123"]
+    assert "name" not in response_tools[0]
+    assert "description" not in response_tools[0]
+    assert response_tools[1]["type"] == "web_search"
+    assert "name" not in response_tools[1]
+    assert "description" not in response_tools[1]
 
 
 @pytest.mark.flaky
@@ -615,12 +839,12 @@ async def test_integration_options(
     client.function_invocation_configuration["max_iterations"] = 2
 
     if option_name.startswith("tools") or option_name.startswith("tool_choice"):
-        messages = [Message(role="user", text="What is the weather in Seattle?")]
+        messages = [Message(role="user", contents=["What is the weather in Seattle?"])]
     elif option_name.startswith("response_format"):
-        messages = [Message(role="user", text="The weather in Seattle is sunny")]
-        messages.append(Message(role="user", text="What is the weather in Seattle?"))
+        messages = [Message(role="user", contents=["The weather in Seattle is sunny"])]
+        messages.append(Message(role="user", contents=["What is the weather in Seattle?"]))
     else:
-        messages = [Message(role="user", text="Say 'Hello World' briefly.")]
+        messages = [Message(role="user", contents=["Say 'Hello World' briefly."])]
 
     options: dict[str, Any] = {option_name: option_value}
     if option_name.startswith("tool_choice"):
@@ -642,10 +866,9 @@ async def test_integration_options(
                 assert isinstance(response.value, OutputStruct)
                 assert "seattle" in response.value.location.lower()
             else:
-                assert response.value is None
-                response_value = json.loads(response.text)
-                assert isinstance(response_value, dict)
-                assert "location" in response_value
+                assert response.value is not None
+                assert isinstance(response.value, dict)
+                assert "location" in response.value
 
 
 @pytest.mark.flaky
@@ -660,7 +883,7 @@ async def test_integration_web_search() -> None:
         "messages": [
             Message(
                 role="user",
-                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                contents=["Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer."],
             )
         ],
         "options": {"tool_choice": "auto", "tools": [web_search_tool]},
@@ -675,6 +898,7 @@ async def test_integration_web_search() -> None:
 
 @pytest.mark.flaky
 @pytest.mark.integration
+@pytest.mark.xfail(reason="Azure AI Foundry stopped accepting array-format output in function_call_output ~2026-04-03")
 @skip_if_foundry_integration_tests_disabled
 @_with_foundry_debug()
 async def test_integration_tool_rich_content_image() -> None:
@@ -688,7 +912,7 @@ async def test_integration_tool_rich_content_image() -> None:
     client = FoundryChatClient(credential=AzureCliCredential())
     client.function_invocation_configuration["max_iterations"] = 2
 
-    messages = [Message(role="user", text="Call the get_test_image tool and describe what you see.")]
+    messages = [Message(role="user", contents=["Call the get_test_image tool and describe what you see."])]
     options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
 
     response = await client.get_response(messages=messages, options=options, stream=True).get_final_response()
@@ -770,3 +994,165 @@ def test_get_mcp_tool_with_connection_id() -> None:
         description="GitHub MCP via Foundry",
     )
     assert tool_obj is not None
+
+
+def test_parse_chunk_surfaces_oauth_consent_request() -> None:
+    """An oauth_consent_request output item surfaces as Content with consent_link."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = "https://consent-host.example.com/login?data=abc123"
+    mock_item.id = "oauth-item-1"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
+    assert update.role == "assistant"
+    assert update.raw_representation is mock_event
+    assert update.model == "test-model"
+
+
+def test_parse_chunk_skips_non_https_oauth_consent() -> None:
+    """An oauth_consent_request with a non-HTTPS link is rejected."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = "http://insecure.example.com/login"
+    mock_item.id = "oauth-item-2"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 0
+
+
+def test_parse_chunk_handles_missing_consent_link() -> None:
+    """An oauth_consent_request without a consent_link produces no content."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = None
+    mock_item.id = "oauth-item-3"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 0
+
+
+def test_parse_chunk_handles_empty_string_consent_link() -> None:
+    """An oauth_consent_request with empty-string consent_link produces no content."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = ""
+    mock_item.id = "oauth-item-4"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 0
+
+
+def test_parse_chunk_delegates_non_oauth_events_to_super() -> None:
+    """Non-oauth events are delegated to super()._parse_chunk_from_openai()."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.delta"
+
+    with patch.object(
+        RawOpenAIChatClient,
+        "_parse_chunk_from_openai",
+        return_value=MagicMock(),
+    ) as mock_super:
+        client._parse_chunk_from_openai(mock_event, {}, {})
+        mock_super.assert_called_once_with(mock_event, {}, {}, None)
+
+
+def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
+    """A top-level response.oauth_consent_requested event surfaces as Content."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.oauth_consent_requested"
+    mock_event.consent_link = "https://consent-host.example.com/authorize?code=xyz"
+    mock_event.id = "consent-event-1"
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
+    assert update.role == "assistant"
+    assert update.raw_representation is mock_event

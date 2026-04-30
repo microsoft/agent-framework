@@ -190,22 +190,80 @@ async def test_magentic_builder_returns_workflow_and_runs() -> None:
 
     assert isinstance(workflow, Workflow)
 
-    outputs: list[Message] = []
+    updates: list[AgentResponseUpdate] = []
     orchestrator_event_count = 0
     async for event in workflow.run("compose summary", stream=True):
-        if event.type == "output":
-            msg = event.data
-            if isinstance(msg, list):
-                outputs.extend(cast(list[Message], msg))
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+            updates.append(event.data)
         elif event.type == "magentic_orchestrator":
             orchestrator_event_count += 1
 
-    assert outputs, "Expected a final output message"
-    assert len(outputs) >= 1
-    final = outputs[-1]
+    assert updates, "Expected a final output update"
+    final = updates[-1]
     assert final.text == manager.FINAL_ANSWER
     assert final.author_name == manager.name
     assert orchestrator_event_count > 0, "Expected orchestrator events to be emitted"
+
+
+async def test_magentic_final_answer_yields_update_in_streaming() -> None:
+    """In streaming mode, Magentic's manager final-answer surfaces as `AgentResponseUpdate`.
+
+    Mirrors AgentExecutor's mode-aware behavior: streaming workflows produce per-chunk
+    `AgentResponseUpdate` events; the synthesized final answer is logically a single chunk,
+    so it surfaces as a single `AgentResponseUpdate`.
+    """
+    manager = FakeManager()
+    workflow = MagenticBuilder(
+        participants=[StubAgent(manager.next_speaker_name, "first draft")],
+        manager=manager,
+    ).build()
+
+    terminal: AgentResponseUpdate | None = None
+    async for event in workflow.run("compose summary", stream=True):
+        if event.type == "output":
+            terminal = event.data
+
+    assert isinstance(terminal, AgentResponseUpdate), (
+        f"Expected AgentResponseUpdate in streaming mode, got {type(terminal).__name__}"
+    )
+    assert terminal.text == manager.FINAL_ANSWER
+    assert terminal.author_name == manager.name
+
+
+async def test_magentic_final_answer_yields_response_in_non_streaming() -> None:
+    """In non-streaming mode, Magentic's manager final-answer surfaces as `AgentResponse`."""
+    manager = FakeManager()
+    workflow = MagenticBuilder(
+        participants=[StubAgent(manager.next_speaker_name, "first draft")],
+        manager=manager,
+    ).build()
+
+    events = await workflow.run("compose summary")
+    outputs = [ev for ev in events if ev.type == "output"]
+    assert len(outputs) == 1
+    assert isinstance(outputs[0].data, AgentResponse)
+    assert outputs[0].data.messages[-1].text == manager.FINAL_ANSWER
+
+
+async def test_magentic_limit_termination_yields_update_in_streaming() -> None:
+    """In streaming mode, Magentic's round-limit termination surfaces as `AgentResponseUpdate`."""
+    manager = FakeManager(max_round_count=1)
+    workflow = MagenticBuilder(
+        participants=[DummyExec(name=manager.next_speaker_name)],
+        manager=manager,
+    ).build()
+
+    terminal: AgentResponseUpdate | None = None
+    async for event in workflow.run("round limit test", stream=True):
+        if event.type == "output":
+            terminal = event.data
+
+    assert isinstance(terminal, AgentResponseUpdate), (
+        f"Expected AgentResponseUpdate in streaming mode, got {type(terminal).__name__}"
+    )
+    # Either the final answer OR the round-limit termination message — both are valid terminal states
+    # for max_round_count=1; the precise one depends on FakeManager's progression.
+    assert terminal.text
 
 
 async def test_magentic_as_agent_does_not_accept_conversation() -> None:
@@ -250,7 +308,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert isinstance(req_event.data, MagenticPlanReviewRequest)
 
     completed = False
-    output: list[Message] | None = None
+    output: AgentResponseUpdate | None = None
     async for ev in wf.run(stream=True, responses={req_event.request_id: req_event.data.approve()}):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
@@ -261,8 +319,8 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 
     assert completed
     assert output is not None
-    assert isinstance(output, list)
-    assert all(isinstance(msg, Message) for msg in output)
+    # Streaming mode: terminal output is AgentResponseUpdate.
+    assert isinstance(output, AgentResponseUpdate)
 
 
 async def test_magentic_plan_review_with_revise():
@@ -333,14 +391,12 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
         None,
     )
     assert idle_status is not None
-    # Check that we got workflow output via WorkflowEvent with type "output"
+    # Streaming mode: terminal output is AgentResponseUpdate.
     output_event = next((e for e in events if e.type == "output"), None)
     assert output_event is not None
     data = output_event.data
-    assert isinstance(data, list)
-    assert len(data) > 0  # type: ignore
-    assert data[-1].role == "assistant"  # type: ignore
-    assert all(isinstance(msg, Message) for msg in data)  # type: ignore
+    assert isinstance(data, AgentResponseUpdate)
+    assert data.role == "assistant"
 
 
 async def test_magentic_checkpoint_resume_round_trip():
@@ -578,14 +634,14 @@ async def _collect_agent_responses_setup(participant: SupportsAgentRun) -> list[
 
     # Run a bounded stream to allow one invoke and then completion
     events: list[WorkflowEvent] = []
-    async for ev in wf.run("task", stream=True):  # plan review disabled
+    async for ev in wf.run("task", stream=True):
         events.append(ev)
         # Capture streaming updates (type="output" with AgentResponseUpdate data)
         if ev.type == "output" and isinstance(ev.data, AgentResponseUpdate):
             captured.append(
                 Message(
                     role=ev.data.role or "assistant",
-                    text=ev.data.text or "",
+                    contents=[ev.data.text or ""],
                     author_name=ev.data.author_name,
                 )
             )
@@ -753,11 +809,9 @@ async def test_magentic_stall_and_reset_reach_limits():
     assert idle_status is not None
     output_event = next((e for e in events if e.type == "output"), None)
     assert output_event is not None
-    assert isinstance(output_event.data, list)
-    assert all(isinstance(msg, Message) for msg in output_event.data)  # type: ignore
-    assert len(output_event.data) > 0  # type: ignore
-    assert output_event.data[-1].text is not None  # type: ignore
-    assert output_event.data[-1].text == "Workflow terminated due to reaching maximum reset count."  # type: ignore
+    # Streaming mode: terminal output is AgentResponseUpdate.
+    assert isinstance(output_event.data, AgentResponseUpdate)
+    assert output_event.data.text == "Workflow terminated due to reaching maximum reset count."
 
 
 async def test_magentic_checkpoint_runtime_only() -> None:

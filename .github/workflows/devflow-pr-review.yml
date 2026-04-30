@@ -1,0 +1,165 @@
+name: DevFlow PR Review
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - ready_for_review
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: devflow-pr-review-${{ github.repository }}-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  DEVFLOW_REPOSITORY: ${{ vars.DF_REPO }}
+  DEVFLOW_REF: main
+  TARGET_REPO_PATH: ${{ github.workspace }}/target-repo
+  DEVFLOW_PATH: ${{ github.workspace }}/devflow
+
+jobs:
+  team_check:
+    runs-on: ubuntu-latest
+    outputs:
+      is_team_member: ${{ steps.check.outputs.is_team_member }}
+      pr_number: ${{ steps.pr.outputs.pr_number }}
+      pr_url: ${{ steps.pr.outputs.pr_url }}
+      repo: ${{ steps.pr.outputs.repo }}
+    steps:
+      - name: Resolve PR metadata
+        id: pr
+        shell: bash
+        env:
+          PR_HTML_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER_EVENT: ${{ github.event.pull_request.number }}
+          PR_NUMBER_INPUT: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
+            pr_number="${PR_NUMBER_EVENT}"
+            pr_url="${PR_HTML_URL}"
+          else
+            pr_number="${PR_NUMBER_INPUT}"
+            pr_url="https://github.com/${GITHUB_REPOSITORY}/pull/${pr_number}"
+          fi
+
+          if [[ ! "$pr_number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Could not determine PR number; for workflow_dispatch runs, the 'pr_number' input is required when not running on pull_request_target." >&2
+            exit 1
+          fi
+
+          echo "pr_url=${pr_url}" >> "$GITHUB_OUTPUT"
+          echo "pr_number=${pr_number}" >> "$GITHUB_OUTPUT"
+          echo "repo=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
+
+      - name: Check PR author team membership
+        id: check
+        uses: actions/github-script@v8
+        env:
+          TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        with:
+          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          script: |
+            let author = context.payload.pull_request?.user?.login;
+            if (!author) {
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: Number(process.env.PR_NUMBER),
+              });
+              author = pr.user.login;
+            }
+
+            let isTeamMember = false;
+            try {
+              const teamMembership = await github.rest.teams.getMembershipForUserInOrg({
+                org: context.repo.owner,
+                team_slug: process.env.TEAM_NAME,
+                username: author,
+              });
+              isTeamMember = teamMembership.data.state === 'active';
+            } catch (error) {
+              console.log(`Team membership lookup failed for ${author}: ${error.message}`);
+              isTeamMember = false;
+            }
+
+            core.setOutput('is_team_member', isTeamMember ? 'true' : 'false');
+            if (isTeamMember) {
+              core.info(`Author ${author} is a team member; proceeding with review.`);
+            } else {
+              core.info(`Author ${author} is not a member of ${process.env.TEAM_NAME}; skipping review.`);
+            }
+
+  review:
+    runs-on: ubuntu-latest
+    needs: team_check
+    if: ${{ needs.team_check.outputs.is_team_member == 'true' }}
+    timeout-minutes: 60
+    # Advisory check: failures here should not block the PR. The reviewer
+    # posts comments as a best-effort signal; if the pipeline breaks, the
+    # PR author should still be able to merge without a red required check.
+    continue-on-error: true
+
+    steps:
+      # Safe checkout: base repo only, not the untrusted PR head.
+      - name: Checkout target repo base
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: target-repo
+
+      # Private DevFlow checkout: the PAT/token grants access to this repo's code.
+      - name: Checkout DevFlow
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.DEVFLOW_REPOSITORY }}
+          ref: ${{ env.DEVFLOW_REF }}
+          token: ${{ secrets.DEVFLOW_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: devflow
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.x"
+          enable-cache: true
+
+      - name: Install DevFlow dependencies
+        working-directory: ${{ env.DEVFLOW_PATH }}
+        run: uv sync --frozen
+
+      - name: Run PR review
+        id: review
+        working-directory: ${{ env.DEVFLOW_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_COPILOT_TOKEN: ${{ secrets.GH_COPILOT_TOKEN }}
+          SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
+          AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
+          PR_URL: ${{ needs.team_check.outputs.pr_url }}
+        run: |
+          uv run python scripts/trigger_pr_review.py \
+            --pr-url "$PR_URL" \
+            --github-username "$GITHUB_ACTOR" \
+            --no-require-comment-selection

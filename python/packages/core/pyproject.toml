@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0rc5"
+version = "1.2.2"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -12,7 +12,7 @@ urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=ta
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -34,14 +34,13 @@ all = [
     "mcp>=1.24.0,<2",
     "agent-framework-a2a",
     "agent-framework-ag-ui",
-    "agent-framework-azure-ai-search",
     "agent-framework-anthropic",
-    "agent-framework-openai",
-    "agent-framework-claude",
-    "agent-framework-azure-ai",
+    "agent-framework-azure-ai-search",
+    "agent-framework-azure-cosmos",
     "agent-framework-azurefunctions",
     "agent-framework-bedrock",
     "agent-framework-chatkit",
+    "agent-framework-claude",
     "agent-framework-copilotstudio",
     "agent-framework-declarative",
     "agent-framework-devui",
@@ -52,6 +51,7 @@ all = [
     "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-ollama",
+    "agent-framework-openai",
     "agent-framework-orchestrations",
     "agent-framework-purview",
     "agent-framework-redis",

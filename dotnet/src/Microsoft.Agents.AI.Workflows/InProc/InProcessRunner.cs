@@ -71,6 +71,28 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     /// <inheritdoc cref="ISuperStepRunner.StartExecutorId"/>
     public string StartExecutorId { get; }
 
+    /// <summary>
+    /// Gating flag for deferred event republishing after checkpoint restore.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Written with <see cref="Volatile.Write(ref int, int)"/> in <see cref="ResumeStreamAsync(ExecutionMode, CheckpointInfo, bool, CancellationToken)"/>
+    /// and consumed atomically with <see cref="Interlocked.Exchange(ref int, int)"/> in
+    /// <see cref="ISuperStepRunner.RepublishPendingEventsAsync"/>. The write does not need a full
+    /// memory barrier because it is sequenced before the <see cref="AsyncRunHandle"/> constructor
+    /// by the <see langword="await"/> in <see cref="ResumeStreamAsync(ExecutionMode, CheckpointInfo, bool, CancellationToken)"/>. The constructor is the
+    /// only code path that triggers consumption (via the event stream's subscribe and republish flow).
+    /// </para>
+    /// <para>
+    /// Note: <see cref="AsyncRunHandle"/> also reads <see cref="ISuperStepRunner.HasUnservicedRequests"/>
+    /// in its constructor to signal the run loop, but that property reads from
+    /// <see cref="InProcessRunnerContext"/>'s request dictionary (restored during
+    /// <see cref="RestoreCheckpointCoreAsync"/>), not from this flag. The two are independent:
+    /// <c>HasUnservicedRequests</c> triggers the run loop; <c>_needsRepublish</c> triggers event emission.
+    /// </para>
+    /// </remarks>
+    private int _needsRepublish;
+
     /// <inheritdoc cref="ISuperStepRunner.TelemetryContext"/>
     public WorkflowTelemetryContext TelemetryContext => this.Workflow.TelemetryContext;
 
@@ -145,7 +167,10 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         return new(new AsyncRunHandle(this, this, mode));
     }
 
-    public async ValueTask<AsyncRunHandle> ResumeStreamAsync(ExecutionMode mode, CheckpointInfo fromCheckpoint, CancellationToken cancellationToken = default)
+    public ValueTask<AsyncRunHandle> ResumeStreamAsync(ExecutionMode mode, CheckpointInfo fromCheckpoint, CancellationToken cancellationToken = default)
+        => this.ResumeStreamAsync(mode, fromCheckpoint, republishPendingEvents: true, cancellationToken);
+
+    public async ValueTask<AsyncRunHandle> ResumeStreamAsync(ExecutionMode mode, CheckpointInfo fromCheckpoint, bool republishPendingEvents, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
         Throw.IfNull(fromCheckpoint);
@@ -154,7 +179,18 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             throw new InvalidOperationException("This runner was not configured with a CheckpointManager, so it cannot restore checkpoints.");
         }
 
-        await this.RestoreCheckpointAsync(fromCheckpoint, cancellationToken).ConfigureAwait(false);
+        // Restore checkpoint state without republishing pending request events.
+        // The event stream will republish them after subscribing so that events
+        // are never lost to an absent subscriber.
+        await this.RestoreCheckpointCoreAsync(fromCheckpoint, cancellationToken).ConfigureAwait(false);
+
+        if (republishPendingEvents)
+        {
+            // Signal the event stream to republish pending requests after subscribing.
+            // This is consumed atomically by RepublishPendingEventsAsync.
+            Volatile.Write(ref this._needsRepublish, 1);
+        }
+
         return new AsyncRunHandle(this, this, mode);
     }
 
@@ -162,6 +198,16 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     bool ISuperStepRunner.HasUnprocessedMessages => this.RunContext.NextStepHasActions;
     bool ISuperStepRunner.TryGetResponsePortExecutorId(string portId, out string? executorId)
         => this.RunContext.TryGetResponsePortExecutorId(portId, out executorId);
+
+    ValueTask ISuperStepRunner.RepublishPendingEventsAsync(CancellationToken cancellationToken)
+    {
+        if (Interlocked.Exchange(ref this._needsRepublish, 0) != 0)
+        {
+            return this.RunContext.RepublishUnservicedRequestsAsync(cancellationToken);
+        }
+
+        return default;
+    }
 
     public bool IsCheckpointingEnabled => this.RunContext.IsCheckpointingEnabled;
 
@@ -203,17 +249,33 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         Executor executor = await this.RunContext.EnsureExecutorAsync(receiverId, this.StepTracer, cancellationToken).ConfigureAwait(false);
 
         this.StepTracer.TraceActivated(receiverId);
-        while (envelopes.TryDequeue(out var envelope))
-        {
-            (object message, TypeId messageType) = await TranslateMessageAsync(envelope).ConfigureAwait(false);
 
-            await executor.ExecuteCoreAsync(
-                message,
-                messageType,
-                this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),
-                this.TelemetryContext,
-                cancellationToken
-            ).ConfigureAwait(false);
+        // TODO: #5084 - Add delivery-level activity (max one per step per executor) to capture non-message
+        // specific invocations of executor logic.
+        IWorkflowContext tracelessContext = this.RunContext.BindWorkflowContext(receiverId);
+
+        try
+        {
+            await executor.OnMessageDeliveryStartingAsync(tracelessContext, cancellationToken)
+                          .ConfigureAwait(false);
+
+            while (envelopes.TryDequeue(out var envelope))
+            {
+                (object message, TypeId messageType) = await TranslateMessageAsync(envelope).ConfigureAwait(false);
+
+                await executor.ExecuteCoreAsync(
+                    message,
+                    messageType,
+                    this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),
+                    this.TelemetryContext,
+                    cancellationToken
+                ).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            await executor.OnMessageDeliveryFinishedAsync(tracelessContext, cancellationToken)
+                          .ConfigureAwait(false);
         }
 
         async ValueTask<(object, TypeId)> TranslateMessageAsync(MessageEnvelope envelope)
@@ -310,7 +372,31 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this._checkpoints.Add(this._lastCheckpointInfo);
     }
 
+    /// <summary>
+    /// Restores checkpoint state and re-emits any pending external request events.
+    /// </summary>
+    /// <remarks>
+    /// This is the <see cref="ICheckpointingHandle"/> implementation used for runtime restores
+    /// where the event stream subscription is already active. For initial resumes,
+    /// <see cref="ResumeStreamAsync(ExecutionMode, CheckpointInfo, CancellationToken)"/> calls
+    /// <see cref="RestoreCheckpointCoreAsync"/> directly and defers republishing to the event stream.
+    /// </remarks>
     public async ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
+    {
+        await this.RestoreCheckpointCoreAsync(checkpointInfo, cancellationToken).ConfigureAwait(false);
+
+        // Republish pending request events. This is safe for runtime restores where
+        // the event stream is already subscribed. For initial resumes the event stream
+        // handles republishing itself, so ResumeStreamAsync calls RestoreCheckpointCoreAsync directly.
+        await this.RunContext.RepublishUnservicedRequestsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Restores checkpoint state (queued messages, executor state, edge state, etc.)
+    /// without republishing pending request events. The caller is responsible for
+    /// ensuring events are republished after an event subscriber is attached.
+    /// </summary>
+    private async ValueTask RestoreCheckpointCoreAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
         Throw.IfNull(checkpointInfo);
@@ -335,11 +421,9 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         await this.RunContext.ImportStateAsync(checkpoint).ConfigureAwait(false);
 
         Task executorNotifyTask = this.RunContext.NotifyCheckpointLoadedAsync(cancellationToken);
-        ValueTask republishRequestsTask = this.RunContext.RepublishUnservicedRequestsAsync(cancellationToken);
 
         await this.EdgeMap.ImportStateAsync(checkpoint).ConfigureAwait(false);
         await Task.WhenAll(executorNotifyTask,
-                           republishRequestsTask.AsTask(),
                            restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
 
         this._lastCheckpointInfo = checkpointInfo;

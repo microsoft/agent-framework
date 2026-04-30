@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
-from agent_framework import Agent, AgentSession, Message, SupportsAgentRun
+from agent_framework import Agent, AgentResponse, AgentResponseUpdate, AgentSession, Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -169,7 +169,9 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         """Initialize orchestrator state and start the conversation loop."""
         self._append_messages(messages)
         # Termination condition will also be applied to the input messages
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
+        if await self._check_terminate_and_yield(
+            cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx)
+        ):
             return
 
         next_speaker = await self._get_next_speaker()
@@ -198,9 +200,13 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         messages = clean_conversation_for_handoff(messages)
         self._append_messages(messages)
 
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
+        if await self._check_terminate_and_yield(
+            cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx)
+        ):
             return
-        if await self._check_round_limit_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
+        if await self._check_round_limit_and_yield(
+            cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx)
+        ):
             return
 
         next_speaker = await self._get_next_speaker()
@@ -332,13 +338,15 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         """Initialize orchestrator state and start the conversation loop."""
         self._append_messages(messages)
         # Termination condition will also be applied to the input messages
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
+        if await self._check_terminate_and_yield(
+            cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx)
+        ):
             return
 
         agent_orchestration_output = await self._invoke_agent()
         if await self._check_agent_terminate_and_yield(
             agent_orchestration_output,
-            cast(WorkflowContext[Never, list[Message]], ctx),
+            cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx),
         ):
             return
 
@@ -366,15 +374,19 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         # Remove tool-related content to prevent API errors from empty messages
         messages = clean_conversation_for_handoff(messages)
         self._append_messages(messages)
-        if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
+        if await self._check_terminate_and_yield(
+            cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx)
+        ):
             return
-        if await self._check_round_limit_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
+        if await self._check_round_limit_and_yield(
+            cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx)
+        ):
             return
 
         agent_orchestration_output = await self._invoke_agent()
         if await self._check_agent_terminate_and_yield(
             agent_orchestration_output,
-            cast(WorkflowContext[Never, list[Message]], ctx),
+            cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx),
         ):
             return
 
@@ -499,7 +511,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             ])
         )
         # Prepend instruction as system message
-        current_conversation.append(Message(role="user", text=instruction))
+        current_conversation.append(Message(role="user", contents=[instruction]))
 
         retry_attempts = self._retry_attempts
         while True:
@@ -515,16 +527,16 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                 current_conversation = [
                     Message(
                         role="user",
-                        text=f"Your input could not be parsed due to an error: {ex}. Please try again.",
+                        contents=[f"Your input could not be parsed due to an error: {ex}. Please try again."],
                     )
                 ]
 
     async def _check_agent_terminate_and_yield(
         self,
         agent_orchestration_output: AgentOrchestrationOutput,
-        ctx: WorkflowContext[Never, list[Message]],
+        ctx: WorkflowContext[Never, AgentResponse | AgentResponseUpdate],
     ) -> bool:
-        """Check if the agent requested termination and yield completion if so.
+        """Yield the orchestrator's completion if termination was requested.
 
         Args:
             agent_orchestration_output: Output from the orchestrator agent
@@ -536,8 +548,9 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             final_message = (
                 agent_orchestration_output.final_message or "The conversation has been terminated by the agent."
             )
-            self._append_messages([self._create_completion_message(final_message)])
-            await ctx.yield_output(self._full_conversation)
+            completion_message = self._create_completion_message(final_message)
+            self._append_messages([completion_message])
+            await self._yield_completion(ctx, completion_message)
             return True
 
         return False
@@ -622,7 +635,9 @@ class GroupChatBuilder:
                 True to terminate the conversation, False to continue.
             max_rounds: Optional maximum number of orchestrator rounds to prevent infinite conversations.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
-            intermediate_outputs: If True, enables intermediate outputs from agent participants.
+            intermediate_outputs: If True, every participant's `yield_output` surfaces as a
+                workflow `output` event in addition to the orchestrator's. By default (False)
+                only the orchestrator's output surfaces.
         """
         self._participants: dict[str, SupportsAgentRun | Executor] = {}
         self._participant_factories: list[Callable[[], SupportsAgentRun | Executor]] = []
@@ -643,8 +658,7 @@ class GroupChatBuilder:
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] = set()
 
-        # Intermediate outputs
-        self._intermediate_outputs = intermediate_outputs
+        self._intermediate_outputs: bool = intermediate_outputs
 
         if participants is None and participant_factories is None:
             raise ValueError("Either participants or participant_factories must be provided.")

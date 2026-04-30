@@ -358,7 +358,7 @@ class InputRouterExecutor(Executor):
 
         await ctx.send_message(
             AgentExecutorRequest(
-                messages=[Message(role="user", text=message)],
+                messages=[Message(role="user", contents=[message])],
                 should_respond=True,
             )
         )

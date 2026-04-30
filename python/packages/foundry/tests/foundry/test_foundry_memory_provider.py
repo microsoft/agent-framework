@@ -7,8 +7,9 @@ import os
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, AgentResponse, Message
+from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
+from agent_framework._telemetry import get_user_agent
 
 from agent_framework_foundry._memory_provider import FoundryMemoryProvider
 
@@ -94,7 +95,7 @@ def test_init_with_project_endpoint_and_credential(mock_project_client: AsyncMoc
             endpoint="https://test.project.endpoint",
             credential=mock_credential,
             allow_preview=True,
-            user_agent=AGENT_FRAMEWORK_USER_AGENT,
+            user_agent=get_user_agent(),
         )
 
 
@@ -156,7 +157,7 @@ async def test_retrieves_static_memories_on_first_run(mock_project_client: Async
         scope="user_123",
     )
     session = AgentSession(session_id="test-session")
-    ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
+    ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
     await provider.before_run(  # type: ignore[arg-type]
         agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
@@ -191,7 +192,7 @@ async def test_contextual_memories_added_to_context(mock_project_client: AsyncMo
         scope="user_123",
     )
     session = AgentSession(session_id="test-session")
-    ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
+    ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
     await provider.before_run(  # type: ignore[arg-type]
         agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
@@ -218,7 +219,7 @@ async def test_empty_input_skips_contextual_search(mock_project_client: AsyncMoc
         scope="user_123",
     )
     session = AgentSession(session_id="test-session")
-    ctx = SessionContext(input_messages=[Message(role="user", text="")], session_id="s1")
+    ctx = SessionContext(input_messages=[Message(role="user", contents=[""])], session_id="s1")
 
     await provider.before_run(  # type: ignore[arg-type]
         agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
@@ -240,7 +241,7 @@ async def test_empty_search_results_no_messages(mock_project_client: AsyncMock) 
         scope="user_123",
     )
     session = AgentSession(session_id="test-session")
-    ctx = SessionContext(input_messages=[Message(role="user", text="test")], session_id="s1")
+    ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
     await provider.before_run(  # type: ignore[arg-type]
         agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
@@ -265,7 +266,7 @@ async def test_static_memories_only_retrieved_once(mock_project_client: AsyncMoc
         scope="user_123",
     )
     session = AgentSession(session_id="test-session")
-    ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
+    ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
     # First call
     await provider.before_run(  # type: ignore[arg-type]
@@ -280,7 +281,7 @@ async def test_static_memories_only_retrieved_once(mock_project_client: AsyncMoc
     mock_project_client.beta.memory_stores.search_memories.return_value = contextual_result2
 
     # Second call - should only search contextual, not static
-    ctx2 = SessionContext(input_messages=[Message(role="user", text="World")], session_id="s1")
+    ctx2 = SessionContext(input_messages=[Message(role="user", contents=["World"])], session_id="s1")
     await provider.before_run(  # type: ignore[arg-type]
         agent=None, session=session, context=ctx2, state=session.state.setdefault(provider.source_id, {})
     )
@@ -296,7 +297,7 @@ async def test_handles_search_exception_gracefully(mock_project_client: AsyncMoc
         scope="user_123",
     )
     session = AgentSession(session_id="test-session")
-    ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
+    ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
     # Should not raise exception
     await provider.before_run(  # type: ignore[arg-type]
@@ -321,8 +322,8 @@ async def test_stores_input_and_response(mock_project_client: AsyncMock) -> None
         scope="user_123",
     )
     session = AgentSession(session_id="test-session")
-    ctx = SessionContext(input_messages=[Message(role="user", text="question")], session_id="s1")
-    ctx._response = AgentResponse(messages=[Message(role="assistant", text="answer")])
+    ctx = SessionContext(input_messages=[Message(role="user", contents=["question"])], session_id="s1")
+    ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["answer"])])
 
     await provider.after_run(  # type: ignore[arg-type]
         agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
@@ -350,12 +351,12 @@ async def test_only_stores_user_assistant_system(mock_project_client: AsyncMock)
     session = AgentSession(session_id="test-session")
     ctx = SessionContext(
         input_messages=[
-            Message(role="user", text="hello"),
-            Message(role="tool", text="tool output"),
+            Message(role="user", contents=["hello"]),
+            Message(role="tool", contents=["tool output"]),
         ],
         session_id="s1",
     )
-    ctx._response = AgentResponse(messages=[Message(role="assistant", text="reply")])
+    ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["reply"])])
 
     await provider.after_run(  # type: ignore[arg-type]
         agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
@@ -377,8 +378,8 @@ async def test_skips_empty_messages(mock_project_client: AsyncMock) -> None:
     session = AgentSession(session_id="test-session")
     ctx = SessionContext(
         input_messages=[
-            Message(role="user", text=""),
-            Message(role="user", text="   "),
+            Message(role="user", contents=[""]),
+            Message(role="user", contents=["   "]),
         ],
         session_id="s1",
     )
@@ -402,8 +403,8 @@ async def test_uses_configured_update_delay(mock_project_client: AsyncMock) -> N
         update_delay=60,
     )
     session = AgentSession(session_id="test-session")
-    ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="s1")
-    ctx._response = AgentResponse(messages=[Message(role="assistant", text="hey")])
+    ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
+    ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hey"])])
 
     await provider.after_run(  # type: ignore[arg-type]
         agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
@@ -427,8 +428,8 @@ async def test_uses_previous_update_id_for_incremental_updates(mock_project_clie
         scope="user_123",
     )
     session = AgentSession(session_id="test-session")
-    ctx1 = SessionContext(input_messages=[Message(role="user", text="first")], session_id="s1")
-    ctx1._response = AgentResponse(messages=[Message(role="assistant", text="response1")])
+    ctx1 = SessionContext(input_messages=[Message(role="user", contents=["first"])], session_id="s1")
+    ctx1._response = AgentResponse(messages=[Message(role="assistant", contents=["response1"])])
 
     # First update
     await provider.after_run(  # type: ignore[arg-type]
@@ -437,8 +438,8 @@ async def test_uses_previous_update_id_for_incremental_updates(mock_project_clie
     assert session.state[provider.source_id]["previous_update_id"] == "update-1"
 
     # Second update should use previous_update_id
-    ctx2 = SessionContext(input_messages=[Message(role="user", text="second")], session_id="s1")
-    ctx2._response = AgentResponse(messages=[Message(role="assistant", text="response2")])
+    ctx2 = SessionContext(input_messages=[Message(role="user", contents=["second"])], session_id="s1")
+    ctx2._response = AgentResponse(messages=[Message(role="assistant", contents=["response2"])])
 
     await provider.after_run(  # type: ignore[arg-type]
         agent=None, session=session, context=ctx2, state=session.state.setdefault(provider.source_id, {})
@@ -458,8 +459,8 @@ async def test_handles_update_exception_gracefully(mock_project_client: AsyncMoc
         scope="user_123",
     )
     session = AgentSession(session_id="test-session")
-    ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="s1")
-    ctx._response = AgentResponse(messages=[Message(role="assistant", text="hey")])
+    ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
+    ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hey"])])
 
     # Should not raise exception
     await provider.after_run(  # type: ignore[arg-type]
