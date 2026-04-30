@@ -694,7 +694,7 @@ jobs:
             integration-report-history-merge-
       - name: Generate trend report
         run: >
-          uv run python scripts/flaky_report/aggregate.py
+          uv run python scripts/integration_test_report/aggregate.py
           ../test-results/
           integration-report-history.json
           integration-test-report.md

@@ -4401,25 +4401,27 @@ async def test_integration_file_search() -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
-    # Use static method for file search tool
-    file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
-    # Test that the client will use the file search tool
-    response = await openai_responses_client.get_response(
-        messages=[
-            Message(
-                role="user",
-                contents=["What is the weather today? Do a file search to find the answer."],
-            )
-        ],
-        options={
-            "tool_choice": "auto",
-            "tools": [file_search_tool],
-        },
-    )
+    try:
+        # Use static method for file search tool
+        file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+        # Test that the client will use the file search tool
+        response = await openai_responses_client.get_response(
+            messages=[
+                Message(
+                    role="user",
+                    contents=["What is the weather today? Do a file search to find the answer."],
+                )
+            ],
+            options={
+                "tool_choice": "auto",
+                "tools": [file_search_tool],
+            },
+        )
 
-    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
-    assert "sunny" in response.text.lower()
-    assert "75" in response.text
+        assert "sunny" in response.text.lower()
+        assert "75" in response.text
+    finally:
+        await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
 
 
 @pytest.mark.flaky
@@ -4431,36 +4433,37 @@ async def test_integration_streaming_file_search() -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
-    # Use static method for file search tool
-    file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
-    # Test that the client will use the file search tool
-    response = openai_responses_client.get_response(
-        messages=[
-            Message(
-                role="user",
-                contents=["What is the weather today? Do a file search to find the answer."],
-            )
-        ],
-        stream=True,
-        options={
-            "tool_choice": "auto",
-            "tools": [file_search_tool],
-        },
-    )
+    try:
+        # Use static method for file search tool
+        file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+        # Test that the client will use the file search tool
+        response = openai_responses_client.get_response(
+            messages=[
+                Message(
+                    role="user",
+                    contents=["What is the weather today? Do a file search to find the answer."],
+                )
+            ],
+            stream=True,
+            options={
+                "tool_choice": "auto",
+                "tools": [file_search_tool],
+            },
+        )
 
-    assert response is not None
-    full_message: str = ""
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if content.type == "text" and content.text:
-                full_message += content.text
+        assert response is not None
+        full_message: str = ""
+        async for chunk in response:
+            assert chunk is not None
+            assert isinstance(chunk, ChatResponseUpdate)
+            for content in chunk.contents:
+                if content.type == "text" and content.text:
+                    full_message += content.text
 
-    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
-
-    assert "sunny" in full_message.lower()
-    assert "75" in full_message
+        assert "sunny" in full_message.lower()
+        assert "75" in full_message
+    finally:
+        await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
 
 
 @pytest.mark.flaky

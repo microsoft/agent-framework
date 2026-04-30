@@ -3,10 +3,10 @@
 """CLI entry point for the integration test report tool.
 
 Usage:
-    uv run python -m scripts.flaky_report <reports-dir> <history-file> <output-file>
+    uv run python -m scripts.integration_test_report <reports-dir> <history-file> <output-file>
 
 Example (from python/ directory):
-    uv run python -m scripts.flaky_report \\
+    uv run python -m scripts.integration_test_report \\
         ../test-results/ \\
         integration-report-history.json \\
         integration-test-report.md
@@ -14,7 +14,7 @@ Example (from python/ directory):
 
 import sys
 
-from scripts.flaky_report.aggregate import main
+from scripts.integration_test_report.aggregate import main
 
 if __name__ == "__main__":
     sys.exit(main())
