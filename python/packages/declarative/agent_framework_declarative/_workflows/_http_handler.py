@@ -57,8 +57,8 @@ class HttpRequestInfo:
 
     method: str
     url: str
-    headers: dict[str, str] = field(default_factory=dict)
-    query_parameters: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)  # type: ignore[reportUnknownVariableType]
+    query_parameters: dict[str, str] = field(default_factory=dict)  # type: ignore[reportUnknownVariableType]
     body: str | None = None
     body_content_type: str | None = None
     timeout_ms: int | None = None
@@ -74,12 +74,17 @@ class HttpRequestResult:
     ``dict[str, list[str]]``. The executor folds duplicates into a single
     comma-joined string only at the point it assigns ``responseHeaders`` to
     workflow state.
+
+    Header keys are normalized to lowercase so that lookups are consistent
+    regardless of the server's transmitted casing (HTTP headers are
+    case-insensitive per RFC 7230 §3.2). Custom :class:`HttpRequestHandler`
+    implementations should follow the same convention.
     """
 
     status_code: int
     is_success_status_code: bool
     body: str
-    headers: dict[str, list[str]] = field(default_factory=dict)
+    headers: dict[str, list[str]] = field(default_factory=dict)  # type: ignore[reportUnknownVariableType]
 
 
 @runtime_checkable
@@ -132,7 +137,7 @@ class DefaultHttpRequestHandler:
     def __init__(
         self,
         *,
-        client: "httpx.AsyncClient | None" = None,
+        client: httpx.AsyncClient | None = None,
         client_provider: ClientProvider | None = None,
     ) -> None:
         self._owned_client: httpx.AsyncClient | None = None
@@ -180,9 +185,12 @@ class DefaultHttpRequestHandler:
         )
 
         # Preserve multi-value headers (e.g. multiple Set-Cookie) as list[str].
+        # Normalize names to lowercase so lookups are consistent and case
+        # variations from the transport do not create duplicate logical keys
+        # (HTTP headers are case-insensitive per RFC 7230 §3.2).
         result_headers: dict[str, list[str]] = {}
         for key, value in response.headers.multi_items():
-            result_headers.setdefault(key, []).append(value)
+            result_headers.setdefault(key.lower(), []).append(value)
 
         body_text = response.text
 
@@ -216,7 +224,7 @@ class DefaultHttpRequestHandler:
                     self._owned_client = httpx.AsyncClient()
         return self._owned_client
 
-    async def __aenter__(self) -> "DefaultHttpRequestHandler":
+    async def __aenter__(self) -> DefaultHttpRequestHandler:
         return self
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:

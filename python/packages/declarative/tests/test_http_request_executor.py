@@ -72,9 +72,7 @@ def _ok(body: str = "", headers: dict[str, list[str]] | None = None) -> HttpRequ
     )
 
 
-def _err(
-    status: int = 500, body: str = "", headers: dict[str, list[str]] | None = None
-) -> HttpRequestResult:
+def _err(status: int = 500, body: str = "", headers: dict[str, list[str]] | None = None) -> HttpRequestResult:
     return HttpRequestResult(
         status_code=status,
         is_success_status_code=False,
@@ -150,9 +148,7 @@ class TestSuccessPath:
     async def test_get_parses_json_object(self) -> None:
         handler = StubHandler(_ok('{"key":"value","number":42}'))
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(method="GET", response="Local.Result"))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(method="GET", response="Local.Result")))
         await workflow.run({})
 
         decl = workflow._state.get(DECLARATIVE_STATE_KEY)
@@ -165,9 +161,7 @@ class TestSuccessPath:
     async def test_get_parses_plain_string(self) -> None:
         handler = StubHandler(_ok("not-json content"))
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(response="Local.Result"))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(response="Local.Result")))
         await workflow.run({})
 
         decl = workflow._state.get(DECLARATIVE_STATE_KEY)
@@ -177,9 +171,7 @@ class TestSuccessPath:
     async def test_get_empty_body_yields_none(self) -> None:
         handler = StubHandler(_ok(""))
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(response="Local.Result"))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(response="Local.Result")))
         await workflow.run({})
 
         decl = workflow._state.get(DECLARATIVE_STATE_KEY)
@@ -189,9 +181,7 @@ class TestSuccessPath:
     async def test_response_object_form_path(self) -> None:
         handler = StubHandler(_ok('{"x":1}'))
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(response={"path": "Local.Result"}))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(response={"path": "Local.Result"})))
         await workflow.run({})
 
         decl = workflow._state.get(DECLARATIVE_STATE_KEY)
@@ -376,9 +366,7 @@ class TestBody:
     async def test_unknown_body_kind_raises(self) -> None:
         handler = StubHandler(_ok())
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(body={"kind": "weirdform", "content": "x"}))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(body={"kind": "weirdform", "content": "x"})))
         with pytest.raises(Exception) as excinfo:
             await workflow.run({})
         # Should surface as ValueError (potentially wrapped by runner)
@@ -527,9 +515,7 @@ class TestResponseHeaders:
             )
         )
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(response_headers="Local.H"))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(response_headers="Local.H")))
         await workflow.run({})
         decl = workflow._state.get(DECLARATIVE_STATE_KEY)
         h = decl["Local"]["H"]
@@ -540,9 +526,7 @@ class TestResponseHeaders:
     async def test_response_headers_empty_assigned_none(self) -> None:
         handler = StubHandler(_ok("ok", headers={}))
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(response_headers="Local.H"))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(response_headers="Local.H")))
         await workflow.run({})
         decl = workflow._state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["H"] is None
@@ -551,9 +535,7 @@ class TestResponseHeaders:
     async def test_non_2xx_still_publishes_headers(self) -> None:
         handler = StubHandler(_err(status=500, body="boom", headers={"X-Trace": ["abc"]}))
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(response_headers="Local.H"))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(response_headers="Local.H")))
         with pytest.raises(DeclarativeActionError):
             await workflow.run({})
         decl = workflow._state.get(DECLARATIVE_STATE_KEY)
@@ -586,9 +568,7 @@ class TestConversationAppend:
     async def test_empty_conversation_id_does_not_append(self) -> None:
         handler = StubHandler(_ok('{"answer":"hello"}'))
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(response="Local.Result", conversation_id=""))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(response="Local.Result", conversation_id="")))
         await workflow.run({})
         decl = workflow._state.get(DECLARATIVE_STATE_KEY)
         # Auto-init creates an entry for the System.ConversationId conversation,
@@ -600,9 +580,7 @@ class TestConversationAppend:
     async def test_empty_body_skips_conversation_append(self) -> None:
         handler = StubHandler(_ok(""))
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(conversation_id="conv-test-1"))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(conversation_id="conv-test-1")))
         await workflow.run({})
         decl = workflow._state.get(DECLARATIVE_STATE_KEY)
         # No conversation entry should have been created either.
@@ -617,9 +595,7 @@ class TestConnection:
     async def test_connection_name_forwarded(self) -> None:
         handler = StubHandler(_ok())
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(connection={"name": "my-connection"}))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(connection={"name": "my-connection"})))
         await workflow.run({})
         assert handler.last_info is not None
         assert handler.last_info.connection_name == "my-connection"
@@ -654,9 +630,7 @@ class TestTimeout:
     async def test_timeout_ms_forwarded(self) -> None:
         handler = StubHandler(_ok())
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(request_timeout_ms=2500))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(request_timeout_ms=2500)))
         await workflow.run({})
         assert handler.last_info is not None
         assert handler.last_info.timeout_ms == 2500
@@ -665,9 +639,7 @@ class TestTimeout:
     async def test_timeout_ms_zero_treated_as_unset(self) -> None:
         handler = StubHandler(_ok())
         factory = WorkflowFactory(http_request_handler=handler)
-        workflow = factory.create_workflow_from_definition(
-            _yaml(_action(request_timeout_ms=0))
-        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(request_timeout_ms=0)))
         await workflow.run({})
         assert handler.last_info is not None
         assert handler.last_info.timeout_ms is None

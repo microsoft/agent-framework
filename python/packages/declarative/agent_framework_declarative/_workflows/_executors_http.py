@@ -64,7 +64,7 @@ def _get_path(action_def: Mapping[str, Any], key: str) -> str | None:
     if isinstance(value, str):
         return value or None
     if isinstance(value, Mapping):
-        path = value.get("path")
+        path = value.get("path")  # type: ignore[reportUnknownMemberType, reportUnknownVariableType]
         return path if isinstance(path, str) and path else None
     return None
 
@@ -97,7 +97,7 @@ def _parse_response_body(body: str | None) -> Any:
         return None
     try:
         return json.loads(body)
-    except (ValueError, json.JSONDecodeError):
+    except json.JSONDecodeError:
         return body
 
 
@@ -118,13 +118,14 @@ def _format_query_value(value: Any) -> str | None:
 
 
 def _get_messages_path(state: DeclarativeWorkflowState, conversation_id_expr: str | None) -> str | None:
-    """Mirror ``InvokeAzureAgentExecutor._get_conversation_messages_path`` semantics.
+    """Return the configured conversation messages path, if any.
 
-    Returns a single state path (no double-mirroring): ``Conversation.messages``
-    when no conversation id is provided, otherwise
-    ``System.conversations.{evaluated_id}.messages``. Returns ``None`` if the
-    expression evaluates to an empty string (matches .NET ``GetConversationId``
-    behaviour where empty becomes ``null`` and the response is not appended).
+    Returns ``System.conversations.{evaluated_id}.messages`` when a
+    ``conversation_id_expr`` is configured and evaluates to a non-empty value.
+    Returns ``None`` when no conversation id expression is configured or when
+    the expression evaluates to ``None`` or an empty string (matches .NET
+    ``GetConversationId`` behaviour where empty becomes ``null`` and the
+    response is not appended).
     """
     if not conversation_id_expr:
         return None
@@ -209,9 +210,7 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
         except DeclarativeActionError:
             raise
         except httpx.HTTPError as exc:
-            raise DeclarativeActionError(
-                f"HTTP request to '{url}' failed: {type(exc).__name__}"
-            ) from exc
+            raise DeclarativeActionError(f"HTTP request to '{url}' failed: {type(exc).__name__}") from exc
         except Exception as exc:
             # Custom HttpRequestHandler implementations may raise arbitrary
             # exception types. Wrap them in DeclarativeActionError so workflow
@@ -219,9 +218,7 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
             # ``asyncio.CancelledError`` is a ``BaseException`` (not
             # ``Exception``) and so still propagates unmodified, preserving
             # workflow-cancellation semantics.
-            raise DeclarativeActionError(
-                f"HTTP request to '{url}' failed: {type(exc).__name__}"
-            ) from exc
+            raise DeclarativeActionError(f"HTTP request to '{url}' failed: {type(exc).__name__}") from exc
 
         if result.is_success_status_code:
             self._assign_response(state, result)
@@ -234,10 +231,7 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
         self._assign_response_headers(state, result)
         body_preview = _format_body_for_diagnostics(result.body)
         if body_preview:
-            message = (
-                f"HTTP request to '{url}' failed with status code {result.status_code}. "
-                f"Body: '{body_preview}'"
-            )
+            message = f"HTTP request to '{url}' failed with status code {result.status_code}. Body: '{body_preview}'"
         else:
             message = f"HTTP request to '{url}' failed with status code {result.status_code}."
         raise DeclarativeActionError(message)
@@ -265,7 +259,7 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
         if not isinstance(raw_headers, Mapping) or not raw_headers:
             return None
         result: dict[str, str] = {}
-        for key, value in raw_headers.items():
+        for key, value in raw_headers.items():  # type: ignore[reportUnknownVariableType]
             if not isinstance(key, str) or not key:
                 continue
             evaluated = state.eval_if_expression(value)
@@ -282,7 +276,7 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
         if not isinstance(raw_params, Mapping) or not raw_params:
             return None
         result: dict[str, str] = {}
-        for key, value in raw_params.items():
+        for key, value in raw_params.items():  # type: ignore[reportUnknownVariableType]
             if not isinstance(key, str) or not key or value is None:
                 continue
             evaluated = state.eval_if_expression(value)
@@ -297,40 +291,34 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
             return None, None
         if not isinstance(raw_body, Mapping):
             raise ValueError(
-                "HttpRequestAction 'body' must be a mapping with a 'kind' field "
-                "(json, raw) or omitted entirely."
+                "HttpRequestAction 'body' must be a mapping with a 'kind' field (json, raw) or omitted entirely."
             )
 
-        kind_value = raw_body.get("kind") or raw_body.get("$kind")
+        kind_value: Any = raw_body.get("kind") or raw_body.get("$kind")  # type: ignore[reportUnknownMemberType]
         if kind_value is None:
             raise ValueError(
-                "HttpRequestAction 'body' is missing 'kind'. Use 'json', 'raw', "
-                "or omit 'body' for no request body."
+                "HttpRequestAction 'body' is missing 'kind'. Use 'json', 'raw', or omit 'body' for no request body."
             )
         if not isinstance(kind_value, str):
-            raise ValueError(
-                f"HttpRequestAction 'body.kind' must be a string, got {type(kind_value).__name__}."
-            )
+            raise ValueError(f"HttpRequestAction 'body.kind' must be a string, got {kind_value!r}.")
 
         if kind_value in _BODY_KIND_NONE:
             return None, None
 
         if kind_value in _BODY_KIND_JSON:
-            content_expr = raw_body.get("content")
+            content_expr: Any = raw_body.get("content")  # type: ignore[reportUnknownMemberType]
             if content_expr is None:
                 return None, None
             evaluated = state.eval_if_expression(content_expr)
             try:
                 body_text = json.dumps(evaluated, default=str)
             except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"HttpRequestAction 'body.content' could not be serialised as JSON: {exc}"
-                ) from exc
+                raise ValueError(f"HttpRequestAction 'body.content' could not be serialised as JSON: {exc}") from exc
             return body_text, "application/json"
 
         if kind_value in _BODY_KIND_RAW:
-            content_expr = raw_body.get("content")
-            content_type_expr = raw_body.get("contentType")
+            content_expr = raw_body.get("content")  # type: ignore[reportUnknownMemberType]
+            content_type_expr: Any = raw_body.get("contentType")  # type: ignore[reportUnknownMemberType]
             content: str | None = None
             if content_expr is not None:
                 evaluated = state.eval_if_expression(content_expr)
@@ -374,7 +362,7 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
         connection = self._action_def.get("connection")
         if not isinstance(connection, Mapping):
             return None
-        name_expr = connection.get("name")
+        name_expr: Any = connection.get("name")  # type: ignore[reportUnknownMemberType]
         if name_expr is None:
             return None
         evaluated = state.eval_if_expression(name_expr)

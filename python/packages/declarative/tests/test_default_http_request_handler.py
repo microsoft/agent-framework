@@ -181,9 +181,7 @@ class TestResponseHeaders:
 
         handler = _make_handler(httpx.MockTransport(respond))
         try:
-            result = await handler.send(
-                HttpRequestInfo(method="GET", url="https://api.example.test/x")
-            )
+            result = await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/x"))
         finally:
             await handler.aclose()
 
@@ -199,9 +197,7 @@ class TestClientOwnership:
         handler = DefaultHttpRequestHandler()
         # Inject a MockTransport-backed client into the owned slot and verify
         # aclose() releases it. Avoids real network access.
-        owned = httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok"))
-        )
+        owned = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok")))
         handler._owned_client = owned
         assert not owned.is_closed
         await handler.aclose()
@@ -209,13 +205,9 @@ class TestClientOwnership:
 
     @pytest.mark.asyncio
     async def test_caller_owned_client_is_not_closed(self) -> None:
-        client = httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok"))
-        )
+        client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok")))
         handler = DefaultHttpRequestHandler(client=client)
-        await handler.send(
-            HttpRequestInfo(method="GET", url="https://api.example.test/x")
-        )
+        await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/x"))
         await handler.aclose()
         assert not client.is_closed
         await client.aclose()  # cleanup
@@ -242,11 +234,7 @@ class TestClientOwnership:
             nonlocal construction_count
             if not args and not kwargs:
                 construction_count += 1
-                return original_ctor(
-                    transport=httpx.MockTransport(
-                        lambda r: httpx.Response(200, text="ok")
-                    )
-                )
+                return original_ctor(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok")))
             return original_ctor(*args, **kwargs)
 
         import agent_framework_declarative._workflows._http_handler as hh
@@ -256,10 +244,7 @@ class TestClientOwnership:
             handler = DefaultHttpRequestHandler()
             try:
                 await asyncio.gather(*[
-                    handler.send(
-                        HttpRequestInfo(method="GET", url="https://api.example.test/x")
-                    )
-                    for _ in range(8)
+                    handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/x")) for _ in range(8)
                 ])
             finally:
                 await handler.aclose()
@@ -292,9 +277,7 @@ class TestClientProvider:
 
         handler = DefaultHttpRequestHandler(client=primary_client, client_provider=provider)
         try:
-            result = await handler.send(
-                HttpRequestInfo(method="GET", url="https://api.example.test/x")
-            )
+            result = await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/x"))
             assert result.body == "provided"
             assert captured["transport"] == "provided"
         finally:
@@ -316,9 +299,7 @@ class TestClientProvider:
         primary_client = httpx.AsyncClient(transport=httpx.MockTransport(primary))
         handler = DefaultHttpRequestHandler(client=primary_client, client_provider=provider)
         try:
-            result = await handler.send(
-                HttpRequestInfo(method="GET", url="https://api.example.test/x")
-            )
+            result = await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/x"))
             assert result.body == "primary"
         finally:
             await handler.aclose()
@@ -343,8 +324,6 @@ class TestAsyncContextManager:
     @pytest.mark.asyncio
     async def test_context_manager_closes_owned_client(self) -> None:
         async with DefaultHttpRequestHandler() as handler:
-            owned = httpx.AsyncClient(
-                transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok"))
-            )
+            owned = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="ok")))
             handler._owned_client = owned
         assert owned.is_closed
