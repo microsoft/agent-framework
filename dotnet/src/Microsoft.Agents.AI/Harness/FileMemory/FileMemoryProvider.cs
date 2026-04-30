@@ -40,7 +40,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class FileMemoryProvider : AIContextProvider
+public sealed class FileMemoryProvider : AIContextProvider, IDisposable
 {
     private const string DescriptionSuffix = "_description.md";
     private const string MemoryIndexFileName = "memories.md";
@@ -49,7 +49,8 @@ public sealed class FileMemoryProvider : AIContextProvider
     private const string DefaultInstructions =
         """
         ## File Based Memory
-        You have access to a file-based memory system via the `FileMemory_*` tools for storing and retrieving information across interactions.
+        You have access to a session-scoped, file-based memory system via the `FileMemory_*` tools for storing and retrieving information across interactions.
+        These files act as your working memory for the current session and are isolated from other sessions.
         Use these tools to store plans, memories, processing results, or downloaded data.
 
         - Use descriptive file names (e.g., "projectarchitecture.md", "userpreferences.md").
@@ -63,6 +64,7 @@ public sealed class FileMemoryProvider : AIContextProvider
 
     private readonly AgentFileStore _fileStore;
     private readonly ProviderSessionState<FileMemoryState> _sessionState;
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly string _instructions;
     private IReadOnlyList<string>? _stateKeys;
     private AITool[]? _tools;
@@ -92,6 +94,14 @@ public sealed class FileMemoryProvider : AIContextProvider
 
     /// <inheritdoc />
     public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
+
+    /// <summary>
+    /// Releases the resources used by the <see cref="FileMemoryProvider"/>.
+    /// </summary>
+    public void Dispose()
+    {
+        this._writeLock.Dispose();
+    }
 
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
@@ -147,26 +157,35 @@ public sealed class FileMemoryProvider : AIContextProvider
 
         FileMemoryState state = this._sessionState.GetOrInitializeState(AIAgent.CurrentRunContext?.Session);
         string path = ResolvePath(state.WorkingFolder, fileName);
-        await this._fileStore.WriteFileAsync(path, content, cancellationToken).ConfigureAwait(false);
 
-        string descPath = ResolvePath(state.WorkingFolder, GetDescriptionFileName(fileName));
-
-        if (!string.IsNullOrWhiteSpace(description))
+        await this._writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            await this._fileStore.WriteFileAsync(descPath, description, cancellationToken).ConfigureAwait(false);
+            await this._fileStore.WriteFileAsync(path, content, cancellationToken).ConfigureAwait(false);
+
+            string descPath = ResolvePath(state.WorkingFolder, GetDescriptionFileName(fileName));
+
+            if (!string.IsNullOrWhiteSpace(description))
+            {
+                await this._fileStore.WriteFileAsync(descPath, description, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                // Remove any stale description file when no description is provided.
+                await this._fileStore.DeleteFileAsync(descPath, cancellationToken).ConfigureAwait(false);
+            }
+
+            string result = string.IsNullOrWhiteSpace(description)
+                ? $"File '{fileName}' saved."
+                : $"File '{fileName}' saved with description.";
+
+            await this.RebuildMemoryIndexAsync(state, cancellationToken).ConfigureAwait(false);
+            return result;
         }
-        else
+        finally
         {
-            // Remove any stale description file when no description is provided.
-            await this._fileStore.DeleteFileAsync(descPath, cancellationToken).ConfigureAwait(false);
+            this._writeLock.Release();
         }
-
-        string result = string.IsNullOrWhiteSpace(description)
-            ? $"File '{fileName}' saved."
-            : $"File '{fileName}' saved with description.";
-
-        await this.RebuildMemoryIndexAsync(state, cancellationToken).ConfigureAwait(false);
-        return result;
     }
 
     /// <summary>
@@ -196,14 +215,23 @@ public sealed class FileMemoryProvider : AIContextProvider
     {
         FileMemoryState state = this._sessionState.GetOrInitializeState(AIAgent.CurrentRunContext?.Session);
         string path = ResolvePath(state.WorkingFolder, fileName);
-        bool deleted = await this._fileStore.DeleteFileAsync(path, cancellationToken).ConfigureAwait(false);
 
-        // Also delete companion description file if it exists.
-        string descPath = ResolvePath(state.WorkingFolder, GetDescriptionFileName(fileName));
-        await this._fileStore.DeleteFileAsync(descPath, cancellationToken).ConfigureAwait(false);
+        await this._writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            bool deleted = await this._fileStore.DeleteFileAsync(path, cancellationToken).ConfigureAwait(false);
 
-        await this.RebuildMemoryIndexAsync(state, cancellationToken).ConfigureAwait(false);
-        return deleted ? $"File '{fileName}' deleted." : $"File '{fileName}' not found.";
+            // Also delete companion description file if it exists.
+            string descPath = ResolvePath(state.WorkingFolder, GetDescriptionFileName(fileName));
+            await this._fileStore.DeleteFileAsync(descPath, cancellationToken).ConfigureAwait(false);
+
+            await this.RebuildMemoryIndexAsync(state, cancellationToken).ConfigureAwait(false);
+            return deleted ? $"File '{fileName}' deleted." : $"File '{fileName}' not found.";
+        }
+        finally
+        {
+            this._writeLock.Release();
+        }
     }
 
     /// <summary>

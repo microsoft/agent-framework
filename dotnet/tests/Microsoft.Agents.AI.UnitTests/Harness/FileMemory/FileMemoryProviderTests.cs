@@ -793,4 +793,124 @@ public class FileMemoryProviderTests
     }
 
     #endregion
+
+    #region Thread Safety Tests
+
+    [Fact]
+    public async Task ConcurrentSaves_ProduceConsistentIndexAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        var (tools, _, session) = await CreateToolsAsync(store);
+        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        const int FileCount = 20;
+
+        // Act — save multiple files in parallel.
+        var tasks = new Task[FileCount];
+        for (int i = 0; i < FileCount; i++)
+        {
+            int index = i;
+            tasks[i] = InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
+            {
+                ["fileName"] = $"file{index}.md",
+                ["content"] = $"Content {index}",
+                ["description"] = $"Description {index}",
+            }, session);
+        }
+
+        await Task.WhenAll(tasks);
+
+        // Assert — the memory index should contain all files.
+        string? indexContent = await store.ReadFileAsync("memories.md");
+        Assert.NotNull(indexContent);
+        for (int i = 0; i < FileCount; i++)
+        {
+            Assert.Contains($"**file{i}.md**", indexContent);
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentSaveAndDelete_ProduceConsistentIndexAsync()
+    {
+        // Arrange — pre-populate files that will be deleted.
+        var store = new InMemoryAgentFileStore();
+        var (tools, _, session) = await CreateToolsAsync(store);
+        var saveFile = GetTool(tools, "FileMemory_SaveFile");
+        var deleteFile = GetTool(tools, "FileMemory_DeleteFile");
+
+        for (int i = 0; i < 5; i++)
+        {
+            await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
+            {
+                ["fileName"] = $"delete{i}.md",
+                ["content"] = $"To be deleted {i}",
+            }, session);
+        }
+
+        // Act — concurrently save new files and delete existing ones.
+        var tasks = new List<Task>();
+        for (int i = 0; i < 5; i++)
+        {
+            int index = i;
+            tasks.Add(InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
+            {
+                ["fileName"] = $"keep{index}.md",
+                ["content"] = $"Kept {index}",
+            }, session));
+            tasks.Add(InvokeWithRunContextAsync(deleteFile, new AIFunctionArguments
+            {
+                ["fileName"] = $"delete{index}.md",
+            }, session));
+        }
+
+        await Task.WhenAll(tasks);
+
+        // Assert — index should contain only the kept files.
+        string? indexContent = await store.ReadFileAsync("memories.md");
+        Assert.NotNull(indexContent);
+        for (int i = 0; i < 5; i++)
+        {
+            Assert.Contains($"**keep{i}.md**", indexContent);
+            Assert.DoesNotContain($"**delete{i}.md**", indexContent);
+        }
+    }
+
+    [Fact]
+    public void Dispose_ReleasesResources()
+    {
+        // Arrange
+        var provider = new FileMemoryProvider(new InMemoryAgentFileStore());
+
+        // Act
+        provider.Dispose();
+
+        // Assert — calling Dispose again should not throw (idempotent SemaphoreSlim.Dispose).
+        provider.Dispose();
+    }
+
+    [Fact]
+    public async Task SaveFile_AfterDispose_ThrowsAsync()
+    {
+        // Arrange — create tools from a provider, then dispose the provider.
+        var store = new InMemoryAgentFileStore();
+        var provider = CreateProvider(store);
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+        AIContext result = await provider.InvokingAsync(context);
+        var saveFile = GetTool(result.Tools!, "FileMemory_SaveFile");
+        provider.Dispose();
+
+        // Act & Assert — the disposed SemaphoreSlim should throw ObjectDisposedException.
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await InvokeWithRunContextAsync(saveFile, new AIFunctionArguments
+            {
+                ["fileName"] = "notes.md",
+                ["content"] = "Should fail",
+            }, session));
+    }
+
+    #endregion
 }
