@@ -22,8 +22,8 @@ from agent_framework import FileSkill, FileSkillScript
 
 def subprocess_script_runner(skill: FileSkill, script: FileSkillScript, args: dict[str, Any] | None = None) -> str:
     """Run a skill script as a local Python subprocess.
-    Resolves the script's absolute path from the skill directory, converts
-    the ``args`` dict to CLI flags, and returns captured output.
+    Uses ``FileSkillScript.full_path`` as the script path, converts the
+    ``args`` dict to CLI flags, and returns captured output.
     Args:
         skill: The file-based skill that owns the script.
         script: The file-based script to run.

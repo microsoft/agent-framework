@@ -980,8 +980,8 @@ Each skill provides specialized instructions, reference documents, and assets fo
 When a task aligns with a skill's domain, follow these steps in exact order:
 - Use `load_skill` to retrieve the skill's instructions.
 - Follow the provided guidance.
-{resource_instructions}\
-{runner_instructions}\
+{resource_instructions}
+{runner_instructions}
 Only load what is needed, when it is needed."""
 
 RESOURCE_INSTRUCTIONS: Final[str] = (
@@ -2456,8 +2456,10 @@ class SkillsProviderBuilder:
     def with_prompt_template(self, template: str) -> SkillsProviderBuilder:
         """Set a custom system-prompt template for skill advertising.
 
-        The template must contain a ``{skills}`` placeholder and optionally
-        a ``{runner_instructions}`` placeholder.
+        The template must contain a ``{skills}`` placeholder and may also
+        include a ``{runner_instructions}`` placeholder. If any configured
+        skill exposes resources, the template must also include a
+        ``{resource_instructions}`` placeholder.
 
         Args:
             template: The prompt template string.
