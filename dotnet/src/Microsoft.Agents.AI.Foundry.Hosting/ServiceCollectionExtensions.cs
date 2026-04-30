@@ -11,6 +11,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -236,8 +237,6 @@ public static class FoundryHostingExtensions
     /// </remarks>
     internal static AIAgent TryApplyUserAgent(AIAgent agent)
     {
-        ArgumentNullException.ThrowIfNull(agent);
-
         var chatClient = agent.GetService<IChatClient>();
         if (chatClient is null)
         {

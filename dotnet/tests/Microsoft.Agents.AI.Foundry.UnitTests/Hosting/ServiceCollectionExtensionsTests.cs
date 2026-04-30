@@ -97,13 +97,6 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void TryApplyUserAgent_NullAgent_ThrowsArgumentNullException()
-    {
-        // Arrange + Act + Assert
-        Assert.Throws<ArgumentNullException>(() => FoundryHostingExtensions.TryApplyUserAgent(null!));
-    }
-
-    [Fact]
     public void TryApplyUserAgent_AgentWithoutChatClient_NoOp()
     {
         // Arrange: agent.GetService<IChatClient>() returns null.
