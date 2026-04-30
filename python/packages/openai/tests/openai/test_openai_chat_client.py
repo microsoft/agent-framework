@@ -5133,4 +5133,137 @@ def test_prepare_messages_for_openai_filters_none_fc_id() -> None:
     assert fc_item["id"].startswith("fc_")
 
 
+# region: hosted MCP round-trip (issue #5546)
+
+
+def test_prepare_messages_for_openai_serializes_mcp_server_tool_call_as_mcp_call_input_item() -> None:
+    """A Message containing only an mcp_server_tool_call Content should produce
+    a top-level mcp_call input item, not be silently dropped (which today's
+    _prepare_content_for_openai default branch does).
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
+    assert len(mcp_items) == 1, f"expected exactly one mcp_call item; got result={result}"
+    item = mcp_items[0]
+    assert item["id"] == "mcp_abc123"
+    assert item["server_label"] == "api_specs"
+    assert item["name"] == "search"
+    assert item["arguments"] == '{"q": "cats"}'
+    assert "output" not in item or item["output"] is None
+
+
+def test_prepare_messages_for_openai_coalesces_mcp_call_and_result_into_single_item() -> None:
+    """An mcp_server_tool_call followed by an mcp_server_tool_result with the
+    same call_id (in same or separate Messages) must produce ONE mcp_call
+    input item carrying both arguments and output. Two items would let the
+    Responses API see an orphaned output and reject the request.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_abc123",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
+    assert len(mcp_items) == 1, f"expected one coalesced mcp_call item carrying both arguments and output; got {result}"
+    item = mcp_items[0]
+    assert item["id"] == "mcp_abc123"
+    assert item["arguments"] == '{"q": "cats"}'
+    assert item.get("output") == "found 10 cats"
+
+    # And no orphaned function_call_output should appear anywhere in the input.
+    fco_items = [item for item in result if isinstance(item, dict) and item.get("type") == "function_call_output"]
+    assert fco_items == [], f"unexpected orphan function_call_output items: {fco_items}"
+
+
+def test_prepare_messages_for_openai_drops_orphan_mcp_server_tool_result() -> None:
+    """When an mcp_server_tool_result has no matching mcp_server_tool_call in
+    the message list, it must be dropped, NOT serialized as a
+    function_call_output. An orphan function_call_output is what triggers the
+    Responses API 400 reported in #5546.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_orphan_id",
+                    output=[Content.from_text(text="dangling output")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    fco_items = [item for item in result if isinstance(item, dict) and item.get("type") == "function_call_output"]
+    assert fco_items == [], f"orphan mcp_server_tool_result must not serialize as function_call_output; got {fco_items}"
+    mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
+    assert mcp_items == [], f"orphan mcp_server_tool_result must not synthesize a stand-alone mcp_call; got {mcp_items}"
+
+
+def test_stringify_mcp_output_extracts_text_from_dict_entries() -> None:
+    """A list of dicts in the canonical MCP text-content shape
+    (`{"type": "text", "text": "..."}`, e.g. from raw-JSON-decoded MCP
+    responses) must unwrap to plain text rather than Python `repr`.
+    """
+    result = OpenAIChatClient._stringify_mcp_output([{"type": "text", "text": "found 10 cats"}])
+    assert result == "found 10 cats"
+
+
+def test_stringify_mcp_output_falls_back_to_json_for_non_text_dict_entries() -> None:
+    """Dict entries that are not in the canonical text-content shape must
+    serialize as JSON, not Python `repr`. Python `repr` for a dict uses
+    single quotes and would not round-trip through any JSON-aware consumer.
+    """
+    result = OpenAIChatClient._stringify_mcp_output([{"type": "image", "url": "https://example.com/x"}])
+    # Valid JSON: starts with `{`, contains the keys, no Python-repr single quotes.
+    assert result.startswith("{")
+    assert '"url"' in result
+    assert "'" not in result
+
+
+# endregion
+
+
 # endregion

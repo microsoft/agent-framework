@@ -806,6 +806,18 @@ def _item_to_message(item: Item) -> Message:
     if item.type == "custom_tool_call_output":
         cto = cast(ItemCustomToolCallOutput, item)
         output = cto.output if isinstance(cto.output, str) else str(cto.output)
+        # Hosted-MCP results land here because the host writes them via
+        # `aoutput_item_custom_tool_call_output` (see `_to_outputs` for
+        # `mcp_server_tool_result`). The persisted `call_id` keeps its
+        # `mcp_*` prefix; on read, route those back to a hosted-MCP result
+        # Content so the chat-client serialize layer can coalesce them
+        # onto a single `mcp_call` input item with `output` populated.
+        # Issue #5546.
+        if cto.call_id and cto.call_id.startswith("mcp_"):
+            return Message(
+                role="tool",
+                contents=[Content.from_mcp_server_tool_result(call_id=cto.call_id, output=output)],
+            )
         return Message(
             role="tool",
             contents=[Content.from_function_result(cto.call_id, result=output)],
@@ -1054,6 +1066,16 @@ def _output_item_to_message(item: OutputItem) -> Message:
     if item.type == "custom_tool_call_output":
         cto = cast(OutputItemCustomToolCallOutput, item)
         output = cto.output if isinstance(cto.output, str) else str(cto.output)
+        # Hosted-MCP results land here because the host writes them via
+        # `aoutput_item_custom_tool_call_output`. Route `mcp_*` call_ids
+        # back to a hosted-MCP result Content so the chat-client serialize
+        # layer can coalesce onto the matching `mcp_call` input item.
+        # Issue #5546.
+        if cto.call_id and cto.call_id.startswith("mcp_"):
+            return Message(
+                role="tool",
+                contents=[Content.from_mcp_server_tool_result(call_id=cto.call_id, output=output)],
+            )
         return Message(
             role="tool",
             contents=[Content.from_function_result(cto.call_id, result=output)],
