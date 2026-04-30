@@ -7,5 +7,7 @@ resources:
   cpu: "0.25"
   memory: 0.5Gi
 environment_variables:
+  - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+    value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
   - name: GITHUB_PAT
     value: ${GITHUB_PAT}

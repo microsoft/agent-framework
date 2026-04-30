@@ -16,12 +16,14 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 ### Tools
 
-This agent uses two tools:
+This agent uses four tools:
 
-1. **Local Shell Tool (`run_bash`)** – Executes shell commands locally to perform filesystem operations such as listing files, reading file contents, or creating directories. The tool captures stdout, stderr, and the exit code of the command and returns them as a string.
-2. **Code Interpreter Tool (`code_interpreter`)** – Allows the agent to execute Python code in a safe, sandboxed environment. This tool can be used to read and manipulate file contents, perform calculations, or run other Python logic as part of the agent's responses.
+1. **Get Current Working Directory Tool (`get_cwd`)** – Returns the current working directory of the agent host process.
+2. **List Files Tool (`list_files`)** – Lists the files in a specified directory.
+3. **Read File Tool (`read_file`)** – Reads the contents of a specified file.
+4. **Code Interpreter Tool (`code_interpreter`)** – Allows the agent to execute Python code in a safe.
 
-> In this sample, the local shell tool is a function tool defined in Python using the `@tool` decorator from the Agent Framework. The code interpreter tool is a managed tool provided by [Foundry Toolbox](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox). Learn more about foundry toolbox integration with hosted agents with this [sample](../04_foundry_toolbox/).
+> In this sample, the filesystem tools are function tools defined in Python using the `@tool` decorator from the Agent Framework. The code interpreter tool is a managed tool provided by [Foundry Toolbox](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox). Learn more about foundry toolbox integration with hosted agents with this [sample](../04_foundry_toolbox/).
 
 ## Running the Agent Host
 

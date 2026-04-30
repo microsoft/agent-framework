@@ -2,7 +2,6 @@
 
 import asyncio
 import os
-import subprocess
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
@@ -15,31 +14,32 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-@tool(
-    description="Execute a shell command for filesystem operations.",
-    approval_mode="never_require",
-)
-def run_bash(command: str) -> str:
-    """Execute a shell command locally and return stdout, stderr, and exit code."""
+@tool(description="Get the current working directory.", approval_mode="never_require")
+def get_cwd() -> str:
+    """Get the current working directory."""
     try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        parts: list[str] = []
-        if result.stdout:
-            parts.append(result.stdout)
-        if result.stderr:
-            parts.append(f"stderr: {result.stderr}")
-        parts.append(f"exit_code: {result.returncode}")
-        return "\n".join(parts)
-    except subprocess.TimeoutExpired:
-        return "Command timed out after 30 seconds"
+        return os.getcwd()
     except Exception as e:
-        return f"Error executing command: {e}"
+        return f"Error getting current working directory: {e}"
+
+
+@tool(description="List files in a directory.", approval_mode="never_require")
+def list_files(directory: str) -> list[str]:
+    """List files in a directory."""
+    try:
+        return os.listdir(directory)
+    except Exception as e:
+        return [f"Error listing files in {directory}: {e}"]
+
+
+@tool(description="Read the contents of a file.", approval_mode="never_require")
+def read_file(file_path: str) -> str:
+    """Read the contents of a file."""
+    try:
+        with open(file_path) as f:
+            return f.read()
+    except Exception as e:
+        return f"Error reading file {file_path}: {e}"
 
 
 async def main():
@@ -68,7 +68,7 @@ async def main():
             "Make sure all mathematical calculations are performed using the code interpreter "
             "instead of mental arithmetic."
         ),
-        tools=[run_bash] + selected_tools,
+        tools=[get_cwd, list_files, read_file] + selected_tools,
         # History will be managed by the hosting infrastructure, thus there
         # is no need to store history by the service. Learn more at:
         # https://developers.openai.com/api/reference/resources/responses/methods/create
