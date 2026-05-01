@@ -872,6 +872,8 @@ class RawAnthropicClient(
         tool_mode = validate_tool_mode(options.get("tool_choice"))
         if tool_mode is None:
             return result or None
+        if "allowed_tools" in tool_mode:
+            logger.warning("allowed_tools is not supported by Anthropic; the setting will be ignored")
         allow_multiple = options.get("allow_multiple_tool_calls")
         match tool_mode.get("mode"):
             case "auto":

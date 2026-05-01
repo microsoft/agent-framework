@@ -363,7 +363,7 @@ def _create_workflow() -> Workflow:
 
     chat_client = OpenAIChatCompletionClient(
         model=os.environ["AZURE_OPENAI_MODEL"],
-        api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default"),
+        credential=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default"),
     )
 
     # Create agents for parallel analysis
