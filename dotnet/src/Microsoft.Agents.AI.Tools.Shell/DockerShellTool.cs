@@ -248,14 +248,67 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
     }
 
     /// <summary>
-    /// Build the AIFunction for this tool. Unlike <see cref="LocalShellTool"/>,
-    /// approval is NOT required by default since the container is the boundary.
+    /// Returns <see langword="true"/> when this tool's effective configuration
+    /// matches the hardened defaults — no network, non-root user, read-only
+    /// root filesystem, the host mount (if any) is read-only, and no
+    /// caller-supplied <c>extraRunArgs</c> have been added. When this is
+    /// <see langword="true"/>, <see cref="AsAIFunction"/> may safely default
+    /// to <c>requireApproval: false</c>; when it is <see langword="false"/>,
+    /// the caller has relaxed the isolation boundary and approval becomes
+    /// the safer default.
     /// </summary>
+    public bool IsHardenedConfiguration =>
+        StringComparer.Ordinal.Equals(this._network, "none")
+        && !IsRootUser(this._user)
+        && this._readOnlyRoot
+        && (this._hostWorkdir is null || this._mountReadonly)
+        && this._extraRunArgs.Count == 0;
+
+    private static bool IsRootUser(string user)
+    {
+        // user is typically "uid:gid" (e.g. "65534:65534") or "0", "0:0",
+        // "root", or "root:root". Anything we cannot parse is treated as
+        // root for the purpose of the safety default — fail safe.
+        if (string.IsNullOrEmpty(user))
+        {
+            return true;
+        }
+        var uidPart = user.Split(':')[0];
+        if (uidPart.Equals("root", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        return !int.TryParse(uidPart, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var uid)
+            || uid == 0;
+    }
+
+    /// <summary>
+    /// Build the AIFunction for this tool.
+    /// </summary>
+    /// <remarks>
+    /// When <paramref name="requireApproval"/> is <see langword="null"/>
+    /// (the default), approval is enabled iff
+    /// <see cref="IsHardenedConfiguration"/> is <see langword="false"/>.
+    /// In other words: if the caller relaxed any isolation knob (for
+    /// example by setting <c>network: "host"</c>, running as
+    /// <c>0:0</c>, disabling <c>readOnlyRoot</c>, granting a writable
+    /// host mount, or supplying <c>extraRunArgs</c>), the tool falls
+    /// back to requiring user approval. Pass
+    /// <c>requireApproval: false</c> explicitly to opt out of that
+    /// safety net.
+    /// </remarks>
     /// <param name="name">Function name surfaced to the model.</param>
     /// <param name="description">Function description for the model.</param>
-    /// <param name="requireApproval">When <see langword="true"/>, wraps in <see cref="ApprovalRequiredAIFunction"/>. Defaults to <see langword="false"/>.</param>
-    public AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool requireApproval = false)
+    /// <param name="requireApproval">
+    /// <see langword="true"/> always wraps in
+    /// <see cref="ApprovalRequiredAIFunction"/>; <see langword="false"/>
+    /// never does; <see langword="null"/> (the default) wraps iff
+    /// <see cref="IsHardenedConfiguration"/> is <see langword="false"/>.
+    /// </param>
+    public AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool? requireApproval = null)
     {
+        var effectiveRequireApproval = requireApproval ?? !this.IsHardenedConfiguration;
+
         description ??=
             "Execute a single shell command inside an isolated Docker container and return its " +
             "stdout, stderr, and exit code. The container has no network, no host filesystem access " +
@@ -281,7 +334,7 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
             },
             new AIFunctionFactoryOptions { Name = name, Description = description });
 
-        return requireApproval ? new ApprovalRequiredAIFunction(fn) : fn;
+        return effectiveRequireApproval ? new ApprovalRequiredAIFunction(fn) : fn;
     }
 
     /// <inheritdoc />

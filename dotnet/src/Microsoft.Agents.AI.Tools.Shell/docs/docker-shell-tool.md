@@ -301,11 +301,29 @@ sequenceDiagram
     Agent-->>Model: tool result
 ```
 
-`AsAIFunction` defaults to `requireApproval: false` because the
-container itself is the security boundary — the model can't escape
-`--network none` + `--read-only` + `--cap-drop ALL` no matter what
-command it sends. The `LocalShellTool` defaults to the opposite,
-because there is no boundary at all when running directly on the host.
+`AsAIFunction` accepts a nullable `requireApproval`:
+
+| `requireApproval` value | Behavior |
+|---|---|
+| `null` (default) | Wraps in `ApprovalRequiredAIFunction` **iff** `IsHardenedConfiguration` is `false`. |
+| `false` | Never wraps — explicit caller opt-out. |
+| `true` | Always wraps. |
+
+`IsHardenedConfiguration` returns `true` when ALL of the following hold:
+
+- `network == "none"` (no network namespace);
+- the container user is non-root (UID != 0, not `"root"`);
+- `readOnlyRoot == true`;
+- the host mount, if any, is read-only (`mountReadonly == true`);
+- no caller-supplied `extraRunArgs` have been added.
+
+This makes the safety default proportional to the actual isolation:
+the container itself is the security boundary as long as it stays
+hardened — the model can't escape `--network none` + `--read-only` +
+`--cap-drop ALL` no matter what command it sends — but as soon as the
+caller weakens any of those knobs, the tool falls back to requiring
+approval. The `LocalShellTool` defaults to approval-required across
+the board because there is no host-side boundary at all.
 
 ---
 

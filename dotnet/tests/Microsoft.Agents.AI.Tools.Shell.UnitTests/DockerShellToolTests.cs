@@ -14,6 +14,8 @@ namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 /// </summary>
 public sealed class DockerShellToolTests
 {
+    private static readonly string[] s_privilegedExtraRunArgs = new[] { "--privileged" };
+
     [Fact]
     public void BuildRunArgv_EmitsHardenedDefaults()
     {
@@ -167,10 +169,13 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public void AsAIFunction_DefaultIsNotApprovalGated()
+    public void AsAIFunction_HardenedDefaults_AreNotApprovalGated()
     {
-        // Container is the boundary; approval is opt-in for DockerShellTool.
+        // With the default hardened config (network=none, non-root user,
+        // read-only root, no extra args, no host mount) approval should
+        // remain opt-in.
         using var t = new DockerShellTool(mode: ShellMode.Stateless);
+        Assert.True(t.IsHardenedConfiguration);
         var fn = t.AsAIFunction();
         Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
@@ -182,6 +187,48 @@ public sealed class DockerShellToolTests
         using var t = new DockerShellTool(mode: ShellMode.Stateless);
         var fn = t.AsAIFunction(requireApproval: true);
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
+    }
+
+    [Theory]
+    [InlineData("host", "65534:65534", true, true, false)]   // network=host => relaxed
+    [InlineData("none", "0:0", true, true, false)]            // root user => relaxed
+    [InlineData("none", "root", true, true, false)]           // root by name => relaxed
+    [InlineData("none", "65534:65534", false, true, false)]   // writable root => relaxed
+    public void AsAIFunction_RelaxedConfig_DefaultsToApprovalGated(
+        string network, string user, bool readOnlyRoot, bool mountReadonly, bool _)
+    {
+        using var t = new DockerShellTool(
+            mode: ShellMode.Stateless,
+            network: network,
+            user: user,
+            readOnlyRoot: readOnlyRoot,
+            mountReadonly: mountReadonly);
+        Assert.False(t.IsHardenedConfiguration);
+
+        var fn = t.AsAIFunction();
+        Assert.IsType<ApprovalRequiredAIFunction>(fn);
+    }
+
+    [Fact]
+    public void AsAIFunction_ExtraRunArgs_DefaultsToApprovalGated()
+    {
+        using var t = new DockerShellTool(
+            mode: ShellMode.Stateless,
+            extraRunArgs: s_privilegedExtraRunArgs);
+        Assert.False(t.IsHardenedConfiguration);
+
+        var fn = t.AsAIFunction();
+        Assert.IsType<ApprovalRequiredAIFunction>(fn);
+    }
+
+    [Fact]
+    public void AsAIFunction_RelaxedButExplicitOptOut_IsNotApprovalGated()
+    {
+        using var t = new DockerShellTool(
+            mode: ShellMode.Stateless,
+            network: "host");
+        var fn = t.AsAIFunction(requireApproval: false);
+        Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
     }
 
     [Fact]
