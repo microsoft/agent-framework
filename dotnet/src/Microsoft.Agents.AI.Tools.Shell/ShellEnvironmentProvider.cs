@@ -11,66 +11,6 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.Tools.Shell;
 
 /// <summary>
-/// Identifies the shell family the agent is talking to.
-/// </summary>
-public enum ShellFamily
-{
-    /// <summary>POSIX-style shell (bash, sh, zsh).</summary>
-    Posix,
-    /// <summary>PowerShell (pwsh or Windows PowerShell).</summary>
-    PowerShell,
-}
-
-/// <summary>
-/// A point-in-time snapshot of the shell environment the agent is using.
-/// </summary>
-/// <param name="Family">Shell family (PowerShell vs POSIX).</param>
-/// <param name="OSDescription"><see cref="RuntimeInformation.OSDescription"/>.</param>
-/// <param name="ShellVersion">Reported shell version, or <see langword="null"/> if probing failed.</param>
-/// <param name="WorkingDirectory">CWD at probe time, or empty if probing failed.</param>
-/// <param name="ToolVersions">Map of probed CLI tool name to reported version (or <see langword="null"/> when not installed).</param>
-public sealed record ShellEnvironmentSnapshot(
-    ShellFamily Family,
-    string OSDescription,
-    string? ShellVersion,
-    string WorkingDirectory,
-    IReadOnlyDictionary<string, string?> ToolVersions);
-
-/// <summary>
-/// Configuration knobs for <see cref="ShellEnvironmentProvider"/>.
-/// </summary>
-public sealed class ShellEnvironmentProviderOptions
-{
-    /// <summary>
-    /// CLI tools whose <c>--version</c> output is probed and surfaced in
-    /// the agent context. Defaults to a small, common set.
-    /// </summary>
-    public IReadOnlyList<string> ProbeTools { get; init; } =
-        ["git", "dotnet", "node", "python", "docker"];
-
-    /// <summary>
-    /// Optional override for the auto-detected shell family. When
-    /// <see langword="null"/>, the family is inferred from
-    /// <see cref="RuntimeInformation"/> (Windows → PowerShell, otherwise
-    /// POSIX). Set this when running against a non-default shell (e.g.,
-    /// bash on Windows via WSL, or pwsh on Linux).
-    /// </summary>
-    public ShellFamily? OverrideFamily { get; init; }
-
-    /// <summary>
-    /// Per-probe execution timeout. Failed or timed-out probes are
-    /// recorded as missing rather than thrown to the agent.
-    /// </summary>
-    public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(5);
-
-    /// <summary>
-    /// Optional formatter for the instructions block. When
-    /// <see langword="null"/>, a built-in formatter is used.
-    /// </summary>
-    public Func<ShellEnvironmentSnapshot, string>? InstructionsFormatter { get; init; }
-}
-
-/// <summary>
 /// An <see cref="AIContextProvider"/> that probes the underlying shell
 /// (OS, shell family/version, working directory, available CLI tools)
 /// once per session and injects an authoritative instructions block so
