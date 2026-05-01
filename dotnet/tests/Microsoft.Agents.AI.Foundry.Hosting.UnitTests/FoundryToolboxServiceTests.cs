@@ -4,11 +4,10 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
-using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.Options;
 using Moq;
 
-namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
+namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 public class FoundryToolboxServiceTests
 {
