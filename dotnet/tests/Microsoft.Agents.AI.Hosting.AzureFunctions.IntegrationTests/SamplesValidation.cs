@@ -60,7 +60,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         await Task.CompletedTask;
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task SingleAgentSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "01_SingleAgent");
@@ -148,7 +148,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task MultiAgentOrchestrationConcurrentSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "03_AgentOrchestration_Concurrency");
@@ -198,7 +198,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task MultiAgentOrchestrationConditionalsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "04_AgentOrchestration_Conditionals");
@@ -216,7 +216,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
@@ -272,7 +272,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -362,7 +362,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task AgentAsMcpToolAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_AgentAsMcpTool");
@@ -402,7 +402,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");

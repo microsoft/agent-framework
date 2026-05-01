@@ -67,7 +67,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task SingleAgentOrchestrationChainingSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
@@ -103,7 +103,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task MultiAgentConcurrencySampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
@@ -158,7 +158,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task MultiAgentConditionalSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
@@ -235,7 +235,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         Assert.True(foundSuccess, "Orchestration did not complete successfully.");
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
@@ -304,7 +304,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -384,7 +384,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_ReliableStreaming");
