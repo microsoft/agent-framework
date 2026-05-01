@@ -162,7 +162,10 @@ internal sealed class WorkflowRunner
 
                 case RequestInfoEvent requestInfo:
                     Debug.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
-                    externalResponse = requestInfo.Request;
+                    if (response is null || !string.Equals(requestInfo.Request.RequestId, response.RequestId, StringComparison.Ordinal))
+                    {
+                        externalResponse = requestInfo.Request;
+                    }
                     break;
 
                 case ConversationUpdateEvent invokeEvent:
