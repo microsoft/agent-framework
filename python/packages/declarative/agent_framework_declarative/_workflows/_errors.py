@@ -6,12 +6,8 @@ This module exists so that executor modules and the builder (e.g.
 ``_executors_http``, ``_declarative_builder``) can raise declarative-specific
 exceptions without importing from ``_factory``. ``_factory`` imports
 ``_declarative_builder`` which imports the executor modules; pulling
-``DeclarativeWorkflowError`` from ``_factory`` into an executor or builder
-module would therefore introduce a circular import.
-
-``_factory`` re-exports :class:`DeclarativeWorkflowError` (and
-:class:`DeclarativeActionError`) for convenience so existing import paths keep
-working.
+:class:`DeclarativeWorkflowError` from ``_factory`` into an executor or
+builder module would therefore introduce a circular import.
 """
 
 from __future__ import annotations

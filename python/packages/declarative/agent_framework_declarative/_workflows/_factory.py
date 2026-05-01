@@ -27,15 +27,13 @@ from agent_framework import (
 
 from .._loader import AgentFactory
 from ._declarative_builder import DeclarativeWorkflowBuilder
-from ._errors import DeclarativeActionError, DeclarativeWorkflowError
+from ._errors import DeclarativeWorkflowError
 from ._http_handler import HttpRequestHandler
 
 logger = logging.getLogger("agent_framework.declarative")
 
 
-# Re-export DeclarativeWorkflowError (now defined in _errors) so existing
-# import paths (`from .._factory import DeclarativeWorkflowError`) keep working.
-__all__ = ["DeclarativeActionError", "DeclarativeWorkflowError", "WorkflowFactory"]
+__all__ = ["WorkflowFactory"]
 
 
 class WorkflowFactory:
