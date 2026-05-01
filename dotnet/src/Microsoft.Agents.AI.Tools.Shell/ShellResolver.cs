@@ -48,7 +48,7 @@ internal static class ShellResolver
         {
             return new ResolvedShell("/bin/bash", ShellKind.Bash);
         }
-        return new ResolvedShell("/bin/sh", ShellKind.Bash);
+        return new ResolvedShell("/bin/sh", ShellKind.Sh);
     }
 
     /// <summary>
@@ -86,6 +86,9 @@ internal static class ShellResolver
         {
             "PWSH" or "POWERSHELL" => ShellKind.PowerShell,
             "CMD" => ShellKind.Cmd,
+            // Non-bash POSIX shells: treat sh/dash/ash/busybox as plain sh
+            // so we don't pass bash-only flags like --noprofile / --norc.
+            "SH" or "DASH" or "ASH" or "BUSYBOX" => ShellKind.Sh,
             _ => ShellKind.Bash,
         };
     }
@@ -128,12 +131,14 @@ internal static class ShellResolver
 /// <summary>Identifies the dialect of the resolved shell.</summary>
 internal enum ShellKind
 {
-    /// <summary>POSIX shell (bash, sh, zsh).</summary>
+    /// <summary>POSIX shell (bash, zsh) that accepts <c>--noprofile</c> / <c>--norc</c>.</summary>
     Bash,
     /// <summary>PowerShell (pwsh or Windows PowerShell).</summary>
     PowerShell,
     /// <summary>Windows cmd.exe.</summary>
     Cmd,
+    /// <summary>POSIX <c>sh</c> / dash / ash / busybox — does NOT accept <c>--noprofile</c>.</summary>
+    Sh,
 }
 
 internal readonly record struct ResolvedShell(string Binary, ShellKind Kind, IReadOnlyList<string>? ExtraArgv = null)
@@ -152,6 +157,7 @@ internal readonly record struct ResolvedShell(string Binary, ShellKind Kind, IRe
                 command,
             },
             ShellKind.Cmd => new[] { "/d", "/c", command },
+            ShellKind.Sh => new[] { "-c", command },
             _ => new[] { "--noprofile", "--norc", "-c", command },
         };
         if (extra.Count == 0)
@@ -182,6 +188,7 @@ internal readonly record struct ResolvedShell(string Binary, ShellKind Kind, IRe
             },
             ShellKind.Cmd => throw new NotSupportedException(
                 "Persistent mode is not supported for cmd.exe — use pwsh, powershell, or a POSIX shell."),
+            ShellKind.Sh => Array.Empty<string>(),
             _ => new[] { "--noprofile", "--norc" },
         };
         if (extra.Count == 0)

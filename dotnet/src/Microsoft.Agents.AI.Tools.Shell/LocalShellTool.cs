@@ -497,6 +497,7 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecut
             ShellKind.PowerShell => "PowerShell (pwsh)",
             ShellKind.Cmd => "cmd.exe",
             ShellKind.Bash => "bash",
+            ShellKind.Sh => "POSIX sh (dash/ash)",
             _ => "POSIX shell",
         };
         _ = sb.Append("Shell: ").Append(shellName).Append(" (binary: '").Append(this._shell.Binary).Append("'). ");
@@ -512,9 +513,13 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecut
             _ = sb.Append("`Get-Content` or `cat` (built-in alias works); ");
             _ = sb.Append("`Where-Object` / `Select-String` (NOT `grep`). ");
         }
-        else if (this._shell.Kind == ShellKind.Bash)
+        else if (this._shell.Kind is ShellKind.Bash or ShellKind.Sh)
         {
-            _ = sb.Append("Use POSIX shell syntax (bash). ");
+            _ = sb.Append("Use POSIX shell syntax. ");
+            if (this._shell.Kind == ShellKind.Sh)
+            {
+                _ = sb.Append("This is a minimal POSIX sh (likely dash/ash) — avoid bash-only features like `[[ ... ]]`, arrays, `<<<` here-strings, or `set -o pipefail`. ");
+            }
         }
 
         if (this._mode == ShellMode.Persistent)
