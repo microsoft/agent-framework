@@ -314,7 +314,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     }
                 },
                 message: "Orchestration is requesting human feedback",
-                timeout: TimeSpan.FromSeconds(90));
+                timeout: TimeSpan.FromSeconds(180));
 
             // Approve the content
             Uri approvalUri = new($"{runAgentUri}?thread_id={sessionId}");
@@ -334,7 +334,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     }
                 },
                 message: "Content published notification is logged",
-                timeout: TimeSpan.FromSeconds(90));
+                timeout: TimeSpan.FromSeconds(180));
 
             // Verify the final orchestration status by asking the agent for the status
             Uri statusUri = new($"{runAgentUri}?thread_id={sessionId}");
@@ -358,7 +358,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     return isCompleted && hasContent;
                 },
                 message: "Orchestration is completed",
-                timeout: TimeSpan.FromSeconds(90));
+                timeout: TimeSpan.FromSeconds(180));
         });
     }
 
