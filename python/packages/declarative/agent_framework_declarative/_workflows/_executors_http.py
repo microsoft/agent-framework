@@ -405,12 +405,9 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
         messages_path = _get_messages_path(state, conversation_id_expr)
         if messages_path is None:
             return
-        # Ensure the conversation entry exists so downstream agents can reference it.
-        evaluated_id = messages_path.split(".", 2)[2].rsplit(".", 1)[0]
-        conversations: dict[str, Any] = state.get("System.conversations") or {}
-        if evaluated_id not in conversations:
-            conversations[evaluated_id] = {"id": evaluated_id, "messages": []}
-            state.set("System.conversations", conversations)
+        # Mirrors InvokeAzureAgentExecutor: rely on state.append to lazily
+        # create the conversation entry. Avoids re-parsing the id back out
+        # of the dotted path string.
         message = Message(role="assistant", contents=[body])
         state.append(messages_path, message)
 
