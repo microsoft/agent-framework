@@ -9,7 +9,7 @@ deciders: eavanvalkenburg
 
 ## What are the business goals for this feature?
 
-Give Python app authors one low-level, Starlette-based hosting surface that can expose a single **hostable target** — either a `SupportsAgentRun`-compatible agent **or** a `Workflow` — on one or more channels (Responses API, Invocations API, Telegram, future WhatsApp/Teams, etc.) without requiring them to hand-build protocol routing or server glue per protocol, **and** let an end user start a conversation on one channel (e.g. Telegram on their phone) and seamlessly continue it on another (e.g. Teams at their desk) against the same target and the same conversation history.
+Give Python app authors one low-level, Starlette-based hosting surface that can expose a single **hostable target** — either a `SupportsAgentRun`-compatible agent **or** a `Workflow` — on one or more channels (Responses API, Invocations API, Telegram, future A2A, MCP-tool, WhatsApp/Teams, etc.) without requiring them to hand-build protocol routing or server glue per protocol, **and** let an end user start a conversation on one channel (e.g. Telegram on their phone) and seamlessly continue it on another (e.g. Teams at their desk) against the same target and the same conversation history.
 
 This consolidates the protocol-specific hosting layers that exist today (`agent-framework-foundry-hosting`, `agent-framework-ag-ui`, `agent-framework-a2a`, `agent-framework-devui`) into a shared composable model where:
 
@@ -133,9 +133,11 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
 22. **Generic auth helpers** — shared middleware for common channel auth patterns (HMAC signature, bearer token).
 23. **Pluggable session and run-handle store** — interface for cross-channel, cross-host session persistence; same store persists `RunHandle`s and identity-link grants beyond process lifetime. Extends cross-channel chat continuity (req #9) and background runs (req #14) beyond a single host/process.
 24. **First-party identity linker helpers** — concrete `OAuthIdentityLinker` (with provider presets), `OneTimeCodeIdentityLinker` (cross-channel code exchange), and an `MfaIdentityLinker` shipped as opt-in helpers on top of the `IdentityLinker` contract.
+25. **`A2AChannel` package** (`agent-framework-hosting-a2a`) — exposes the hostable target over the Agent-to-Agent protocol so other agents can consume it as a peer. Caller-supplied-session family (alongside Responses and Invocations): A2A's per-conversation id maps to `ChannelSession.key`; the calling agent's identity (e.g. its A2A agent card / signed JWT) flows through `IdentityResolver`; structured replies fit the existing `ChannelRequest` + `ResponseTarget` envelope. No new host primitives required — only the protocol binding and package.
+26. **`MCPToolChannel` package** (`agent-framework-hosting-mcp`) — exposes the hostable target as a **Model Context Protocol tool** so MCP clients (other agents, IDE tooling) can invoke it. Same caller-supplied-session family: the MCP `tool/call` carries the conversation key into `ChannelSession.key`; the MCP client identity flows through `IdentityResolver`; the tool result is the target's response. Streaming MCP tools map onto the host's existing streaming response delivery; long-running MCP tools map onto background runs with `RunHandle` when the work outlasts a single tool-call round-trip.
 
 ### Stretch
-25. **WhatsApp and Teams channel packages** — using the same `Channel` + `ChannelCommand` model, designed so they participate in cross-channel continuity (req #9) and can serve as `ChannelPush` destinations (req #13) when paired with a stable per-user `isolation_key`.
+27. **WhatsApp and Teams channel packages** — using the same `Channel` + `ChannelCommand` model, designed so they participate in cross-channel continuity (req #9) and can serve as `ChannelPush` destinations (req #13) when paired with a stable per-user `isolation_key`.
 
 ## API Surface
 
@@ -431,14 +433,42 @@ POST /responses { "previous_response_id": "resp_018f…", "input": [...] }
 
 This means **any** AF `HistoryProvider` backs Responses out of the box — `FileHistoryProvider`, an in-memory provider, a future `CosmosHistoryProvider`, etc. The wire `previous_response_id` is just a session id with channel-defined formatting; nothing in the provider has to know "this is a Responses session".
 
-##### `FoundryHistoryProvider` — Foundry-backed history
+##### The Responses `store` parameter
 
-For users who want the conversation persisted in the **same Foundry response store** that today's `azure.ai.agentserver.responses.store._foundry_provider.FoundryStorageProvider` writes to (so e.g. Foundry Workbench can replay the conversation, or other Foundry tools can introspect it), a new provider is added — proposed name `FoundryHistoryProvider` — implementing the standard `HistoryProvider` Protocol and ported from agentserver's storage code (no `agentserver` runtime dependency). Shipped in `agent-framework-foundry`, attached the same way any other history provider is attached to an agent:
+The OpenAI Responses API exposes a `store` boolean on every request. Its meaning in the official SDK is "service-side: persist this response so a later call can reference it via `previous_response_id`." In the hosting world this gets more interesting because there are **three** independent places a turn can end up persisted:
+
+- **Service-side** — the upstream provider's response store (e.g. OpenAI's hosted response store, accessible by `previous_response_id` against that provider directly). Controlled by the `store` flag on the agent's underlying `ChatClient` at construction time.
+- **Hosted-agent storage** — the `HistoryProvider`(s) attached to the agent (`FileHistoryProvider`, `FoundryHostedAgentHistoryProvider`, in-memory, dual-write, …). Controlled by the host's `session_mode` directive, which `run_hook` can rewrite per request.
+- **Caller-side** — the API caller keeps the `response_id` returned by the host and chains future calls with `previous_response_id`. Always available; out of host scope.
+
+These axes are **independent**. The same wire `store` value can land in any combination of them — or none — depending on (a) how the developer assembled the agent (`HistoryProvider` attached or not? `ChatClient` configured with its own `store=True` or not?) and (b) what the channel's `run_hook` does with the value. **The point of the matrix below is that `store` does not have a single canonical meaning at the hosted-agent layer — the developer of the hosted agent decides what it means.**
+
+| Caller sends | **Service-side** (underlying `ChatClient`'s own `store`) | **Hosted-agent storage** (agent's `HistoryProvider`) | **Caller-side** (caller chains `previous_response_id`) |
+|---|---|---|---|
+| `store=true` (or omitted; OpenAI default is `true`) | Writes **iff** the `ChatClient` was constructed to honor `store=true` against the upstream service. The host forwards the wire value into the chat client's options but does not look at it itself. | **Default:** loads and writes via the configured `HistoryProvider` (`session_mode="auto"`). <br> **Developer overrides** (via `run_hook`): `session_mode="disabled"` to suppress (compliance hold, ephemeral one-shots); `session_mode="required"` to fail closed if no session can be resolved instead of auto-issuing. | Always available — the host returns a chained `response_id` the caller may keep and re-send as `previous_response_id`. |
+| `store=false` | Typically suppresses the service-side write — but the exact behavior depends on the `ChatClient` (some providers ignore the per-request flag, some honor it, some require a different opt-out). The host does not interpret it on the chat client's behalf. | **Default:** **still loads and writes** via the configured `HistoryProvider` — `store=false` is **not** auto-translated into a session-disable. The `HistoryProvider` is configured on the agent for app-level reasons (audit, replay, multi-channel continuity) the API caller has no business unilaterally overriding. <br> **Developer overrides** (via `run_hook`): `session_mode="disabled"` to **honor caller intent** (the path most apps that expose `store=false` as a real "stateless" guarantee will take); `session_mode="required"` (Scenario 3) to **ignore caller intent** and force host-managed sessions; conditional rules (e.g. honor `store=false` only from internal callers). | Always available — and the default fallback when both server-side surfaces are suppressed. |
+
+The same `store=false` request can therefore end up persisted in:
+
+- **service-side only** (chat client honors the flag → no service-side write; `HistoryProvider` not attached → no hosted-agent write; caller keeps `response_id`),
+- **hosted-agent storage only** (chat client honors the flag → no service-side write; `HistoryProvider` attached and `run_hook` does not override → host writes anyway),
+- **both** (chat client ignores the flag → service-side write happens; `HistoryProvider` attached and not overridden → hosted-agent write also happens),
+- **neither** (chat client honors the flag and `run_hook` translates it into `session_mode="disabled"` → only the caller's local copy exists).
+
+Two design properties fall out of this:
+
+1. **`store` is forwarded, not auto-mapped to host policy.** The caller's `store` value is forwarded into the chat client's options (where the upstream provider's own `store` semantics apply), but it is **not** translated into a `session_mode` directive against the agent's `HistoryProvider` by default. Collapsing the two — for example to make `store=false` a real end-to-end "stateless" guarantee — is an explicit developer choice expressed in `run_hook`.
+2. **Documenting `store` semantics is a per-deployment responsibility.** Because the resolved persistence depends on three independent developer decisions, the meaning of `store=true` / `store=false` against any given hosted agent is something the deployment **must document for its callers** — there is no framework-level guarantee beyond "the wire value is forwarded to the chat client, and the host's `HistoryProvider` runs by default unless `run_hook` says otherwise."
+3. **Richer storage vocabulary via `extra_body`.** A single boolean is often too coarse to express what a deployment actually wants to offer. The OpenAI Responses request envelope supports an `extra_body` mapping (the official Python SDK exposes it on every call as a passthrough into the request JSON); the `ResponsesChannel` parses unknown body keys onto `ChannelRequest.attributes`, so `run_hook` can read deployment-specific knobs from there and translate them into `session_mode`, the chat client's `store` flag, or anything else. Examples a deployment might expose: `extra_body={"af_store": "audit_only"}` to write to the `HistoryProvider` but suppress the service-side mirror; `{"af_store": "ephemeral"}` to skip both server-side surfaces; `{"af_store": "replay_safe"}` to force `session_mode="required"` and reject calls without a resolvable session. The framework does not standardize these names — they are part of the deployment's documented contract with its callers, on top of the standard `store` flag.
+
+##### `FoundryHostedAgentHistoryProvider` — Foundry-backed history
+
+For users who want the conversation persisted in the **same Foundry response store** that today's `azure.ai.agentserver.responses.store._foundry_provider.FoundryStorageProvider` writes to (so e.g. Foundry Workbench can replay the conversation, or other Foundry tools can introspect it), a new provider is added — proposed name `FoundryHostedAgentHistoryProvider` — implementing the standard `HistoryProvider` Protocol and ported from agentserver's storage code (no `agentserver` runtime dependency). Shipped in `agent-framework-foundry`, attached the same way any other history provider is attached to an agent:
 
 ```python
-agent = ChatClientAgent(
-    chat_client=client,
-    history_provider=FoundryHistoryProvider(
+agent = Agent(
+    client=client,
+    history_provider=FoundryHostedAgentHistoryProvider(
         endpoint=os.environ["FOUNDRY_ENDPOINT"],
         load_messages=True,
     ),
@@ -455,9 +485,9 @@ Foundry's storage backend keys writes off two platform-injected request headers 
 
 The existing AF convention applies: an agent may compose **multiple** `HistoryProvider`s, but **only one** carries `load_messages=True`. Common patterns:
 
-- *Single store.* `FileHistoryProvider(load_messages=True)` — local dev. Or `FoundryHistoryProvider(load_messages=True)` — Foundry-backed prod.
-- *Audit dual-write.* `FoundryHistoryProvider(load_messages=True)` + `CosmosHistoryProvider(load_messages=False)` — Foundry is the source of truth used to reconstruct context for the LLM; Cosmos receives a write-only audit copy.
-- *Mirror to Foundry for Workbench replay only.* Conversely, an in-house store can hold `load_messages=True` while `FoundryHistoryProvider(load_messages=False)` mirrors writes into Foundry purely so the conversation shows up in Foundry tooling.
+- *Single store.* `FileHistoryProvider(load_messages=True)` — local dev. Or `FoundryHostedAgentHistoryProvider(load_messages=True)` — Foundry-backed prod.
+- *Audit dual-write.* `FoundryHostedAgentHistoryProvider(load_messages=True)` + `CosmosHistoryProvider(load_messages=False)` — Foundry is the source of truth used to reconstruct context for the LLM; Cosmos receives a write-only audit copy.
+- *Mirror to Foundry for Workbench replay only.* Conversely, an in-house store can hold `load_messages=True` while `FoundryHostedAgentHistoryProvider(load_messages=False)` mirrors writes into Foundry purely so the conversation shows up in Foundry tooling.
 
 The choice of where to store, and whether to dual-write, is fully the developer's. The channel does not need to know which backing store(s) the agent is using.
 
@@ -505,7 +535,7 @@ To make the picture explicit: there are exactly three distinct *storage seams* i
 
 | Seam | Scope | Examples |
 |---|---|---|
-| **`ContextProvider`** (per-conversation) | Per-`source_id` data the agent needs at run time. Messages (via `HistoryProvider`), AG-UI per-thread state (via `AgUiStateProvider`), or any future per-conversation extension. **The only public per-conversation seam.** | `FileHistoryProvider`, `FoundryHistoryProvider`, `AgUiStateProvider` |
+| **`ContextProvider`** (per-conversation) | Per-`source_id` data the agent needs at run time. Messages (via `HistoryProvider`), AG-UI per-thread state (via `AgUiStateProvider`), or any future per-conversation extension. **The only public per-conversation seam.** | `FileHistoryProvider`, `FoundryHostedAgentHistoryProvider`, `AgUiStateProvider` |
 | **Host-level pluggable store** (per-host) | `RunHandle`s for background runs, identity-link grants, last-seen `(isolation_key, channel)` records. In-memory in v1; pluggable in v1 fast follow (req #23). MAY be backed by the same physical store as `ContextProvider`, but the protocol is distinct because the data is host-execution metadata, not per-conversation context. | (in-memory v1; future Cosmos / SQL adapter) |
 | **`CheckpointStorage`** (workflow runtime) | Workflow executor frames so a workflow can resume after process restart. Structurally distinct from both seams above (the data is workflow-runtime state, not session/identity state). MAY share a physical backend, but the protocol stays separate. | `FileCheckpointStorage`, future `CosmosCheckpointStorage` |
 
@@ -521,7 +551,7 @@ Each built-in channel owns a **default** mapping from its protocol request model
 
 | Channel | Default mapping |
 |---|---|
-| `ResponsesChannel` | Forwards relevant caller settings (e.g. `temperature`) into `ChannelRequest.options`; maps `store=False` to `session_mode="disabled"`. The same default mapping is used for both HTTP and WebSocket transports — WS frames are decoded into the same Responses request model before invocation. |
+| `ResponsesChannel` | Forwards relevant caller settings (e.g. `temperature`, `store`) into `ChannelRequest.options` so the underlying chat client receives them; **does not** map `store=false` to `session_mode="disabled"` by default — see [The Responses store parameter](#the-responses-store-parameter) for the full matrix and the developer-override path. The same default mapping is used for both HTTP and WebSocket transports — WS frames are decoded into the same Responses request model before invocation. |
 | `InvocationsChannel` | Maps the request body into `input`, `options`, and session behavior for the hosted target. |
 | `TelegramChannel` | Maps incoming messages or commands into `input`, `stream`, and session defaults appropriate for the chat. |
 
@@ -563,7 +593,7 @@ The packaging question for `uvicorn` (required dependency vs optional extra) is 
 - **Active channel**: The channel most recently observed for a given `isolation_key`. Tracked by the host on every successfully resolved request; consumed by `ResponseTarget.active`.
 - **`RunHandle`**: First-class artifact for background/asynchronous runs, returned immediately from `host.run_in_background(request)`. Carries `id`, `status`, `isolation_key`, `result`/`error`, and the configured `response_target`. Host pushes the result to the response target when ready and serves it via channel poll routes.
 - **Background run**: A `ChannelRequest` submitted via `host.run_in_background(request)` (or any request with `background=True`). The originating call returns a `RunHandle` immediately; the response is delivered later via the configured `ResponseTarget` and/or polled by run id.
-- **`session_mode`**: Per-request directive (`auto` | `required` | `disabled`) that controls whether the host resolves a session before invoking the target. Lets channels honor protocol semantics like Responses `store=False` and lets app authors enforce extra policy.
+- **`session_mode`**: Per-request directive (`auto` | `required` | `disabled`) that controls whether the host resolves a session before invoking the target. Lets `run_hook`s express explicit policy — e.g. translating Responses `store=false` into `session_mode="disabled"` to honor the caller's "don't store" intent at the `HistoryProvider` layer (the channel does not do this automatically — see [The Responses store parameter](#the-responses-store-parameter)).
 - **`confidentiality_tier`** (channel-level): Opaque label (`"corp"`, `"public"`, `"internal"`, …) declared on a `Channel` and consumed by the host's `LinkPolicy`. Two channels with different confidentiality tiers can share an agent target on one host while remaining session-isolated.
 - **`LinkPolicy`**: Host-level decision over which channel pairs may share an `isolation_key` (link) and which channel pairs may be `ResponseTarget` source/destination for one another (deliver). Built-in variants: allow-all (default), same-tier-only, explicit allow-list, deny-all. See [LinkPolicy and confidentiality_tier](#linkpolicy-and-confidentiality_tier) for the full contract and built-ins table.
 - **`ChannelContribution`**: What a channel returns from `contribute(...)` — routes, middleware, commands, and `on_startup`/`on_shutdown` hooks. The host aggregates contributions into one Starlette app.
@@ -657,7 +687,7 @@ host.serve(host="localhost", port=8000)
 
 ### Scenario 3: Per-request run hook on the Responses channel
 
-The developer wants to enforce that every Responses call sets `temperature`, ignore caller `store=False`, and force host-managed session use — none of which is part of the official Responses spec, but all of which is valid app policy.
+The developer wants to enforce that every Responses call sets `temperature`, and to **harden** session handling so that `session_mode="required"` (fail if no session can be resolved) — explicitly ignoring caller `store=false` since the channel's default already keeps the agent's `HistoryProvider` active regardless of that wire flag (see [The Responses store parameter](#the-responses-store-parameter)). None of this is part of the official Responses spec, but all of it is valid app policy.
 
 > **Prerequisites:** This sample assumes:
 > - The Responses channel is wired into an `AgentFrameworkHost` (see Scenario 1)
@@ -676,7 +706,10 @@ def responses_policy(request: ChannelRequest, **kwargs) -> ChannelRequest:
     if request.options is None or request.options.temperature is None:
         raise ValueError("This host requires temperature on every Responses call.")
 
-    # Intentionally ignore caller store=False and always require host-managed sessions.
+    # Harden session handling: even when the caller sends store=false, keep host-managed
+    # sessions and fail closed instead of auto-issuing. The HistoryProvider would already
+    # run under the default "auto" mode; "required" upgrades that to a hard error if no
+    # session can be resolved (e.g. missing previous_response_id and no resolver match).
     return replace(request, session_mode="required")
 
 
@@ -1268,7 +1301,7 @@ The new core sits **below** the conceptual boundary of today's top-level Respons
 | `agent_framework_foundry_hosting._items_to_messages` / `_output_item_to_message` | Inspiration / parity reference in Responses channel codec | Useful, not generic hosting |
 | `agent_framework_foundry_hosting._to_outputs` and `ResponseEventStream` | Inspiration for Responses event mapping; do not depend on `agentserver` builders | Responses-specific serialization |
 | `azure.ai.agentserver.responses.ResponseContext.get_history()` + `Store` | Folded into the agent's normal core `HistoryProvider` flow. The Responses channel projects `previous_response_id` / `conversation_id` into `ChannelSession.key`; the agent's `HistoryProvider` does the load / append exactly as for any other session. No Responses-specific history Protocol. | One uniform history seam across channels — the developer chooses where to store, and may compose multiple providers under the standard "single `load_messages=True`" rule. |
-| `azure.ai.agentserver.responses.store._foundry_provider.FoundryStorageProvider` (HTTP-backed Foundry storage with `IsolationContext` user/chat headers) | Port to a native `FoundryHistoryProvider` in `agent-framework-foundry` implementing the standard core `HistoryProvider` Protocol. Agents attach it the same way they attach `FileHistoryProvider`. | Lets the Foundry response store back conversations driven through the new host without an `agentserver` runtime dependency, while keeping the channel agnostic to the storage backend. Same provider also works for non-Responses channels (Telegram, Invocations, …) so the choice is "where do I want history persisted" rather than "which channel am I exposing". |
+| `azure.ai.agentserver.responses.store._foundry_provider.FoundryStorageProvider` (HTTP-backed Foundry storage with `IsolationContext` user/chat headers) | Port to a native `FoundryHostedAgentHistoryProvider` in `agent-framework-foundry` implementing the standard core `HistoryProvider` Protocol. Agents attach it the same way they attach `FileHistoryProvider`. | Lets the Foundry response store back conversations driven through the new host without an `agentserver` runtime dependency, while keeping the channel agnostic to the storage backend. Same provider also works for non-Responses channels (Telegram, Invocations, …) so the choice is "where do I want history persisted" rather than "which channel am I exposing". |
 | `agent_framework_foundry_hosting._invocations.InvocationsHostServer._sessions` (in-process `dict[str, AgentSession]`) | Replace with the host's normal `ChannelSession.key → AgentSession` resolution; agent history flows through its own (optional) core `HistoryProvider(load_messages=True)` | Invocations does **not** need a protocol-shaped history seam — confirmed by today's foundry hosting which keeps no `Store` on the Invocations side |
 | `ResponsesAgentServerHost` / `InvocationAgentServerHost` top-level wrappers | Conceptual prior art only | Sit too high; encode protocol ownership |
 | Workflow checkpoint behavior in current Responses hosting | Defer; reference only for future work | Needs separate design if it becomes shared |
@@ -1283,7 +1316,7 @@ The new core sits **below** the conceptual boundary of today's top-level Respons
 | Starlette | External (BSD-licensed) | n/a | Committed; required runtime dep of `agent-framework-hosting` |
 | Uvicorn | External (BSD-licensed) | n/a | Open Question — required dep vs optional extra (see Open Questions) |
 | `agent-framework-foundry-hosting` parity reference | Agent Framework Hosting | TBD | Reference-only, no runtime dependency |
-| `FoundryHistoryProvider` port (from `azure.ai.agentserver.responses.store._foundry_provider` → `agent-framework-foundry`) | Agent Framework Foundry | TBD | Proposed v1 deliverable so Foundry-defined (and any other) agents can use Foundry's response store as a `HistoryProvider` through the new host without an `agentserver` runtime dep. Implements the standard core `HistoryProvider` Protocol — usable from any channel, no Responses-specific Protocol. |
+| `FoundryHostedAgentHistoryProvider` port (from `azure.ai.agentserver.responses.store._foundry_provider` → `agent-framework-foundry`) | Agent Framework Foundry | TBD | Proposed v1 deliverable so Foundry-defined (and any other) agents can use Foundry's response store as a `HistoryProvider` through the new host without an `agentserver` runtime dep. Implements the standard core `HistoryProvider` Protocol — usable from any channel, no Responses-specific Protocol. |
 | PR #5393 Telegram sample (commands, polling/webhook patterns) | Agent Framework | PR author | Reference-only; informs `ChannelCommand` and `TelegramChannel` design |
 | Telegram Bot API SDK | External | n/a | Committed (runtime dep of `agent-framework-hosting-telegram`) |
 | `agent-framework-ag-ui`, `-a2a`, `-devui` | Agent Framework | various | Out of scope for first implementation; future convergence kept as a possibility |

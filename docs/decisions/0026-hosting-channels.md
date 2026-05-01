@@ -9,7 +9,7 @@ deciders: eavanvalkenburg
 
 ## What are the business goals for this feature?
 
-Give Agent Framework app authors — in every supported language — one low-level hosting surface that can expose a single **hostable target** (an agent or a workflow) on **one or more channels** (Responses API, Invocations API, Telegram, future WhatsApp/Teams, custom webhooks) without requiring them to hand-build protocol routing or server glue per protocol, **and** let an end user start a conversation on one channel (e.g. Telegram on their phone) and seamlessly continue it on another (e.g. Teams at their desk) against the same target and the same conversation history.
+Give Agent Framework app authors — in every supported language — one low-level hosting surface that can expose a single **hostable target** (an agent or a workflow) on **one or more channels** (Responses API, Invocations API, Telegram, future A2A, MCP-tool, WhatsApp/Teams, custom webhooks) without requiring them to hand-build protocol routing or server glue per protocol, **and** let an end user start a conversation on one channel (e.g. Telegram on their phone) and seamlessly continue it on another (e.g. Teams at their desk) against the same target and the same conversation history.
 
 This consolidates the protocol-specific hosting layers that exist today (in Python: `agent-framework-foundry-hosting`, `-ag-ui`, `-a2a`, `-devui`; in .NET: the analogous per-protocol hosting helpers) into a shared composable model where:
 
@@ -68,6 +68,7 @@ The hosting core is deliberately **not** a replacement for the existing protocol
 - Standardizing a persistent session storage contract across all channels in the first phase. (Cross-channel continuity within one host is enabled by `isolation_key` resolution; cross-host/cross-process continuity requires the pluggable session store, listed as a fast follow.)
 - Hosting multiple agents behind one router in this first design.
 - Designing every detail of WhatsApp, Teams, or Bot Framework payloads now (only Telegram is concretely targeted, informed by PR #5393).
+- Shipping the **A2A** (agent-to-agent) and **MCP-tool** (exposing the agent as an MCP tool) channels in the first implementation. Both are explicitly **in scope for the overall design** — the host contract, `ChannelRequest` envelope, identity/session/response-target stack, and persisted delivery envelope must accommodate them as caller-supplied-session channels — but their concrete protocol bindings, route catalogs, and packages are **fast-follow work** after the first Telegram + Responses + Invocations release.
 - Replacing protocol-specific serializers with one generic event model.
 - Taking a runtime or package dependency on legacy protocol-specific hosts (e.g. `agentserver` in Python) in the new hosting core or its new channel packages.
 - Forcing identical type names across languages — each language follows its own idioms while preserving the same concepts and terminology.
@@ -266,27 +267,52 @@ The decision is validated when, in each implementing language:
 
 | # | Question | Notes |
 |---|---|---|
-| 1 | Final distribution package and namespace names per language. | Python public imports stay at `agent_framework.hosting` regardless; .NET namespace conventions follow `Microsoft.Agents.AI.*`. |
-| 2 | How tightly do Python and .NET API names need to match? | Decision: keep concepts and terminology identical, allow idiomatic naming differences (e.g. `serve` vs `RunAsync`). |
-| 3 | Should generic auth helpers (HMAC signature, bearer token) live in core, in optional shared helpers, or per channel? | Currently per channel + host middleware in both languages. |
-| 4 | Should a later phase define a pluggable session store interface, and should it be cross-language or per-language? | Listed as v1 fast follow in the Python spec. |
-| 5 | **Should the host support multi-target hosting at all** — one host fronting a router across multiple agents and/or workflows? Open whether this is wanted: it broadens scope, complicates session/identity resolution per target, and may always be better solved a layer above (e.g. an external router owning multiple single-target hosts). | Removed from the spec's stretch requirements pending validation that the use case is real. |
-| 6 | Is "Channel" the GA name in both languages? "Head" was used interchangeably during design discussions. | Confirm before public docs in either language. |
-| 7 | Should command scopes / projection metadata become first-class — e.g. private-chat-only vs group-chat-visible commands, per-locale descriptions? | Telegram's `BotCommandScope` and `language_code` would need to be representable cross-channel and cross-language. |
-| 8 | Which identity-linking mechanisms ship in the first phase — OAuth (which providers as helpers?), MFA via an Identity provider, signed short-lived one-time codes generated on one channel and entered on another, or all of the above? | Contract is generic; first-party helpers are scoped separately. Decision should not block channel work. |
-| 9 | Where do issued link grants live — short-lived in-memory state in the host, the **host-level pluggable store** (same physical backend that holds `RunHandle`s and last-seen records), or a separate identity store? | Default direction: a single host-level pluggable store for all host-execution metadata (link grants, `RunHandle`s, last-seen `(isolation_key, channel)`); per-conversation data stays on `ContextProvider`. Finalize the contract alongside Open Question #11. |
-| 10 | Should the identity resolver be invoked **per channel** (one resolver per mounted channel) or **once on the host** with a `(channel_id, native_id)` input? | Leaning toward host-level resolver receiving channel id, so cross-channel decisions stay in one place. |
-| 11 | Where does the **run-handle store** live (in-memory v1, the host-level pluggable store, separate store)? What is the at-rest format and TTL? | Run handles, link grants (Q9), and last-seen records all share the host-level pluggable store contract; per-conversation data continues to flow through `ContextProvider`. Format and TTL determined alongside that store landing. |
-| 12 | What is the contract for `ChannelPush` failure (destination channel offline, user opted out, push token expired) — fall back to active, drop, or surface as a `RunHandle.failed`? | Default behavior should be opinionated; per-request override via run hook. |
-| 13 | Should `response_target="active"` use a **time window** (last seen within N minutes) and what happens if the window expires before the response is ready? | Likely yes — fall back to `originating` or `all_linked`; configurable. |
-| 14 | For the Responses WebSocket transport, what subprotocol identifier and auth carrier should the channel adopt — `Authorization` header on the `Upgrade`, a `Sec-WebSocket-Protocol` token, or a query-string-bound short-lived token? Aligning with the upstream OpenAI Responses WS shape is preferable; the channel codec should stay swappable so it can track upstream changes without touching the host contract. | Decide alongside the first Responses WS implementation; keep host contract untouched. |
-| 15 | Should `Channel.confidentiality_tier` stay an opaque string (current draft) or become a small enum / ordered hierarchy (e.g. `public < internal < corp`) so policies can be expressed as comparisons? | Opaque string is simplest and lets each app define its own taxonomy; ordered hierarchy is more expressive but couples taxonomy to the host. Decide before public docs. |
+| 6 | Is "Channel" the GA name in both languages? "Head" was used interchangeably during design discussions. | Use "Channel" for now in spec, ADR, samples, and sub-package names. Other names remain on the table; revisit before public docs in either language. |
+| 14 | For the Responses WebSocket transport, what subprotocol identifier and auth carrier should the channel adopt — `Authorization` header on the `Upgrade`, a `Sec-WebSocket-Protocol` token, or a query-string-bound short-lived token? | Wait for the upstream OpenAI Responses WS spec to land. The channel codec is intentionally swappable (the host contract does not depend on the WS framing) so the channel package can track upstream changes without touching the host. Document the swappable-codec property explicitly in the spec. |
+
+## Resolved Questions (decisions log)
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Final distribution package and namespace names per language. | Accept the proposed Python distribution + import names (`agent-framework-hosting` → `agent_framework.hosting`, plus per-channel `agent-framework-hosting-{responses,invocations,telegram}`). Keep the proposed .NET namespaces (`Microsoft.Agents.AI.Hosting{,.Responses,.Invocations,.Telegram}`) as the working target. |
+| 2 | How tightly do Python and .NET API names need to match? | Keep concepts and terminology identical across languages; allow idiomatic naming differences (e.g. `serve` vs `RunAsync`). |
+| 3 | Should generic auth helpers (HMAC signature, bearer token) live in core, in optional shared helpers, or per channel? | Per-channel auth + host-level middleware composition (current draft). No separate shared-helpers package in v1. **Cross-check the matching decision in the Python spec.** |
+| 4 | Should a later phase define a pluggable session store interface, and should it be cross-language or per-language? | Per-language interface (idiomatic per ecosystem). Cross-language compatibility is **not** a v1 goal; revisit if/when concrete demand emerges. |
+| 5 | Should the host support multi-target hosting (one host fronting a router across multiple agents/workflows)? | **No.** One host = one target. External routers compose multiple single-target hosts (e.g. via Starlette mount in Python, equivalent in .NET). Confirms the existing non-goal. |
+| 7 | Should command scopes / projection metadata (private vs group, per-locale descriptions) become first-class on `ChannelCommand`? | Add **optional** `scopes` and `locales` fields on `ChannelCommand`. Channels are free to ignore them. Keeps the cross-channel surface lean while letting Telegram (and future Teams) project the metadata into their native command catalog. |
+| 8 | Which identity-linking mechanisms ship in the first phase? | Ship two first-party helpers in v1 fast-follow: **Entra OAuth** (preset on `OAuthIdentityLinker`) and **`OneTimeCodeIdentityLinker`** (cross-channel code exchange). **Drop `MfaIdentityLinker`** from the v1 fast-follow list. The generic `IdentityLinker` contract still admits any other linker app authors want to write. |
+| 9 | Where do issued link grants live? | **File storage for v1**, leveraging Hosted Agents' isolated, persistent per-instance file storage. Resolved together with Q11. |
+| 10 | Should the identity resolver be invoked per channel or once on the host with `(channel_id, native_id)`? | **Host-level resolver receiving `(channel_id, native_id)`** so cross-channel decisions stay in one place. Per-channel overrides remain a future option if real cases emerge. |
+| 11 | Where does the run-handle store live? At-rest format and TTL? | Same as Q9 — **file storage for v1**, sharing the host-level pluggable-store contract with link grants and last-seen records. At-rest format and TTL designed alongside the implementation (not committed to in this ADR). |
+| 12 | Contract for `ChannelPush` failure (offline destination, opt-out, expired token)? | Default: **fall back to the originating channel**, recorded on the persisted `deliveries[]` array with telemetry. Per-request override via `run_hook`. (This already matches the spec; cross-check the wording.) |
+| 13 | Should `response_target="active"` use a time window? Behavior on expiry? | Yes — configurable `active_window_seconds` on the host (suggested default **300 s**). On expiry, fall back to `originating`, then to `all_linked`. Recorded on `deliveries[]`. Per-request override via `run_hook`. |
+| 15 | Should `Channel.confidentiality_tier` stay opaque or become an ordered enum? | **Keep as opaque string.** Apps define their own taxonomy. Built-in policies do equality / set membership checks only — no ordered-comparison policy is shipped. |
+
+## Decisions-driven follow-ups
+
+These are spec-body / sample / code edits implied by the resolutions above, **out of scope for this ADR pass** but tracked here so they aren't lost:
+
+- **Q3** — cross-check the Python spec's auth-helpers stance against the resolved "per-channel + host middleware" decision; reconcile any drift.
+- **Q7** — spec, `ChannelCommand` reference, and the Telegram channel design need optional `scopes` and `locales` fields with clear "channels free to ignore" semantics.
+- **Q8** — spec req #24 (v1 fast-follow identity helpers) drops `MfaIdentityLinker`. Update the fast-follow list and any narrative that references the three-helper trio.
+- **Q9 + Q11** — spec req #23 (pluggable session/run-handle/identity store) should call out **file storage as the v1 backend** and the Hosted-Agents-isolated-files justification. Format and TTL remain implementation details.
+- **Q12** — verify the spec's `ChannelPush` failure narrative includes "recorded on `deliveries[]`" alongside "telemetry warning"; tighten if needed.
+- **Q13** — add `active_window_seconds` (default 300 s) to the host config surface and document the `originating` → `all_linked` fallback chain.
+- **Q14** — explicitly document the **swappable WS codec** property in the Responses channel section (host contract does not depend on the framing) so the spec stays valid as upstream OpenAI evolves.
+- **Q15** — confirm the spec consistently treats `confidentiality_tier` as an opaque string and that no built-in policy assumes an ordered hierarchy.
 
 ## More Information
 
 See [Non-Goals](#non-goals--relationship-to-existing-hosting-packages) for what this ADR explicitly does **not** require in the first phase.
 
 The Telegram sample proposed in PR #5393 is prior art for native command catalogs and for channels that need startup/shutdown lifecycle behavior beyond plain route registration. The same shape is expected to inform future Teams and WhatsApp channels in both languages.
+
+**Designed-in followup channels.** Two further channels are explicitly part of the overall design but are scheduled as fast-follow work after the first Responses + Invocations + Telegram release:
+
+- **A2A channel** — exposes the hostable target over the Agent-to-Agent protocol so other agents can consume it as a peer. Fits the existing **caller-supplied session** family (alongside Responses and Invocations): A2A's per-conversation identifier is parsed into `ChannelSession.key`, the calling agent's identity (e.g. its A2A agent card / signed JWT) flows through the standard `IdentityResolver` seam, and structured replies fit the existing `ChannelRequest` / `ResponseTarget` envelope. No new host primitives are required to support it; the work is the protocol binding and the package.
+- **MCP-tool channel** — exposes the hostable target as a **Model Context Protocol tool** so MCP clients (other agents, IDE tooling, …) can invoke it. Same caller-supplied-session family: the MCP `tool/call` carries the conversation key into `ChannelSession.key`, the MCP client identity flows through `IdentityResolver`, and the tool result is the target's response. Streaming MCP tools map onto the host's existing streaming response delivery; non-streaming MCP tools map onto background runs with `RunHandle` if the target needs more time than a single tool-call round-trip allows.
+
+Both channels MUST be reachable through the **same** `AgentFrameworkHost` as Responses, Invocations, and Telegram so the cross-channel `isolation_key` continuity story (start a task via MCP from an IDE, follow up on Telegram) is coherent. Their detailed API surfaces are deferred to dedicated follow-up specs.
 
 Companion specs cover the per-language API surface, information design, and sample code:
 
