@@ -1430,6 +1430,57 @@ def test_tool_choice_required_with_function_name(
     assert prepared_options["tool_choice"]["function"]["name"] == "get_weather"
 
 
+def test_tool_choice_allowed_tools_falls_back_to_mode(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice with allowed_tools falls back to plain mode (Chat Completions API unsupported)."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "auto", "allowed_tools": ["get_weather"]},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert prepared_options["tool_choice"] == "auto"
+
+
+def test_tool_choice_allowed_tools_required_mode_falls_back(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice with allowed_tools and required mode falls back to 'required'."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "required", "allowed_tools": ["get_weather"]},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert prepared_options["tool_choice"] == "required"
+
+
+def test_tool_choice_auto_dict_without_allowed_tools(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice dict with mode auto and no allowed_tools falls through to plain 'auto'."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "auto"},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert prepared_options["tool_choice"] == "auto"
+
+
 def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) -> None:
     """Test that response_format as dict is passed through directly."""
     client = OpenAIChatCompletionClient()
@@ -1589,6 +1640,12 @@ class OutputStruct(BaseModel):
             {"mode": "required", "required_function_name": "get_weather"},
             False,
             id="tool_choice_required",
+        ),
+        param(
+            "tool_choice",
+            {"mode": "auto", "allowed_tools": ["get_weather"]},
+            False,
+            id="tool_choice_allowed_tools",
         ),
         param("response_format", OutputStruct, True, id="response_format_pydantic"),
         param(

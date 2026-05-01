@@ -45,6 +45,15 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
 
     #endregion
 
+    #region InvokeHttpRequest Tests
+
+    [RetryTheory(3, 5000)]
+    [InlineData("HttpRequest.yaml", "visibility: public")]
+    public Task ValidateHttpRequestAsync(string workflowFileName, string? expectedResultContains) =>
+        this.RunHttpRequestTestAsync(workflowFileName, expectedResultContains);
+
+    #endregion
+
     #region InvokeFunctionTool Test Helpers
 
     /// <summary>
@@ -246,6 +255,40 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
         }
 
         return results;
+    }
+
+    #endregion
+
+    #region InvokeHttpRequest Test Helpers
+
+    /// <summary>
+    /// Runs an HttpRequestAction workflow test with the specified configuration.
+    /// </summary>
+    private async Task RunHttpRequestTestAsync(
+        string workflowFileName,
+        string? expectedResultContains = null)
+    {
+        // Arrange
+        string workflowPath = GetWorkflowPath(workflowFileName);
+        await using DefaultHttpRequestHandler httpRequestHandler = new();
+        DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(
+            externalConversation: false,
+            httpRequestHandler: httpRequestHandler);
+
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(workflowPath, workflowOptions);
+        WorkflowHarness harness = new(workflow, runId: Path.GetFileNameWithoutExtension(workflowPath));
+
+        // Act
+        WorkflowEvents workflowEvents = await harness.RunWorkflowAsync("start").ConfigureAwait(false);
+
+        // Assert - Verify executor and action events
+        AssertWorkflowEventsEmitted(workflowEvents);
+
+        // Assert - Verify expected result if specified
+        if (expectedResultContains is not null)
+        {
+            AssertResultContains(workflowEvents, expectedResultContains);
+        }
     }
 
     #endregion

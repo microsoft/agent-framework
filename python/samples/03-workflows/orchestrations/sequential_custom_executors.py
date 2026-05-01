@@ -2,11 +2,11 @@
 
 import asyncio
 import os
-from typing import Any
 
 from agent_framework import (
     Agent,
     AgentExecutorResponse,
+    AgentResponse,
     Executor,
     Message,
     WorkflowContext,
@@ -16,6 +16,7 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+from typing_extensions import Never
 
 # Load environment variables from .env file
 load_dotenv()
@@ -25,13 +26,14 @@ Sample: Sequential workflow mixing agents and a custom summarizer executor
 
 This demonstrates how SequentialBuilder chains participants with a shared
 conversation context (list[Message]). An agent produces content; a custom
-executor appends a compact summary to the conversation. The workflow completes
-after all participants have executed in sequence, and the final output contains
-the complete conversation.
+executor synthesizes a compact summary and yields it as the workflow's terminal
+output.
 
 Custom executor contract:
-- Provide at least one @handler accepting AgentExecutorResponse and a WorkflowContext[list[Message]]
-- Emit the updated conversation via ctx.send_message([...])
+- Intermediate custom executors: handle the message type from the prior participant
+  and forward `list[Message]` via `ctx.send_message(...)` for the next participant.
+- Terminator custom executors: handle the message type from the prior participant and
+  yield the workflow's final answer as an `AgentResponse` via `ctx.yield_output(...)`.
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
@@ -41,27 +43,29 @@ Prerequisites:
 
 
 class Summarizer(Executor):
-    """Simple summarizer: consumes full conversation and appends an assistant summary."""
+    """Terminator custom executor: synthesizes a one-line summary as the workflow's final answer."""
 
     @handler
-    async def summarize(self, agent_response: AgentExecutorResponse, ctx: WorkflowContext[list[Message]]) -> None:
-        """Append a summary message to a copy of the full conversation.
+    async def summarize(
+        self,
+        agent_response: AgentExecutorResponse,
+        ctx: WorkflowContext[Never, AgentResponse],
+    ) -> None:
+        """Yield a terminal AgentResponse containing the summary.
 
-        Note: A custom executor must be able to handle the message type from the prior participant, and produce
-        the message type expected by the next participant. In this case, the prior participant is an agent thus
-        the input is AgentExecutorResponse (an agent will be wrapped in an AgentExecutor, which produces
-        `AgentExecutorResponse`). If the next participant is also an agent or this is the final participant,
-        the output must be `list[Message]`.
+        The prior participant is an agent, which is wrapped in an `AgentExecutor` that
+        produces `AgentExecutorResponse`. As the last participant in the sequential workflow,
+        this executor calls `ctx.yield_output(AgentResponse(...))` so its output becomes the
+        workflow's terminal output (rather than being forwarded to a downstream participant).
         """
         if not agent_response.full_conversation:
-            await ctx.send_message([Message("assistant", ["No conversation to summarize."])])
+            await ctx.yield_output(AgentResponse(messages=[Message("assistant", ["No conversation to summarize."])]))
             return
 
         users = sum(1 for m in agent_response.full_conversation if m.role == "user")
         assistants = sum(1 for m in agent_response.full_conversation if m.role == "assistant")
         summary = Message("assistant", [f"Summary -> users:{users} assistants:{assistants}"])
-        final_conversation = list(agent_response.full_conversation) + [summary]
-        await ctx.send_message(final_conversation)
+        await ctx.yield_output(AgentResponse(messages=[summary]))
 
 
 async def main() -> None:
@@ -81,33 +85,20 @@ async def main() -> None:
     summarizer = Summarizer(id="summarizer")
     workflow = SequentialBuilder(participants=[content, summarizer]).build()
 
-    # 3) Run workflow and extract final conversation
+    # 3) Run workflow and extract the final summary
     events = await workflow.run("Explain the benefits of budget eBikes for commuters.")
     outputs = events.get_outputs()
 
     if outputs:
-        print("===== Final Conversation =====")
-        messages: list[Message] | Any = outputs[0]
-        for i, msg in enumerate(messages, start=1):
-            name = msg.author_name or ("assistant" if msg.role == "assistant" else "user")
-            print(f"{'-' * 60}\n{i:02d} [{name}]\n{msg.text}")
+        print("===== Final Summary =====")
+        final: AgentResponse = outputs[0]
+        for msg in final.messages:
+            print(msg.text)
 
     """
     Sample Output:
 
-    ------------------------------------------------------------
-    01 [user]
-    Explain the benefits of budget eBikes for commuters.
-    ------------------------------------------------------------
-    02 [content]
-    Budget eBikes offer commuters an affordable, eco-friendly alternative to cars and public transport.
-    Their electric assistance reduces physical strain and allows riders to cover longer distances quickly,
-    minimizing travel time and fatigue. Budget models are low-cost to maintain and operate, making them accessible
-    for a wider range of people. Additionally, eBikes help reduce traffic congestion and carbon emissions,
-    supporting greener urban environments. Overall, budget eBikes provide cost-effective, efficient, and
-    sustainable transportation for daily commuting needs.
-    ------------------------------------------------------------
-    03 [assistant]
+    ===== Final Summary =====
     Summary -> users:1 assistants:1
     """
 
