@@ -67,6 +67,7 @@ internal sealed class ShellSession : IAsyncDisposable
     private readonly string _sentinelTag;
 
     private Process? _proc;
+    private bool _isSessionLeader;
     private Task? _stdoutReader;
     private Task? _stderrReader;
     private readonly List<byte> _stdoutBuf = new(capacity: 4096);
@@ -138,6 +139,29 @@ internal sealed class ShellSession : IAsyncDisposable
             foreach (var arg in this._shell.PersistentArgv())
             {
                 startInfo.ArgumentList.Add(arg);
+            }
+
+            // On POSIX, wrap the shell in `setsid` so the spawned process
+            // becomes a session leader (PID == PGID). This is what makes
+            // `killpg(proc.Id, SIGINT)` in InterruptCurrentCommandAsync
+            // correctly target the shell + its in-flight command instead
+            // of inheriting the agent host's process group. If setsid is
+            // not available we fall back to a direct launch and the
+            // interrupt path becomes a best-effort no-op (the caller's
+            // hard close-and-respawn handles the timeout case).
+            this._isSessionLeader = false;
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                && TryFindSetsid(out var setsidPath))
+            {
+                var originalArgs = new List<string>(startInfo.ArgumentList);
+                startInfo.FileName = setsidPath;
+                startInfo.ArgumentList.Clear();
+                startInfo.ArgumentList.Add(this._shell.Binary);
+                foreach (var arg in originalArgs)
+                {
+                    startInfo.ArgumentList.Add(arg);
+                }
+                this._isSessionLeader = true;
             }
 
             if (this._cleanEnvironment)
@@ -632,9 +656,16 @@ internal sealed class ShellSession : IAsyncDisposable
             else
             {
                 // Send SIGINT to the process group so the shell + any direct
-                // child receive it. p/invoke killpg via libc.
-                var pid = proc.Id;
-                _ = NativeMethods.killpg(pid, NativeMethods.SIGINT);
+                // child receive it. p/invoke killpg via libc. We only do
+                // this when EnsureStartedAsync succeeded in wrapping the
+                // shell in `setsid` — otherwise `proc.Id` is NOT a process
+                // group id (the child inherited the agent's PGID) and
+                // calling killpg on it would signal the agent.
+                if (!this._isSessionLeader)
+                {
+                    return;
+                }
+                _ = NativeMethods.killpg(proc.Id, NativeMethods.SIGINT);
             }
         }
         catch (Exception ex) when (ex is InvalidOperationException || ex is System.ComponentModel.Win32Exception)
@@ -642,6 +673,39 @@ internal sealed class ShellSession : IAsyncDisposable
             // Best-effort interrupt — fall through to caller's hard-close path.
         }
         await Task.CompletedTask.ConfigureAwait(false);
+    }
+
+    private static bool TryFindSetsid(out string fullPath)
+    {
+        // Check well-known locations first to avoid PATH-based lookups when possible.
+        foreach (var c in new[] { "/usr/bin/setsid", "/bin/setsid", "/usr/local/bin/setsid" })
+        {
+            if (File.Exists(c))
+            {
+                fullPath = c;
+                return true;
+            }
+        }
+        // Fall back to PATH.
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrEmpty(pathEnv))
+        {
+            foreach (var dir in pathEnv!.Split(Path.PathSeparator))
+            {
+                if (string.IsNullOrEmpty(dir))
+                {
+                    continue;
+                }
+                var candidate = Path.Combine(dir, "setsid");
+                if (File.Exists(candidate))
+                {
+                    fullPath = candidate;
+                    return true;
+                }
+            }
+        }
+        fullPath = string.Empty;
+        return false;
     }
 
     private static class NativeMethods
