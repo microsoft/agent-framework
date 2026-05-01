@@ -175,12 +175,15 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
             this._containerStarted = true;
             if (this._mode == ShellMode.Persistent)
             {
-                var execArgv = BuildExecArgv(this.DockerBinary, this.ContainerName, interactive: true);
+                var execArgv = BuildExecArgv(this.DockerBinary, this.ContainerName);
                 // ShellSession needs a ResolvedShell. Stitch one together: the
-                // 'binary' is `docker`, the 'kind' is bash (because the inner
-                // shell is bash), and ExtraArgv carries the docker-exec prefix
-                // so PersistentArgv prepends it before the bash flags.
-                var inner = new ResolvedShell(execArgv[0], ShellKind.Bash, ExtraArgv: execArgv.Skip(1).ToArray());
+                // 'binary' is `docker`, the kind is Sh (so PersistentArgv()
+                // returns an empty suffix), and ExtraArgv carries the full
+                // `exec -i <ctr> bash --noprofile --norc` prefix verbatim.
+                // Using Bash here would cause PersistentArgv to append
+                // --noprofile/--norc a second time on top of the flags
+                // already in ExtraArgv.
+                var inner = new ResolvedShell(execArgv[0], ShellKind.Sh, ExtraArgv: execArgv.Skip(1).ToArray());
                 this._session = new ShellSession(
                     inner,
                     workingDirectory: null, // workdir is set on the container itself
@@ -464,20 +467,15 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
         return argv;
     }
 
-    /// <summary>Build the <c>docker exec -i &lt;container&gt; bash</c> argv.</summary>
-    public static IReadOnlyList<string> BuildExecArgv(string binary, string containerName, bool interactive)
+    /// <summary>
+    /// Build the <c>docker exec -i &lt;container&gt; bash --noprofile --norc</c> argv for
+    /// the persistent inner shell. Stateless callers should use
+    /// <see cref="BuildRunArgvStateless"/>; this method intentionally does
+    /// not produce a stand-alone command argv.
+    /// </summary>
+    public static IReadOnlyList<string> BuildExecArgv(string binary, string containerName)
     {
-        var argv = new List<string> { binary, "exec", "-i", containerName, "bash" };
-        if (interactive)
-        {
-            argv.Add("--noprofile");
-            argv.Add("--norc");
-        }
-        else
-        {
-            argv.Add("-c");
-        }
-        return argv;
+        return new List<string> { binary, "exec", "-i", containerName, "bash", "--noprofile", "--norc" };
     }
 
     private async Task StartContainerAsync(CancellationToken cancellationToken)
@@ -557,18 +555,19 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
         {
             timedOut = true;
             // Kill the running container by name; --rm reaps it.
-            try
-            {
-                using var killCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                _ = await RunDockerCommandAsync(
-                    new[] { this.DockerBinary, "kill", "--signal", "KILL", perCallName }, killCts.Token).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is OperationCanceledException || ex is Win32Exception || ex is InvalidOperationException)
-            {
-                // best-effort
-            }
+            await this.BestEffortKillContainerAsync(perCallName).ConfigureAwait(false);
             try { await proc.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); }
             catch (Exception ex) when (ex is InvalidOperationException || ex is Win32Exception) { }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Caller-driven cancellation: --rm only fires when PID 1 exits, so
+            // if we just propagate, the container keeps running indefinitely.
+            // Kill it explicitly before rethrowing so we don't leak containers.
+            await this.BestEffortKillContainerAsync(perCallName).ConfigureAwait(false);
+            try { await proc.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is InvalidOperationException || ex is Win32Exception) { }
+            throw;
         }
         proc.WaitForExit();
         stopwatch.Stop();
@@ -614,6 +613,20 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
         }
         foreach (var a in this._extraRunArgs) { argv.Add(a); }
         return argv;
+    }
+
+    private async Task BestEffortKillContainerAsync(string containerName)
+    {
+        try
+        {
+            using var killCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            _ = await RunDockerCommandAsync(
+                new[] { this.DockerBinary, "kill", "--signal", "KILL", containerName }, killCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException || ex is Win32Exception || ex is InvalidOperationException)
+        {
+            // best-effort: container may already be gone
+        }
     }
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDockerCommandAsync(

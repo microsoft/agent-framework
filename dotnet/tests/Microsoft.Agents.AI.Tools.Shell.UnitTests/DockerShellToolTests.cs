@@ -127,20 +127,12 @@ public sealed class DockerShellToolTests
     }
 
     private static readonly string[] s_expectedInteractive = new[] { "docker", "exec", "-i", "af-shell-x", "bash", "--noprofile", "--norc" };
-    private static readonly string[] s_expectedStateless = new[] { "podman", "exec", "-i", "ctr", "bash", "-c" };
 
     [Fact]
-    public void BuildExecArgv_Interactive_AddsBashNoProfile()
+    public void BuildExecArgv_EmitsBashNoProfileNoRc()
     {
-        var argv = DockerShellTool.BuildExecArgv("docker", "af-shell-x", interactive: true);
+        var argv = DockerShellTool.BuildExecArgv("docker", "af-shell-x");
         Assert.Equal(s_expectedInteractive, argv);
-    }
-
-    [Fact]
-    public void BuildExecArgv_Stateless_AddsDashC()
-    {
-        var argv = DockerShellTool.BuildExecArgv("podman", "ctr", interactive: false);
-        Assert.Equal(s_expectedStateless, argv);
     }
 
     [Fact]
@@ -236,5 +228,15 @@ public sealed class DockerShellToolTests
     {
         var ok = await DockerShellTool.IsAvailableAsync(binary: "definitely-not-a-real-binary-xyz123");
         Assert.False(ok);
+    }
+
+    [Fact]
+    public async Task RunAsync_RejectedCommand_ThrowsShellCommandRejectedAsync()
+    {
+        // Pure policy path: the policy check runs before any docker invocation,
+        // so this exercises rejection without needing a Docker daemon.
+        using var t = new DockerShellTool(mode: ShellMode.Stateless);
+        await Assert.ThrowsAsync<ShellCommandRejectedException>(
+            () => t.RunAsync("rm -rf /"));
     }
 }

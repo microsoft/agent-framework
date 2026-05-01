@@ -123,7 +123,7 @@ sequenceDiagram
 
     Note over Tool: container is now up but has no shell yet
 
-    Tool->>Tool: BuildExecArgv(interactive: true)
+    Tool->>Tool: BuildExecArgv()
     Tool->>Tool: new ShellSession(inner)
     Note over Tool: ShellSession will lazily spawn `docker exec ...`<br/>on the first RunAsync call
 ```
