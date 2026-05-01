@@ -295,7 +295,7 @@ These are spec-body / sample / code edits implied by the resolutions above, **ou
 
 - **Q3** — cross-check the Python spec's auth-helpers stance against the resolved "per-channel + host middleware" decision; reconcile any drift.
 - **Q7** — spec, `ChannelCommand` reference, and the Telegram channel design need optional `scopes` and `locales` fields with clear "channels free to ignore" semantics.
-- **Q8** — spec req #24 (v1 fast-follow identity helpers) drops `MfaIdentityLinker`. Update the fast-follow list and any narrative that references the three-helper trio.
+- **Q8** — ✅ Done in spec rev. Req #24 lists only `OAuthIdentityLinker` and `OneTimeCodeIdentityLinker`; the linker-helper table and the OAuth scenario no longer reference `MfaIdentityLinker`.
 - **Q9 + Q11** — ✅ Resolved in spec rev. Spec req #23 now names the seam **`HostStateStore`** with a v1 default of `FileHostStateStore` (atomic JSON writes under `./.af-hosting/`), so continuation tokens, link grants, and last-seen records all survive single-node restarts. Pluggable Cosmos / SQL / Redis adapters remain v1 fast follow.
 - **Q12** — verify the spec's `ChannelPush` failure narrative includes "recorded on `deliveries[]`" alongside "telemetry warning"; tighten if needed.
 - **Q13** — add `active_window_seconds` (default 300 s) to the host config surface and document the `originating` → `all_linked` fallback chain.

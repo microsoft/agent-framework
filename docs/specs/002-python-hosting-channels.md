@@ -118,8 +118,8 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
 8. **Partition sessions by isolation key** — channels populate `ChannelSession.isolation_key` (user, tenant, chat, …) using hosted-agent terminology.
 9. **Resolve to the same session across channels on one host** — two channels mounted on the same `AgentFrameworkHost` that produce the same `isolation_key` (e.g. a stable user identity mapped from each channel's native identifier) resolve to the same `AgentSession`, so an end user starting a chat on Telegram can continue it on Teams against the same conversation history without per-channel session bookkeeping.
 10. **Map channel-native identity into `isolation_key`** — every channel has its own user namespace (Telegram `chat_id`, Teams AAD object id, WhatsApp phone, Slack user id). The host accepts a host-level `identity_resolver` callable that maps a `ChannelIdentity(channel_id, native_id, attributes)` into an `isolation_key` (or `None` if unknown). Channels publish the native identity they observed; the resolver decides whether it maps to an existing user.
-11. **Link a new channel to an existing identity through a well-known ceremony** — the host accepts a host-level `identity_linker` (e.g. `OAuthIdentityLinker(...)`, `OneTimeCodeIdentityLinker(...)`, `MfaIdentityLinker(...)`) which contributes its own routes/lifecycle and exposes a `begin(channel_identity) -> LinkChallenge` / `complete(challenge_id, proof) -> isolation_key` flow. Channels surface a `link`/`connect` `ChannelCommand` that delegates to the linker; on success the resolver subsequently maps the new channel-native identity to the existing `isolation_key`. Mechanism (OAuth provider, MFA factor, signed one-time code) is pluggable; the contract is fixed.
-12. **Route the response to a chosen channel** — `ChannelRequest.response_target` accepts `ResponseTarget.originating` (default — synchronous response on the originating channel), `ResponseTarget.active` (the channel most recently observed for the resolved `isolation_key`), `ResponseTarget.channel("activity")` (specific channel id), `ResponseTarget.channels([...])` (a list), `ResponseTarget.all_linked` (every channel where this `isolation_key` is known), or `ResponseTarget.none` (background-only — caller must poll the `ContinuationToken`). When the target is not the originating channel, the host delivers via the destination channel's `ChannelPush` capability.
+11. **Link a new channel to an existing identity through a well-known ceremony** — the host accepts a host-level `identity_linker` (e.g. `OAuthIdentityLinker(...)`, `OneTimeCodeIdentityLinker(...)`) which contributes its own routes/lifecycle and exposes a `begin(channel_identity) -> LinkChallenge` / `complete(challenge_id, proof) -> isolation_key` flow. Channels surface a `link`/`connect` `ChannelCommand` that delegates to the linker; on success the resolver subsequently maps the new channel-native identity to the existing `isolation_key`. Mechanism (OAuth provider, signed one-time code, future linker types) is pluggable; the contract is fixed.
+12. **Route the response to a chosen channel** — `ChannelRequest.response_target` accepts `ResponseTarget.originating` (default — synchronous response on the originating channel), `ResponseTarget.active` (the channel most recently observed for the resolved `isolation_key`), `ResponseTarget.channel("activity")` (specific channel id, recipient resolved from the link store), `ResponseTarget.channels([...])` (a list), `ResponseTarget.identities([ChannelIdentity(...)])` (one or more **explicit channel-native identities** — bypasses the link store, used when the caller already knows the recipient's channel-native id), `ResponseTarget.all_linked` (every channel where this `isolation_key` is known), or `ResponseTarget.none` (background-only — caller must poll the `ContinuationToken`). When the target is not the originating channel, the host delivers via the destination channel's `ChannelPush` capability.
 13. **Push proactively from a channel** — channels that can deliver outbound messages without a prior request (Telegram bot proactive message, Activity Protocol proactive message via Azure Bot Service, webhook callbacks, SSE broadcasts) implement an optional `ChannelPush` capability on top of the base `Channel` protocol. Channels without push can only be the `originating` target.
 14. **Submit background runs as a first-class operation** — `host.run_in_background(request) -> ContinuationToken` returns immediately with an opaque, URL-safe `token` and a status (`queued` | `running` | `completed` | `failed`). The host invokes the target asynchronously and, when complete, both delivers the result via the configured `ResponseTarget` push **and** records it against the token so callers can poll `host.get_continuation(token)`. Built-in channels expose poll routes (`/responses/v1/{continuation_token}`, `/invocations/{continuation_token}`) that surface this without app code. Continuation tokens are persisted via a `HostStateStore` (file-based by default — see [Host state storage](#host-state-storage)) so background runs survive host restarts.
 15. **Track the active channel per `isolation_key`** — the host records `(isolation_key, last_seen_channel, last_seen_at)` on every successfully resolved request so `ResponseTarget.active` resolves correctly. Apps can override in the `run_hook` (e.g. force `active` to a specific channel for a particular request).
@@ -133,7 +133,7 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
 ### v1 Fast Follow
 22. **Generic auth helpers** — shared middleware for common channel auth patterns (HMAC signature, bearer token).
 23. **Pluggable host state store** — interface for cross-host persistence of `ContinuationToken`s, identity-link grants, and last-seen `(isolation_key, channel)` records. Default implementation in v1 is **file-based** (`FileHostStateStore`); `InMemoryHostStateStore` is available for tests. A future `CosmosHostStateStore` / `SQLHostStateStore` would extend cross-channel chat continuity (req #9), background runs (req #14), and identity-link continuity (req #11) beyond a single host/process — but the v1 file-based default already survives host restarts on a single node. Same protocol covers session aliasing where applicable.
-24. **First-party identity linker helpers** — concrete `OAuthIdentityLinker` (with provider presets), `OneTimeCodeIdentityLinker` (cross-channel code exchange), and an `MfaIdentityLinker` shipped as opt-in helpers on top of the `IdentityLinker` contract.
+24. **First-party identity linker helpers** — concrete `OAuthIdentityLinker` (with provider presets) and `OneTimeCodeIdentityLinker` (cross-channel code exchange) shipped as opt-in helpers on top of the `IdentityLinker` contract. Investigation of additional first-party linker types tracked as a follow-up.
 25. **`A2AChannel` package** (`agent-framework-hosting-a2a`) — exposes the hostable target over the Agent-to-Agent protocol so other agents can consume it as a peer. Caller-supplied-session family (alongside Responses and Invocations): A2A's per-conversation id maps to `ChannelSession.key`; the calling agent's identity (e.g. its A2A agent card / signed JWT) flows through `IdentityResolver`; structured replies fit the existing `ChannelRequest` + `ResponseTarget` envelope. No new host primitives required — only the protocol binding and package.
 26. **`MCPToolChannel` package** (`agent-framework-hosting-mcp`) — exposes the hostable target as a **Model Context Protocol tool** so MCP clients (other agents, IDE tooling) can invoke it. Same caller-supplied-session family: the MCP `tool/call` carries the conversation key into `ChannelSession.key`; the MCP client identity flows through `IdentityResolver`; the tool result is the target's response. Streaming MCP tools map onto the host's existing streaming response delivery; long-running MCP tools map onto background runs with `ContinuationToken` when the work outlasts a single tool-call round-trip.
 27. **`ActivityChannel` package** (`agent-framework-hosting-activity`) — exposes the hostable target behind **Azure Bot Service**, which fronts Teams, Web Chat, Slack-style connectors, and the rest of the Bot Framework / M365 connector ecosystem. Provides **native translations** between Activity Protocol objects (`Activity`, `ConversationReference`, adaptive cards, `Invoke` activities, …) and the host's `ChannelRequest` / `ChannelResponse` types — so the contract is **explicit** rather than implicit through a generic Invocations endpoint. Host-tracked-session family: Bot Service authenticates with a JWT carrying the AAD object id, the channel populates `ChannelIdentity` from `from.aadObjectId`, the host's per-`isolation_key` alias decides which `AgentSession` to resolve, and `host.reset_session(...)` is reachable via a Teams slash command or adaptive-card action. `ChannelPush` is implemented over Bot Service's `ConversationReference` + `continueConversationAsync` pattern. Naming this channel **Activity** rather than **Teams** keeps a `TeamsChannel` name available for any future direct-to-Teams transport that bypasses Bot Service.
@@ -302,7 +302,6 @@ Apps that already own an identity namespace (corporate user id, tenant-scoped ac
 |---|---|---|
 | `OAuthIdentityLinker(provider, ...)` | OAuth authorization-code redirect | Contributes `/identity/oauth/{provider}/start` + `/callback`; ships with provider presets (Microsoft, Google, GitHub) as opt-in helpers. Stores the verified IdP `sub` / `oid` as a verified claim alongside the channel-native identity so channels that authenticate with the same IdP (e.g. Teams via Entra ID) auto-link on first contact. |
 | `OneTimeCodeIdentityLinker(...)` | Signed short-lived code | User runs `/link` on channel A, receives a code; runs `/link <code>` on channel B; host verifies and merges. |
-| `MfaIdentityLinker(factor, ...)` | Identity-provider MFA challenge | For environments where a corporate IdP already owns identity assurance. |
 
 A built-in `link` (or `connect`) `ChannelCommand` is exposed automatically when an `IdentityLinker` is configured. Its `handle` invokes `linker.begin(...)` and replies with the `LinkChallenge` payload (URL, code, instructions) projected through the channel's native rendering. Channels may opt out (`expose_in_ui=False`) or override the command's name per channel.
 
@@ -380,8 +379,9 @@ Messages that don't satisfy the rule are ignored at the channel layer — no `Ch
 |---|---|---|
 | Originating | `ResponseTarget.originating` (default) | Synchronous response on the originating channel. |
 | Active | `ResponseTarget.active` | Delivered to the channel most recently observed for the resolved `isolation_key`. |
-| Specific | `ResponseTarget.channel("activity")` | Delivered to the named channel via its `ChannelPush`. |
-| Multiple | `ResponseTarget.channels(["telegram", "activity"])` | Delivered to each named channel. |
+| Specific channel (link-store recipient) | `ResponseTarget.channel("activity")` | Delivered via the named channel's `ChannelPush` to whichever channel-native identity is recorded for the resolved `isolation_key` in the link store. |
+| Explicit identities | `ResponseTarget.identities([ChannelIdentity("telegram", native_id="<chat_id>"), ...])` | Delivered via each named channel's `ChannelPush` to the **caller-supplied channel-native identity** — bypasses the link store entirely. Used when the originating caller already knows the recipient's channel-native id (e.g. a server-side Responses caller relaying for a known user). The host still consults `LinkPolicy` for each delivery. Convenience alias: `ResponseTarget.identity(ChannelIdentity(...))` for the single-identity case. |
+| Multiple channels | `ResponseTarget.channels(["telegram", "activity"])` | Delivered to each named channel (link-store recipient per channel). |
 | All linked | `ResponseTarget.all_linked` | Delivered to every channel where the resolved `isolation_key` is known. |
 | None | `ResponseTarget.none` | Background-only — caller must poll the `ContinuationToken`. Forces `background=True`. |
 
@@ -872,7 +872,7 @@ Webhook transport contributes `/telegram/webhook` by default; the command catalo
 
 ### Scenario 6: Linking a new channel to an existing identity via OAuth
 
-A developer wants every Telegram chat to be **authenticated up front** via OAuth (Microsoft Entra ID) before the agent will respond, and wants Teams chats from the same Entra ID user to be **auto-linked** to the existing session — no second `/link` ceremony, just sign in once on the first channel and the rest follow automatically. This is the foundation that Scenario 7 (cross-channel chat continuity) builds on.
+A developer wants every Telegram chat to be **authenticated up front** via OAuth (Microsoft Entra ID) before the agent will respond, and wants Teams chats from the same Entra ID user to be **auto-linked** to the existing session — no second `/link` ceremony, just sign in once on the first channel and the rest follow automatically. This delivers cross-channel chat continuity as a side-effect of identity linking; Scenario 7 covers the alternative pattern where a trusted server-side relay supplies identity directly without a link ceremony.
 
 > **Prerequisites:** This sample assumes:
 > - `agent-framework-hosting`, `agent-framework-hosting-telegram`, and the (future) `agent-framework-hosting-activity` channel are installed
@@ -925,55 +925,155 @@ The flow:
    - `verified_claim("microsoft.oid", "<aad-object-id>") → isolation_key="hk_018f…a3"`
 3. `alice` replies on Telegram. The channel sees the link is now present, resolves the existing `isolation_key`, and forwards the message to the agent normally. From here on, Telegram chats are routed without further ceremony.
 4. The next day, `alice` opens Teams. The `ActivityChannel` extracts both the channel-native identity (`activity`, `<aad-oid>`) **and** the verified IdP claim from the inbound activity (Teams already authenticates with Entra ID via Bot Service, so the AAD object id is trusted). It asks the linker `is_linked(...)`. The `(activity, <aad-oid>)` pair is **not** in the store — but the verified claim `("microsoft.oid", "<aad-object-id>")` **is**. The linker auto-merges `(activity, <aad-oid>) → isolation_key="hk_018f…a3"` without any user-visible `/link` ceremony.
-5. From the next turn on, both Telegram and Teams resolve to the **same** `isolation_key` and the **same** `AgentSession`. The agent sees the conversation history from both channels as one continuous thread (this is the property Scenario 7 leans on).
+5. From the next turn on, both Telegram and Teams resolve to the **same** `isolation_key` and the **same** `AgentSession`. The agent sees the conversation history from both channels as one continuous thread.
 
 The two enabling pieces:
 
 - **`require_link: bool` on the channel** — when `True`, the channel checks the linker before dispatching every inbound request. Un-linked identities are short-circuited to a rendered `LinkChallenge` instead of an agent invocation. Default is `False` (the opportunistic flow below).
 - **Verified IdP claims in the linker's identity store** — when an OAuth ceremony completes, the linker records the verified identity claim (e.g. `(microsoft.oid, <oid>)`) alongside the channel-native identity. Channels that can supply the same kind of verified claim from their own auth context (Teams via the AAD bearer on the activity, future M365 channels via the same bearer, …) get **auto-linked silently** on first contact when their claim matches an existing entry. This is what makes "sign in once on Telegram, Teams just works" possible without any per-channel link ceremony.
 
-**Variant — opportunistic linking (`require_link=False`).** Leave the flag at its default and the channel will dispatch un-linked identities straight to the agent (the host's default resolver auto-issues a fresh `isolation_key` for them — this is the starting state Scenario 7 walks through). The user can later run the `link` `ChannelCommand` manually to merge that auto-issued key onto an existing one.
+**Variant — opportunistic linking (`require_link=False`).** Leave the flag at its default and the channel will dispatch un-linked identities straight to the agent (the host's default resolver auto-issues a fresh `isolation_key` for them). The user can later run the `link` `ChannelCommand` manually to merge that auto-issued key onto an existing one. This is the lower-friction onboarding flow at the cost of allowing pre-link conversations to exist in their own isolated session until merged.
 
 **Variant — alternative ceremony.** Swapping the linker for `OneTimeCodeIdentityLinker(...)` changes the ceremony to "complete `/link` on channel A, get a 6-digit code, run `/link 482931` on channel B"; with `require_link=True` the channel just renders the code-entry instructions instead of an OAuth URL. Apps with their own corporate identity namespace can additionally pass a custom `identity_resolver` so the post-link `isolation_key` is the corporate user id instead of the host-issued opaque key. Channels themselves are unchanged across these variants — only the linker and (optionally) the resolver change.
 
-### Scenario 7: Cross-channel chat continuity (Telegram → Teams via the Activity channel) with zero per-channel boilerplate
+### Scenario 7: Trusted server-side caller relays a Responses request and pushes the answer back to the user's Telegram chat
 
-A developer wants the same end user to start a conversation on Telegram and continue it on Teams (via a future `ActivityChannel` fronted by Azure Bot Service) against the same agent and the same conversation history. **No per-channel mapping code is required.** The default `IdentityResolver` auto-issues an `isolation_key` to each `(channel, native_id)` on first contact and persists it; the link/merge step that converges two auto-issued keys onto one was covered in Scenario 6.
+A developer runs an internal application server that already knows its end users (e.g. via an SSO session) and wants to expose **two surfaces against the same agent**: the OpenAI-compatible **Responses API** (so the application backend can drive the agent programmatically on behalf of the signed-in user) and **Telegram** (so the same end user can also chat with the agent directly). When the application backend submits a Responses call, it should be possible to (a) link that call to the same `isolation_key` as the user's existing Telegram chats — so the agent sees one continuous conversation history — and optionally (b) have the agent's response pushed back to the user's Telegram chat instead of (or in addition to) being returned synchronously on the Responses HTTP call.
+
+This works **without** an `IdentityLinker` because the application backend is a **trusted relay**: it already authenticated the user through its own SSO and knows both the user's app-internal id and (because the user has previously connected their Telegram account in the application's own settings page) the user's Telegram `chat_id`. The host just needs to be told.
 
 > **Prerequisites:** This sample assumes:
-> - `agent-framework-hosting-telegram` is installed (and a future `-activity` channel package)
+> - `agent-framework-hosting`, `agent-framework-hosting-responses`, and `agent-framework-hosting-telegram` are installed
+> - The application backend can attach two extra fields to its Responses call: an `app_user_id` (the user's stable id in the application's own namespace) and, optionally, a `push_to_telegram_chat_id` (the user's known Telegram chat id from the application's own database)
 
 ```python
 import os
+from dataclasses import replace
 
-from agent_framework.hosting import AgentFrameworkHost, TelegramChannel
-# from agent_framework.hosting import ActivityChannel  # future
+from agent_framework.hosting import (
+    AgentFrameworkHost,
+    ChannelIdentity,
+    ChannelRequest,
+    IdentityResolver,
+    ResponseTarget,
+    ResponsesChannel,
+    TelegramChannel,
+)
+
+
+# A custom identity resolver that promotes the app's own user id to the
+# isolation_key whenever a channel can supply one. The Telegram channel exposes
+# the chat_id (pre-registered in the application's settings page → so the
+# application maps chat_id → app_user_id and tells the host); the Responses
+# channel exposes the app_user_id directly via extra_body (see run_hook below).
+async def app_identity_resolver(identity: ChannelIdentity, **_) -> str | None:
+    # Both channels populate ChannelIdentity.attributes["app_user_id"] — see
+    # the run hooks below.
+    return identity.attributes.get("app_user_id")
+
+
+# Telegram channel maps Telegram chat_id → app_user_id from the application's
+# pre-registered chat-id table. Cached locally; in real apps this is whatever
+# lookup matches the application's own user-account schema.
+KNOWN_TELEGRAM_USERS: dict[str, str] = {
+    "<chat_id_of_alice>": "user_alice",
+    # ...
+}
+
+
+async def telegram_promote_app_user(request: ChannelRequest, **_) -> ChannelRequest:
+    chat_id = request.identity.native_id
+    app_user_id = KNOWN_TELEGRAM_USERS.get(chat_id)
+    if app_user_id is None:
+        return request  # falls back to host's auto-issued isolation_key
+    return replace(
+        request,
+        identity=replace(
+            request.identity,
+            attributes={**request.identity.attributes, "app_user_id": app_user_id},
+        ),
+    )
+
+
+# The application backend POSTs to /responses/v1/responses with
+#
+#   {
+#     "model": "...",
+#     "input": "...",
+#     "extra_body": {
+#       "hosting": {
+#         "app_user_id": "user_alice",                # who this request is for
+#         "push_to_telegram_chat_id": "<chat_id>",    # optional
+#       }
+#     }
+#   }
+#
+# The Responses channel surfaces extra_body["hosting"] on
+# ChannelRequest.attributes["hosting"]; this run_hook reads it and rewrites
+# both the identity (so the request resolves to the same isolation_key as the
+# user's Telegram chats) and the response_target (so the answer is pushed to
+# Telegram in addition to / instead of the synchronous Responses reply).
+async def responses_relay_hook(request: ChannelRequest, **_) -> ChannelRequest:
+    hosting = request.attributes.get("hosting", {})
+    app_user_id = hosting.get("app_user_id")
+    push_chat_id = hosting.get("push_to_telegram_chat_id")
+
+    if app_user_id is None:
+        return request  # plain Responses call, no relay → keep defaults
+
+    # Promote app_user_id onto the identity so the resolver returns it as
+    # isolation_key.
+    new_identity = replace(
+        request.identity,
+        attributes={**request.identity.attributes, "app_user_id": app_user_id},
+    )
+
+    # If the caller also supplied a Telegram chat id, push the answer there
+    # via ResponseTarget.identities (explicit recipient — bypasses the link
+    # store, which is empty for this user since no link ceremony ran). The
+    # Responses HTTP call returns a ContinuationToken so the application
+    # backend can correlate.
+    if push_chat_id:
+        return replace(
+            request,
+            identity=new_identity,
+            response_target=ResponseTarget.identities([
+                ChannelIdentity(channel="telegram", native_id=push_chat_id),
+            ]),
+            background=True,
+        )
+
+    return replace(request, identity=new_identity)
 
 
 host = AgentFrameworkHost(
     target=agent,
+    identity_resolver=IdentityResolver(app_identity_resolver),
     channels=[
+        ResponsesChannel(run_hook=responses_relay_hook),
         TelegramChannel(
             bot_token=os.environ["TELEGRAM_BOT_TOKEN"],
             transport="webhook",
+            run_hook=telegram_promote_app_user,
         ),
-        # ActivityChannel(...),  # future
     ],
 )
 host.serve(host="0.0.0.0", port=8000)
 ```
 
-That's the entire setup. No `run_hook`, no per-channel `resolve_user_id_from_*` function, no manual `ChannelSession` construction. The flow:
+The flow:
 
-1. End user `alice` chats with the bot on Telegram for the first time. The default resolver sees `ChannelIdentity(channel="telegram", native_id="<chat_id>", ...)`, auto-issues `isolation_key="hk_018f…a3"`, persists `("telegram", "<chat_id>") → "hk_018f…a3"`, and the host resolves a fresh `AgentSession` scoped by that key.
-2. Subsequent Telegram messages from the same `chat_id` resolve to the same `isolation_key` and the same `AgentSession` — `alice`'s Telegram conversation history is intact.
-3. The first time `alice` messages the bot on Teams (which arrives through the `ActivityChannel`), the resolver auto-issues a **different** `isolation_key="hk_018f…b7"` for `("activity", "<aad-oid>")` — Teams sees a fresh conversation, because the host has no way to know yet that the two channel-native identities belong to the same person.
-4. To converge them, `alice` runs the host-provided `/link` command on Teams using whichever ceremony the host's `identity_linker` provides (see Scenario 6 for OAuth and one-time-code variants). The link ceremony **merges** `("activity", "<aad-oid>")` onto her existing Telegram-issued `isolation_key="hk_018f…a3"`. From the next turn on, Teams resolves to the same `AgentSession` as Telegram, and the agent sees one continuous thread.
+1. Alice has previously connected her Telegram account on the application's settings page; the application stored `chat_id_of_alice → user_alice` in `KNOWN_TELEGRAM_USERS` (a real deployment uses a database).
+2. Alice opens the application's web UI and types a question. The application backend (signed in as `user_alice`) calls the Responses API mounted on this host with `extra_body={"hosting": {"app_user_id": "user_alice"}}` (and no `push_to_telegram_chat_id`). The `responses_relay_hook` promotes `app_user_id` onto the identity, the resolver returns `isolation_key="user_alice"`, the agent runs, and the answer is returned synchronously over HTTP. The agent's `HistoryProvider` appends both turns to the session keyed by `user_alice`.
+3. Later, Alice messages the same agent on Telegram from her registered chat. The Telegram channel's `run_hook` promotes `app_user_id="user_alice"` onto the identity (because her chat_id is in the known-users table), the resolver returns the **same** `isolation_key="user_alice"`, the agent loads the **same** session — and sees the earlier turn from the web UI. **One continuous conversation across two channels, no link ceremony required, no `IdentityLinker` configured.**
+4. Now Alice walks away from her desk. The application backend wants to fire a long-running task on her behalf and have the answer reach her on Telegram. It calls the Responses API with `extra_body={"hosting": {"app_user_id": "user_alice", "push_to_telegram_chat_id": "<chat_id_of_alice>"}}`. The `responses_relay_hook` rewrites the request to `background=True` and `response_target=ResponseTarget.identities([ChannelIdentity("telegram", "<chat_id_of_alice>")])`. The Responses HTTP call returns a `ContinuationToken` immediately (so the application backend can correlate); when the agent completes, the host calls `TelegramChannel.push(ChannelIdentity("telegram", "<chat_id_of_alice>"), result)` and the answer arrives in Alice's Telegram chat.
 
-Two notes:
+The two enabling pieces:
 
-- **The `isolation_key` is opaque on purpose.** The default auto-issued key (`"hk_018f…a3"`) is just a stable handle the host uses to partition sessions; apps that own a real identity namespace (corporate user id, tenant-scoped account id) can supply a custom `identity_resolver` that returns those values directly and skip auto-issuance entirely.
-- **No app-supplied identity store is required for the single-host case.** The host's built-in identity store handles auto-issuance and atomic merge-on-link in process. Cross-host/cross-process continuity (and surviving restarts) is provided by the `HostStateStore` (see [Host state storage](#host-state-storage)) — the v1 file-based default already covers single-node restarts; pluggable Cosmos / SQL / Redis adapters are tracked in req #23.
+- **`extra_body["hosting"]` as a developer-controlled relay envelope.** The Responses channel surfaces an opaque `hosting` block from `extra_body` onto `ChannelRequest.attributes["hosting"]`. The hosting core does **not** define what goes in there — the developer decides what their trusted backend may carry (here `app_user_id` and `push_to_telegram_chat_id`) and reads it in their `run_hook`. This is the same pattern the `store=` table calls out for richer per-call control.
+- **`ResponseTarget.identities([...])` for explicit caller-known recipients.** This bypasses the link store and pushes to a channel-native identity the caller already knows. Use it when the originating caller is a trusted relay that authenticated the user through some other means (corporate SSO, an internal API key bound to a user) and just needs the host to dispatch. `LinkPolicy` is still consulted per delivery, so a corp-tier Responses call cannot smuggle a public-tier Telegram push if the policy disallows it.
+
+**Variant — same scenario with an `IdentityLinker` configured.** If the host *does* have an `IdentityLinker` (Scenario 6), the application backend doesn't need to maintain its own `chat_id → app_user_id` table at all: when Alice runs `/link` once on Telegram, the linker records the channel-native identity against `isolation_key="user_alice"` (resolved from the Entra OAuth claim that matches the application's own SSO). After that, the run hook can simply use `ResponseTarget.channel("telegram")` (link-store recipient) instead of `ResponseTarget.identities([...])`. The explicit-identities variant remains useful when the application owns identity end-to-end and prefers not to delegate to a host-level linker.
 
 ### Scenario 8: Background run with cross-channel response delivery
 
