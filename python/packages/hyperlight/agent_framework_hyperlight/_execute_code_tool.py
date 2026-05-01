@@ -20,8 +20,6 @@ from urllib.parse import urlparse
 from agent_framework import Content, FunctionTool
 from agent_framework._tools import ApprovalMode, normalize_tools
 
-from ._drop_diagnostic import is_enabled as _drop_diag_enabled
-from ._drop_diagnostic import track as _drop_diag_track
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountHostPath, FileMountInput
 
@@ -171,9 +169,6 @@ class _SandboxWorker:
             self._sandbox = sandbox
             self._snapshot = snapshot
             self._initialized = True
-            if _drop_diag_enabled():
-                _drop_diag_track(sandbox, "sandbox")
-                _drop_diag_track(snapshot, "snapshot")
             # Locals fall out of scope on the worker thread; the worker-local
             # attributes hold the only strong refs from now on.
 
@@ -198,8 +193,6 @@ class _SandboxWorker:
             sandbox.restore(snapshot)
             _clear_directory(output_dir)
             result = sandbox.run(code=code)
-            if _drop_diag_enabled():
-                _drop_diag_track(result, "execution-result")
             try:
                 return build_contents(
                     result=result,
