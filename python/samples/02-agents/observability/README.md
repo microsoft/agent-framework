@@ -173,7 +173,7 @@ Finally we have `VS_CODE_EXTENSION_PORT` which you can set to a port, which can 
 
 The framework will emit observability data when the `ENABLE_INSTRUMENTATION` environment variable is set to `true`. If both are `true` then it will also emit sensitive information. When these are not set, or set to false, you can use the `enable_instrumentation()` function from the `agent_framework.observability` module to turn on instrumentation programmatically. This is useful when you want to control this via code instead of environment variables.
 
-> **Note**: Sensitive information includes prompts, responses, and more, and should only be enabled in a development or test environment. It is not recommended to enable this in production environments as it may expose sensitive data.
+> **Note**: Sensitive information includes prompts, responses, and more, and should only be enabled in a development or test environment. It is not recommended to enable this in production environments as it may expose sensitive data. Enabling this will automatically enable instrumentation if it is not already enabled.
 
 The two other variables, `ENABLE_CONSOLE_EXPORTERS` and `VS_CODE_EXTENSION_PORT`, are used to configure where the observability data is sent. Those are only activated when calling `configure_otel_providers()`.
 

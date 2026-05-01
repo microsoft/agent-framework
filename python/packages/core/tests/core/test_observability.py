@@ -1015,6 +1015,30 @@ def test_observability_settings_is_setup_initial(monkeypatch):
     assert settings.is_setup is False
 
 
+@pytest.mark.parametrize(
+    ("enable_instrumentation", "enable_sensitive_data", "expected"),
+    [
+        (False, False, False),
+        (True, False, True),
+        (False, True, True),
+        (True, True, True),
+    ],
+)
+def test_observability_settings_enabled_property(
+    monkeypatch, enable_instrumentation: bool, enable_sensitive_data: bool, expected: bool
+):
+    """ENABLED is True when either instrumentation or sensitive data is enabled."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+    settings = ObservabilitySettings(
+        enable_instrumentation=enable_instrumentation,
+        enable_sensitive_data=enable_sensitive_data,
+    )
+    assert settings.ENABLED is expected
+
+
 # region Test enable_instrumentation function
 
 
