@@ -210,9 +210,8 @@ internal static class OutputConverter
                     }
 
                     case ToolApprovalRequestContent:
-                        // Non-function tool calls (e.g. MCP calls) are not emitted here.
-                        // Mirrors the OpenAI Hosting layer's ToolApprovalRequestEventGenerator,
-                        // which also only handles FunctionCallContent.
+                        // Approval requests must wrap a FunctionCallContent (handled above).
+                        // Any other shape has no representation in the Responses wire format.
                         break;
 
                     case ToolApprovalResponseContent:

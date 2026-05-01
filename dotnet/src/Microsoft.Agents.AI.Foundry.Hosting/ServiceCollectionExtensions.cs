@@ -185,8 +185,6 @@ public static class FoundryHostingExtensions
 
     /// <summary>
     /// The ActivitySource name for the Responses hosting pipeline.
-    /// Matches the value previously exposed by <c>AgentHostTelemetry.ResponsesSourceName</c>
-    /// in <c>Azure.AI.AgentServer.Core</c>.
     /// </summary>
     private const string ResponsesSourceName = "Azure.AI.AgentServer.Responses";
 

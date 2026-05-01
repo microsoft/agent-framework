@@ -221,12 +221,11 @@ internal static class InputConverter
     /// <summary>
     /// Converts an inbound <c>mcp_approval_request</c> wire item (from history replay
     /// or fresh-input) to a <see cref="ToolApprovalRequestContent"/> wrapping a
-    /// <see cref="FunctionCallContent"/>. Mirrors python's
-    /// <c>foundry_hosting/_responses.py</c> mapping.
+    /// <see cref="FunctionCallContent"/>.
     /// </summary>
     private static ChatMessage ConvertMcpApprovalRequest(string id, string name, string? arguments)
     {
-        var functionCall = new FunctionCallContent(id, name, TryParseArguments(arguments));
+        var functionCall = new FunctionCallContent(id, name, ParseFunctionArgumentsObject(arguments));
         return new ChatMessage(
             ChatRole.Assistant,
             [new ToolApprovalRequestContent(id, functionCall)]);
@@ -237,8 +236,7 @@ internal static class InputConverter
     /// <see cref="ToolApprovalResponseContent"/>. Looks up the original AF request id
     /// via <see cref="ToolApprovalIdMap"/>; falls back to the wire id when the mapping
     /// is unavailable. Carries a placeholder <see cref="FunctionCallContent"/> because
-    /// the original tool-call details are not echoed by clients in the response item
-    /// (matches python's behavior).
+    /// the original tool-call details are not echoed by clients in the response item.
     /// </summary>
     private static ChatMessage ConvertMcpApprovalResponse(string approvalRequestId, bool approve, AgentSessionStateBag? stateBag)
     {
@@ -251,7 +249,7 @@ internal static class InputConverter
 
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing tool-call arguments from SDK input.")]
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing tool-call arguments from SDK input.")]
-    private static Dictionary<string, object?>? TryParseArguments(string? arguments)
+    private static Dictionary<string, object?>? ParseFunctionArgumentsObject(string? arguments)
     {
         if (string.IsNullOrWhiteSpace(arguments))
         {
@@ -364,9 +362,9 @@ internal static class InputConverter
 
         if (!string.IsNullOrEmpty(fileData))
         {
-            // Mirror python's _convert_file_data: if the data URI carries text/* content,
-            // decode it inline as TextContent so {System.LastMessageText} (and other
-            // text-only consumers) sees the file's body rather than an opaque blob.
+            // If the data URI carries text/* content, decode it inline as TextContent so
+            // {System.LastMessageText} (and other text-only consumers) sees the file's
+            // body rather than an opaque blob.
             if (TryDecodeTextDataUri(fileData, filename, out var decodedText))
             {
                 contents.Add(new MeaiTextContent(decodedText));

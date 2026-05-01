@@ -107,10 +107,6 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     }
     private async ValueTask HandleChatMessagesAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        // Materialize so we can detect the last message and only finalize the turn once.
-        // The host (WorkflowSession) sends the entire turn (history + new user message)
-        // as one batch; previously we kept only the trailing message which silently
-        // dropped replayed history and multi-message turns.
         var list = messages as IList<ChatMessage> ?? new List<ChatMessage>(messages);
         if (list.Count == 0)
         {

@@ -17,13 +17,11 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This implementation mirrors the python <c>FileCheckpointStorage</c> pattern used by
-/// <c>foundry_hosting._responses</c>: when running in a Foundry hosted environment, sessions
-/// are stored under the well-known <c>/.checkpoints</c> path; locally, they fall under
-/// <c>{cwd}/.checkpoints</c>. The session JSON produced when the agent serializes the session
-/// already contains the workflow's in-memory checkpoint manager state, so a single file per
-/// (agent, conversation) pair is sufficient to resume long-running workflows across process
-/// restarts.
+/// When running in a Foundry hosted environment, sessions are stored under the well-known
+/// <c>/.checkpoints</c> path; locally, they fall under <c>{cwd}/.checkpoints</c>. The session
+/// JSON produced when the agent serializes the session already contains the workflow's
+/// in-memory checkpoint manager state, so a single file per (agent, conversation) pair is
+/// sufficient to resume long-running workflows across process restarts.
 /// </para>
 /// <para>
 /// Files are written atomically via a temp-file + <see cref="File.Move(string, string, bool)"/>
@@ -35,7 +33,6 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 {
     /// <summary>
     /// The well-known absolute path used when running inside a Foundry hosted environment.
-    /// Matches python's <c>CHECKPOINT_STORAGE_PATH</c> in <c>foundry_hosting._responses</c>.
     /// </summary>
     public const string HostedCheckpointDirectory = "/.checkpoints";
 
@@ -89,16 +86,15 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         Directory.CreateDirectory(this.RootDirectory);
 
         string path = this.GetSessionPath(agent, conversationId);
-        // Ensure the per-agent bucket directory exists when a name is provided.
-        // GetSessionPath itself is read-side-effect-free; directory creation is
-        // a write concern and lives only on the save path.
         string? parentDir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(parentDir))
         {
             Directory.CreateDirectory(parentDir);
         }
-        // Unique temp filename so concurrent saves on the same conversation don't
-        // collide on the same temp file (which would either throw or lose updates).
+
+        // Each save writes to its own temp file before atomically renaming over the
+        // destination. Last writer wins for the final file, but no reader can observe
+        // a torn or partially-written JSON document.
         string tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
 
         try
@@ -144,13 +140,10 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 
     private string GetSessionPath(AIAgent agent, string conversationId)
     {
-        // Mirror python's _responses.py pattern: when the agent home directory is already
-        // process-scoped (the hosted /.checkpoints case), keying by conversationId alone
-        // is sufficient. When multiple keyed agents share a single in-process default
-        // store (the local-dev case), bucket each agent into its own subdirectory using
-        // its stable Name so two agents that happen to receive the same conversationId
-        // don't overwrite each other's persisted state. agent.Id is intentionally NOT
-        // used because it is regenerated each startup for in-memory-defined agents.
+        // When agent.Name is set we bucket sessions into a per-agent subdirectory so
+        // multiple keyed agents sharing a single in-process default store cannot
+        // collide on the same conversationId. agent.Id is intentionally NOT used
+        // because it is regenerated on every startup for in-memory-defined agents.
         string fileName = $"{Sanitize(conversationId)}.json";
         if (string.IsNullOrEmpty(agent.Name))
         {
@@ -190,8 +183,8 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
             }
         }
 
-        // Defense-in-depth: Path.GetInvalidFileNameChars() on Linux only contains NUL and '/',
-        // so the segments "." and ".." would otherwise pass through and could resolve to the
+        // Path.GetInvalidFileNameChars() on Linux only contains NUL and '/', so the
+        // segments "." and ".." would otherwise pass through and could resolve to the
         // current/parent directory when used as a bare path component (e.g. agent.Name).
         // Neutralize any segment composed entirely of dots so the result can never escape
         // its parent directory.
