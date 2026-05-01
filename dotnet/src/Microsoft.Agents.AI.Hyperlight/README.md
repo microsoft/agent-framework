@@ -27,10 +27,12 @@ Both surfaces support:
 
 ## Requirements
 
-* A published `HyperlightSandbox.Api` NuGet package (`0.1.0-preview` per
-  [hyperlight-sandbox PR #46](https://github.com/hyperlight-dev/hyperlight-sandbox/pull/46)).
-  Until this package is available on nuget.org the project restores will
-  fail; the package is intentionally `IsPackable=false` in this state.
+* The `Hyperlight.HyperlightSandbox.Api` NuGet package, published from the
+  `src/sdk/dotnet` SDK in [hyperlight-dev/hyperlight-sandbox](https://github.com/hyperlight-dev/hyperlight-sandbox)
+  (the .NET API was added in [PR #46](https://github.com/hyperlight-dev/hyperlight-sandbox/pull/46),
+  now merged). Until the package is published to nuget.org the project
+  restore will fail; this project is intentionally `IsPackable=false` in
+  the meantime.
 * A Hyperlight Python guest module when using `SandboxBackend.Wasm`.
 
 ## Status

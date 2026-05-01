@@ -205,7 +205,10 @@ internal sealed class SandboxExecutor : IDisposable
 
         // Warm-up run to trigger lazy initialization, then capture a clean snapshot
         // that is restored before every subsequent user invocation.
-        _ = sandbox.Run(this._options.Backend == SandboxBackend.JavaScript ? "undefined" : "None");
+        // Backend-specific no-op used to trigger lazy guest runtime initialization
+        // before the warm snapshot is captured. Matches the values used by the
+        // upstream HyperlightSandbox.Extensions.AI CodeExecutionTool reference.
+        _ = sandbox.Run(this._options.Backend == SandboxBackend.JavaScript ? "void 0;" : "None");
         this._warmSnapshot = sandbox.Snapshot();
         this._sandbox = sandbox;
         this._lastConfigFingerprint = snapshot.ConfigFingerprint;
