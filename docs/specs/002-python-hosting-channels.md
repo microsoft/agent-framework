@@ -223,7 +223,10 @@ TelegramChannel(path="/bots/telegram", bot_token=token)  # -> /bots/telegram/web
 | `options` | `ChatOptions?` | Caller-derived options (e.g. Responses `temperature`). |
 | `session_mode` | `Literal["auto", "required", "disabled"]` | Whether host-managed session use is automatic, mandatory, or bypassed. |
 | `metadata` | `Mapping[str, Any]` | Protocol-level metadata for telemetry. |
-| `attributes` | `Mapping[str, Any]` | Channel-specific structured values (signature state, capability hints). |
+| `attributes` | `Mapping[str, Any]` | Channel-specific structured values (signature state, capability hints). Host code never reads this map; reserved for channel-private bookkeeping. |
+| `client_state` | `Mapping[str, Any] \| None` | Bidirectional, mutable per-request state object supplied by event-rich front-ends (e.g. AG-UI). Channel-defined shape; the host treats it as opaque. Channels typically thread this into a channel-owned `ContextProvider` (see [Channel-owned per-thread state](#channel-owned-per-thread-state)) and read it back after the run to emit state-snapshot/delta events. |
+| `client_tools` | `Sequence[ToolDescriptor] \| None` | Frontend tool catalog supplied per request. The channel forwards definitions onto the agent's `ChatOptions` so the LLM can call them, but tool *execution* returns to the originating client (the host does not invoke them). Run hooks may filter or rewrite the catalog. |
+| `forwarded_props` | `Mapping[str, Any] \| None` | Pass-through bag for channel-protocol extras the run hook needs to route into the target — e.g. AG-UI `resume` / `command` / HITL response payloads that drive workflow `RequestInfo` / `RequestResponse` round-trips. Opaque to the host; the run hook decides where it lands on the rebuilt `ChannelRequest.input`. |
 | `identity` | `ChannelIdentity?` | Channel-native identity observed on this request — `(channel, native_id, attributes)`. Channels populate it from the inbound payload (Telegram `chat.id`, Teams `from.aadObjectId`, Responses `safety_identifier`, …). The host records `(isolation_key, channel) → identity` on every successful resolve so `ResponseTarget.active`, `.channel(name)`, `.channels([...])`, and `.all_linked` can find a destination native id without per-request payload bookkeeping. |
 | `stream` | `bool` | Whether to invoke `stream(...)` rather than `run(...)`. |
 | `response_target` | `ResponseTarget` | Where the response is delivered (default: `ResponseTarget.originating`). See `ResponseTarget` below. |
@@ -367,7 +370,7 @@ The host stores `RunHandle`s; v1 uses an in-memory store, v1 fast follow (req #2
 | Type | Fields | Description |
 |---|---|---|
 | `HostedRunResult` | `response: AgentResponse`, `session: AgentSession?`, `text` | One-shot outcome. |
-| `HostedStreamResult` | `updates: ResponseStream[...]`, `session: AgentSession?` | Streaming outcome. |
+| `HostedStreamResult` | `updates: ResponseStream[...]`, `raw_events: AsyncIterable[Any] \| None`, `session: AgentSession?` | Streaming outcome. `updates` is the **normalized** stream of `AgentRunResponseUpdate` (lossless for messages, function calls, usage) and is the happy path for Responses, Invocations, Telegram, and most channels. `raw_events` is an optional **passthrough seam** onto the underlying agent event stream (before update normalization) for channels whose protocol carries domain events the framework does not model — e.g. AG-UI's `StateSnapshotEvent` / `StateDeltaEvent` / `ToolCallStartEvent`. Channels that consume `raw_events` bear responsibility for the full event translation; the request still flows through `context.stream(...)` so session resolution, identity, push, and policy continue to apply. `None` when the host has no raw upstream (e.g. a workflow-only target produced from cached events). |
 
 The host does **not** emit protocol events directly — channels translate `HostedRunResult`/`HostedStreamResult` into Responses events, Invocations SSE, webhook callbacks, or platform messages.
 
@@ -446,6 +449,8 @@ host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel()])
 
 The provider implements the standard `HistoryProvider` interface — there is no Responses-specific Protocol in between. It is also valid for any other channel (Telegram, Invocations, …) — Foundry storage simply becomes the chosen backend.
 
+Foundry's storage backend keys writes off two platform-injected request headers (`x-agent-user-isolation-key`, `x-agent-chat-isolation-key`) rather than the request body. The Responses and Invocations channels parse both headers off the inbound request and forward them as an opaque mapping on `ChannelRequest.attributes["isolation"]` (`{"user_key", "chat_key"}`); the host's per-request `bind_request_context` then passes that value to `FoundryHostedAgentHistoryProvider.bind_request_context(isolation=...)`, which the provider applies to its storage calls. Channels never import `IsolationContext`; the provider accepts both an `IsolationContext` instance and a plain mapping. When the headers are absent (local dev outside the Hosted Agents runtime) the attribute is omitted and storage falls back to non-isolated reads/writes, so the same code path works in both environments.
+
 ##### Multi-provider composition
 
 The existing AF convention applies: an agent may compose **multiple** `HistoryProvider`s, but **only one** carries `load_messages=True`. Common patterns:
@@ -455,6 +460,58 @@ The existing AF convention applies: an agent may compose **multiple** `HistoryPr
 - *Mirror to Foundry for Workbench replay only.* Conversely, an in-house store can hold `load_messages=True` while `FoundryHistoryProvider(load_messages=False)` mirrors writes into Foundry purely so the conversation shows up in Foundry tooling.
 
 The choice of where to store, and whether to dual-write, is fully the developer's. The channel does not need to know which backing store(s) the agent is using.
+
+#### Channel-owned per-thread state
+
+Some channel protocols carry **non-message** durable state attached to the conversation — most notably AG-UI's per-thread `state` object, mutated mid-stream via `StateSnapshotEvent` / `StateDeltaEvent` (JSON-Patch-shaped) and read by the front-end on the next turn. This is *not* message history, so it does not belong on `HistoryProvider`; but it has the same lifetime, isolation, and "opaque to the host" properties as messages, so the framework already has the right primitive: **`ContextProvider`**.
+
+`HistoryProvider` is only one concrete `ContextProvider` (the one that uses the per-source `state: dict[str, Any]` slot to hold messages). Channels with non-message per-thread state SHOULD ship their own `ContextProvider` subclass and write into the same per-source `state` slot.
+
+Sketch (for AG-UI; the same pattern applies to any event-rich front-end):
+
+```python
+from agent_framework import ContextProvider, ContextProviderState
+
+class AgUiStateProvider(ContextProvider):
+    """Per-thread non-message state for AG-UI front-ends.
+
+    Persists the AG-UI ``state`` object scoped by ``source_id`` (the
+    AgentSession id). Reads from ``ChannelRequest.client_state`` before
+    the run, exposes the current value to the agent via Context, and lets
+    the channel diff it after the run to emit StateSnapshotEvent /
+    StateDeltaEvent on the wire.
+    """
+
+    state_key = "ag_ui_state"  # slot in the per-source state dict
+
+    async def before_run(self, context, *, source_id, **kw):
+        slot = context.state.setdefault(source_id, {})
+        # If the request supplied a fresh client_state, seed/replace it.
+        if (incoming := context.request.client_state) is not None:
+            slot[self.state_key] = dict(incoming)
+        # Expose the live value to the agent (e.g. into context.metadata).
+
+    async def after_run(self, context, *, source_id, **kw):
+        # The current value lives in context.state[source_id][self.state_key];
+        # the channel reads it and emits StateSnapshotEvent / StateDeltaEvent.
+        ...
+```
+
+Composition rules are unchanged: one `HistoryProvider` carries `load_messages=True`, additional `ContextProvider`s (including `AgUiStateProvider`) attach alongside. Backing storage is whatever the user wires — in-memory for dev, the same physical store as messages for prod. **No new storage protocol is introduced for channel state**; it shares the same per-source state slot that `HistoryProvider` uses.
+
+#### Storage taxonomy
+
+To make the picture explicit: there are exactly three distinct *storage seams* in the hosting design, each with a clear scope. The first two are usually backed by the same physical store the user wires; they stay distinct as protocols because the data shapes differ.
+
+| Seam | Scope | Examples |
+|---|---|---|
+| **`ContextProvider`** (per-conversation) | Per-`source_id` data the agent needs at run time. Messages (via `HistoryProvider`), AG-UI per-thread state (via `AgUiStateProvider`), or any future per-conversation extension. **The only public per-conversation seam.** | `FileHistoryProvider`, `FoundryHistoryProvider`, `AgUiStateProvider` |
+| **Host-level pluggable store** (per-host) | `RunHandle`s for background runs, identity-link grants, last-seen `(isolation_key, channel)` records. In-memory in v1; pluggable in v1 fast follow (req #23). MAY be backed by the same physical store as `ContextProvider`, but the protocol is distinct because the data is host-execution metadata, not per-conversation context. | (in-memory v1; future Cosmos / SQL adapter) |
+| **`CheckpointStorage`** (workflow runtime) | Workflow executor frames so a workflow can resume after process restart. Structurally distinct from both seams above (the data is workflow-runtime state, not session/identity state). MAY share a physical backend, but the protocol stays separate. | `FileCheckpointStorage`, future `CosmosCheckpointStorage` |
+
+Concretely, this means an app deploying onto e.g. Foundry storage can run **all three** against the same Foundry backend and still have three orthogonal protocol surfaces — one per concern — instead of one universal store everything accidentally collides in.
+
+Channels surface per-request transport state (response ids, isolation keys, future signals) on `ChannelRequest.attributes`; the host's `bind_request_context` forwards those attributes as kwargs to each `ContextProvider.bind_request_context` call so providers can apply them to their reads and writes. Providers SHOULD accept `**_` to ignore unknown attributes for forward-compat. This keeps channel↔provider coupling to a documented attribute name (e.g. `"isolation"`) instead of requiring providers to install ASGI middleware.
 
 The `ResponsesChannel` exposes both an HTTP transport (`{path}/v1/...`) and an optional **WebSocket transport** (`{path}{websocket_path}`, default `/responses/ws`) controlled by `transports`. The WS transport carries the same Responses request/event model as the HTTP+SSE variant — clients open a single connection per conversation and send/receive Responses frames as JSON messages. Both transports go through the same `run_hook`, the same default mapping, and the same `ChannelRequest` shape; the channel codec is responsible for framing only. Auth is reused from the HTTP transport (Authorization header on the `Upgrade` request); subprotocol negotiation is open (see Open Questions).
 
@@ -938,7 +995,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from agent_framework import AgentRunInputs
 from agent_framework.hosting import (
     Channel,
     ChannelContext,
@@ -960,7 +1016,7 @@ class MyWebhookChannel:
             channel_request = ChannelRequest(
                 channel=self.name,
                 operation="message.create",
-                input=AgentRunInputs.from_text(payload["text"]),
+                input=payload["text"],
                 session=ChannelSession(
                     key=payload["thread_id"],
                     isolation_key=payload["account_id"],
@@ -1033,6 +1089,7 @@ channel /link command
 | Background-run lifecycle | Host core | owns `RunHandle` issuance, async execution, completion notification; stores via in-memory or pluggable store |
 | Run poll routes | Channel package | each channel exposes its own protocol-shaped poll route (`/responses/v1/{run_id}`, `/invocations/{run_id}`) backed by `host.get_run(run_id)` |
 | Conversation history (all channels — Responses, Invocations, Telegram, Teams, …) | Agent's core `HistoryProvider` (`agent_framework._sessions.HistoryProvider`) | Channels project their wire id (`previous_response_id`, `conversation_id`, request body `session_id`, host-tracked alias, …) into `ChannelSession.key`; the host resolves an `AgentSession` and the agent's `HistoryProvider` does the load / append. No channel-specific history seam. Multi-provider composition (with a single `load_messages=True`) is the standard AF convention; see [Conversation history for the Responses channel](#conversation-history-for-the-responses-channel) for the Foundry-backed variant. |
+| Channel-owned non-message per-thread state (e.g. AG-UI `client_state`) | Channel-shipped `ContextProvider` subclass written into the same per-source state slot | Reuses the existing `ContextProvider` seam — *not* a new storage protocol. Channel reads `ChannelRequest.client_state` in `before_run`, lets the agent observe/mutate the slot, then reads the post-run value in `after_run` to emit channel-specific events (e.g. AG-UI `StateSnapshotEvent` / `StateDeltaEvent`). Composition rules unchanged (one `HistoryProvider` carries `load_messages=True`; additional `ContextProvider`s attach alongside). See [Channel-owned per-thread state](#channel-owned-per-thread-state). |
 | Agent invocation | Host core | always through the target's execution seam — `SupportsAgentRun.run(...)` for agent targets, `Workflow.run(...)` for workflow targets |
 | Protocol response/event model | Channel package | core returns agent results; channel serializes them |
 | ASGI server bootstrap | Host core convenience | `host.serve(...)` for default uvicorn path; `host.app` for custom hosting |
@@ -1091,6 +1148,8 @@ When the host invokes the target, it does **not** pass the raw `ChannelRequest.i
 ```
 
 Round-trip is guaranteed by `Message.to_dict()` / `Message.from_dict()`. Future providers that key on protocol shape (e.g. a Responses `previous_response_id`-keyed store) can read this envelope to reconstruct cross-channel context without needing a separate channel-metadata sidecar.
+
+`FoundryHostedAgentHistoryProvider` round-trips the entire `additional_properties["hosting"]` namespace (and any other AF-side namespace) through the Foundry response store via a single opaque `agent_framework` container key written onto each `OutputItem`. See [Foundry storage gap: `update_item`](#foundry-storage-gap-update_item) for the one part of the schema (post-push `deliveries[]` mutation) that depends on a service-side addition.
 
 ### Delivery tracking on assistant messages
 
@@ -1163,12 +1222,36 @@ class SupportsDeliveryTracking(Protocol):
 | Provider | `SupportsDeliveryTracking`? | Behavior |
 |---|---|---|
 | `FileHistoryProvider` (append-only JSONL) | No (capability not implemented) | Host writes the assistant `Message` **once**, at the end of the delivery cycle, with terminal `deliveries[]`. Pre-attempt `pending` snapshot is not durable; a host crash mid-delivery loses per-destination state for in-flight pushes. **Audit-complete, replay-best-effort.** |
-| `FoundryHistoryProvider` (Foundry response store as a core `HistoryProvider` backend; in-place message updates supported by the underlying store) | Expected to implement | Full lifecycle: pending → updates → terminal. Replay-safe across host restart. **Audit-complete, replay-complete.** |
+| `FoundryHostedAgentHistoryProvider` (Foundry response store) | **Partial — initial-write only** (see [Foundry storage gap](#foundry-storage-gap-update_item) below) | Inbound envelope (`channel`/`identity`/`response_target`) and **initial-write `deliveries[]` snapshot** (all `pending`, plus any `skipped`) round-trip through the Foundry response store unchanged via the `agent_framework` extras container key the provider writes onto each `OutputItem`. **Per-destination updates after each push attempt are not durable** because the Foundry storage SDK does not yet expose a way to mutate an individual stored history item. Behaves as `FileHistoryProvider` in that regard until the [service ask](#foundry-storage-gap-update_item) lands. **Audit-complete-on-write, replay-best-effort.** |
 | Cosmos / SQL providers (when introduced) | Expected to implement | Same as above. |
 
 Providers that omit the capability are still valid hosts for any `ResponseTarget` configuration — they just cannot offer durable replay. The host detects the capability with `isinstance(provider, SupportsDeliveryTracking)` and degrades to write-once when absent.
 
 > **Why on the message and not in a separate delivery log?** Two reasons. First, the message store is the single source of truth for an assistant turn; piggy-backing on it avoids a second consistency boundary between "message written" and "delivery scheduled". Second, any operator who wants a queryable delivery dashboard can ETL the array out of `additional_properties["hosting"]["deliveries"]` into their preferred outbox/log store — the on-message form does not preclude that. The spec commits only to the on-message shape; outbox layers are an implementation choice.
+
+#### Foundry storage gap: `update_item`
+
+`FoundryHostedAgentHistoryProvider` round-trips arbitrary `Message.additional_properties` namespaces through the Foundry response store as opaque JSON via a single `agent_framework` container key on each `OutputItem` (see `_shared.py:_collect_af_extras` / `_inject_af_extras` / `_attach_extras`). This makes the **initial-write** parts of the schema above durable:
+
+- The inbound `hosting` envelope (`channel`, `identity`, `response_target`) on user messages.
+- The initial-write `deliveries[]` snapshot on assistant messages (all entries `pending` or `skipped`, written before the first push attempt).
+
+What is **not yet** durable through this provider is **post-push mutation** of an individual stored item. The `azure.ai.agentserver.responses.store.FoundryStorageProvider` SDK exposes `create_response`, `get_response`, `update_response`, `delete_response`, `get_input_items`, `get_items`, and `get_history_item_ids` — but no `update_item` / PATCH on a single history item. So when the host updates an entry in `deliveries[]` after `ChannelPush.push()` returns (`status` → `delivered`/`failed`, `attempts`, timestamps, `last_error`, `delivery_id`), there is no way to push that mutation back into the per-item storage row.
+
+**Workarounds and trade-offs:**
+
+| Option | Trade-off |
+|---|---|
+| Encode `deliveries[]` on the *response object* (under `agent_framework`) instead of the assistant *item*, and use `update_response` to mutate it. | Works today, but deliveries are no longer co-located with the assistant message — schema for the `Message` round-trip becomes provider-specific. |
+| Delete + recreate the assistant item with the updated body. | Likely loses the `previous_response_id` chain pointer, breaks subsequent `get_history_item_ids` walks, and re-stamps the storage `id` (audit-trail noise). |
+| Wait for Foundry storage to add `update_item`. | Cleanest end-state. **This is the recommended path.** |
+
+**Service ask for the FoundryHostedAgent / Foundry response store team:**
+
+- Add `update_item(item_id, item_body, *, isolation: IsolationContext | None = None) -> None` (PATCH semantics) to `azure.ai.agentserver.responses.store.FoundryStorageProvider` and the underlying `POST/PATCH /storage/items/{item_id}` REST surface.
+- Required because the Hosting spec's per-destination delivery-tracking lifecycle (`pending → delivered`/`failed`/`skipped`) needs to mutate an individual stored item after the first push attempt completes.
+- Without it, the FoundryHostedAgentHistoryProvider's `SupportsDeliveryTracking` implementation is permanently stuck at "write-once-best-effort" and durable replay through Foundry storage is unreachable.
+- Existing `update_response` is not sufficient because deliveries belong on the **assistant `Message`** (so they round-trip with the message into any provider that consumes the standard `Message` schema), not on the response envelope.
 
 ## Reference and Parity Plan
 
@@ -1209,30 +1292,48 @@ The new core sits **below** the conceptual boundary of today's top-level Respons
 
 | # | Question | On Point | Notes |
 |---|---|---|---|
-| 1 | Final distribution package names (`agent-framework-hosting`, `-responses`, `-invocations`, `-telegram`)? | PM / Eng | Public imports stay at `agent_framework.hosting` regardless. |
-| 2 | Should `uvicorn` be a required dependency of `agent-framework-hosting`, or an optional extra with a clear install hint when `host.serve(...)` is called? | Eng | `host.app` remains the canonical server-agnostic ASGI surface either way. Required = simplest UX; extra = leanest dep tree and reinforces ASGI portability. |
-| 3 | Should `HostedRunResult` remain a host-specific wrapper, or is returning `AgentResponse` directly sufficient? | Eng | Wrapper currently carries `session: AgentSession?`; useful for channels that need to surface the resolved session back. |
-| 4 | Should generic auth helpers (HMAC signature, bearer token) live in core, in optional shared helpers, or per channel? | Eng | Current draft leaves it per channel + host middleware. |
 | 5 | How much of the Responses Conversations API should the Responses channel own vs a future shared conversation utility? | Eng / PM | Tied to whether session storage gets standardized. |
-| 6 | Should a later phase define a pluggable session store interface? | Eng | Listed as v1 fast follow / requirement #23. |
-| 7 | Should the `protocol_request` keyword passed to `ChannelRunHook` stay loosely typed (`Any`), or grow into channel-specific typed hook payloads (and/or a typed `ChannelRunHookKwargs` TypedDict)? | Eng | Loosely typed in v1 to keep the surface minimal; typed kwargs can be additive. |
+| 6 | Should a later phase define a pluggable session store interface? | Eng | Needs to be designed **holistically across all storage axes** — sessions, messages, identity links, run-state / continuation tokens, workflow checkpoints — rather than per-axis. Tracked as v1 fast-follow / requirement #23. |
 | 8 | Should command scopes / projection metadata become first-class — e.g. private-chat-only vs group-chat-visible commands, or per-locale descriptions? | Eng / PM | Telegram's `BotCommandScope` and `language_code` would need to be representable cross-channel. |
-| 9 | Should the channel `path` override allow nested routers (e.g. `path=""`) for cases where the channel is the app's root? | Eng | Edge case; not blocking. |
 | 10 | Is "Channel" the GA name? "Head" was used interchangeably during design discussions. | PM | "Channel" chosen for the spec; confirm before public docs. |
-| 11 | **Should the host support multiple targets** at all — one host fronting a router that dispatches across multiple `SupportsAgentRun` agents and/or `Workflow` targets? Open whether this is wanted: it broadens scope, complicates session/identity resolution per target, and may always be better solved a layer above (e.g. an external router that owns multiple single-target hosts). | PM / Eng | Removed from stretch requirements pending validation that the use case is real. |
-| 12 | Should `ChannelRequest.session_mode` grow additional values (e.g. `"shared"` for multi-channel session sharing) or stay closed at three? | Eng | Three values cover the known protocol semantics today. |
-| 13 | Which identity-linking mechanisms ship as first-party helpers in the first phase — `OAuthIdentityLinker` (which provider presets?), `OneTimeCodeIdentityLinker`, `MfaIdentityLinker`, or all three? | PM / Eng | Contract is generic; helper scope decided separately. Listed as fast follow #24. |
-| 14 | Where do issued link grants live — short-lived in-memory state on the host, the same pluggable session store (#23), or a separate identity store? | Eng | Likely shares the pluggable session/state store; finalize when that store contract lands. |
-| 15 | Should the resolver be invoked **once on the host** with a `ChannelIdentity(channel, native_id, ...)` (current draft) or pluggable **per channel**? | Eng | Host-level keeps cross-channel decisions in one place; per-channel could simplify channel-specific identity normalization. |
-| 16 | Should `IdentityLinker` and `Channel` share a base `Contributor` Protocol (both contribute routes/lifecycle), or stay distinct types with a shared `contribute(...)` shape? | Eng | Distinct types in current draft so the two roles stay clearly separated; consolidation can be additive. |
+| 12 | Should `ChannelRequest.session_mode` grow additional values (e.g. `"shared"` for multi-channel session sharing) or stay closed at three? | Eng | The taxonomy needs a **dedicated design exercise** covering all known channel session-shape patterns; revisit after that exercise. |
+| 14 | Where do issued link grants live — short-lived in-memory state on the host, the same pluggable session store (#23), or a separate identity store? | Eng | For v1, link grants are written to **files** — files in hosted agents are persisted and isolated, which is good enough. Replace with the holistic store from Q6 / #23 when it lands. |
 | 17 | Should `ResponseTarget.active` honor a configurable **time window** (last seen within N minutes) and what is the fallback when the window has expired before the response is ready — `originating`, `all_linked`, drop with `RunHandle.failed`? | PM / Eng | Likely yes with sensible default (e.g. 24h fall back to `originating`); per-request override via the run hook. |
-| 18 | What is the contract for `ChannelPush` failures (destination offline, user opted out, push token expired) — fall back to `originating`, fall back to `all_linked`, mark the `RunHandle` failed, or surface a per-channel policy? | Eng | Default should be opinionated and observable in telemetry; per-request override via the run hook. |
-| 19 | Should `host.run_in_background(...)` accept a `notify` callback in addition to `ResponseTarget` (programmatic delivery target — e.g. enqueue onto a service bus — without going through a channel)? | Eng | Not blocking v1; can be additive on top of `ResponseTarget`. |
-| 20 | Storage and TTL of `RunHandle`s in v1 (in-memory) and after the pluggable store lands (#23) — are completed handles retained for poll-after-push, and for how long? | Eng | Affects the channel poll-route experience; default likely 24h then GC. |
-| 21 | When `response_target=ResponseTarget.all_linked` returns multiple deliveries, how is partial failure surfaced on the `RunHandle` — single status, per-destination status array, or first-failure-wins? | Eng | Per-destination array is most expressive but enlarges the type; decide before background runs are GA. |
 | 22 | For the Responses WebSocket transport, what subprotocol identifier (if any) should be advertised on the `Upgrade` and how is auth conveyed — `Authorization` header on the upgrade, a `Sec-WebSocket-Protocol` token, or a query-string-bound short-lived token? | Eng / PM | Aligning with whatever OpenAI ships for Responses WS is preferable; keep the codec swappable so the channel can track upstream changes without breaking the host contract. |
-| 23 | Should the **pluggable session/identity store** (the persistence work tracked as v1 fast follow #23) and the per-agent core `HistoryProvider` share a backing store contract, or stay completely separate? Today: history flows through the agent's `HistoryProvider`, identity-link grants and last-seen state live with the host. | Eng | Keeping them separate is simplest for v1; convergence belongs with the pluggable session/identity store work. |
-| 24 | Should `FoundryHistoryProvider` live in `agent-framework-foundry` (keeps Foundry-related code together; reuses the standard core `HistoryProvider` Protocol so no new package dependency is needed) — or is there a case for a separate package? | Eng | First option is the obvious default since the provider implements the core Protocol with no hosting-package coupling. Decide alongside the Foundry package owners. |
-| 25 | Should `Channel.confidentiality_tier` stay an opaque `str?` (current draft) or become a small enum / hierarchy (e.g. ordered `public < internal < corp`) so policies can be expressed as comparisons? | PM / Eng | Opaque label is simplest and lets each app define its own taxonomy; ordered hierarchy is more expressive but tightly couples taxonomy to the host. Decide before public docs. |
-| 26 | Where does the **delivery-replay mechanism** live — host-owned (`host.retry_delivery(...)`, background sweeper consulting `SupportsDeliveryTracking` providers), per-channel (each `ChannelPush` declares its own retry policy), or fully out-of-band (operators run their own worker over the on-message `deliveries[]` log)? | Eng | Out of scope for the v1 data model spec; the on-message envelope is sufficient for any of these. Decide alongside the pluggable session/identity store work (#23). |
 | 27 | What is the retention contract for completed `deliveries[]` entries — keep forever for audit, GC after the message itself ages out, or cap per-message at a fixed attempt count? Should `last_error` payloads be redacted to a code/message pair to avoid logging PII from the underlying channel SDK? | Eng / Compliance | Suggest "lifetime equals message lifetime" + redacted error shape (`{code, message}` only, no provider stack frames or payload echoes) as the default; revisit when the persistent store contract lands. |
+
+### Resolved Questions (decisions log)
+
+Original numbering preserved so external references (checkpoints, ADR cross-links) still resolve. Decisions captured here may imply spec-body changes elsewhere — see [Decisions-driven follow-ups](#decisions-driven-follow-ups) below.
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Final distribution package names? | `agent-framework-hosting` with suffixes (`-responses`, `-invocations`, `-telegram`, …). Public imports stay at `agent_framework.hosting`. |
+| 2 | `uvicorn` required vs optional extra? | Use **hypercorn** instead of uvicorn; the `serve` extra remains optional. `host.app` is still the canonical server-agnostic ASGI surface. |
+| 3 | Keep `HostedRunResult` wrapper or return `AgentResponse` directly? | **Keep `HostedRunResult`.** It wraps both `AgentRunResult` *and* the unknown output type of a `Workflow`, and adds host-run metadata (resolved session, etc.). |
+| 4 | Where do generic auth helpers live? | Only the **mechanisms** live in core. Concrete implementations sit in their own packages when they pull dependencies; dep-free helpers may live in `hosting`. |
+| 7 | `protocol_request` typed (`Any`) or typed kwargs? | **Keep `Any`.** |
+| 9 | Allow nested routers / `path=""`? | **Yes.** The host developer is responsible for ensuring routes do not overlap. |
+| 11 | Should the host support multiple targets? | **No** — final. Solve a layer above (an external router that owns multiple single-target hosts). |
+| 13 | Which identity linkers ship in phase 1? | **Entra linker** (in the Entra package) + **one-time-code linker** (in core). Drop MFA for now; investigating additional linkers tracked as a follow-up. |
+| 15 | Identity resolver invoked once on host vs per channel? | **Once on the host** with `ChannelIdentity(channel, native_id, ...)`. |
+| 16 | Should `IdentityLinker` and `Channel` share a base `Contributor` protocol? | **A linker *is* a Channel — specialised.** Use the single Channel-shaped contract; collapse `IdentityLinker` into a Channel specialisation. |
+| 18 | Contract for `ChannelPush` failures? | **Annotate the failure on the relevant `deliveries[]` entry** in the data model (see §"Delivery tracking on assistant messages"). Re-delivery is future work (Q26). |
+| 19 | `host.run_in_background(...)` `notify` callback? | Programmatic non-channel delivery will be expressed via the **`continuation_token`** mechanism (see Q20), not a separate `notify` callback. |
+| 20 | Storage / TTL of `RunHandle`s? | Rename `RunHandle` → **`continuation_token`** and store as "regular" messages — this already exists for the Responses channel; **add equivalent support to the Invocations channel.** Push-capable channels can still use it; default behaviour remains "push on completion", but the developer can choose other UX (poll-after-push, hybrid, …). |
+| 21 | Partial-failure surfacing for `all_linked`? | **Handled by the `deliveries[]` array** in the data model, updated per-destination as each push attempt completes. |
+| 23 | Share one backing store contract for host-level vs `ContextProvider`? | **Stay separate protocols** (current draft direction confirmed). A deployment may still bind both onto the same physical backend. |
+| 24 | Where does the Foundry history provider live? | Tentative name **`FoundryHostedAgentHistoryProvider`**, in the **`foundry-hosting`** package (shares the dependency). Confirm with Foundry package owners before launch. |
+| 25 | `Channel.confidentiality_tier` opaque vs enum? | Keep as `str?` for now; can revisit before Release. |
+| 26 | Where does the delivery-replay mechanism live? | **In the Host**, but **out of scope for v1.** The on-message `deliveries[]` envelope is sufficient input for any future replayer. |
+
+### Decisions-driven follow-ups
+
+The following resolutions imply prose / API edits elsewhere in the spec body (not just the table above). Captured here so they aren't lost; the edits themselves are deferred to a separate pass.
+
+- **Q2** — Switch all install / `host.serve()` references from `uvicorn` to `hypercorn`.
+- **Q3** — Update `HostedRunResult` documentation to cover the workflow-output case and the host-run metadata it adds on top of `AgentRunResult`.
+- **Q11** — Strip any remaining "multi-target hedge" language from the spec body.
+- **Q13** — Update the linker catalogue: Entra (in Entra package) + one-time-code (in core); remove MFA references.
+- **Q16** — Collapse `IdentityLinker` into a Channel specialisation in the spec body (architecture diagrams, contracts, examples).
+- **Q20** — Rename `RunHandle` → `continuation_token` throughout the spec; document the addition of continuation-token support to the Invocations channel; document the developer-controlled push UX choices.
