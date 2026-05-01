@@ -371,7 +371,8 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecut
                 }
                 catch (ShellCommandRejectedException ex)
                 {
-                    return $"Command blocked by policy: {ex.Message}";
+                    // ex.Message already starts with "Command rejected by policy: ...".
+                    return ex.Message;
                 }
             },
             new AIFunctionFactoryOptions

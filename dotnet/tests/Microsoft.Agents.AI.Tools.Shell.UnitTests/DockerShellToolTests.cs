@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 
@@ -171,7 +172,7 @@ public sealed class DockerShellToolTests
         // Container is the boundary; approval is opt-in for DockerShellTool.
         using var t = new DockerShellTool(mode: ShellMode.Stateless);
         var fn = t.AsAIFunction();
-        Assert.IsNotType<Extensions.AI.ApprovalRequiredAIFunction>(fn);
+        Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
     }
 
@@ -180,7 +181,7 @@ public sealed class DockerShellToolTests
     {
         using var t = new DockerShellTool(mode: ShellMode.Stateless);
         var fn = t.AsAIFunction(requireApproval: true);
-        Assert.IsType<Extensions.AI.ApprovalRequiredAIFunction>(fn);
+        Assert.IsType<ApprovalRequiredAIFunction>(fn);
     }
 
     [Fact]

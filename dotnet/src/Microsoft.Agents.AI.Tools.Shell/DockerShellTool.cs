@@ -267,7 +267,8 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
                 }
                 catch (ShellCommandRejectedException ex)
                 {
-                    return $"Command blocked by policy: {ex.Message}";
+                    // ex.Message already starts with "Command rejected by policy: ...".
+                    return ex.Message;
                 }
             },
             new AIFunctionFactoryOptions { Name = name, Description = description });

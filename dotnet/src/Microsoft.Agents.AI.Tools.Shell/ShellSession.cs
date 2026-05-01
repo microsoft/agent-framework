@@ -647,8 +647,15 @@ internal sealed class ShellSession : IAsyncDisposable
     private static class NativeMethods
     {
         internal const int SIGINT = 2;
+
+        // killpg lives in libc on Linux/macOS. The previous annotation used
+        // DllImportSearchPath.System32 — that's a Windows-only loader hint and
+        // does nothing for libc.so on POSIX. SafeDirectories satisfies
+        // CA5392/CA5393 without falling back to the unsafe AssemblyDirectory
+        // probe path. The call site is also gated to non-Windows, so the
+        // import is never resolved on Windows.
         [DllImport("libc", SetLastError = true)]
-        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
         internal static extern int killpg(int pgrp, int sig);
     }
 
