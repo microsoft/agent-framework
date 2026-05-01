@@ -691,7 +691,7 @@ class ObservabilitySettings:
 
         Model diagnostics are enabled if either diagnostic is enabled or diagnostic with sensitive events is enabled.
         """
-        return self.enable_instrumentation or self.enable_sensitive_data
+        return self.enable_instrumentation
 
     @property
     def SENSITIVE_DATA_ENABLED(self) -> bool:

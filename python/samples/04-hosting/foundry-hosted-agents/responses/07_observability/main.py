@@ -16,9 +16,9 @@ from pydantic import Field
 load_dotenv()
 
 
-@tool(approval_mode="never_require")
+@tool(approval_mode="never_require", description="Get the current location of the user.")
 def get_current_location() -> str:
-    """Get the current working directory."""
+    """Get the current location of the agent."""
     locations = ["New York", "London", "Paris", "Tokyo"]
     return locations[randint(0, len(locations) - 1)]
 
