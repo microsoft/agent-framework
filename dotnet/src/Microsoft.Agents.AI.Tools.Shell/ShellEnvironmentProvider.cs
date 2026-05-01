@@ -1,0 +1,294 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Microsoft.Agents.AI.Tools.Shell;
+
+/// <summary>
+/// Identifies the shell family the agent is talking to.
+/// </summary>
+public enum ShellFamily
+{
+    /// <summary>POSIX-style shell (bash, sh, zsh).</summary>
+    Posix,
+    /// <summary>PowerShell (pwsh or Windows PowerShell).</summary>
+    PowerShell,
+}
+
+/// <summary>
+/// A point-in-time snapshot of the shell environment the agent is using.
+/// </summary>
+/// <param name="Family">Shell family (PowerShell vs POSIX).</param>
+/// <param name="OSDescription"><see cref="RuntimeInformation.OSDescription"/>.</param>
+/// <param name="ShellVersion">Reported shell version, or <see langword="null"/> if probing failed.</param>
+/// <param name="WorkingDirectory">CWD at probe time, or empty if probing failed.</param>
+/// <param name="ToolVersions">Map of probed CLI tool name to reported version (or <see langword="null"/> when not installed).</param>
+public sealed record ShellEnvironmentSnapshot(
+    ShellFamily Family,
+    string OSDescription,
+    string? ShellVersion,
+    string WorkingDirectory,
+    IReadOnlyDictionary<string, string?> ToolVersions);
+
+/// <summary>
+/// Configuration knobs for <see cref="ShellEnvironmentProvider"/>.
+/// </summary>
+public sealed class ShellEnvironmentProviderOptions
+{
+    /// <summary>
+    /// CLI tools whose <c>--version</c> output is probed and surfaced in
+    /// the agent context. Defaults to a small, common set.
+    /// </summary>
+    public IReadOnlyList<string> ProbeTools { get; init; } =
+        ["git", "dotnet", "node", "python", "docker"];
+
+    /// <summary>
+    /// Optional override for the auto-detected shell family. When
+    /// <see langword="null"/>, the family is inferred from
+    /// <see cref="RuntimeInformation"/> (Windows → PowerShell, otherwise
+    /// POSIX). Set this when running against a non-default shell (e.g.,
+    /// bash on Windows via WSL, or pwsh on Linux).
+    /// </summary>
+    public ShellFamily? OverrideFamily { get; init; }
+
+    /// <summary>
+    /// Per-probe execution timeout. Failed or timed-out probes are
+    /// recorded as missing rather than thrown to the agent.
+    /// </summary>
+    public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Optional formatter for the instructions block. When
+    /// <see langword="null"/>, a built-in formatter is used.
+    /// </summary>
+    public Func<ShellEnvironmentSnapshot, string>? InstructionsFormatter { get; init; }
+}
+
+/// <summary>
+/// An <see cref="AIContextProvider"/> that probes the underlying shell
+/// (OS, shell family/version, working directory, available CLI tools)
+/// once per session and injects an authoritative instructions block so
+/// the agent emits commands in the correct shell idiom.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This addresses a common failure mode where a model defaults to bash
+/// syntax while talking to a PowerShell session (or vice versa). Probes
+/// run through the supplied <see cref="IShellExecutor"/>, so the same
+/// provider works for both <see cref="LocalShellTool"/> (host shell) and
+/// <see cref="DockerShellTool"/> (container shell).
+/// </para>
+/// <para>
+/// The provider does not expose any new tools; it augments the system
+/// prompt only. Probe failures are swallowed and surfaced as
+/// <see langword="null"/> entries in the snapshot — a missing CLI never
+/// fails the agent.
+/// </para>
+/// </remarks>
+public sealed class ShellEnvironmentProvider : AIContextProvider
+{
+    private readonly IShellExecutor _executor;
+    private readonly ShellEnvironmentProviderOptions _options;
+    private Task<ShellEnvironmentSnapshot>? _snapshotTask;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ShellEnvironmentProvider"/> class.
+    /// </summary>
+    /// <param name="executor">The shell executor used to run probe commands.</param>
+    /// <param name="options">Optional configuration; defaults are used when <see langword="null"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="executor"/> is <see langword="null"/>.</exception>
+    public ShellEnvironmentProvider(IShellExecutor executor, ShellEnvironmentProviderOptions? options = null)
+    {
+        this._executor = executor ?? throw new ArgumentNullException(nameof(executor));
+        this._options = options ?? new ShellEnvironmentProviderOptions();
+    }
+
+    /// <summary>
+    /// Gets the most recently captured snapshot, or <see langword="null"/>
+    /// if no probe has completed yet.
+    /// </summary>
+    public ShellEnvironmentSnapshot? CurrentSnapshot { get; private set; }
+
+    /// <summary>
+    /// Force a re-probe and refresh the cached snapshot. Useful when the
+    /// agent has changed something the snapshot depends on (e.g., installed
+    /// a new CLI mid-session).
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The freshly captured snapshot.</returns>
+    public async Task<ShellEnvironmentSnapshot> RefreshAsync(CancellationToken cancellationToken = default)
+    {
+        var snapshot = await this.ProbeAsync(cancellationToken).ConfigureAwait(false);
+        this.CurrentSnapshot = snapshot;
+        this._snapshotTask = Task.FromResult(snapshot);
+        return snapshot;
+    }
+
+    /// <inheritdoc />
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        // First-call wins: subsequent concurrent callers await the same Task.
+        // Probe is best-effort — failures surface as null fields, not exceptions.
+        var task = this._snapshotTask;
+        if (task is null)
+        {
+            var fresh = this.ProbeAsync(cancellationToken);
+            task = Interlocked.CompareExchange(ref this._snapshotTask, fresh, null) ?? fresh;
+        }
+
+        var snapshot = await task.ConfigureAwait(false);
+        this.CurrentSnapshot = snapshot;
+
+        var formatter = this._options.InstructionsFormatter ?? DefaultInstructionsFormatter;
+        return new AIContext { Instructions = formatter(snapshot) };
+    }
+
+    private async Task<ShellEnvironmentSnapshot> ProbeAsync(CancellationToken cancellationToken)
+    {
+        var family = this._options.OverrideFamily ?? DetectFamily();
+
+        await this._executor.StartAsync(cancellationToken).ConfigureAwait(false);
+
+        var (shellVersion, workingDir) = await this.ProbeShellAndCwdAsync(family, cancellationToken).ConfigureAwait(false);
+
+        var toolVersions = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tool in this._options.ProbeTools)
+        {
+            toolVersions[tool] = await this.ProbeToolVersionAsync(tool, cancellationToken).ConfigureAwait(false);
+        }
+
+        return new ShellEnvironmentSnapshot(
+            Family: family,
+            OSDescription: RuntimeInformation.OSDescription,
+            ShellVersion: shellVersion,
+            WorkingDirectory: workingDir,
+            ToolVersions: toolVersions);
+    }
+
+    private async Task<(string? Version, string Cwd)> ProbeShellAndCwdAsync(ShellFamily family, CancellationToken cancellationToken)
+    {
+        var probe = family == ShellFamily.PowerShell
+            ? "Write-Output (\"VERSION=\" + $PSVersionTable.PSVersion.ToString()); Write-Output (\"CWD=\" + (Get-Location).Path)"
+            : "echo \"VERSION=${BASH_VERSION:-${ZSH_VERSION:-unknown}}\"; echo \"CWD=$PWD\"";
+
+        var result = await this.RunProbeAsync(probe, cancellationToken).ConfigureAwait(false);
+        if (result is null)
+        {
+            return (null, string.Empty);
+        }
+
+        string? version = null;
+        string cwd = string.Empty;
+        foreach (var line in result.Stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (line.StartsWith("VERSION=", StringComparison.Ordinal))
+            {
+                var v = line.Substring("VERSION=".Length).Trim();
+                version = string.IsNullOrEmpty(v) || v == "unknown" ? null : v;
+            }
+            else if (line.StartsWith("CWD=", StringComparison.Ordinal))
+            {
+                cwd = line.Substring("CWD=".Length).Trim();
+            }
+        }
+        return (version, cwd);
+    }
+
+    private async Task<string?> ProbeToolVersionAsync(string tool, CancellationToken cancellationToken)
+    {
+        // Quote the tool name to keep the probe predictable in PowerShell.
+        var probe = $"{tool} --version";
+        var result = await this.RunProbeAsync(probe, cancellationToken).ConfigureAwait(false);
+        if (result is null || result.ExitCode != 0)
+        {
+            return null;
+        }
+        var firstLine = result.Stdout
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault();
+        return string.IsNullOrWhiteSpace(firstLine) ? null : firstLine.Trim();
+    }
+
+    private async Task<ShellResult?> RunProbeAsync(string command, CancellationToken cancellationToken)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(this._options.ProbeTimeout);
+        try
+        {
+            return await this._executor.RunAsync(command, cts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException || ex is ShellCommandRejectedException || ex is ShellExecutionException || ex is ShellTimeoutException)
+        {
+            return null;
+        }
+    }
+
+    private static ShellFamily DetectFamily() =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? ShellFamily.PowerShell
+            : ShellFamily.Posix;
+
+    /// <summary>
+    /// Default formatter for the instructions block. Public so callers
+    /// who want to wrap or augment the default can call it directly.
+    /// </summary>
+    /// <param name="snapshot">The snapshot to render.</param>
+    /// <returns>A multi-line markdown-style instructions block.</returns>
+    public static string DefaultInstructionsFormatter(ShellEnvironmentSnapshot snapshot)
+    {
+        var sb = new StringBuilder();
+        _ = sb.AppendLine("## Shell environment");
+
+        if (snapshot.Family == ShellFamily.PowerShell)
+        {
+            var version = snapshot.ShellVersion is null ? string.Empty : $" {snapshot.ShellVersion}";
+            _ = sb.Append("You are operating a PowerShell").Append(version).Append(" session on ").Append(snapshot.OSDescription).AppendLine(".");
+            _ = sb.AppendLine("Use PowerShell idioms, NOT bash:");
+            _ = sb.AppendLine("- Set environment variables with `$env:NAME = 'value'` (NOT `NAME=value`).");
+            _ = sb.AppendLine("- Change directory with `Set-Location` or `cd`. Paths use `\\` separators.");
+            _ = sb.AppendLine("- Reference environment variables as `$env:NAME` (NOT `$NAME`).");
+            _ = sb.AppendLine("- The system temp directory is `[System.IO.Path]::GetTempPath()` (NOT `/tmp`).");
+            _ = sb.AppendLine("- Pipe to `Out-Null` to suppress output (NOT `> /dev/null`).");
+        }
+        else
+        {
+            var version = snapshot.ShellVersion is null ? string.Empty : $" {snapshot.ShellVersion}";
+            _ = sb.Append("You are operating a POSIX shell").Append(version).Append(" session on ").Append(snapshot.OSDescription).AppendLine(".");
+            _ = sb.AppendLine("Use POSIX shell idioms (bash/sh).");
+            _ = sb.AppendLine("- Set environment variables for the next command with `export NAME=value`.");
+            _ = sb.AppendLine("- Reference environment variables as `$NAME` or `${NAME}`.");
+            _ = sb.AppendLine("- Paths use `/` separators.");
+        }
+
+        if (!string.IsNullOrEmpty(snapshot.WorkingDirectory))
+        {
+            _ = sb.Append("Working directory: ").AppendLine(snapshot.WorkingDirectory);
+        }
+
+        var installed = snapshot.ToolVersions
+            .Where(kv => kv.Value is not null)
+            .Select(kv => $"{kv.Key} ({kv.Value})")
+            .ToList();
+        var missing = snapshot.ToolVersions
+            .Where(kv => kv.Value is null)
+            .Select(kv => kv.Key)
+            .ToList();
+
+        if (installed.Count > 0)
+        {
+            _ = sb.Append("Available CLIs: ").AppendLine(string.Join(", ", installed));
+        }
+        if (missing.Count > 0)
+        {
+            _ = sb.Append("Not installed: ").AppendLine(string.Join(", ", missing));
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+}
