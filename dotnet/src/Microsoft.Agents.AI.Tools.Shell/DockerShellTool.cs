@@ -61,6 +61,14 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
 
     private const int DefaultMaxOutputBytes = 64 * 1024;
 
+    /// <summary>
+    /// Recommended default per-command timeout (30 seconds). Pass this
+    /// explicitly to the constructor to opt in to a bounded timeout. Note
+    /// that <see langword="null"/> (the parameter default) means
+    /// <em>no timeout</em>, matching the documented contract.
+    /// </summary>
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+
     private readonly string _image;
     private readonly ShellMode _mode;
     private readonly string? _hostWorkdir;
@@ -141,7 +149,7 @@ public sealed class DockerShellTool : IDisposable, IAsyncDisposable, IShellExecu
         this._extraRunArgs = extraRunArgs ?? Array.Empty<string>();
         this._env = environment ?? new Dictionary<string, string>();
         this._policy = policy ?? new ShellPolicy();
-        this._timeout = timeout ?? TimeSpan.FromSeconds(30);
+        this._timeout = timeout;
         this._maxOutputBytes = maxOutputBytes;
         this._onCommand = onCommand;
         this.DockerBinary = dockerBinary ?? "docker";

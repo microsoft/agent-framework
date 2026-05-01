@@ -42,6 +42,14 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecut
 {
     private const int DefaultMaxOutputBytes = 64 * 1024;
 
+    /// <summary>
+    /// Recommended default per-command timeout (30 seconds). Pass this
+    /// explicitly to the constructor to opt in to a bounded timeout. Note
+    /// that <see langword="null"/> (the parameter default) means
+    /// <em>no timeout</em>, matching the documented contract.
+    /// </summary>
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
+
     private readonly ShellMode _mode;
     private readonly ShellPolicy _policy;
     private readonly ResolvedShell _shell;
@@ -104,7 +112,7 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecut
         this._mode = mode;
         this._policy = policy ?? new ShellPolicy();
         this._shell = shellArgv is not null ? ShellResolver.ResolveArgv(shellArgv) : ShellResolver.Resolve(shell);
-        this._timeout = timeout ?? TimeSpan.FromSeconds(30);
+        this._timeout = timeout;
         this._maxOutputBytes = maxOutputBytes;
         this._workingDirectory = workingDirectory;
         this._confineWorkingDirectory = confineWorkingDirectory;

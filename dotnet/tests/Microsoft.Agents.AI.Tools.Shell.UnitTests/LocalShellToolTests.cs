@@ -95,6 +95,27 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
+    public async Task RunAsync_NullTimeout_DoesNotTimeOutAsync()
+    {
+        // Documented contract: timeout: null disables timeouts. Verify that
+        // a short-lived command completes normally instead of being killed
+        // when the caller explicitly opts out of a timeout.
+        await using var shell = new LocalShellTool(mode: ShellMode.Stateless, timeout: null);
+        var echo = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "Write-Output ok"
+            : "echo ok";
+        var result = await shell.RunAsync(echo);
+        Assert.False(result.TimedOut);
+        Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
+    public void DefaultTimeout_IsThirtySeconds()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(30), LocalShellTool.DefaultTimeout);
+    }
+
+    [Fact]
     public void AsAIFunction_DefaultsToApprovalRequired()
     {
         using var shell = new LocalShellTool(mode: ShellMode.Stateless);
