@@ -448,12 +448,23 @@ internal sealed class WorkflowSession : AgentSession
                     this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
                     goto default;
 
+                case AgentResponseEvent agentResponse:
+                    if (!this._includeWorkflowOutputsInResponse)
+                    {
+                        goto default;
+                    }
+
+                    foreach (ChatMessage message in agentResponse.Response.Messages)
+                    {
+                        yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                    }
+                    break;
+
                 case WorkflowOutputEvent output:
                     IEnumerable<ChatMessage>? updateMessages = output.Data switch
                     {
                         IEnumerable<ChatMessage> chatMessages => chatMessages,
                         ChatMessage chatMessage => [chatMessage],
-                        AgentResponse agentResponse => agentResponse.Messages,
                         _ => null
                     };
 

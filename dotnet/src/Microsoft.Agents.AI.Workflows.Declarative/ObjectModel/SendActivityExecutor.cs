@@ -21,8 +21,13 @@ internal sealed class SendActivityExecutor(SendActivity model, WorkflowFormulaSt
 
             await context.AddEventAsync(new MessageActivityEvent(activityText.Trim()), cancellationToken).ConfigureAwait(false);
 
+            // Route through YieldOutputAsync so the activity participates in the workflow's
+            // output-filter pipeline. The runner currently special-cases AgentResponse to
+            // produce an AgentResponseEvent identical to the one we'd build by hand, so this
+            // is behavior-preserving today and forward-compatible if filtering is ever
+            // applied to agent responses.
             AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentResponseEvent(this.Id, response), cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
         return default;

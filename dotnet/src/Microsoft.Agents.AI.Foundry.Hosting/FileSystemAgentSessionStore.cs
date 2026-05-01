@@ -4,6 +4,7 @@ using System;
 using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -156,24 +157,30 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 
     private static string Sanitize(string value)
     {
-        // stackalloc is bounded so an externally-controlled length cannot crash the
-        // hosting process with StackOverflowException.
-        const int StackLimit = 256;
+        // Percent-encode every character that is invalid in a filename, plus '%' itself
+        // so the encoding is unambiguous. This is reversible and avoids the collision
+        // hazard of a lossy character substitution (e.g. "foo/bar" and "foo_bar" sharing
+        // a sanitized name).
         char[] invalid = Path.GetInvalidFileNameChars();
 
+        int encodedLength = ComputeEncodedLength(value, invalid);
+
+        // stackalloc is bounded so an externally-controlled length cannot crash the
+        // hosting process with StackOverflowException.
+        const int StackLimit = 512;
         string sanitized;
-        if (value.Length <= StackLimit)
+        if (encodedLength <= StackLimit)
         {
-            Span<char> buffer = stackalloc char[value.Length];
+            Span<char> buffer = stackalloc char[encodedLength];
             SanitizeCore(value, invalid, buffer);
             sanitized = new string(buffer);
         }
         else
         {
-            char[] rented = ArrayPool<char>.Shared.Rent(value.Length);
+            char[] rented = ArrayPool<char>.Shared.Rent(encodedLength);
             try
             {
-                Span<char> buffer = rented.AsSpan(0, value.Length);
+                Span<char> buffer = rented.AsSpan(0, encodedLength);
                 SanitizeCore(value, invalid, buffer);
                 sanitized = new string(buffer);
             }
@@ -183,17 +190,31 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
             }
         }
 
-        // Path.GetInvalidFileNameChars() on Linux only contains NUL and '/', so the
-        // segments "." and ".." would otherwise pass through and could resolve to the
-        // current/parent directory when used as a bare path component (e.g. agent.Name).
-        // Neutralize any segment composed entirely of dots so the result can never escape
-        // its parent directory.
+        // '.' and '..' are valid filename characters but resolve to current/parent
+        // directory when used as a bare path component. Windows additionally strips
+        // trailing dots from filenames, so a segment like "..." would survive on disk
+        // as "" and a partial-encode like "%2E.." would survive as "%2E". Encode every
+        // dot in any all-dot segment so the result has no special meaning to the OS.
         if (sanitized.Length > 0 && IsAllDots(sanitized))
         {
-            return new string('_', sanitized.Length);
+            return string.Concat(Enumerable.Repeat("%2E", sanitized.Length));
         }
 
         return sanitized;
+    }
+
+    private static int ComputeEncodedLength(string value, char[] invalid)
+    {
+        int extra = 0;
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (c == '%' || Array.IndexOf(invalid, c) >= 0)
+            {
+                extra += 2; // 1 char ('%' or invalid) becomes 3 chars ("%XX")
+            }
+        }
+        return value.Length + extra;
     }
 
     private static bool IsAllDots(string value)
@@ -211,10 +232,22 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 
     private static void SanitizeCore(string value, char[] invalid, Span<char> buffer)
     {
+        int j = 0;
         for (int i = 0; i < value.Length; i++)
         {
             char c = value[i];
-            buffer[i] = Array.IndexOf(invalid, c) >= 0 ? '_' : c;
+            if (c == '%' || Array.IndexOf(invalid, c) >= 0)
+            {
+                buffer[j++] = '%';
+                buffer[j++] = HexChar((c >> 4) & 0xF);
+                buffer[j++] = HexChar(c & 0xF);
+            }
+            else
+            {
+                buffer[j++] = c;
+            }
         }
     }
+
+    private static char HexChar(int n) => (char)(n < 10 ? '0' + n : 'A' + n - 10);
 }

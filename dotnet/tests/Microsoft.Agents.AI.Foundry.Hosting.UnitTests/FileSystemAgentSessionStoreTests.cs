@@ -129,10 +129,8 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
     [Fact]
     public async Task SaveSessionAsync_LongConversationId_DoesNotStackOverflowAsync()
     {
-        // Sanitize previously used unbounded stackalloc — a long id would crash the
-        // process. We deliberately keep the value < typical OS file-name limits
-        // (~255 chars) so the file write succeeds but Sanitize is forced past the
-        // small-input fast path.
+        // Keep the value < typical OS file-name limits (~255 chars) so the file write
+        // succeeds, but long enough to force Sanitize past its small-input fast path.
         var store = new FileSystemAgentSessionStore(this._root);
         var conversationId = new string('a', 200);
         var agent = new TestAgent();
@@ -200,8 +198,6 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
     [InlineData("...")]
     public async Task SaveSessionAsync_AgentNameIsDotSegment_DoesNotEscapeRootAsync(string agentName)
     {
-        // Defense-in-depth: Path.GetInvalidFileNameChars() on Linux only contains NUL and '/',
-        // so segments composed entirely of dots would otherwise resolve to the parent of root.
         var store = new FileSystemAgentSessionStore(this._root);
         var agent = new TestAgent(name: agentName);
 
@@ -213,19 +209,37 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
         var fullPath = Path.GetFullPath(allFiles[0]);
         Assert.StartsWith(Path.GetFullPath(this._root) + Path.DirectorySeparatorChar, fullPath, StringComparison.Ordinal);
 
-        // The bucket directory name must not be a navigable dot-segment.
+        // The bucket directory name must not be a navigable dot-segment. After
+        // percent-encoding every dot in an all-dot segment, names like ".", "..", and
+        // "..." become "%2E", "%2E%2E", "%2E%2E%2E" — distinct, OS-neutral filenames.
         var bucketName = Path.GetFileName(Path.GetDirectoryName(fullPath)!);
         Assert.NotEmpty(bucketName);
+        Assert.NotEqual(".", bucketName);
+        Assert.NotEqual("..", bucketName);
         Assert.DoesNotContain(bucketName, c => c == '.');
+    }
+
+    [Fact]
+    public async Task SaveSessionAsync_DistinctNamesWithInvalidChars_ProduceDistinctFilesAsync()
+    {
+        // Percent-encoding must keep otherwise-colliding inputs distinct: under the
+        // earlier underscore-substitution scheme, "foo/bar" and "foo_bar" both sanitized
+        // to "foo_bar" and would have shared a session bucket on disk.
+        var store = new FileSystemAgentSessionStore(this._root);
+        var agentSlash = new TestAgent(name: "foo/bar");
+        var agentUnderscore = new TestAgent(name: "foo_bar");
+
+        await store.SaveSessionAsync(agentSlash, "conv-1", NewSession());
+        await store.SaveSessionAsync(agentUnderscore, "conv-1", NewSession());
+
+        var bucketDirs = Directory.GetDirectories(store.RootDirectory);
+        Assert.Equal(2, bucketDirs.Length);
     }
 
     [Fact]
     public async Task GetSessionAsync_NoExistingFile_DoesNotCreateAgentDirectoryAsync()
     {
         // Read operations must not have side effects on the file system.
-        // The previous implementation called Directory.CreateDirectory(agentDir)
-        // inside GetSessionPath, so a miss-on-read still left an empty bucket
-        // directory behind on disk.
         var store = new FileSystemAgentSessionStore(this._root);
         var agent = new TestAgent(name: "agent-with-bucket");
 

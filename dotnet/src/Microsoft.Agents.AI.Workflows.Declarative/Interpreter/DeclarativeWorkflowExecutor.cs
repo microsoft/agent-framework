@@ -70,30 +70,35 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     {
         Type tInput = typeof(TInput);
 
-        // Use IsAssignableFrom rather than exact equality so that a broader TInput (e.g.
-        // object or an interface that already accepts ChatMessage) does not get its
-        // inherited inputTransform shadowed by a more-specific handler we register here.
-        if (!tInput.IsAssignableFrom(typeof(string)))
+        // Skip an exact-type match because RouteBuilder.AddHandler throws on duplicate
+        // registrations for the same message type. Equality (not IsAssignableFrom) is
+        // also what ChatProtocolExtensions.IsChatProtocol checks, so always registering
+        // IEnumerable<ChatMessage> when TInput is broader (e.g. object) keeps the
+        // workflow chat-protocol-compliant.
+        if (tInput != typeof(string))
         {
             routeBuilder.AddHandler<string>(this.HandleStringAsync);
         }
 
-        if (!tInput.IsAssignableFrom(typeof(ChatMessage)))
+        if (tInput != typeof(ChatMessage))
         {
             routeBuilder.AddHandler<ChatMessage>(this.HandleChatMessageAsync);
         }
 
-        if (!tInput.IsAssignableFrom(typeof(IEnumerable<ChatMessage>)))
+        if (tInput != typeof(IEnumerable<ChatMessage>))
         {
             routeBuilder.AddHandler<IEnumerable<ChatMessage>>(this.HandleChatMessagesAsync);
         }
 
-        if (!tInput.IsAssignableFrom(typeof(ChatMessage[])))
+        if (tInput != typeof(ChatMessage[]))
         {
             routeBuilder.AddHandler<ChatMessage[]>(this.HandleChatMessageArrayAsync);
         }
 
-        routeBuilder.AddHandler<TurnToken>(this.HandleTurnTokenAsync);
+        if (tInput != typeof(TurnToken))
+        {
+            routeBuilder.AddHandler<TurnToken>(this.HandleTurnTokenAsync);
+        }
     }
 
     private ValueTask HandleStringAsync(string message, IWorkflowContext context, CancellationToken cancellationToken)
