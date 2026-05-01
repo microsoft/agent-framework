@@ -1136,16 +1136,18 @@ Variants without changing channel code:
 
 If the chosen destination channel does not implement `ChannelPush` (e.g. Responses), the host falls back to the `originating` channel and records the fallback in telemetry. This makes the Responses + background-run combo work as "submit on Responses, poll on Responses" without surprising silent drops.
 
-### Scenario 9: Hosting a `Workflow` instead of an agent
+### Scenario 9: Hosting a `Workflow` instead of an agent (with checkpoint storage)
 
 > **Prerequisites:** This sample assumes:
 > - `agent-framework-hosting` and `agent-framework-hosting-invocations` are installed
 > - A `Workflow` definition with typed inputs (`OrderIntakeInputs`)
+> - A directory writable by the host process for workflow checkpoints
 
 ```python
 from dataclasses import dataclass, replace
+from pathlib import Path
 
-from agent_framework import Workflow
+from agent_framework import FileCheckpointStorage, WorkflowBuilder
 from agent_framework.hosting import (
     AgentFrameworkHost,
     ChannelRequest,
@@ -1160,19 +1162,34 @@ class OrderIntakeInputs:
     quantity: int
 
 
-workflow: Workflow = build_order_intake_workflow()  # application-defined
+# Build the workflow with a CheckpointStorage so individual executor frames
+# are persisted as the workflow runs. FileCheckpointStorage writes one file
+# per checkpoint under the configured directory; survives host restarts.
+checkpoint_storage = FileCheckpointStorage(directory=Path("./.af-hosting/checkpoints/"))
+
+workflow = (
+    WorkflowBuilder(checkpoint_storage=checkpoint_storage)
+    .add_executor(...)        # application-defined
+    .build()
+)
 
 
 def adapt_to_workflow_inputs(request: ChannelRequest, *, protocol_request=None, **kwargs) -> ChannelRequest:
     # The channel produces a default ChannelRequest with text input. The workflow
-    # needs typed OrderIntakeInputs — the hook is the adapter point.
+    # needs typed OrderIntakeInputs — the hook is the adapter point. The same
+    # hook is the place to surface a caller-supplied checkpoint id (to resume
+    # an interrupted run) by promoting it onto request.attributes; the host's
+    # workflow dispatch reads it on the way to Workflow.run(...).
     payload = protocol_request  # raw Invocations request body
     inputs = OrderIntakeInputs(
         customer_id=payload["customer_id"],
         sku=payload["sku"],
         quantity=int(payload["quantity"]),
     )
-    return replace(request, input=inputs)
+    new_attrs = dict(request.attributes)
+    if checkpoint_id := payload.get("resume_from_checkpoint"):
+        new_attrs["workflow.checkpoint_id"] = checkpoint_id
+    return replace(request, input=inputs, attributes=new_attrs)
 
 
 host = AgentFrameworkHost(
@@ -1185,6 +1202,8 @@ host.serve(host="localhost", port=8000)
 ```
 
 The host detects that `target` is a `Workflow` and dispatches the resulting `ChannelRequest.input` to `Workflow.run(...)` instead of `SupportsAgentRun.run(...)`. The channel does not need to know which kind of target it is fronting — `HostedRunResult` and `HostedStreamResult` are normalized across both seams. The same workflow target could equally be exposed on Telegram or a Responses channel by supplying the appropriate `run_hook` to translate inbound chat messages into typed workflow inputs.
+
+**Checkpoint storage** is wired onto the workflow itself (via `WorkflowBuilder(checkpoint_storage=...)` or per-run via `Workflow.run(..., checkpoint_storage=...)`), **not** on the host. The host treats it as workflow-runtime state — structurally distinct from the `HostStateStore` (which persists `ContinuationToken`s, identity-link grants, and last-seen records — host-execution metadata, not workflow internals) and from `ContextProvider` (per-conversation context). All three protocols stay separate, but a deployment MAY back them with the same physical store. When `request.attributes["workflow.checkpoint_id"]` is set (as the run hook does above when the caller supplies `resume_from_checkpoint`), the host's workflow dispatch path passes it through to `Workflow.run(checkpoint_id=...)` so the workflow resumes from that frame instead of running from scratch — useful for long-running intake flows that survive host restarts or retries.
 
 ### Scenario 10: Authoring a new channel package
 
