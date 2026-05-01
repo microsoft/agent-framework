@@ -561,7 +561,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                             "callback is configured on the agent; the request was denied."
                         )
                     )
-                    logger.info(
+                    logger.warning(
                         "Denying execution of tool '%s' (approval_mode='always_require', %s)",
                         func_tool.name,
                         "callback denied" if approval_handler is not None else "no callback configured",
