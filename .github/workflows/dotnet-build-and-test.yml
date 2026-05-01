@@ -390,7 +390,7 @@ jobs:
             dotnet-integration-report-history-
       - name: Generate trend report
         run: >
-          uv run python scripts/flaky_report/aggregate.py
+          uv run python scripts/integration_test_report/aggregate.py
           ../dotnet-test-results/
           dotnet-integration-report-history.json
           dotnet-integration-test-report.md
