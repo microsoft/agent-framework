@@ -77,11 +77,19 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // 4. Convert input: history + current input → ChatMessage[]
         var messages = new List<ChatMessage>();
 
-        // Load conversation history if available
-        var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
-        if (history.Count > 0)
+        // Load conversation history only for fresh sessions. When a session already exists
+        // (e.g. resuming a workflow paused at an external-input port), the workflow's
+        // checkpointed state already contains the prior turns' messages — replaying history
+        // would re-drive completed actions and break HITL resume semantics.
+        var isResume = !string.IsNullOrWhiteSpace(sessionConversationId)
+            && session?.StateBag?.Count > 0;
+        if (!isResume)
         {
-            messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag));
+            var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
+            if (history.Count > 0)
+            {
+                messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag));
+            }
         }
 
         // Load and convert current input items

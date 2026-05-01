@@ -14,9 +14,17 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
 /// Provides a file-system backed implementation of <see cref="AgentSessionStore"/> that persists
-/// the serialized session JSON for each conversation to disk under a configurable root directory.
+/// the agent-framework's serialized <see cref="AgentSession"/> state for each (agent, conversation)
+/// pair to disk. This complements Foundry storage (which owns conversation messages, agent
+/// definitions, and threads) — it is not a replacement for it.
 /// </summary>
 /// <remarks>
+/// <para>
+/// The session JSON stored here is the AF runtime's own state (workflow checkpoint manager,
+/// pending external requests, internal port state) that is required to resume an
+/// <see cref="AgentSession"/> across HTTP requests or process restarts but is not part of
+/// Foundry's data model.
+/// </para>
 /// <para>
 /// When running in a Foundry hosted environment, sessions are stored under the well-known
 /// <c>/.checkpoints</c> path; locally, they fall under <c>{cwd}/.checkpoints</c>. The session

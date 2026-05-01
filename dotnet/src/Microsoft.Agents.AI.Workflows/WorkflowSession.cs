@@ -288,23 +288,92 @@ internal sealed class WorkflowSession : AgentSession
     }
 
     /// <summary>
+    /// Resolves the concrete request payload type from <see cref="RequestPortInfo.RequestType"/>
+    /// and returns it as an <see cref="IExternalRequestEnvelope"/> if the type implements that
+    /// abstraction. Resolving via the concrete <see cref="TypeId"/> (rather than asking the
+    /// PortableValue to deserialize directly to <see cref="IExternalRequestEnvelope"/>) is
+    /// required because checkpointed payloads round-trip as JSON which cannot be deserialized
+    /// to an interface; the concrete type populates the deserialization cache so subsequent
+    /// interface assignment succeeds.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to the parameter of method", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    private static bool TryGetRequestEnvelope(ExternalRequest request, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
+    {
+        envelope = null;
+
+        TypeId requestType = request.PortInfo.RequestType;
+        Type? concreteType = Type.GetType($"{requestType.TypeName}, {requestType.AssemblyName}", throwOnError: false);
+        if (concreteType is null || !typeof(IExternalRequestEnvelope).IsAssignableFrom(concreteType))
+        {
+            return false;
+        }
+
+        if (!request.TryGetDataAs(concreteType, out object? data) || data is not IExternalRequestEnvelope env)
+        {
+            return false;
+        }
+
+        envelope = env;
+        return true;
+    }
+
+    /// <summary>
     /// Creates the workflow-facing request content surfaced in response updates.
     /// </summary>
-    private static AIContent CreateRequestContentForDelivery(ExternalRequest request) => request switch
+    private static AIContent CreateRequestContentForDelivery(ExternalRequest request)
     {
-        ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? functionCallContent)
-            => CloneFunctionCallContent(functionCallContent, externalRequest.RequestId),
-        ExternalRequest externalRequest when externalRequest.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
-            => CloneToolApprovalRequestContent(toolApprovalRequestContent, externalRequest.RequestId),
-        ExternalRequest externalRequest
-            => externalRequest.ToFunctionCall(),
-    };
+        // If the request payload is a higher-layer envelope (e.g., a declarative
+        // ExternalInputRequest), surface its inner FCC/TARC to the host on the wire.
+        if (TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
+        {
+            AIContent? inner = envelope.GetInnerRequestContent();
+            if (inner is ToolApprovalRequestContent toolApprovalRequest)
+            {
+                return CloneToolApprovalRequestContent(toolApprovalRequest, request.RequestId);
+            }
+            if (inner is FunctionCallContent functionCall)
+            {
+                return CloneFunctionCallContent(functionCall, request.RequestId);
+            }
+        }
+
+        return request switch
+        {
+            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? functionCallContent)
+                => CloneFunctionCallContent(functionCallContent, externalRequest.RequestId),
+            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
+                => CloneToolApprovalRequestContent(toolApprovalRequestContent, externalRequest.RequestId),
+            ExternalRequest externalRequest
+                => externalRequest.ToFunctionCall(),
+        };
+    }
 
     /// <summary>
     /// Rewrites workflow-facing response content back to the original agent-owned content ID.
     /// </summary>
     private static object NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request)
     {
+        // If the request payload is a higher-layer envelope, recover the original
+        // CallId/RequestId from the inner content and ask the envelope to wrap the
+        // response back into its paired response type for delivery to the request port.
+        if (TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
+        {
+            AIContent? inner = envelope.GetInnerRequestContent();
+            AIContent payload = (content, inner) switch
+            {
+                (FunctionResultContent functionResult, FunctionCallContent functionCall)
+                    => CloneFunctionResultContent(functionResult, functionCall.CallId),
+                (FunctionResultContent functionResult, ToolApprovalRequestContent toolApprovalRequest)
+                    => CloneFunctionResultContent(functionResult, toolApprovalRequest.ToolCall.CallId),
+                (ToolApprovalResponseContent toolApprovalResponse, ToolApprovalRequestContent toolApprovalRequest)
+                    => CloneToolApprovalResponseContent(toolApprovalResponse, toolApprovalRequest.RequestId),
+                _ => content,
+            };
+
+            ChatMessage message = new(ChatRole.Tool, [payload]);
+            return envelope.CreateResponse([message]);
+        }
+
         switch (content)
         {
             // If we got a FRC, and were expecting a FRC (because the request started out as a FCC, rather than getting converted to
@@ -432,9 +501,11 @@ internal sealed class WorkflowSession : AgentSession
                     // identifiers (executor ID) to the client. Surface the exception
                     // message only when the host opts in via _includeExceptionDetails.
                     Exception? executorException = executorFailed.Data;
-                    while (executorException is TargetInvocationException etie && etie.InnerException != null)
+                    while (executorException is { InnerException: not null }
+                        && (executorException is TargetInvocationException
+                            || executorException.GetType().Name == "DeclarativeActionException"))
                     {
-                        executorException = etie.InnerException;
+                        executorException = executorException.InnerException;
                     }
 
                     string executorMessage = this._includeExceptionDetails && executorException != null
