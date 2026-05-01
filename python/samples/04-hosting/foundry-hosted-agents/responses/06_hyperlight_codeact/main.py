@@ -60,6 +60,7 @@ def main():
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=DefaultAzureCredential(),
+        function_invocation_configuration={"include_detailed_errors": True},
     )
 
     # 2. Register sandbox tools on a Hyperlight CodeAct provider. The model only

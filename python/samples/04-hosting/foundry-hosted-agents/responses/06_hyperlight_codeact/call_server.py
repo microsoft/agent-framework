@@ -27,7 +27,7 @@ PROMPT = (
 
 def main() -> None:
     token = AzureCliCredential().get_token(SCOPE).token
-    client = OpenAI(base_url=ENDPOINT, api_key=token)
+    client = OpenAI(base_url=ENDPOINT, api_key=token, default_query={"api-version": "v1"})
     response = client.responses.create(model="hosted-agent", input=PROMPT)
     print(response.output_text)
 

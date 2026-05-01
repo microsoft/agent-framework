@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import importlib.metadata
 
+from . import _drop_diagnostic
 from ._execute_code_tool import HyperlightExecuteCodeTool
 from ._provider import HyperlightCodeActProvider
 from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountInput
+
+_drop_diagnostic.install()
 
 try:
     __version__ = importlib.metadata.version(__name__)

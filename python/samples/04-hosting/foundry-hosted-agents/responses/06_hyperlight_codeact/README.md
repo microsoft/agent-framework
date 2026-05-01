@@ -29,6 +29,28 @@ the OpenAI Responses protocol.
 > `win32/AMD64` with Python `<3.14`. The hosted container runs `python:3.12-slim`
 > on linux/x86_64, which is supported.
 
+### Hypervisor requirement
+
+Hyperlight executes guest WebAssembly inside a micro-VM and **requires a
+hypervisor on the host**:
+
+- **Linux:** `/dev/kvm` must be present *and* the container must have access to
+  it (`docker run --device=/dev/kvm ...`).
+- **Windows:** the Microsoft Hypervisor Platform (MSHV) must be enabled.
+
+Without a hypervisor, sandbox creation fails with:
+
+```
+Failed to create sandbox: failed to build ProtoWasmSandbox: No Hypervisor was found for Sandbox
+```
+
+This affects hosted environments that don't expose `/dev/kvm` to the workload
+container (most managed PaaS, including the default Foundry hosted-agent
+runtime). To run this sample as a hosted agent you need a hosting target with
+nested virtualization and `/dev/kvm` device passthrough — for example an Azure
+VM, AKS nodes with KVM enabled, or Azure Container Instances configured for
+nested virt.
+
 ## Running the Agent Host
 
 Follow the instructions in the
@@ -52,3 +74,20 @@ curl -X POST http://localhost:8088/responses \
 To host the agent on Foundry, follow the instructions in the
 [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry)
 section of the parent README.
+
+### Deploying with in-tree (local) packages
+
+This sample's Dockerfile installs `agent-framework-core`, `-openai`, `-foundry`,
+`-foundry-hosting`, and `-hyperlight` from local source under `python/packages/`
+instead of from PyPI, so you can validate unreleased fixes end-to-end. The
+Dockerfile expects the repository's `python/` directory as the build context:
+
+```bash
+docker build \
+  -f python/samples/04-hosting/foundry-hosted-agents/responses/06_hyperlight_codeact/Dockerfile \
+  -t <acr>.azurecr.io/<repo>:<tag> \
+  python/
+```
+
+Then push to your ACR and create a new Foundry hosted-agent version against
+the image as described in the parent README.
