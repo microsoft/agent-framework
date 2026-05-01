@@ -1242,10 +1242,30 @@ class MyWebhookChannel:
                 ),
             )
             result = await context.run(channel_request)
-            return JSONResponse({"reply": result.text})
+            # See "Result is rich, not just text" below — `result.text` is the
+            # plain-text projection; this channel chooses to also surface
+            # citations and any tool-call traces it cares about. The exact
+            # serialization is the channel's call.
+            return JSONResponse(_render_for_mywebhook(result))
 
         return ChannelContribution(routes=[Route(f"{self._path}/inbound", endpoint, methods=["POST"])])
 ```
+
+**Result is rich, not just text.** `result` here is a `HostedRunResult` wrapping an `AgentRunResult` (or a workflow output). It is **not** limited to a flat string — `result.text` is the convenience plain-text projection, but the underlying object carries:
+
+- the full `messages: list[ChatMessage]` thread the agent produced this turn — each message holds an ordered list of typed `Contents` (see [`Contents` in core](https://github.com/microsoft/agent-framework/blob/main/python/packages/core/agent_framework/_types.py)): `TextContent`, `DataContent` (inline base64 blobs), `UriContent` (URLs to images/audio/files), `FunctionCallContent` and `FunctionResultContent` (tool-call traces), `HostedFileContent` / `HostedVectorStoreContent` (provider-side file/vector references), `UsageContent` (token usage), `ErrorContent`, `TextReasoningContent` (reasoning traces), and channel-extensible custom content kinds. Each content also has `additional_properties` for provider-specific extensions (citations, image alt text, source spans, …),
+- `value: T | None` — the typed structured output when the agent returned one (e.g. via response-format / structured-output features),
+- `usage_details: UsageDetails | None`, `raw_representation`, and per-message `additional_properties` carrying provider-native extras.
+
+A channel author is free to project this into **whatever the channel's native shape supports**. Examples:
+
+- The built-in **Telegram channel** renders `text` segments with Telegram's `MarkdownV2` parse mode (escaping the special set), uploads `DataContent` images via `sendPhoto` and audio via `sendAudio` as separate Telegram messages in the same chat, and emits inline-button keyboards from `FunctionCallContent` traces when the channel is configured to surface tool calls as user-confirmable actions. Citations attached to a `TextContent.additional_properties["citations"]` slot are rendered as numbered footnote links the user can tap.
+- The built-in **Responses channel** preserves the full content-list shape on the wire — every `ChatMessage` round-trips as a Responses-shaped output item so callers can inspect the typed mix of text, function-call traces, image/file outputs, reasoning, and structured-output `value`s exactly as the agent produced them. There is no lossy collapse to a single text field.
+- A channel fronting a **chat UI** can render `TextContent` as full GitHub-Flavored Markdown / HTML (tables, code fences with syntax highlighting, math), `DataContent` and `UriContent` as inline images/audio/video players, `FunctionCallContent` / `FunctionResultContent` as collapsible "tool ran" cards, and `TextReasoningContent` as a collapsible reasoning panel — all from the same `result`.
+- A **voice channel** can route `TextContent` through TTS, play `DataContent(audio/*)` directly, and surface `FunctionCallContent` only as audio earcons (or skip them entirely) — the same `result` object drives a completely different surface.
+- A **richly-typed RPC channel** can return `result.value` (the structured output) directly when the workflow / agent produced one, and fall back to `result.text` only when no typed output is available.
+
+The host imposes no projection — `result.text` is offered as a convenience for channels whose native shape really is "single string in, single string out", and channels are encouraged to lean on the full content list when their protocol supports more.
 
 ## Information Design
 
