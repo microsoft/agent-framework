@@ -1181,7 +1181,6 @@ class TestClaudeAgentTelemetry:
         mock_client = self._create_mock_client(messages)
 
         monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", False)
-        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_sensitive_data", False)
 
         with (
             patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
