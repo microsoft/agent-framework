@@ -141,20 +141,28 @@ class _SandboxWorker:
                 return True, fn()
             except BaseException as exc:
                 exc_type = type(exc)
-                exc_message = str(exc)
+                # Capture args (usually (message,)) so the re-raised exception keeps the
+                # original shape for types whose constructor doesn't accept a single str.
+                # Fall back to the str() form if args is empty.
+                exc_args: tuple[Any, ...] = exc.args if exc.args else (str(exc),)
                 # Drop the traceback on the worker thread so frame locals (which
                 # may include PyO3 unsendable objects) are released here, not on
                 # the caller thread that will receive the wrapped exception.
                 exc.__traceback__ = None
                 del exc
-                return False, (exc_type, exc_message)
+                return False, (exc_type, exc_args)
 
         ok, payload = self._executor.submit(_wrapped).result()
         if ok:
             return cast(_T, payload)
-        exc_type, exc_message = cast(tuple[type[BaseException], str], payload)
+        exc_type, exc_args = cast(tuple[type[BaseException], tuple[Any, ...]], payload)
         # Re-raise a fresh instance with no chained traceback frames from the worker.
-        raise exc_type(exc_message)
+        # If the exception type's constructor rejects the captured args (rare), fall
+        # back to a RuntimeError carrying the string form so we never lose the signal.
+        try:
+            raise exc_type(*exc_args)
+        except TypeError:
+            raise RuntimeError(f"{exc_type.__name__}: {exc_args}") from None
 
     def initialize(self, build_fn: Callable[[], tuple[Any, Any]]) -> None:
         """Build and install the sandbox+snapshot on the worker thread.
@@ -207,6 +215,17 @@ class _SandboxWorker:
                 del result
 
         return self._run_on_worker(_on_worker)
+
+    def is_alive(self) -> bool:
+        """Return ``True`` while the worker thread can still accept new submissions.
+
+        Useful for tests/observability; returns ``False`` after ``dispose()``.
+        """
+        try:
+            self._executor.submit(lambda: None).result(timeout=1.0)
+        except RuntimeError:
+            return False
+        return True
 
     def dispose(self) -> None:
         """Release the sandbox+snapshot on the owner worker thread, then shut down.

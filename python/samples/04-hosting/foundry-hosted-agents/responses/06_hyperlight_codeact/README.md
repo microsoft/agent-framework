@@ -8,6 +8,17 @@ tools (`compute`, `fetch_data`) are registered on `HyperlightCodeActProvider`
 and are reachable from inside the sandbox via `call_tool(...)`, never as
 direct LLM tools.
 
+> **⚠️ Foundry hosted-agent runtime support is in progress.**
+> Hyperlight requires a hypervisor (`/dev/kvm` on Linux, MSHV on Windows). The
+> default Foundry hosted-agent runtime does not currently expose a hypervisor
+> to the workload container, so deploying this sample as a Foundry hosted
+> agent will fail at runtime with
+> `Failed to create sandbox: ... No Hypervisor was found for Sandbox`.
+> The sample container itself works end-to-end when run locally with
+> `docker run --device=/dev/kvm ...` (see [Hypervisor requirement](#hypervisor-requirement)
+> below). We are working with the platform team to enable a hypervisor-capable
+> hosting target.
+
 ## How It Works
 
 ### Model integration

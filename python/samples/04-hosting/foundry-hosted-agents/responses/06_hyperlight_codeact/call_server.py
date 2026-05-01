@@ -11,12 +11,17 @@
 
 """Call the deployed Hyperlight CodeAct Foundry hosted agent via the OpenAI client."""
 
+import os
+
 from azure.identity import AzureCliCredential
 from openai import OpenAI
 
-ENDPOINT = (
-    "https://edvan-foundry-sw.services.ai.azure.com/api/projects/agents"
-    "/agents/agent-framework-agent-with-hyperlight-codeact-responses"
+# Set FOUNDRY_AGENT_ENDPOINT to your deployed agent endpoint, e.g.
+#   https://<your-foundry-resource>.services.ai.azure.com/api/projects/<project>/agents/<agent-name>
+ENDPOINT = os.environ.get(
+    "FOUNDRY_AGENT_ENDPOINT",
+    "https://<your-foundry-resource>.services.ai.azure.com"
+    "/api/projects/<project>/agents/<agent-name>",
 )
 SCOPE = "https://ai.azure.com/.default"
 PROMPT = (

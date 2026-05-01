@@ -5,8 +5,6 @@
 #     -f python/samples/04-hosting/foundry-hosted-agents/responses/06_hyperlight_codeact/Dockerfile \
 #     -t <acr>.azurecr.io/<image>:<tag> \
 #     python/
-#
-# The companion `deploy.ps1` script in the sample folder does this for you.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -31,7 +29,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir /opt/af/foundry \
     && pip install --no-cache-dir /opt/af/foundry_hosting \
     && pip install --no-cache-dir /opt/af/hyperlight \
-    && if [ -s requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
+    && if grep -Eq '^[[:space:]]*[^#[:space:]]' requirements.txt; then pip install --no-cache-dir -r requirements.txt; fi
 
 EXPOSE 8088
 
