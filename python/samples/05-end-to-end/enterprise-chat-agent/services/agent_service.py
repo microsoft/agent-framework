@@ -162,7 +162,8 @@ def get_mcp_tool() -> MCPStreamableHTTPTool:
 
     The tool should be used as an async context manager:
         async with get_mcp_tool() as mcp:
-            response = await agent.run(content, session_id=thread_id, tools=mcp)
+            session = agent.create_session(session_id=thread_id)
+            response = await agent.run(content, session=session, tools=mcp)
 
     Returns:
         Configured MCPStreamableHTTPTool instance.

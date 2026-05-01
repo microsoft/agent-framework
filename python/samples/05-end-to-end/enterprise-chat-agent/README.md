@@ -28,7 +28,7 @@ Client → Azure Functions (HTTP Triggers) → ChatAgent → Azure OpenAI
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.10–3.13 (3.12 recommended; 3.14 is **not** yet supported by all dependencies)
 - [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd)
 - [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local)
 - Azure subscription with:
@@ -85,12 +85,49 @@ azd down
 
 ### Option 2: Run Locally
 
+#### 1. Create a virtual environment and install dependencies
+
+The Azure Functions Python worker uses the first `python` it finds on `PATH`. To make sure it loads the same interpreter where you installed the dependencies, create and activate a venv **before** running `pip install` and `func start`:
+
+**Windows (PowerShell):**
+
+```powershell
+cd python/samples/05-end-to-end/enterprise-chat-agent
+
+# Use a supported interpreter (3.10–3.13). Example with 3.12:
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+# Sanity check — should print the .venv path and an agent_framework location
+python -c "import sys, agent_framework; print(sys.executable); print(agent_framework.__file__)"
+```
+
+**macOS / Linux (bash/zsh):**
+
 ```bash
 cd python/samples/05-end-to-end/enterprise-chat-agent
+
+python3.12 -m venv .venv
+source .venv/bin/activate
+
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Copy `local.settings.json.example` to `local.settings.json` and update:
+> **Tip:** If you prefer not to rely on activation, pin the worker explicitly by adding this entry to `local.settings.json` (see step 2):
+>
+> ```json
+> "languageWorkers__python__defaultExecutablePath": ".venv/Scripts/python.exe"
+> ```
+>
+> (Use `.venv/bin/python` on macOS/Linux.) This avoids the common `ModuleNotFoundError: No module named 'agent_framework'` caused by `func start` picking up the global Python interpreter.
+
+#### 2. Configure local settings
+
+Copy `local.settings.json.example` to `local.settings.json` and update the values:
 
 ```json
 {
@@ -101,7 +138,7 @@ Copy `local.settings.json.example` to `local.settings.json` and update:
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
     "AZURE_OPENAI_DEPLOYMENT_NAME": "gpt-4o",
-    "AZURE_OPENAI_API_VERSION": "2024-10-21",
+    "AZURE_OPENAI_API_VERSION": "preview",
     "AZURE_COSMOS_ENDPOINT": "https://your-cosmos-account.documents.azure.com:443/",
     "AZURE_COSMOS_DATABASE_NAME": "chat_db",
     "AZURE_COSMOS_CONTAINER_NAME": "messages",
@@ -114,7 +151,9 @@ Copy `local.settings.json.example` to `local.settings.json` and update:
 }
 ```
 
-Run locally:
+#### 3. Run the Function App
+
+From the **same shell where the venv is activated**:
 
 ```bash
 func start
@@ -227,7 +266,7 @@ This sample uses **buffered responses** - the agent processes the entire message
 The Agent Framework supports streaming via `ResponseStream`:
 
 ```python
-from agent_framework import Agent, AgentSession
+from agent_framework import Agent
 
 # Enable streaming
 response_stream = await agent.run(
@@ -261,14 +300,14 @@ If you need true streaming for a production chat experience, consider these opti
 ```python
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from agent_framework import Agent, AgentSession
+from agent_framework import Agent
 
 app = FastAPI()
 
 @app.post("/api/threads/{thread_id}/messages/stream")
 async def send_message_stream(thread_id: str, request: MessageRequest):
     async def generate():
-        session = AgentSession(session_id=thread_id)
+        session = agent.create_session(session_id=thread_id)
         response_stream = await agent.run(
             prompt=request.content,
             session=session,

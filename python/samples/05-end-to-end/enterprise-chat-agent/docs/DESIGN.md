@@ -96,7 +96,8 @@ POST /api/threads/{thread_id}/messages
     ↓
 1. Validate thread exists (Cosmos DB lookup)
     ↓
-2. agent.run(content, session=AgentSession(thread_id))
+2. session = agent.create_session(session_id=thread_id)
+   agent.run(content, session=session)
     ↓
    ┌─────────────────────────────────────────┐
    │  CosmosHistoryProvider (automatic):     │

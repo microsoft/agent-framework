@@ -8,7 +8,6 @@ import os
 from datetime import datetime, timezone
 
 import azure.functions as func
-from agent_framework import AgentSession
 from services import (
     cosmos_span,
     get_agent,
@@ -89,8 +88,8 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
         # Get agent (configured with CosmosHistoryProvider and local tools)
         agent = get_agent()
 
-        # Create session with thread_id so CosmosHistoryProvider uses it
-        session = AgentSession(session_id=thread_id)
+        # Bind a session to thread_id so CosmosHistoryProvider partitions on it
+        session = agent.create_session(session_id=thread_id)
         logging.info(f"Running agent with session_id={session.session_id}")
 
         # Run agent with MCP tools for Microsoft Learn documentation
@@ -100,7 +99,7 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
         async with get_mcp_tool() as mcp:
             response = await agent.run(
                 content,
-                session=session,  # Pass session object, not session_id
+                session=session,
                 tools=mcp,  # Add MCP tools for this run
             )
 
