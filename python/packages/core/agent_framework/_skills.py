@@ -199,8 +199,7 @@ class _FileSkillResource(SkillResource):
     """A file-path-backed skill resource that reads content from disk.
 
     Stores a pre-resolved absolute file path and reads content directly,
-    consistent with the .NET ``AgentFileSkillResource`` and the sibling
-    :class:`FileSkillScript`.
+    consistent with the sibling :class:`FileSkillScript`.
 
     Attributes:
         name: Resource identifier (relative path within the skill directory).
@@ -982,7 +981,7 @@ Only load what is needed, when it is needed."""
 
 RESOURCE_INSTRUCTIONS: Final[str] = (
     "- Use `read_skill_resource` to read any referenced resources, using the name exactly as listed\n"
-    '   (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).\n'
+    '   (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ"` not `"FAQ.md"`).\n'
 )
 
 SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (

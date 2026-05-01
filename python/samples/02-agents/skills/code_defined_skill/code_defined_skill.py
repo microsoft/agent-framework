@@ -146,7 +146,7 @@ async def main() -> None:
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units.",
-        context_providers=[SkillsProvider([unit_converter_skill])],
+        context_providers=[SkillsProvider(unit_converter_skill)],
     ) as agent:
         print("Converting units")
         print("-" * 60)
