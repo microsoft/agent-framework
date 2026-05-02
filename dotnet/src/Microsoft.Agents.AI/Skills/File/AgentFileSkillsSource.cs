@@ -233,7 +233,9 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         foreach (Match kvMatch in s_yamlKeyValueRegex.Matches(yamlContent))
         {
             string key = kvMatch.Groups[1].Value;
-            string value = kvMatch.Groups[2].Success ? kvMatch.Groups[2].Value : kvMatch.Groups[3].Value;
+            string value = kvMatch.Groups[2].Success
+                ? kvMatch.Groups[2].Value
+                : ParseYamlScalarValue(yamlContent, kvMatch);
 
             if (string.Equals(key, "name", StringComparison.OrdinalIgnoreCase))
             {
@@ -538,6 +540,62 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         }
 
         return false;
+    }
+
+    private static string ParseYamlScalarValue(string yamlContent, Match kvMatch)
+    {
+        string value = kvMatch.Groups[3].Value;
+
+        if (value.Length == 0 || value[0] is not ('|' or '>'))
+        {
+            return value;
+        }
+
+        char scalarStyle = value[0];
+
+        int nextLineStart = yamlContent.IndexOf('\n', kvMatch.Index + kvMatch.Length);
+        if (nextLineStart < 0)
+        {
+            return value;
+        }
+
+        nextLineStart++;
+
+        var lines = yamlContent.Substring(nextLineStart).Split('\n');
+        var blockLines = new List<string>();
+
+        foreach (string line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                blockLines.Add(string.Empty);
+                continue;
+            }
+
+            if (line[0] != ' ' && line[0] != '\t')
+            {
+                break;
+            }
+
+            blockLines.Add(line);
+        }
+
+        if (blockLines.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        int commonIndent = blockLines
+            .Where(line => line.Length > 0)
+            .Min(line => line.TakeWhile(ch => ch == ' ' || ch == '\t').Count());
+
+        string[] normalizedLines = blockLines
+            .Select(line => line.Length == 0 ? string.Empty : line.Substring(Math.Min(commonIndent, line.Length)))
+            .ToArray();
+
+        return scalarStyle == '|'
+            ? string.Join("\n", normalizedLines)
+            : string.Join(" ", normalizedLines.Where(line => line.Length > 0));
     }
 
     /// <summary>
