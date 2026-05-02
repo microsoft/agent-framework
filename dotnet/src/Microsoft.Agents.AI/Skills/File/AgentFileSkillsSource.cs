@@ -552,6 +552,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         }
 
         char scalarStyle = value[0];
+        bool keepTrailingNewline = value.Length > 1 && value[1] == '+';
 
         int nextLineStart = yamlContent.IndexOf('\n', kvMatch.Index + kvMatch.Length);
         if (nextLineStart < 0)
@@ -561,10 +562,11 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
         nextLineStart++;
 
-        var lines = yamlContent.Substring(nextLineStart).Split('\n');
         var blockLines = new List<string>();
+        using var reader = new StringReader(yamlContent.Substring(nextLineStart));
 
-        foreach (string line in lines)
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
         {
             if (string.IsNullOrWhiteSpace(line))
             {
@@ -593,9 +595,11 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
             .Select(line => line.Length == 0 ? string.Empty : line.Substring(Math.Min(commonIndent, line.Length)))
             .ToArray();
 
-        return scalarStyle == '|'
+        string parsedValue = scalarStyle == '|'
             ? string.Join("\n", normalizedLines)
             : string.Join(" ", normalizedLines.Where(line => line.Length > 0));
+
+        return keepTrailingNewline ? parsedValue + "\n" : parsedValue;
     }
 
     /// <summary>

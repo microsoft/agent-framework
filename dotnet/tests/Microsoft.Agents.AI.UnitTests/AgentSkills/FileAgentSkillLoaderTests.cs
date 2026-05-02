@@ -108,11 +108,11 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 
     [Theory]
-    [InlineData("|-")]
-    [InlineData("|+")]
-    [InlineData(">-")]
-    [InlineData(">+")]
-    public async Task GetSkillsAsync_ScalarDescriptionWithChompingIndicator_ParsesValueAsync(string indicator)
+    [InlineData("|-", "This is a multiline\ndescription for the skill.")]
+    [InlineData("|+", "This is a multiline\ndescription for the skill.\n")]
+    [InlineData(">-", "This is a multiline description for the skill.")]
+    [InlineData(">+", "This is a multiline description for the skill.\n")]
+    public async Task GetSkillsAsync_ScalarDescriptionWithChompingIndicator_ParsesValueAsync(string indicator, string expectedDescription)
     {
         // Arrange
         string chomping = indicator[1] == '+' ? "keep" : "strip";
@@ -129,7 +129,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         // Assert
         Assert.Single(skills);
-        Assert.StartsWith("This is a multiline", skills[0].Frontmatter.Description, StringComparison.Ordinal);
+        Assert.Equal(expectedDescription, skills[0].Frontmatter.Description);
     }
 
     [Fact]
