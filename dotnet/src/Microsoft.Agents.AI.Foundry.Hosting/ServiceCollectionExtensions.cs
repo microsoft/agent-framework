@@ -210,7 +210,7 @@ public static class FoundryHostingExtensions
 
     /// <summary>
     /// Attempts to wrap the agent's underlying <see cref="ResponsesClient"/>
-    /// with a <see cref="DelegatingResponsesClient"/> so every outgoing Responses-API request
+    /// with a <see cref="UserAgentResponsesClient"/> so every outgoing Responses-API request
     /// carries the hosted-agent <c>User-Agent</c> segment.
     /// </summary>
     /// <remarks>
@@ -219,7 +219,7 @@ public static class FoundryHostingExtensions
     /// <list type="bullet">
     /// <item><description><paramref name="agent"/> exposes no <see cref="IChatClient"/>;</description></item>
     /// <item><description>the chat client is not backed by MEAI's internal <c>OpenAIResponsesChatClient</c> (e.g., a non-OpenAI provider or a custom impl);</description></item>
-    /// <item><description>the inner <see cref="ResponsesClient"/> is already a <see cref="DelegatingResponsesClient"/>.</description></item>
+    /// <item><description>the inner <see cref="ResponsesClient"/> is already a <see cref="UserAgentResponsesClient"/>.</description></item>
     /// </list>
     /// </para>
     /// <para>
@@ -261,12 +261,12 @@ public static class FoundryHostingExtensions
         }
 
         var current = field.GetValue(meaiInstance) as ResponsesClient;
-        if (current is null or DelegatingResponsesClient)
+        if (current is null or UserAgentResponsesClient)
         {
             return agent;
         }
 
-        field.SetValue(meaiInstance, new DelegatingResponsesClient(current));
+        field.SetValue(meaiInstance, new UserAgentResponsesClient(current));
         return agent;
     }
 

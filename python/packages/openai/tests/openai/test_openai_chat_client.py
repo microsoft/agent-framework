@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import inspect
 import json
@@ -119,6 +120,15 @@ async def create_vector_store(
     )
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
+
+    # Wait for the vector store index to be fully searchable.
+    # create_and_poll confirms file processing, but the search index is eventually consistent.
+    for _ in range(10):
+        vs = await client.client.vector_stores.retrieve(vector_store.id)
+        if vs.file_counts.completed >= 1 and vs.file_counts.in_progress == 0:
+            break
+        await asyncio.sleep(1)
+    await asyncio.sleep(2)
 
     return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
@@ -4385,10 +4395,6 @@ async def test_integration_web_search() -> None:
     assert response.text is not None
 
 
-@pytest.mark.skip(
-    reason="Unreliable due to OpenAI vector store indexing potential "
-    "race condition. See https://github.com/microsoft/agent-framework/issues/1669"
-)
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
@@ -4398,31 +4404,29 @@ async def test_integration_file_search() -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
-    # Use static method for file search tool
-    file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
-    # Test that the client will use the file search tool
-    response = await openai_responses_client.get_response(
-        messages=[
-            Message(
-                role="user",
-                contents=["What is the weather today? Do a file search to find the answer."],
-            )
-        ],
-        options={
-            "tool_choice": "auto",
-            "tools": [file_search_tool],
-        },
-    )
+    try:
+        # Use static method for file search tool
+        file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+        # Test that the client will use the file search tool
+        response = await openai_responses_client.get_response(
+            messages=[
+                Message(
+                    role="user",
+                    contents=["What is the weather today? Do a file search to find the answer."],
+                )
+            ],
+            options={
+                "tool_choice": "auto",
+                "tools": [file_search_tool],
+            },
+        )
 
-    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
-    assert "sunny" in response.text.lower()
-    assert "75" in response.text
+        assert "sunny" in response.text.lower()
+        assert "75" in response.text
+    finally:
+        await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
 
 
-@pytest.mark.skip(
-    reason="Unreliable due to OpenAI vector store indexing "
-    "potential race condition. See https://github.com/microsoft/agent-framework/issues/1669"
-)
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
@@ -4432,35 +4436,37 @@ async def test_integration_streaming_file_search() -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
-    # Use static method for file search tool
-    file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
-    # Test that the client will use the web search tool
-    response = openai_responses_client.get_streaming_response(
-        messages=[
-            Message(
-                role="user",
-                contents=["What is the weather today? Do a file search to find the answer."],
-            )
-        ],
-        options={
-            "tool_choice": "auto",
-            "tools": [file_search_tool],
-        },
-    )
+    try:
+        # Use static method for file search tool
+        file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+        # Test that the client will use the file search tool
+        response = openai_responses_client.get_response(
+            messages=[
+                Message(
+                    role="user",
+                    contents=["What is the weather today? Do a file search to find the answer."],
+                )
+            ],
+            stream=True,
+            options={
+                "tool_choice": "auto",
+                "tools": [file_search_tool],
+            },
+        )
 
-    assert response is not None
-    full_message: str = ""
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if content.type == "text" and content.text:
-                full_message += content.text
+        assert response is not None
+        full_message: str = ""
+        async for chunk in response:
+            assert chunk is not None
+            assert isinstance(chunk, ChatResponseUpdate)
+            for content in chunk.contents:
+                if content.type == "text" and content.text:
+                    full_message += content.text
 
-    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
-
-    assert "sunny" in full_message.lower()
-    assert "75" in full_message
+        assert "sunny" in full_message.lower()
+        assert "75" in full_message
+    finally:
+        await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
 
 
 @pytest.mark.flaky

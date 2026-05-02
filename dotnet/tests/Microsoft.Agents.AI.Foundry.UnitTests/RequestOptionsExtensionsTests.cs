@@ -66,7 +66,7 @@ public sealed class RequestOptionsExtensionsTests
         await pipeline.SendAsync(message);
 
         // Assert: the policy is MEAI-only; the foundry-hosting supplement is added elsewhere
-        // (by the polyfill DelegatingResponsesClient → HostedAgentUserAgentPolicy).
+        // (by the polyfill UserAgentResponsesClient → HostedAgentUserAgentPolicy).
         Assert.NotNull(handler.LastUserAgent);
         Assert.DoesNotContain("foundry-hosting/agent-framework-dotnet", handler.LastUserAgent);
     }
