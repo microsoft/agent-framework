@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from abc import ABC, abstractmethod
-from collections.abc import MutableMapping
+from base64 import urlsafe_b64encode
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
@@ -133,6 +135,18 @@ class TodoInput(SerializationMixin):
         return cls(title=title, description=description)
 
 
+def _parse_todo_items(items_payload: list[Any], *, source_description: str) -> list[TodoItem]:
+    """Parse persisted todo item payloads with clear corruption errors."""
+    items: list[TodoItem] = []
+    for index, item in enumerate(items_payload):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"Todo item at index {index} in {source_description} must be a mapping; got {type(item).__name__}."
+            )
+        items.append(TodoItem.from_dict(dict(cast(Mapping[str, Any], item))))
+    return items
+
+
 def _coerce_todo_input(todo: TodoInput | dict[str, Any] | Any) -> TodoInput:
     """Normalize tool-provided todo input into a TodoInput model."""
     if isinstance(todo, TodoInput):
@@ -142,6 +156,7 @@ def _coerce_todo_input(todo: TodoInput | dict[str, Any] | Any) -> TodoInput:
     raise ValueError("Todo input must be a TodoInput instance or JSON object.")
 
 
+@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoStore(ABC):
     """Abstract backing store for session todo items."""
 
@@ -180,7 +195,7 @@ class TodoSessionStore(TodoStore):
         if not isinstance(raw_next_id, int):
             provider_state["next_id"] = next_id
 
-        return [TodoItem.from_dict(cast(dict[str, Any], item)) for item in items_payload], next_id
+        return _parse_todo_items(items_payload, source_description="session todo state"), next_id
 
     def save_state(self, session: AgentSession, items: list[TodoItem], *, next_id: int, source_id: str) -> None:
         """Persist todo state back into session state."""
@@ -194,7 +209,7 @@ class TodoSessionStore(TodoStore):
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoFileStore(TodoStore):
-    """Store todo state in one JSON file per session."""
+    """Store todo state in one JSON file per session and source ID."""
 
     def __init__(
         self,
@@ -221,9 +236,36 @@ class TodoFileStore(TodoStore):
         self.owner_prefix = owner_prefix
         self.owner_state_key = owner_state_key
         self.state_filename = state_filename
+        self._base_root = self.base_path.resolve()
 
-    def _get_state_path(self, session: AgentSession) -> Path:
-        """Return the JSON file path for one session."""
+    _ENCODED_SEGMENT_PREFIX: ClassVar[str] = "~todo-"
+    _WINDOWS_RESERVED_FILE_STEMS: ClassVar[frozenset[str]] = frozenset({
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "COM1",
+        "COM2",
+        "COM3",
+        "COM4",
+        "COM5",
+        "COM6",
+        "COM7",
+        "COM8",
+        "COM9",
+        "LPT1",
+        "LPT2",
+        "LPT3",
+        "LPT4",
+        "LPT5",
+        "LPT6",
+        "LPT7",
+        "LPT8",
+        "LPT9",
+    })
+
+    def _get_state_path(self, session: AgentSession, *, source_id: str) -> Path:
+        """Return the JSON file path for one session and source ID."""
         session_directory = self.base_path
         if self.owner_state_key is not None:
             owner_value = session.state.get(self.owner_state_key)
@@ -231,15 +273,53 @@ class TodoFileStore(TodoStore):
                 raise RuntimeError(
                     f"TodoFileStore requires session.state[{self.owner_state_key!r}] to be set for file-backed storage."
                 )
-            session_directory = session_directory / f"{self.owner_prefix}{owner_value}" / self.kind
-        session_directory = session_directory / session.session_id
-        session_directory.mkdir(parents=True, exist_ok=True)
-        return session_directory / self.state_filename
+            owner_segment = self._path_segment(owner_value, label="owner")
+            session_directory = session_directory / f"{self.owner_prefix}{owner_segment}" / self.kind
+        session_directory = session_directory / self._path_segment(
+            session.session_id, label="session_id", reject_path_separators=True
+        )
+        state_path = (session_directory / self._state_filename(source_id)).resolve()
+        if not state_path.is_relative_to(self._base_root):
+            raise ValueError(f"Todo file path escaped base directory for session_id {session.session_id!r}.")
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        return state_path
+
+    @classmethod
+    def _path_segment(cls, value: object, *, label: str, reject_path_separators: bool = False) -> str:
+        """Return a filesystem-safe path segment for user-controlled state values."""
+        raw_value = str(value)
+        if reject_path_separators and ("/" in raw_value or "\\" in raw_value):
+            raise ValueError(f"TodoFileStore {label} must not contain path separators: {raw_value!r}")
+        if cls._is_literal_path_segment_safe(raw_value):
+            return raw_value
+        encoded_value = urlsafe_b64encode(raw_value.encode("utf-8")).decode("ascii").rstrip("=")
+        return f"{cls._ENCODED_SEGMENT_PREFIX}{encoded_value or label}"
+
+    @classmethod
+    def _is_literal_path_segment_safe(cls, value: str) -> bool:
+        """Return whether a value can be used directly as one path segment."""
+        if (
+            not value
+            or value.startswith(".")
+            or value.endswith((" ", "."))
+            or value.upper() in cls._WINDOWS_RESERVED_FILE_STEMS
+        ):
+            return False
+        if any(ord(character) < 32 for character in value):
+            return False
+        return all(character.isalnum() or character in "._-" for character in value)
+
+    def _state_filename(self, source_id: str) -> str:
+        """Return a source-specific JSON state filename."""
+        state_path = Path(self.state_filename)
+        source_segment = self._path_segment(source_id, label="source_id")
+        if state_path.suffix:
+            return f"{state_path.stem}.{source_segment}{state_path.suffix}"
+        return f"{state_path.name}.{source_segment}.json"
 
     def load_state(self, session: AgentSession, *, source_id: str) -> tuple[list[TodoItem], int]:
         """Load todo state from disk."""
-        del source_id
-        state_path = self._get_state_path(session)
+        state_path = self._get_state_path(session, source_id=source_id)
         if not state_path.exists():
             return [], 1
         payload = cast(dict[str, Any], json.loads(state_path.read_text(encoding="utf-8")))
@@ -252,12 +332,11 @@ class TodoFileStore(TodoStore):
         if not isinstance(raw_next_id, int):
             raise ValueError(f"Todo file {state_path} has a non-integer 'next_id' field.")
         items_payload: list[Any] = cast(Any, raw_items)
-        return [TodoItem.from_dict(cast(dict[str, Any], item)) for item in items_payload], raw_next_id
+        return _parse_todo_items(items_payload, source_description=f"todo file {state_path}"), raw_next_id
 
     def save_state(self, session: AgentSession, items: list[TodoItem], *, next_id: int, source_id: str) -> None:
         """Persist todo state to disk."""
-        del source_id
-        state_path = self._get_state_path(session)
+        state_path = self._get_state_path(session, source_id=source_id)
         state_path.write_text(
             json.dumps({"items": [item.to_dict(exclude_none=False) for item in items], "next_id": next_id}) + "\n",
             encoding="utf-8",
@@ -301,6 +380,16 @@ class TodoListContextProvider(ContextProvider):
         super().__init__(source_id)
         self.instructions = instructions or DEFAULT_TODO_INSTRUCTIONS
         self.store = store or TodoSessionStore()
+        self._mutation_locks: dict[tuple[int, str], asyncio.Lock] = {}
+
+    def _mutation_lock(self, session: AgentSession) -> asyncio.Lock:
+        """Return the per-session/source lock for read-modify-write todo operations."""
+        key = (id(session), self.source_id)
+        lock = self._mutation_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._mutation_locks[key] = lock
+        return lock
 
     async def before_run(
         self,
@@ -314,66 +403,69 @@ class TodoListContextProvider(ContextProvider):
         del agent, state
 
         @tool(name="add_todos", approval_mode="never_require")
-        def add_todos(todos: list[dict[str, Any]]) -> str:
+        async def add_todos(todos: list[dict[str, Any]]) -> str:
             """Add one or more todo items for the current session."""
             if not todos:
                 raise ValueError("todos must contain at least one item.")
 
-            existing_items, next_id = self.store.load_state(session, source_id=self.source_id)
-            created_items: list[TodoItem] = []
-            for raw_todo in todos:
-                todo = _coerce_todo_input(raw_todo)
-                created_item = TodoItem(
-                    id=next_id,
-                    title=todo.title,
-                    description=todo.description.strip() if todo.description is not None else None,
-                )
-                existing_items.append(created_item)
-                created_items.append(created_item)
-                next_id += 1
+            async with self._mutation_lock(session):
+                existing_items, next_id = self.store.load_state(session, source_id=self.source_id)
+                created_items: list[TodoItem] = []
+                for raw_todo in todos:
+                    todo = _coerce_todo_input(raw_todo)
+                    created_item = TodoItem(
+                        id=next_id,
+                        title=todo.title,
+                        description=todo.description.strip() if todo.description is not None else None,
+                    )
+                    existing_items.append(created_item)
+                    created_items.append(created_item)
+                    next_id += 1
 
-            self.store.save_state(session, existing_items, next_id=next_id, source_id=self.source_id)
+                self.store.save_state(session, existing_items, next_id=next_id, source_id=self.source_id)
             return json.dumps([item.to_dict(exclude_none=False) for item in created_items])
 
         @tool(name="complete_todos", approval_mode="never_require")
-        def complete_todos(ids: list[int]) -> str:
+        async def complete_todos(ids: list[int]) -> str:
             """Mark one or more todo items as complete by ID."""
             if not ids:
                 raise ValueError("ids must contain at least one todo ID.")
 
-            items, next_id = self.store.load_state(session, source_id=self.source_id)
-            id_set = set(ids)
-            completed_count = 0
-            updated_items: list[TodoItem] = []
-            for item in items:
-                if not item.is_complete and item.id in id_set:
-                    updated_items.append(
-                        TodoItem(
-                            id=item.id,
-                            title=item.title,
-                            description=item.description,
-                            is_complete=True,
+            async with self._mutation_lock(session):
+                items, next_id = self.store.load_state(session, source_id=self.source_id)
+                id_set = set(ids)
+                completed_count = 0
+                updated_items: list[TodoItem] = []
+                for item in items:
+                    if not item.is_complete and item.id in id_set:
+                        updated_items.append(
+                            TodoItem(
+                                id=item.id,
+                                title=item.title,
+                                description=item.description,
+                                is_complete=True,
+                            )
                         )
-                    )
-                    completed_count += 1
-                else:
-                    updated_items.append(item)
+                        completed_count += 1
+                    else:
+                        updated_items.append(item)
 
-            if completed_count:
-                self.store.save_state(session, updated_items, next_id=next_id, source_id=self.source_id)
+                if completed_count:
+                    self.store.save_state(session, updated_items, next_id=next_id, source_id=self.source_id)
             return json.dumps({"completed": completed_count})
 
         @tool(name="remove_todos", approval_mode="never_require")
-        def remove_todos(ids: list[int]) -> str:
+        async def remove_todos(ids: list[int]) -> str:
             """Remove one or more todo items by ID."""
             if not ids:
                 raise ValueError("ids must contain at least one todo ID.")
 
-            items, next_id = self.store.load_state(session, source_id=self.source_id)
-            remaining_items = [item for item in items if item.id not in set(ids)]
-            removed_count = len(items) - len(remaining_items)
-            if removed_count:
-                self.store.save_state(session, remaining_items, next_id=next_id, source_id=self.source_id)
+            async with self._mutation_lock(session):
+                items, next_id = self.store.load_state(session, source_id=self.source_id)
+                remaining_items = [item for item in items if item.id not in set(ids)]
+                removed_count = len(items) - len(remaining_items)
+                if removed_count:
+                    self.store.save_state(session, remaining_items, next_id=next_id, source_id=self.source_id)
             return json.dumps({"removed": removed_count})
 
         @tool(name="get_remaining_todos", approval_mode="never_require")
