@@ -76,6 +76,13 @@ async def test_session_mode_context_provider_updates_session_mode(
     )
     tools = options["tools"]
     assert isinstance(tools, list)
+    instructions = options["instructions"]
+    assert isinstance(instructions, str)
+    assert "## Agent Mode" in instructions
+    assert "Use the set_mode tool to switch between modes as your work progresses." in instructions
+    assert "ask clarifying questions, discuss options, and get user approval before proceeding" in instructions
+    assert "If you encounter ambiguity, choose the most reasonable option and note your choice" in instructions
+    assert "You are currently operating in the plan mode." in instructions
 
     get_mode_tool = _tool_by_name(tools, "get_mode")
     set_mode_tool = _tool_by_name(tools, "set_mode")
