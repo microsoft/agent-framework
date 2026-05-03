@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use HyperlightCodeActProvider with provider-owned
 // tools (exposed inside the sandbox via `call_tool(...)`). The model can

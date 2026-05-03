@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to wire up CodeAct manually using
 // HyperlightExecuteCodeFunction rather than the AIContextProvider. Use this

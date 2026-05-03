@@ -1,4 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hyperlight;
 
@@ -16,7 +18,7 @@ public enum CodeActApprovalMode
     /// <summary>
     /// Approval is derived from the provider-owned CodeAct tool registry.
     /// If any configured tool is an
-    /// <see cref="Microsoft.Extensions.AI.ApprovalRequiredAIFunction"/>,
+    /// <see cref="ApprovalRequiredAIFunction"/>,
     /// <c>execute_code</c> also requires approval. Otherwise it does not.
     /// </summary>
     NeverRequire,

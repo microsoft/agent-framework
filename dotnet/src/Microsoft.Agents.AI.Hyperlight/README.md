@@ -1,6 +1,6 @@
-# Microsoft.Agents.AI.Hyperlight
+﻿# Microsoft.Agents.AI.Hyperlight
 
-First-class [CodeAct](../../../docs/decisions/0024-hyperlight-codeact-integration.md)
+First-class [CodeAct](../../../docs/decisions/0024-codeact-integration.md)
 support for the Microsoft Agent Framework, backed by the
 [Hyperlight](https://github.com/hyperlight-dev/hyperlight) VM-isolated sandbox.
 
