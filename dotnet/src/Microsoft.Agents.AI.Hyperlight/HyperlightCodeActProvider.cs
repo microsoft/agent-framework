@@ -67,7 +67,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
     /// <param name="options">
     /// Optional configuration options for the provider. When <see langword="null"/> the provider
     /// uses the defaults of <see cref="HyperlightCodeActProviderOptions"/> (the
-    /// <see cref="SandboxBackend.JavaScript"/> backend with no tools, mounts, or allow-list entries).
+    /// <see cref="HyperlightSandbox.Api.SandboxBackend.JavaScript"/> backend with no tools, mounts, or allow-list entries).
     /// Use <see cref="HyperlightCodeActProviderOptions.CreateForWasm(string)"/> to target a Wasm
     /// guest module instead.
     /// </param>
@@ -304,13 +304,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
         mode == CodeActApprovalMode.AlwaysRequire
             || tools.Any(t => t is ApprovalRequiredAIFunction);
 
-    private void ThrowIfDisposed()
-    {
-        if (this._disposed)
-        {
-            throw new ObjectDisposedException(nameof(HyperlightCodeActProvider));
-        }
-    }
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(this._disposed, this);
 
     /// <summary>Releases the underlying sandbox and associated native resources.</summary>
     public void Dispose()

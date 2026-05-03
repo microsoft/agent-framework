@@ -46,7 +46,7 @@ internal static class ToolBridge
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-            return JsonSerializer.Serialize(new { error = ex.Message });
+            return JsonSerializer.Serialize(new HyperlightToolError(ex.Message), HyperlightJsonContext.Default.HyperlightToolError);
         }
     }
 
@@ -77,6 +77,18 @@ internal static class ToolBridge
         return result;
     }
 
-    private static string SerializeResult(object? result) =>
-        result is null ? "null" : JsonSerializer.Serialize(result);
+    private static string SerializeResult(object? result)
+    {
+        if (result is null)
+        {
+            return "null";
+        }
+
+        // Tool results are arbitrary user types — defer to AIJsonUtilities so that
+        // the same trim/AOT-friendly serializer chain used elsewhere in the framework
+        // is applied here. The inputs are produced by user-supplied AIFunctions and
+        // therefore cannot be modeled in our own JsonSerializerContext.
+        var typeInfo = AIJsonUtilities.DefaultOptions.GetTypeInfo(result.GetType());
+        return JsonSerializer.Serialize(result, typeInfo);
+    }
 }

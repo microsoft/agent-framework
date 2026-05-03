@@ -86,13 +86,7 @@ public sealed class HyperlightExecuteCodeFunction : IDisposable
         return InstructionBuilder.BuildContextInstructions(toolsVisibleToModel);
     }
 
-    private void ThrowIfDisposed()
-    {
-        if (this._disposed)
-        {
-            throw new ObjectDisposedException(nameof(HyperlightExecuteCodeFunction));
-        }
-    }
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(this._disposed, this);
 
     /// <summary>Releases the underlying sandbox and associated native resources.</summary>
     public void Dispose()

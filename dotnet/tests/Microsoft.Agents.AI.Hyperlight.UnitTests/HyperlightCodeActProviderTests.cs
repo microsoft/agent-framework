@@ -109,8 +109,8 @@ public sealed class HyperlightCodeActProviderTests
     {
         // Arrange
         using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions());
-        var d1 = new AllowedDomain("https://a", new[] { "GET" });
-        var d2 = new AllowedDomain("https://a", new[] { "POST" });
+        var d1 = new AllowedDomain("https://a", ["GET"]);
+        var d2 = new AllowedDomain("https://a", ["POST"]);
         var d3 = new AllowedDomain("https://b");
 
         // Act

@@ -214,31 +214,19 @@ internal sealed class SandboxExecutor : IDisposable
         this._lastConfigFingerprint = snapshot.ConfigFingerprint;
     }
 
-    private static string BuildResult(ExecutionResult result)
-    {
-        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["stdout"] = result.Stdout ?? string.Empty,
-            ["stderr"] = result.Stderr ?? string.Empty,
-            ["exit_code"] = result.ExitCode,
-            ["success"] = result.ExitCode == 0,
-        };
+    private static string BuildResult(ExecutionResult result) =>
+        JsonSerializer.Serialize(
+            new HyperlightExecutionResult(
+                result.Stdout ?? string.Empty,
+                result.Stderr ?? string.Empty,
+                result.ExitCode,
+                result.ExitCode == 0),
+            HyperlightJsonContext.Default.HyperlightExecutionResult);
 
-        return JsonSerializer.Serialize(payload);
-    }
-
-    private static string BuildErrorResult(string message)
-    {
-        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["stdout"] = string.Empty,
-            ["stderr"] = message,
-            ["exit_code"] = -1,
-            ["success"] = false,
-        };
-
-        return JsonSerializer.Serialize(payload);
-    }
+    private static string BuildErrorResult(string message) =>
+        JsonSerializer.Serialize(
+            new HyperlightExecutionResult(string.Empty, message, -1, false),
+            HyperlightJsonContext.Default.HyperlightExecutionResult);
 
     public void Dispose()
     {

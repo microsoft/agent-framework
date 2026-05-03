@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
@@ -19,13 +20,14 @@ public sealed class ProvideAIContextTests
         using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions());
 
         // Act
-        var context = await provider.InvokingAsync(NewInvokingContext()).ConfigureAwait(false);
+        var context = await provider.InvokingAsync(NewInvokingContext());
 
         // Assert
         Assert.NotNull(context);
         Assert.NotNull(context!.Tools);
-        Assert.Single(context.Tools!);
-        var function = Assert.IsAssignableFrom<AIFunction>(context.Tools![0]);
+        var tools = context.Tools!.ToList();
+        Assert.Single(tools);
+        var function = Assert.IsAssignableFrom<AIFunction>(tools[0]);
         Assert.Equal("execute_code", function.Name);
         Assert.False(string.IsNullOrWhiteSpace(context.Instructions));
     }
@@ -40,10 +42,10 @@ public sealed class ProvideAIContextTests
         });
 
         // Act
-        var context = await provider.InvokingAsync(NewInvokingContext()).ConfigureAwait(false);
+        var context = await provider.InvokingAsync(NewInvokingContext());
 
         // Assert
-        _ = Assert.IsType<ApprovalRequiredAIFunction>(context!.Tools![0]);
+        _ = Assert.IsType<ApprovalRequiredAIFunction>(context!.Tools!.First());
     }
 
     [Fact]
@@ -54,14 +56,14 @@ public sealed class ProvideAIContextTests
         using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions
         {
             ApprovalMode = CodeActApprovalMode.NeverRequire,
-            Tools = new[] { (AIFunction)new ApprovalRequiredAIFunction(inner) },
+            Tools = [new ApprovalRequiredAIFunction(inner)],
         });
 
         // Act
-        var context = await provider.InvokingAsync(NewInvokingContext()).ConfigureAwait(false);
+        var context = await provider.InvokingAsync(NewInvokingContext());
 
         // Assert
-        _ = Assert.IsType<ApprovalRequiredAIFunction>(context!.Tools![0]);
+        _ = Assert.IsType<ApprovalRequiredAIFunction>(context!.Tools!.First());
     }
 
     [Fact]
@@ -72,11 +74,11 @@ public sealed class ProvideAIContextTests
         provider.AddTools(AIFunctionFactory.Create(() => "one", name: "first_tool"));
 
         // Act
-        var context = await provider.InvokingAsync(NewInvokingContext()).ConfigureAwait(false);
+        var context = await provider.InvokingAsync(NewInvokingContext());
         provider.AddTools(AIFunctionFactory.Create(() => "two", name: "second_tool"));
 
         // Assert — the returned execute_code description must reflect the first snapshot only.
-        var function = Assert.IsAssignableFrom<AIFunction>(context!.Tools![0]);
+        var function = Assert.IsAssignableFrom<AIFunction>(context!.Tools!.First());
         Assert.Contains("first_tool", function.Description);
         Assert.DoesNotContain("second_tool", function.Description);
     }

@@ -11,7 +11,7 @@
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
   <PropertyGroup>
-    <!-- Disable packing until the Hyperlight.HyperlightSandbox.Api NuGet is published and we are ready to release. -->
+    <!-- Re-enable packing once we are ready to release. -->
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 

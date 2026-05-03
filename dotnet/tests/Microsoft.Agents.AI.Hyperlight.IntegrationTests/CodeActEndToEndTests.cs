@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -36,16 +37,16 @@ public sealed class CodeActEndToEndTests
             HyperlightCodeActProviderOptions.CreateForWasm(GuestPath!));
 
         var context = await provider.InvokingAsync(
-            new AIContextProvider.InvokingContext(s_mockAgent, session: null, new AIContext())).ConfigureAwait(false);
+            new AIContextProvider.InvokingContext(s_mockAgent, session: null, new AIContext()));
 
-        var executeCode = Assert.IsAssignableFrom<AIFunction>(context.Tools![0]);
+        var executeCode = Assert.IsAssignableFrom<AIFunction>(context.Tools!.First());
 
         // Act
         var rawResult = await executeCode.InvokeAsync(
             new AIFunctionArguments(new System.Collections.Generic.Dictionary<string, object?>
             {
                 ["code"] = "print(\"hi\")",
-            })).ConfigureAwait(false);
+            }));
 
         // Assert
         var json = rawResult?.ToString();

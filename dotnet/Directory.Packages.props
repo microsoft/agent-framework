@@ -110,7 +110,7 @@
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="1.1.0" />
     <!-- Hyperlight -->
-    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.1.0-preview" />
+    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.4.0" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
