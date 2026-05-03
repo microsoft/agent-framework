@@ -615,9 +615,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "hyperlight-sandbox", specifier = ">=0.3.0,<0.4" },
-    { name = "hyperlight-sandbox-backend-wasm", marker = "(python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine == 'AMD64' and sys_platform == 'win32')", specifier = ">=0.3.0,<0.4" },
-    { name = "hyperlight-sandbox-python-guest", specifier = ">=0.3.0,<0.4" },
+    { name = "hyperlight-sandbox", specifier = ">=0.4.0,<0.5" },
+    { name = "hyperlight-sandbox-backend-wasm", marker = "(python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine == 'AMD64' and sys_platform == 'win32')", specifier = ">=0.4.0,<0.5" },
+    { name = "hyperlight-sandbox-python-guest", specifier = ">=0.4.0,<0.5" },
 ]
 
 [[package]]
@@ -2951,35 +2951,35 @@ wheels = [
 
 [[package]]
 name = "hyperlight-sandbox"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/cf/fe/ce88996ea3e3e05130d6f0e8cd2ffbe9ab9bf3d9448b7050d4b8d0802b0a/hyperlight_sandbox-0.3.0.tar.gz", hash = "sha256:00491ce267ffbdb206377c79b4afd86510177ad73f4daf2ef7fce02b54eaf801", size = 9251, upload-time = "2026-04-07T03:49:52.542Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/5e/14c69eac7e1c74fbd556c6f890729a3d232d32d65cd9f8cfde72c0534e61/hyperlight_sandbox-0.4.0.tar.gz", hash = "sha256:90d7b91d4d8e17054e282b0daed55c261392a748dafc57e6416d3184cdac910b", size = 9262, upload-time = "2026-05-02T00:00:02.866Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/33/e6dcd6729308d13570ae2d3be0e476019a6f3fea387d7549bb1f77ce0408/hyperlight_sandbox-0.3.0-py3-none-any.whl", hash = "sha256:ba8e6779d64e9c187acd93456851ebafaed2f49380e5d132bc0906a4080d2217", size = 5723, upload-time = "2026-04-07T03:49:53.276Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/e3/b8c106a274c08a30261105afa5511e0ec55960e86b2f6c51e3095e96647c/hyperlight_sandbox-0.4.0-py3-none-any.whl", hash = "sha256:7ae44d2448ed6ecadb368373c7e45eb395521e7774c86a1cbc1ef9cdfc25cd2a", size = 5723, upload-time = "2026-05-02T00:00:03.811Z" },
 ]
 
 [[package]]
 name = "hyperlight-sandbox-backend-wasm"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/91/c9d68cad7996fdd2f1facef1453156bdd8d52eefa976cc8c827c13029497/hyperlight_sandbox_backend_wasm-0.3.0-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:eda362f5f737b0823326290d7627c76ce0547a78e70f07f8c9d177e34622fc02", size = 3806454, upload-time = "2026-04-07T03:49:24.238Z" },
-    { url = "https://files.pythonhosted.org/packages/9a/6f/6b2399a1caf59dd19b635d99ee1add0c975af7bc3317f5d0f1f9c3f90aa0/hyperlight_sandbox_backend_wasm-0.3.0-cp310-cp310-win_amd64.whl", hash = "sha256:79347b7ae94f2786691b04cb52130dabc5991e0c03b42a24bad8adc766832655", size = 3283951, upload-time = "2026-04-07T03:49:17.137Z" },
-    { url = "https://files.pythonhosted.org/packages/23/f2/b380c34a0ce8d486a05adb66757f98cca029e1fb1c96b1c29be0d25d3882/hyperlight_sandbox_backend_wasm-0.3.0-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:aff9eec4803fb535a140298e2632529f4150fcf3c6ea3ff2ae4571572a836116", size = 3806601, upload-time = "2026-04-07T03:49:22.853Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/5a/fb78cfd934e0523887b8d5b073b7b2aed3b545add21cda3aa95929ac1659/hyperlight_sandbox_backend_wasm-0.3.0-cp311-cp311-win_amd64.whl", hash = "sha256:b6151704dd19862c9869b115752b4504b45d0b2eeb46aa9385a1a3b8be11cfa8", size = 3284164, upload-time = "2026-04-07T03:49:18.556Z" },
-    { url = "https://files.pythonhosted.org/packages/21/bc/4e21f5c7ccd9307ac63a61c71b62a57ee4a9e6eec77fc72ff072907a21f5/hyperlight_sandbox_backend_wasm-0.3.0-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:cfd1d22ce221774d82a5174d268d56ff70fc1a23fb993a6491358b5d0ed169bf", size = 3802901, upload-time = "2026-04-07T03:49:19.845Z" },
-    { url = "https://files.pythonhosted.org/packages/9a/41/646be9b0c7bb0f9192e45a77414673aa414eb316c92b5312efe6fb4ce802/hyperlight_sandbox_backend_wasm-0.3.0-cp312-cp312-win_amd64.whl", hash = "sha256:229ab494a422f2de895a2a27ad6a6a2daed710ea062d7c213878bbe5f5b32fa7", size = 3281220, upload-time = "2026-04-07T03:49:21.368Z" },
-    { url = "https://files.pythonhosted.org/packages/74/3a/f8ec4a41fffba4036dfc3cbddc3dfb6e87466b01afe1cb0a50cc6a0f0eed/hyperlight_sandbox_backend_wasm-0.3.0-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:b91905ee2ddd36a78b0dd13b1a62be99a995a45121587c111692591e40b36912", size = 3802789, upload-time = "2026-04-07T03:49:15.614Z" },
-    { url = "https://files.pythonhosted.org/packages/3c/62/dfa8c15102f9b8ec5c3b5ffb54b99d60c75e7a6e4d00540757656bc5a5d8/hyperlight_sandbox_backend_wasm-0.3.0-cp313-cp313-win_amd64.whl", hash = "sha256:eff682761c3b86abfe7e0d523ea0e6d5c7e8299302917c53918743b82c9d1ea2", size = 3280501, upload-time = "2026-04-07T03:49:13.939Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/7c/355864a5bc814eeb8788ea35eb2cdf6c60f34afd7a7cd4433a368f26f60e/hyperlight_sandbox_backend_wasm-0.4.0-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:5b5da47c21aeebd2a7bb9394bbd481fe285fafc5b48d1f3685034e203219bcb5", size = 3921265, upload-time = "2026-05-01T23:59:20.42Z" },
+    { url = "https://files.pythonhosted.org/packages/46/ec/628fafcbf1483f86df6bf9412b23da68b5cd1156d91b0998ed5c62d0b9c4/hyperlight_sandbox_backend_wasm-0.4.0-cp310-cp310-win_amd64.whl", hash = "sha256:c514e662fed41ee8222b09da5f1130ac856c91cc4523b354bb8e7b96da352611", size = 3387473, upload-time = "2026-05-01T23:59:25.548Z" },
+    { url = "https://files.pythonhosted.org/packages/23/d2/09812f51a02e39236bfb5bfc40b4021e98f07e2f32f8d6a72745884d49f8/hyperlight_sandbox_backend_wasm-0.4.0-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:c0935698f58a144150000e978e061fa78daa6f2ac1861980b32571f7c27a53fd", size = 3921230, upload-time = "2026-05-01T23:59:18.635Z" },
+    { url = "https://files.pythonhosted.org/packages/34/b2/56181b5a21c17ad4636686de3463706a85883aa70dd3b1b160dd7e95627b/hyperlight_sandbox_backend_wasm-0.4.0-cp311-cp311-win_amd64.whl", hash = "sha256:8b9486b7617615334d4b06d9462ad57edfe3f161d40d880b866db7d240b4d04e", size = 3388119, upload-time = "2026-05-01T23:59:21.966Z" },
+    { url = "https://files.pythonhosted.org/packages/79/e5/3cdf21594eb28de7ca1a5a1ade27e137c8f3d7ab48d65fed87a3b74c4039/hyperlight_sandbox_backend_wasm-0.4.0-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:ff4627950708909202ee24c6175dc41e9c05479f89393575e3de0f14e6f5a193", size = 3918189, upload-time = "2026-05-01T23:59:16.666Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/97/b1bb9893bbeb979d133dc542520125dcbf8394d1a2537e753118b37c7cab/hyperlight_sandbox_backend_wasm-0.4.0-cp312-cp312-win_amd64.whl", hash = "sha256:cce7dc28b9ded034a11a9a8cf7b9ffb838e29006be8d2e01646dd131ba501b73", size = 3383520, upload-time = "2026-05-01T23:59:27.261Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/29/deee4e31086628750f0ce1f67da1e28c613fd2df68465de130cbfe51e72d/hyperlight_sandbox_backend_wasm-0.4.0-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:88e194515e4784f68676b6906c98a4000f913c93172cf07981d8a977e756bbd6", size = 3917939, upload-time = "2026-05-01T23:59:14.805Z" },
+    { url = "https://files.pythonhosted.org/packages/15/2a/6822aec3c04c46893406d0d6ed576dbdb4b5c1d76a0124dc220bb45b0d34/hyperlight_sandbox_backend_wasm-0.4.0-cp313-cp313-win_amd64.whl", hash = "sha256:d1cd2269a5651ea9be1f94a3e3388f6af69e41dbc2b808c3b806481fe17ce163", size = 3383110, upload-time = "2026-05-01T23:59:23.736Z" },
 ]
 
 [[package]]
 name = "hyperlight-sandbox-python-guest"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/23/6a/f182c4315d31a98dd3b82f9274638e3adb399779584af93c5087bb2f814f/hyperlight_sandbox_python_guest-0.3.0.tar.gz", hash = "sha256:b1de5d8e87375dc6bef744ecd7ae2a7f43d5f6b913b4e990e9872bd439c0b19e", size = 21554625, upload-time = "2026-04-07T03:49:42.672Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/fd/816d1f3f277ff149a45da5381967aa04c22bc7702b5c14f0acfd9db2cee7/hyperlight_sandbox_python_guest-0.4.0.tar.gz", hash = "sha256:64c3c6c13fe550bf5b680fa0b965cf62bc4668084cc275c3467e3c015e6ead36", size = 21657381, upload-time = "2026-05-01T23:59:46.589Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/8e/4cd754928464f56528645c7421ccbb3fcbe45ad2542f899712b0f2f2c0e1/hyperlight_sandbox_python_guest-0.3.0-py3-none-any.whl", hash = "sha256:3c55a7420666ad9a208893dbdf7ad1b5c8ad4f3a94b1a56e64979719c7ce95c1", size = 21716481, upload-time = "2026-04-07T03:49:39.885Z" },
+    { url = "https://files.pythonhosted.org/packages/98/ba/efb9aacf993f0ac142da5beb9177b221e49dc860c6ea398de236015a52a0/hyperlight_sandbox_python_guest-0.4.0-py3-none-any.whl", hash = "sha256:0789eb794b99606288402ed3921b5e2630800a69d24117ecd9b82e816568202d", size = 21822062, upload-time = "2026-05-01T23:59:50.99Z" },
 ]
 
 [[package]]
