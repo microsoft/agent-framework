@@ -10,7 +10,7 @@ from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._tools import tool
 
-DEFAULT_MODE_SOURCE_ID = "session_mode"
+DEFAULT_MODE_SOURCE_ID = "agent_mode"
 DEFAULT_MODE_INSTRUCTIONS = (
     "## Agent Mode\n\n"
     "You can operate in different modes. Depending on the mode you are in, "
@@ -73,7 +73,7 @@ def _normalize_mode(mode: str, *, available_modes: Mapping[str, str]) -> str:
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
-def get_session_mode(
+def get_agent_mode(
     session: AgentSession,
     *,
     source_id: str = DEFAULT_MODE_SOURCE_ID,
@@ -104,7 +104,7 @@ def get_session_mode(
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
-def set_session_mode(
+def set_agent_mode(
     session: AgentSession,
     mode: str,
     *,
@@ -135,10 +135,10 @@ def set_session_mode(
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
-class SessionModeContextProvider(ContextProvider):
+class AgentModeProvider(ContextProvider):
     """Track the agent's operating mode in session state and provide mode tools.
 
-    The ``SessionModeContextProvider`` enables agents to operate in distinct modes during long-running complex tasks.
+    The ``AgentModeProvider`` enables agents to operate in distinct modes during long-running complex tasks.
     The current mode is persisted in the ``AgentSession`` state and is included in the instructions provided to the
     agent on each invocation.
 
@@ -149,7 +149,7 @@ class SessionModeContextProvider(ContextProvider):
     - ``set_mode``: Switch the agent's operating mode.
     - ``get_mode``: Retrieve the agent's current operating mode.
 
-    Public helper functions ``get_session_mode`` and ``set_session_mode`` allow external code to programmatically read
+    Public helper functions ``get_agent_mode`` and ``set_agent_mode`` allow external code to programmatically read
     and change the mode.
     """
 
@@ -161,7 +161,7 @@ class SessionModeContextProvider(ContextProvider):
         mode_descriptions: Mapping[str, str] | None = None,
         instructions: str | None = None,
     ) -> None:
-        """Initialize a new session mode provider.
+        """Initialize a new agent mode provider.
 
         Args:
             source_id: Unique source ID for the provider.
@@ -212,7 +212,7 @@ class SessionModeContextProvider(ContextProvider):
             state: Per-provider invocation state.
         """
         del agent, state
-        current_mode = get_session_mode(
+        current_mode = get_agent_mode(
             session,
             source_id=self.source_id,
             default_mode=self.default_mode,
@@ -222,7 +222,7 @@ class SessionModeContextProvider(ContextProvider):
         @tool(name="set_mode", approval_mode="never_require")
         def set_mode(mode: str) -> str:
             """Switch the agent's operating mode."""
-            normalized_mode = set_session_mode(
+            normalized_mode = set_agent_mode(
                 session,
                 mode,
                 source_id=self.source_id,
@@ -233,7 +233,7 @@ class SessionModeContextProvider(ContextProvider):
         @tool(name="get_mode", approval_mode="never_require")
         def get_mode() -> str:
             """Get the agent's current operating mode."""
-            current_mode_value = get_session_mode(
+            current_mode_value = get_agent_mode(
                 session,
                 source_id=self.source_id,
                 default_mode=self.default_mode,

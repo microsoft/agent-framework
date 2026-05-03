@@ -89,9 +89,9 @@ from ._harness._memory import (
 )
 from ._harness._mode import (
     DEFAULT_MODE_SOURCE_ID,
-    SessionModeContextProvider,
-    get_session_mode,
-    set_session_mode,
+    AgentModeProvider,
+    get_agent_mode,
+    set_agent_mode,
 )
 from ._harness._todo import (
     DEFAULT_TODO_SOURCE_ID,
@@ -311,6 +311,7 @@ __all__ = [
     "AgentMiddleware",
     "AgentMiddlewareLayer",
     "AgentMiddlewareTypes",
+    "AgentModeProvider",
     "AgentResponse",
     "AgentResponseUpdate",
     "AgentRunInputs",
@@ -404,7 +405,6 @@ __all__ = [
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
     "SessionContext",
-    "SessionModeContextProvider",
     "SingleEdgeGroup",
     "Skill",
     "SkillResource",
@@ -477,8 +477,8 @@ __all__ = [
     "evaluator",
     "executor",
     "function_middleware",
+    "get_agent_mode",
     "get_run_context",
-    "get_session_mode",
     "handler",
     "included_messages",
     "included_token_count",
@@ -494,7 +494,7 @@ __all__ = [
     "register_state_type",
     "resolve_agent_id",
     "response_handler",
-    "set_session_mode",
+    "set_agent_mode",
     "step",
     "tool",
     "tool_call_args_match",
