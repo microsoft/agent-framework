@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+import pytest
 
 from agent_framework import (
     DEFAULT_MEMORY_SOURCE_ID,
@@ -18,6 +21,7 @@ from agent_framework import (
     MemoryContextProvider,
     MemoryFileStore,
     MemoryIndexEntry,
+    MemoryStore,
     MemoryTopicRecord,
     Message,
 )
@@ -206,6 +210,108 @@ async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_p
             "text": "I prefer aisle seats.",
         }
     ]
+
+
+def test_memory_file_store_rejects_owner_path_traversal(tmp_path) -> None:
+    """Owner IDs with path traversal segments should not escape ``base_path``."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "../escape"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    record = MemoryTopicRecord(
+        topic="preferences",
+        summary="Prefers concise answers.",
+        memories=["Prefers concise answers."],
+        updated_at=datetime(2026, 4, 21, tzinfo=timezone.utc).replace(microsecond=0).isoformat(),
+    )
+
+    with pytest.raises(ValueError, match="path traversal"):
+        store.write_topic(session, record, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert not (tmp_path.parent / "escape").exists()
+
+
+async def test_memory_file_store_namespaces_topics_state_and_transcripts_by_source_id(tmp_path) -> None:
+    """Providers sharing one file store should not collide when they use different source IDs."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(
+        tmp_path,
+        owner_state_key="owner_id",
+        dumps=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
+        loads=json.loads,
+    )
+    updated_at = datetime(2026, 4, 21, tzinfo=timezone.utc).replace(microsecond=0).isoformat()
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(
+            topic="preferences",
+            summary="Source A summary.",
+            memories=["Source A memory."],
+            updated_at=updated_at,
+        ),
+        source_id="source-a",
+    )
+    store.write_topic(
+        session,
+        MemoryTopicRecord(
+            topic="preferences",
+            summary="Source B summary.",
+            memories=["Source B memory."],
+            updated_at=updated_at,
+        ),
+        source_id="source-b",
+    )
+    store.write_state(
+        session, {"last_consolidated_at": updated_at, "sessions_since_consolidation": ["a"]}, source_id="source-a"
+    )
+    store.write_state(
+        session, {"last_consolidated_at": None, "sessions_since_consolidation": ["b"]}, source_id="source-b"
+    )
+
+    await FileHistoryProvider(store.get_transcripts_directory(session, source_id="source-a")).save_messages(
+        "session-1", [Message(role="user", contents=["Source A transcript."])]
+    )
+    await FileHistoryProvider(store.get_transcripts_directory(session, source_id="source-b")).save_messages(
+        "session-1", [Message(role="user", contents=["Source B transcript."])]
+    )
+
+    assert store.get_topic(session, source_id="source-a", topic="preferences").memories == ["Source A memory."]
+    assert store.get_topic(session, source_id="source-b", topic="preferences").memories == ["Source B memory."]
+    assert store.read_state(session, source_id="source-a")["sessions_since_consolidation"] == ["a"]
+    assert store.read_state(session, source_id="source-b")["sessions_since_consolidation"] == ["b"]
+    assert (
+        store.search_transcripts(session, source_id="source-a", query="transcript")[0]["text"] == "Source A transcript."
+    )
+    assert (
+        store.search_transcripts(session, source_id="source-b", query="transcript")[0]["text"] == "Source B transcript."
+    )
+
+
+async def test_memory_context_provider_does_not_rewrite_unchanged_index(tmp_path) -> None:
+    """A second before-run pass with unchanged memories should preserve ``MEMORY.md`` mtime."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    agent = Agent(
+        client=_MemoryHarnessClient(),
+        context_providers=[MemoryContextProvider(store=store)],
+        default_options={"store": False},
+    )
+
+    await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Current question"])],
+    )
+    index_path = next(tmp_path.rglob("MEMORY.md"))
+    first_mtime_ns = index_path.stat().st_mtime_ns
+
+    await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Current question"])],
+    )
+
+    assert index_path.stat().st_mtime_ns == first_mtime_ns
 
 
 async def test_memory_context_provider_tools_and_automation(tmp_path) -> None:
@@ -442,10 +548,36 @@ async def test_memory_context_provider_uses_explicit_consolidation_client(tmp_pa
     assert consolidation_client.calls == ["consolidate"]
 
 
+async def test_memory_context_provider_preserves_concurrent_writes_to_same_topic(tmp_path) -> None:
+    """Concurrent writes to one topic should preserve every memory line."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    provider = MemoryContextProvider(store=store)
+    agent = Agent(client=_MemoryHarnessClient(), context_providers=[provider], default_options={"store": False})
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Remember these."])],
+    )
+    tools = options["tools"]
+    assert isinstance(tools, list)
+    write_memory = _tool_by_name(tools, "write_memory")
+    memories = [f"Concurrent memory {index}." for index in range(20)]
+
+    await asyncio.gather(
+        *(write_memory.invoke(arguments={"topic": "preferences", "memory": memory}) for memory in memories)
+    )
+
+    topic = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="preferences")
+    assert sorted(topic.memories) == sorted(memories)
+
+
 def test_memory_harness_classes_are_marked_experimental() -> None:
     """Memory harness public classes should expose HARNESS experimental metadata."""
     assert MemoryIndexEntry.__feature_id__ == ExperimentalFeature.HARNESS.value
     assert MemoryTopicRecord.__feature_id__ == ExperimentalFeature.HARNESS.value
+    assert MemoryStore.__feature_id__ == ExperimentalFeature.HARNESS.value
     assert MemoryFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
     assert MemoryContextProvider.__feature_id__ == ExperimentalFeature.HARNESS.value
     assert ".. warning:: Experimental" in MemoryContextProvider.__doc__

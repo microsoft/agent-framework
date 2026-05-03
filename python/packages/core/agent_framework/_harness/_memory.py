@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import threading
+import weakref
 from abc import ABC, abstractmethod
-from base64 import urlsafe_b64decode
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, ClassVar, Final, cast
 
 from .._clients import SupportsChatGetResponse
 from .._compaction import group_messages
@@ -492,6 +495,7 @@ class MemoryTopicRecord:
         )
 
 
+@experimental(feature_id=ExperimentalFeature.HARNESS)
 class MemoryStore(ABC):
     """Abstract backing store for the memory harness."""
 
@@ -558,6 +562,7 @@ class MemoryStore(ABC):
         source_id: str,
         line_limit: int,
         line_length: int,
+        index_entries: Sequence[MemoryIndexEntry] | None = None,
     ) -> str:
         """Return the current ``MEMORY.md`` text, rebuilding it when needed."""
 
@@ -621,6 +626,8 @@ class MemoryFileStore(MemoryStore):
             loads: Callable used to deserialize maintenance state JSON.
         """
         self.base_path = Path(base_path)
+        self.base_path.mkdir(parents=True, exist_ok=True)
+        self._base_root = self.base_path.resolve()
         self.kind = kind
         self.owner_prefix = owner_prefix
         self.owner_state_key = owner_state_key
@@ -637,7 +644,11 @@ class MemoryFileStore(MemoryStore):
             raise RuntimeError(
                 f"MemoryFileStore requires session.state[{self.owner_state_key!r}] to be set for file-backed storage."
             )
-        return str(owner_value)
+        owner_id = str(owner_value)
+        owner_path = Path(owner_id)
+        if owner_path.is_absolute() or any(part == ".." for part in owner_path.parts):
+            raise ValueError("Memory owner ID must not contain path traversal segments.")
+        return owner_id
 
     def get_owner_id(self, session: AgentSession) -> str | None:
         """Return the logical owner ID for one session."""
@@ -661,31 +672,39 @@ class MemoryFileStore(MemoryStore):
             )
         session.state[self.owner_state_key] = owner_value
 
-    def _get_memory_root(self, session: AgentSession) -> Path:
-        memory_root = self.base_path / f"{self.owner_prefix}{self._get_owner_id(session)}" / self.kind
+    @staticmethod
+    def _encode_path_component(value: str) -> str:
+        encoded_value = urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
+        return encoded_value or "_"
+
+    def _get_memory_root(self, session: AgentSession, *, source_id: str) -> Path:
+        owner_component = self._encode_path_component(f"{self.owner_prefix}{self._get_owner_id(session)}")
+        source_component = self._encode_path_component(source_id)
+        memory_root = (self._base_root / source_component / owner_component / self.kind).resolve()
+        if not memory_root.is_relative_to(self._base_root):
+            raise ValueError("Memory storage path escaped base_path.")
         memory_root.mkdir(parents=True, exist_ok=True)
         return memory_root
 
-    def _get_topics_directory(self, session: AgentSession) -> Path:
-        topics_directory = self._get_memory_root(session) / self.topics_directory_name
+    def _get_topics_directory(self, session: AgentSession, *, source_id: str) -> Path:
+        topics_directory = self._get_memory_root(session, source_id=source_id) / self.topics_directory_name
         topics_directory.mkdir(parents=True, exist_ok=True)
         return topics_directory
 
     def get_transcripts_directory(self, session: AgentSession, *, source_id: str) -> Path:
         """Return the owner-level transcript archive directory."""
-        del source_id
-        transcripts_directory = self._get_memory_root(session) / self.transcripts_directory_name
+        transcripts_directory = self._get_memory_root(session, source_id=source_id) / self.transcripts_directory_name
         transcripts_directory.mkdir(parents=True, exist_ok=True)
         return transcripts_directory
 
-    def _get_index_path(self, session: AgentSession) -> Path:
-        return self._get_memory_root(session) / self.index_file_name
+    def _get_index_path(self, session: AgentSession, *, source_id: str) -> Path:
+        return self._get_memory_root(session, source_id=source_id) / self.index_file_name
 
-    def _get_state_path(self, session: AgentSession) -> Path:
-        return self._get_memory_root(session) / self.state_file_name
+    def _get_state_path(self, session: AgentSession, *, source_id: str) -> Path:
+        return self._get_memory_root(session, source_id=source_id) / self.state_file_name
 
-    def _topic_path(self, session: AgentSession, *, topic: str) -> Path:
-        return self._get_topics_directory(session) / f"{_slugify_topic(topic)}.md"
+    def _topic_path(self, session: AgentSession, *, source_id: str, topic: str) -> Path:
+        return self._get_topics_directory(session, source_id=source_id) / f"{_slugify_topic(topic)}.md"
 
     @staticmethod
     def _serialize_json(value: object, *, dumps: JsonDumps) -> str:
@@ -705,9 +724,8 @@ class MemoryFileStore(MemoryStore):
 
     def list_topics(self, session: AgentSession, *, source_id: str) -> list[MemoryTopicRecord]:
         """Return all topic memory files visible from the current owner."""
-        del source_id
         topics: list[MemoryTopicRecord] = []
-        for topic_path in sorted(self._get_topics_directory(session).glob("*.md")):
+        for topic_path in sorted(self._get_topics_directory(session, source_id=source_id).glob("*.md")):
             if not topic_path.is_file():
                 continue
             record = MemoryTopicRecord.from_markdown(
@@ -719,21 +737,21 @@ class MemoryFileStore(MemoryStore):
 
     def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:
         """Return one topic memory file by topic name or slug."""
-        del source_id
-        topic_path = self._topic_path(session, topic=topic)
+        topic_path = self._topic_path(session, source_id=source_id, topic=topic)
         if not topic_path.exists():
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
         return MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
 
     def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
         """Persist one topic memory file."""
-        del source_id
-        self._topic_path(session, topic=record.slug).write_text(f"{record.to_markdown()}\n", encoding="utf-8")
+        self._topic_path(session, source_id=source_id, topic=record.slug).write_text(
+            f"{record.to_markdown()}\n",
+            encoding="utf-8",
+        )
 
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
         """Delete one topic memory file."""
-        del source_id
-        topic_path = self._topic_path(session, topic=topic)
+        topic_path = self._topic_path(session, source_id=source_id, topic=topic)
         if not topic_path.exists():
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
         topic_path.unlink()
@@ -756,7 +774,10 @@ class MemoryFileStore(MemoryStore):
             *(pointer_lines if pointer_lines else [DEFAULT_MEMORY_NO_TOPICS_TEXT]),
         ]
         index_text = "\n".join(index_lines).rstrip()
-        self._get_index_path(session).write_text(f"{index_text}\n", encoding="utf-8")
+        index_path = self._get_index_path(session, source_id=source_id)
+        index_file_text = f"{index_text}\n"
+        if not index_path.exists() or index_path.read_text(encoding="utf-8") != index_file_text:
+            index_path.write_text(index_file_text, encoding="utf-8")
         return entries[:line_limit]
 
     def get_index_text(
@@ -766,15 +787,28 @@ class MemoryFileStore(MemoryStore):
         source_id: str,
         line_limit: int,
         line_length: int,
+        index_entries: Sequence[MemoryIndexEntry] | None = None,
     ) -> str:
         """Return the current ``MEMORY.md`` text, rebuilding it when needed."""
-        self.rebuild_index(session, source_id=source_id, line_limit=line_limit, line_length=line_length)
-        return self._get_index_path(session).read_text(encoding="utf-8").strip()
+        if index_entries is None:
+            self.rebuild_index(session, source_id=source_id, line_limit=line_limit, line_length=line_length)
+        else:
+            pointer_lines = [entry.to_pointer_line(max_length=line_length) for entry in index_entries[:line_limit]]
+            index_lines = [
+                DEFAULT_MEMORY_INDEX_HEADER,
+                "",
+                *(pointer_lines if pointer_lines else [DEFAULT_MEMORY_NO_TOPICS_TEXT]),
+            ]
+            index_text = "\n".join(index_lines).rstrip()
+            index_path = self._get_index_path(session, source_id=source_id)
+            index_file_text = f"{index_text}\n"
+            if not index_path.exists() or index_path.read_text(encoding="utf-8") != index_file_text:
+                index_path.write_text(index_file_text, encoding="utf-8")
+        return self._get_index_path(session, source_id=source_id).read_text(encoding="utf-8").strip()
 
     def read_state(self, session: AgentSession, *, source_id: str) -> dict[str, Any]:
         """Return the maintenance state for the current owner."""
-        del source_id
-        state_path = self._get_state_path(session)
+        state_path = self._get_state_path(session, source_id=source_id)
         if not state_path.exists():
             return _default_state()
         raw_state = self.loads(state_path.read_text(encoding="utf-8"))
@@ -789,8 +823,7 @@ class MemoryFileStore(MemoryStore):
 
     def write_state(self, session: AgentSession, state: Mapping[str, Any], *, source_id: str) -> None:
         """Persist the maintenance state for the current owner."""
-        del source_id
-        self._get_state_path(session).write_text(
+        self._get_state_path(session, source_id=source_id).write_text(
             f"{self._serialize_json(dict(state), dumps=self.dumps)}\n",
             encoding="utf-8",
         )
@@ -805,14 +838,11 @@ class MemoryFileStore(MemoryStore):
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """Search the raw transcript archive for matching text snippets."""
-        del source_id
         normalized_query = query.strip()
         if not normalized_query:
             raise ValueError("query must not be empty.")
         query_casefold = normalized_query.casefold()
-        transcript_files = sorted(
-            self.get_transcripts_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID).glob("*.jsonl")
-        )
+        transcript_files = sorted(self.get_transcripts_directory(session, source_id=source_id).glob("*.jsonl"))
         results: list[dict[str, Any]] = []
         for transcript_file in transcript_files:
             decoded_session_id = self._decode_transcript_session_id(transcript_file)
@@ -844,6 +874,13 @@ class MemoryFileStore(MemoryStore):
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class MemoryContextProvider(HistoryProvider):
     """Inject ``MEMORY.md``, topic memory tools, and transcript-backed extraction."""
+
+    _LOCKS_GUARD: ClassVar[threading.Lock] = threading.Lock()
+    _STORE_LOCKS_BY_LOOP: ClassVar[
+        weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop, weakref.WeakKeyDictionary[MemoryStore, dict[str, asyncio.Lock]]
+        ]
+    ] = weakref.WeakKeyDictionary()
 
     def __init__(
         self,
@@ -926,6 +963,33 @@ class MemoryContextProvider(HistoryProvider):
         self.history_message_filter = history_message_filter
         self.history_dumps = history_dumps
         self.history_loads = history_loads
+
+    def _store_async_lock(self, session: AgentSession, *, kind: str, key: str) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        owner_id = self.store.get_owner_id(session) or ""
+        lock_key = f"{self.source_id}:{owner_id}:{kind}:{key}"
+        with self._LOCKS_GUARD:
+            store_locks_by_loop: weakref.WeakKeyDictionary[MemoryStore, dict[str, asyncio.Lock]] | None = (
+                self._STORE_LOCKS_BY_LOOP.get(loop)
+            )
+            if store_locks_by_loop is None:
+                store_locks_by_loop = weakref.WeakKeyDictionary[MemoryStore, dict[str, asyncio.Lock]]()
+                self._STORE_LOCKS_BY_LOOP[loop] = store_locks_by_loop
+            store_locks = store_locks_by_loop.get(self.store)
+            if store_locks is None:
+                store_locks = {}
+                store_locks_by_loop[self.store] = store_locks
+            store_lock = store_locks.get(lock_key)
+            if store_lock is None:
+                store_lock = asyncio.Lock()
+                store_locks[lock_key] = store_lock
+            return store_lock
+
+    def _topic_async_lock(self, session: AgentSession, topic: str) -> asyncio.Lock:
+        return self._store_async_lock(session, kind="topic", key=_slugify_topic(topic))
+
+    def _state_async_lock(self, session: AgentSession) -> asyncio.Lock:
+        return self._store_async_lock(session, kind="state", key="maintenance")
 
     def _create_history_provider(self, session: AgentSession) -> FileHistoryProvider:
         return FileHistoryProvider(
@@ -1059,6 +1123,7 @@ class MemoryContextProvider(HistoryProvider):
             source_id=self.source_id,
             line_limit=self.index_line_limit,
             line_length=self.index_line_length,
+            index_entries=index_entries,
         )
         recent_history_messages = _select_recent_turn_messages(
             await self.get_messages(context.session_id, state=state),
@@ -1091,31 +1156,14 @@ class MemoryContextProvider(HistoryProvider):
             ).to_markdown()
 
         @tool(name="write_memory", approval_mode="never_require")
-        def write_memory(topic: str, memory: str) -> str:
+        async def write_memory(topic: str, memory: str) -> str:
             """Add one durable memory line to a topic file."""
-            current_time = _timestamp()
-            normalized_topic = _normalize_topic(topic)
-            normalized_memory = _normalize_memory_text(memory)
-            try:
-                existing_record = self.store.get_topic(session, source_id=self.source_id, topic=normalized_topic)
-            except FileNotFoundError:
-                updated_record = MemoryTopicRecord(
-                    topic=normalized_topic,
-                    summary=normalized_memory,
-                    memories=[normalized_memory],
-                    updated_at=current_time,
-                    session_ids=[session.session_id],
-                )
-            else:
-                updated_record = MemoryTopicRecord(
-                    topic=existing_record.topic,
-                    slug=existing_record.slug,
-                    summary=existing_record.summary,
-                    memories=[*existing_record.memories, normalized_memory],
-                    updated_at=current_time,
-                    session_ids=[*existing_record.session_ids, session.session_id],
-                )
-            self.store.write_topic(session, updated_record, source_id=self.source_id)
+            updated_record = await self._merge_memory(
+                session=session,
+                topic=topic,
+                memory=memory,
+                now=datetime.now(timezone.utc).replace(microsecond=0),
+            )
             self.store.rebuild_index(
                 session,
                 source_id=self.source_id,
@@ -1125,16 +1173,17 @@ class MemoryContextProvider(HistoryProvider):
             return json.dumps(updated_record.to_dict(), ensure_ascii=False)
 
         @tool(name="delete_memory_topic", approval_mode="never_require")
-        def delete_memory_topic(topic: str) -> str:
+        async def delete_memory_topic(topic: str) -> str:
             """Delete one topic memory file by topic name or slug."""
             normalized_topic = _normalize_topic(topic)
-            self.store.delete_topic(session, source_id=self.source_id, topic=normalized_topic)
-            self.store.rebuild_index(
-                session,
-                source_id=self.source_id,
-                line_limit=self.index_line_limit,
-                line_length=self.index_line_length,
-            )
+            async with self._topic_async_lock(session, normalized_topic):
+                self.store.delete_topic(session, source_id=self.source_id, topic=normalized_topic)
+                self.store.rebuild_index(
+                    session,
+                    source_id=self.source_id,
+                    line_limit=self.index_line_limit,
+                    line_length=self.index_line_length,
+                )
             return f"Deleted memory topic '{normalized_topic}'."
 
         @tool(name="search_memory_transcripts", approval_mode="never_require")
@@ -1238,12 +1287,13 @@ class MemoryContextProvider(HistoryProvider):
             await self.save_messages(session.session_id, messages_to_store, state=state)
 
         current_time = datetime.now(timezone.utc).replace(microsecond=0)
-        maintenance_state = self.store.read_state(session, source_id=self.source_id)
-        session_ids_since_consolidation = cast(list[str], maintenance_state["sessions_since_consolidation"])
-        if session.session_id not in session_ids_since_consolidation:
-            session_ids_since_consolidation.append(session.session_id)
-        maintenance_state["sessions_since_consolidation"] = session_ids_since_consolidation
-        self.store.write_state(session, maintenance_state, source_id=self.source_id)
+        async with self._state_async_lock(session):
+            maintenance_state = self.store.read_state(session, source_id=self.source_id)
+            session_ids_since_consolidation = cast(list[str], maintenance_state["sessions_since_consolidation"])
+            if session.session_id not in session_ids_since_consolidation:
+                session_ids_since_consolidation.append(session.session_id)
+            maintenance_state["sessions_since_consolidation"] = session_ids_since_consolidation
+            self.store.write_state(session, maintenance_state, source_id=self.source_id)
 
         extracted_topics = await self._extract_memories(
             client=self._chat_client(agent),
@@ -1317,7 +1367,7 @@ class MemoryContextProvider(HistoryProvider):
             if not isinstance(raw_topic, str) or not isinstance(raw_memory, str):
                 continue
             try:
-                updated_record = self._merge_memory(
+                updated_record = await self._merge_memory(
                     session=session,
                     topic=raw_topic,
                     memory=raw_memory,
@@ -1328,7 +1378,7 @@ class MemoryContextProvider(HistoryProvider):
             updated_records.append(updated_record)
         return updated_records
 
-    def _merge_memory(
+    async def _merge_memory(
         self,
         *,
         session: AgentSession,
@@ -1338,27 +1388,28 @@ class MemoryContextProvider(HistoryProvider):
     ) -> MemoryTopicRecord:
         normalized_topic = _normalize_topic(topic)
         normalized_memory = _normalize_memory_text(memory)
-        try:
-            existing_record = self.store.get_topic(session, source_id=self.source_id, topic=normalized_topic)
-        except FileNotFoundError:
-            updated_record = MemoryTopicRecord(
-                topic=normalized_topic,
-                summary=normalized_memory,
-                memories=[normalized_memory],
-                updated_at=_timestamp(now),
-                session_ids=[session.session_id],
-            )
-        else:
-            updated_record = MemoryTopicRecord(
-                topic=existing_record.topic,
-                slug=existing_record.slug,
-                summary=existing_record.summary,
-                memories=[*existing_record.memories, normalized_memory],
-                updated_at=_timestamp(now),
-                session_ids=[*existing_record.session_ids, session.session_id],
-            )
-        self.store.write_topic(session, updated_record, source_id=self.source_id)
-        return updated_record
+        async with self._topic_async_lock(session, normalized_topic):
+            try:
+                existing_record = self.store.get_topic(session, source_id=self.source_id, topic=normalized_topic)
+            except FileNotFoundError:
+                updated_record = MemoryTopicRecord(
+                    topic=normalized_topic,
+                    summary=normalized_memory,
+                    memories=[normalized_memory],
+                    updated_at=_timestamp(now),
+                    session_ids=[session.session_id],
+                )
+            else:
+                updated_record = MemoryTopicRecord(
+                    topic=existing_record.topic,
+                    slug=existing_record.slug,
+                    summary=existing_record.summary,
+                    memories=[*existing_record.memories, normalized_memory],
+                    updated_at=_timestamp(now),
+                    session_ids=[*existing_record.session_ids, session.session_id],
+                )
+            self.store.write_topic(session, updated_record, source_id=self.source_id)
+            return updated_record
 
     async def _run_consolidation(
         self,
@@ -1368,33 +1419,39 @@ class MemoryContextProvider(HistoryProvider):
         force: bool,
         now: datetime,
     ) -> int:
-        maintenance_state = self.store.read_state(session, source_id=self.source_id)
-        if not force and not self._should_consolidate(maintenance_state, now=now):
-            return 0
+        async with self._state_async_lock(session):
+            maintenance_state = self.store.read_state(session, source_id=self.source_id)
+            if not force and not self._should_consolidate(maintenance_state, now=now):
+                return 0
 
-        topic_records = self.store.list_topics(session, source_id=self.source_id)
-        if not topic_records:
+            topic_records = self.store.list_topics(session, source_id=self.source_id)
+            if not topic_records:
+                maintenance_state["last_consolidated_at"] = _timestamp(now)
+                maintenance_state["sessions_since_consolidation"] = []
+                self.store.write_state(session, maintenance_state, source_id=self.source_id)
+                return 0
+
+            consolidated_count = 0
+            for record in topic_records:
+                async with self._topic_async_lock(session, record.slug):
+                    try:
+                        current_record = self.store.get_topic(session, source_id=self.source_id, topic=record.slug)
+                    except FileNotFoundError:
+                        continue
+                    consolidated_record = await self._consolidate_topic(client=client, record=current_record, now=now)
+                    self.store.write_topic(session, consolidated_record, source_id=self.source_id)
+                    consolidated_count += 1
+
             maintenance_state["last_consolidated_at"] = _timestamp(now)
             maintenance_state["sessions_since_consolidation"] = []
             self.store.write_state(session, maintenance_state, source_id=self.source_id)
-            return 0
-
-        consolidated_count = 0
-        for record in topic_records:
-            consolidated_record = await self._consolidate_topic(client=client, record=record, now=now)
-            self.store.write_topic(session, consolidated_record, source_id=self.source_id)
-            consolidated_count += 1
-
-        maintenance_state["last_consolidated_at"] = _timestamp(now)
-        maintenance_state["sessions_since_consolidation"] = []
-        self.store.write_state(session, maintenance_state, source_id=self.source_id)
-        self.store.rebuild_index(
-            session,
-            source_id=self.source_id,
-            line_limit=self.index_line_limit,
-            line_length=self.index_line_length,
-        )
-        return consolidated_count
+            self.store.rebuild_index(
+                session,
+                source_id=self.source_id,
+                line_limit=self.index_line_limit,
+                line_length=self.index_line_length,
+            )
+            return consolidated_count
 
     def _should_consolidate(self, state: Mapping[str, Any], *, now: datetime) -> bool:
         session_ids: object = state.get("sessions_since_consolidation")
