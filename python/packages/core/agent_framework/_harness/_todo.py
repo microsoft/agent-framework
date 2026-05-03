@@ -344,14 +344,13 @@ class TodoFileStore(TodoStore):
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
-class TodoListContextProvider(ContextProvider):
+class TodoProvider(ContextProvider):
     """Provide todo management tools and instructions to an agent.
 
-    The ``TodoListContextProvider`` enables agents to create, complete, remove, and query todo items as part of
-    their planning and execution workflow. Todo state is stored in the configured ``TodoStore`` and persists across
-    agent invocations within the same session. By default, state is stored in ``AgentSession.state`` with
-    ``TodoSessionStore``; callers can provide ``TodoFileStore`` or another store implementation for file-backed or
-    custom persistence.
+    The ``TodoProvider`` enables agents to create, complete, remove, and query todo items as part of their planning
+    and execution workflow. Todo state is stored in the configured ``TodoStore`` and persists across agent invocations
+    within the same session. By default, state is stored in ``AgentSession.state`` with ``TodoSessionStore``; callers
+    can provide ``TodoFileStore`` or another store implementation for file-backed or custom persistence.
 
     This provider exposes the following tools to the agent:
     - ``add_todos``: Add one or more todo items, each with a title and optional description.

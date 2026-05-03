@@ -17,7 +17,7 @@ from agent_framework import (
     TodoFileStore,
     TodoInput,
     TodoItem,
-    TodoListContextProvider,
+    TodoProvider,
     TodoSessionStore,
     TodoStore,
 )
@@ -153,12 +153,12 @@ def test_todo_file_store_rejects_session_path_traversal(tmp_path: Path) -> None:
     assert list(tmp_path.rglob("*")) == []
 
 
-async def test_todo_context_provider_tools_manage_session_state(
+async def test_todo_provider_tools_manage_session_state(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     """Todo provider tools should add, complete, remove, and list session-backed todos."""
     session = AgentSession(session_id="session-1")
-    provider = TodoListContextProvider()
+    provider = TodoProvider()
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
     _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
@@ -204,12 +204,12 @@ async def test_todo_context_provider_tools_manage_session_state(
     ]
 
 
-async def test_todo_context_provider_serializes_concurrent_mutations(
+async def test_todo_provider_serializes_concurrent_mutations(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     """Concurrent todo mutations should not duplicate IDs or lose updates."""
     session = AgentSession(session_id="session-1")
-    provider = TodoListContextProvider()
+    provider = TodoProvider()
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
     _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
@@ -258,5 +258,5 @@ def test_todo_harness_classes_are_marked_experimental() -> None:
     assert TodoInput.__feature_id__ == ExperimentalFeature.HARNESS.value
     assert TodoSessionStore.__feature_id__ == ExperimentalFeature.HARNESS.value
     assert TodoFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert TodoListContextProvider.__feature_id__ == ExperimentalFeature.HARNESS.value
-    assert ".. warning:: Experimental" in TodoListContextProvider.__doc__
+    assert TodoProvider.__feature_id__ == ExperimentalFeature.HARNESS.value
+    assert ".. warning:: Experimental" in TodoProvider.__doc__

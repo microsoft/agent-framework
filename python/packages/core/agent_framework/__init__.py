@@ -92,7 +92,7 @@ from ._harness._todo import (
     TodoFileStore,
     TodoInput,
     TodoItem,
-    TodoListContextProvider,
+    TodoProvider,
     TodoSessionStore,
     TodoStore,
 )
@@ -423,7 +423,7 @@ __all__ = [
     "TodoFileStore",
     "TodoInput",
     "TodoItem",
-    "TodoListContextProvider",
+    "TodoProvider",
     "TodoSessionStore",
     "TodoStore",
     "TokenBudgetComposedStrategy",
