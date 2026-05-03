@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
@@ -41,20 +42,37 @@ def _get_mode_state(session: AgentSession, *, source_id: str) -> dict[str, Any]:
     provider_state = session.state.get(source_id)
     if isinstance(provider_state, dict):
         return cast(dict[str, Any], provider_state)
+    if provider_state is not None:
+        raise TypeError(
+            f"Session state for source_id {source_id!r} must be a dict, got {type(provider_state).__name__}."
+        )
     state: dict[str, Any] = {}
     session.state[source_id] = state
     return state
 
 
-def _normalize_mode(mode: str, *, available_modes: Sequence[str]) -> str:
+def _normalize_available_modes(available_modes: Sequence[str]) -> dict[str, str]:
+    """Return normalized mode names mapped to display names."""
+    normalized_modes: dict[str, str] = {}
+    for mode in available_modes:
+        display_mode = mode.strip()
+        normalized_mode = display_mode.lower()
+        if normalized_mode in normalized_modes:
+            raise ValueError(f"Duplicate mode configured: {mode}.")
+        normalized_modes[normalized_mode] = display_mode
+    return normalized_modes
+
+
+def _normalize_mode(mode: str, *, available_modes: Mapping[str, str]) -> str:
     """Validate and normalize a mode string."""
     normalized = mode.strip().lower()
     if normalized not in available_modes:
-        supported_modes = ", ".join(repr(item) for item in available_modes)
+        supported_modes = ", ".join(repr(item) for item in available_modes.values())
         raise ValueError(f"Invalid mode: {mode}. Supported modes are {supported_modes}.")
     return normalized
 
 
+@experimental(feature_id=ExperimentalFeature.HARNESS)
 def get_session_mode(
     session: AgentSession,
     *,
@@ -75,7 +93,7 @@ def get_session_mode(
     Returns:
         The current mode string.
     """
-    normalized_modes = tuple(available_modes or DEFAULT_MODE_DESCRIPTIONS)
+    normalized_modes = _normalize_available_modes(tuple(available_modes or DEFAULT_MODE_DESCRIPTIONS))
     normalized_default_mode = _normalize_mode(default_mode, available_modes=normalized_modes)
     provider_state = _get_mode_state(session, source_id=source_id)
     current_mode = provider_state.get("current_mode")
@@ -85,6 +103,7 @@ def get_session_mode(
     return _normalize_mode(current_mode, available_modes=normalized_modes)
 
 
+@experimental(feature_id=ExperimentalFeature.HARNESS)
 def set_session_mode(
     session: AgentSession,
     mode: str,
@@ -108,7 +127,7 @@ def set_session_mode(
     Raises:
         ValueError: The requested mode is not configured.
     """
-    normalized_modes = tuple(available_modes or DEFAULT_MODE_DESCRIPTIONS)
+    normalized_modes = _normalize_available_modes(tuple(available_modes or DEFAULT_MODE_DESCRIPTIONS))
     normalized_mode = _normalize_mode(mode, available_modes=normalized_modes)
     provider_state = _get_mode_state(session, source_id=source_id)
     provider_state["current_mode"] = normalized_mode
@@ -158,16 +177,21 @@ class SessionModeContextProvider(ContextProvider):
             ValueError: No modes are configured, or the default mode is not configured.
         """
         super().__init__(source_id)
-        self.mode_descriptions = dict(DEFAULT_MODE_DESCRIPTIONS if mode_descriptions is None else mode_descriptions)
-        self.available_modes = tuple(self.mode_descriptions)
-        if not self.available_modes:
+        mode_descriptions = dict(DEFAULT_MODE_DESCRIPTIONS if mode_descriptions is None else mode_descriptions)
+        self._mode_display_names = _normalize_available_modes(tuple(mode_descriptions))
+        if not self._mode_display_names:
             raise ValueError("mode_descriptions must contain at least one mode.")
-        self.default_mode = _normalize_mode(default_mode, available_modes=self.available_modes)
+        self.mode_descriptions = {mode.strip().lower(): description for mode, description in mode_descriptions.items()}
+        self.available_modes = tuple(self._mode_display_names)
+        self.default_mode = _normalize_mode(default_mode, available_modes=self._mode_display_names)
         self.instructions = instructions
 
     def _build_instructions(self, current_mode: str) -> str:
         """Build the mode guidance injected for the current session."""
-        mode_lines = "".join(f'- "{mode}": {description}\n' for mode, description in self.mode_descriptions.items())
+        mode_lines = "".join(
+            f'- "{self._mode_display_names[mode]}": {description}\n'
+            for mode, description in self.mode_descriptions.items()
+        )
         instructions = self.instructions or DEFAULT_MODE_INSTRUCTIONS
         return instructions.replace("{available_modes}", mode_lines).replace("{current_mode}", current_mode)
 
@@ -204,7 +228,7 @@ class SessionModeContextProvider(ContextProvider):
                 source_id=self.source_id,
                 available_modes=self.available_modes,
             )
-            return f'{{"mode":"{normalized_mode}","message":"Mode changed to \'{normalized_mode}\'."}}'
+            return json.dumps({"mode": normalized_mode, "message": f"Mode changed to '{normalized_mode}'."})
 
         @tool(name="get_mode", approval_mode="never_require")
         def get_mode() -> str:
@@ -215,7 +239,7 @@ class SessionModeContextProvider(ContextProvider):
                 default_mode=self.default_mode,
                 available_modes=self.available_modes,
             )
-            return f'{{"mode":"{current_mode_value}"}}'
+            return json.dumps({"mode": current_mode_value})
 
         context.extend_instructions(
             self.source_id,
