@@ -95,7 +95,7 @@ Dockerfile expects the repository's `python/` directory as the build context:
 
 ```bash
 docker build \
-  -f python/samples/04-hosting/foundry-hosted-agents/responses/06_hyperlight_codeact/Dockerfile \
+  -f python/samples/04-hosting/foundry-hosted-agents/responses/08_hyperlight_codeact/Dockerfile \
   -t <acr>.azurecr.io/<repo>:<tag> \
   python/
 ```

@@ -2,7 +2,7 @@
 # the in-tree agent-framework packages can be installed from source. From the repo root:
 #
 #   docker build \
-#     -f python/samples/04-hosting/foundry-hosted-agents/responses/06_hyperlight_codeact/Dockerfile \
+#     -f python/samples/04-hosting/foundry-hosted-agents/responses/08_hyperlight_codeact/Dockerfile \
 #     -t <acr>.azurecr.io/<image>:<tag> \
 #     python/
 FROM python:3.12-slim
@@ -20,7 +20,7 @@ COPY packages/foundry_hosting /opt/af/foundry_hosting
 COPY packages/hyperlight /opt/af/hyperlight
 
 # Copy just the sample we care about into the user agent location.
-COPY samples/04-hosting/foundry-hosted-agents/responses/06_hyperlight_codeact/ /app/user_agent/
+COPY samples/04-hosting/foundry-hosted-agents/responses/08_hyperlight_codeact/ /app/user_agent/
 WORKDIR /app/user_agent
 
 RUN pip install --no-cache-dir --upgrade pip \
