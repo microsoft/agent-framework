@@ -16,24 +16,23 @@ from .._types import Message
 
 DEFAULT_TODO_SOURCE_ID = "todo"
 DEFAULT_TODO_INSTRUCTIONS = (
-    "You have access to a todo list for tracking work items. "
-    "While planning, break down complex tasks into manageable todo items "
-    "and add them to the list. "
-    "Ask the user questions when clarification is needed to create effective todos. "
-    "If the user provides feedback on your plan, adjust your todos accordingly "
-    "by adding new items or removing irrelevant ones. "
+    "## Todo Items\n\n"
+    "You have access to a todo list for tracking work items.\n"
+    "While planning, make sure that you break down complex tasks into manageable todo items "
+    "and add them to the list.\n"
+    "Ask questions from the user where clarification is needed to create effective todos.\n"
+    "If the user provides feedback on your plan, adjust your todos accordingly by adding new items "
+    "or removing irrelevant ones.\n"
     "During execution, use the todo list to keep track of what needs to be done, "
-    "mark items as complete when finished, "
-    "and remove any items that are no longer needed. "
-    "When the user changes the topic or changes their mind, update the todo list "
-    "accordingly by removing irrelevant items "
-    "or adding new ones as needed.\n\n"
+    "mark items as complete when finished, and remove any items that are no longer needed.\n"
+    "When a user changes the topic or changes their mind, ensure that you update the todo list accordingly "
+    "by removing irrelevant items or adding new ones as needed.\n\n"
     "Use these tools to manage your tasks:\n"
-    "- Use add_todos to break down complex work into trackable items; it supports adding one or many at once.\n"
-    "- Use complete_todos to mark items as done when finished; it supports one or many at once.\n"
+    "- Use add_todos to break down complex work into trackable items (supports adding one or many at once).\n"
+    "- Use complete_todos to mark items as done when finished (supports one or many at once).\n"
     "- Use get_remaining_todos to check what work is still pending.\n"
     "- Use get_all_todos to review the full list including completed items.\n"
-    "- Use remove_todos to remove items that are no longer needed; it supports one or many at once."
+    "- Use remove_todos to remove items that are no longer needed (supports one or many at once)."
 )
 
 
@@ -267,7 +266,21 @@ class TodoFileStore(TodoStore):
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoListContextProvider(ContextProvider):
-    """Provide session-scoped todo tools for planning and execution."""
+    """Provide todo management tools and instructions to an agent.
+
+    The ``TodoListContextProvider`` enables agents to create, complete, remove, and query todo items as part of
+    their planning and execution workflow. Todo state is stored in the configured ``TodoStore`` and persists across
+    agent invocations within the same session. By default, state is stored in ``AgentSession.state`` with
+    ``TodoSessionStore``; callers can provide ``TodoFileStore`` or another store implementation for file-backed or
+    custom persistence.
+
+    This provider exposes the following tools to the agent:
+    - ``add_todos``: Add one or more todo items, each with a title and optional description.
+    - ``complete_todos``: Mark one or more todo items as complete by their IDs.
+    - ``remove_todos``: Remove one or more todo items by their IDs.
+    - ``get_remaining_todos``: Retrieve only incomplete todo items.
+    - ``get_all_todos``: Retrieve all todo items, complete and incomplete.
+    """
 
     def __init__(
         self,
