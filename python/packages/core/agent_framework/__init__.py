@@ -79,6 +79,14 @@ from ._evaluation import (
     tool_calls_present,
 )
 from ._feature_stage import ExperimentalFeature, ReleaseCandidateFeature
+from ._harness._memory import (
+    DEFAULT_MEMORY_SOURCE_ID,
+    MemoryContextProvider,
+    MemoryFileStore,
+    MemoryIndexEntry,
+    MemoryStore,
+    MemoryTopicRecord,
+)
 from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
 from ._middleware import (
     AgentContext,
@@ -261,6 +269,7 @@ __all__ = [
     "APP_INFO",
     "COMPACTION_STATE_KEY",
     "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_MEMORY_SOURCE_ID",
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
     "GROUP_ANNOTATION_KEY",
@@ -355,6 +364,11 @@ __all__ = [
     "MCPStdioTool",
     "MCPStreamableHTTPTool",
     "MCPWebsocketTool",
+    "MemoryContextProvider",
+    "MemoryFileStore",
+    "MemoryIndexEntry",
+    "MemoryStore",
+    "MemoryTopicRecord",
     "Message",
     "MiddlewareException",
     "MiddlewareTermination",
