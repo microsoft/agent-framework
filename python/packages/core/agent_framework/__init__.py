@@ -87,6 +87,12 @@ from ._harness._memory import (
     MemoryStore,
     MemoryTopicRecord,
 )
+from ._harness._mode import (
+    DEFAULT_MODE_SOURCE_ID,
+    SessionModeContextProvider,
+    get_session_mode,
+    set_session_mode,
+)
 from ._harness._todo import (
     DEFAULT_TODO_SOURCE_ID,
     TodoFileStore,
@@ -279,6 +285,7 @@ __all__ = [
     "COMPACTION_STATE_KEY",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_MEMORY_SOURCE_ID",
+    "DEFAULT_MODE_SOURCE_ID",
     "DEFAULT_TODO_SOURCE_ID",
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
@@ -397,6 +404,7 @@ __all__ = [
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
     "SessionContext",
+    "SessionModeContextProvider",
     "SingleEdgeGroup",
     "Skill",
     "SkillResource",
@@ -470,6 +478,7 @@ __all__ = [
     "executor",
     "function_middleware",
     "get_run_context",
+    "get_session_mode",
     "handler",
     "included_messages",
     "included_token_count",
@@ -485,6 +494,7 @@ __all__ = [
     "register_state_type",
     "resolve_agent_id",
     "response_handler",
+    "set_session_mode",
     "step",
     "tool",
     "tool_call_args_match",

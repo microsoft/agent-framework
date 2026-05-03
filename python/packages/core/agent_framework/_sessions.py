@@ -22,6 +22,7 @@ import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
 
@@ -94,7 +95,7 @@ def _serialize_value(value: Any) -> Any:
     if hasattr(value, "to_dict") and callable(value.to_dict):
         return value.to_dict()  # pyright: ignore[reportUnknownMemberType]
     # Pydantic BaseModel support — import lazily to avoid hard dep at module level
-    try:
+    with suppress(ImportError):
         from pydantic import BaseModel
 
         if isinstance(value, BaseModel):
@@ -104,8 +105,6 @@ def _serialize_value(value: Any) -> Any:
             # Auto-register for round-trip deserialization
             _STATE_TYPE_REGISTRY.setdefault(type_id, value.__class__)
             return data
-    except ImportError:
-        pass
     if isinstance(value, list):
         return [_serialize_value(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
     if isinstance(value, dict):
@@ -122,14 +121,12 @@ def _deserialize_value(value: Any) -> Any:
             if hasattr(cls, "from_dict"):
                 return cls.from_dict(value)  # type: ignore[union-attr]
             # Pydantic BaseModel support
-            try:
+            with suppress(ImportError):
                 from pydantic import BaseModel
 
                 if issubclass(cls, BaseModel):
                     data: dict[str, Any] = {str(k): v for k, v in value.items() if k != "type"}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
                     return cls.model_validate(data)
-            except ImportError:
-                pass
     if isinstance(value, list):
         return [_deserialize_value(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
     if isinstance(value, dict):
