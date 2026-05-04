@@ -44,3 +44,4 @@ python synap_basic.py
 - [Microsoft Agent Framework Integration Guide](https://docs.maximem.ai/integrations/microsoft-agent)
 - [Dashboard](https://synap.maximem.ai)
 - [PyPI: maximem-synap-microsoft-agent](https://pypi.org/project/maximem-synap-microsoft-agent/)
+- [Open source integration package](https://github.com/maximem-ai/maximem_synap_sdk/tree/main/packages/integrations)
