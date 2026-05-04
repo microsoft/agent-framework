@@ -4238,11 +4238,13 @@ async def test_streamable_http_get_stream_405_does_not_crash_session():
                         "jsonrpc": "2.0",
                         "id": body["id"],
                         "result": {
-                            "tools": [{
-                                "name": "search_docs",
-                                "description": "Search documentation",
-                                "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
-                            }]
+                            "tools": [
+                                {
+                                    "name": "search_docs",
+                                    "description": "Search documentation",
+                                    "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+                                }
+                            ]
                         },
                     }).encode(),
                 )
@@ -4257,26 +4259,28 @@ async def test_streamable_http_get_stream_405_does_not_crash_session():
     transport = httpx.MockTransport(handle_request)
     http_client = httpx.AsyncClient(transport=transport)
 
-    async with http_client:
-        async with streamable_http_client(
+    async with (
+        http_client,
+        streamable_http_client(
             url="http://test-server/mcp",
             http_client=http_client,
             terminate_on_close=False,
-        ) as (read_stream, write_stream, get_session_id):
-            async with ClientSession(
-                read_stream=read_stream,
-                write_stream=write_stream,
-            ) as session:
-                result = await session.initialize()
-                assert result.serverInfo.name == "learn-mcp"
+        ) as (read_stream, write_stream, get_session_id),
+        ClientSession(
+            read_stream=read_stream,
+            write_stream=write_stream,
+        ) as session,
+    ):
+        result = await session.initialize()
+        assert result.serverInfo.name == "learn-mcp"
 
-                # Allow time for the background GET stream attempt to fail
-                await asyncio.sleep(0.5)
+        # Allow time for the background GET stream attempt to fail
+        await asyncio.sleep(0.5)
 
-                # Session must remain usable after the GET stream failure
-                tools = await session.list_tools()
-                assert len(tools.tools) == 1
-                assert tools.tools[0].name == "search_docs"
+        # Session must remain usable after the GET stream failure
+        tools = await session.list_tools()
+        assert len(tools.tools) == 1
+        assert tools.tools[0].name == "search_docs"
 
 
 async def test_streamable_http_get_stream_connection_error_does_not_crash_session():
@@ -4340,25 +4344,27 @@ async def test_streamable_http_get_stream_connection_error_does_not_crash_sessio
     transport = httpx.MockTransport(handle_request)
     http_client = httpx.AsyncClient(transport=transport)
 
-    async with http_client:
-        async with streamable_http_client(
+    async with (
+        http_client,
+        streamable_http_client(
             url="http://test-server/mcp",
             http_client=http_client,
             terminate_on_close=False,
-        ) as (read_stream, write_stream, get_session_id):
-            async with ClientSession(
-                read_stream=read_stream,
-                write_stream=write_stream,
-            ) as session:
-                result = await session.initialize()
-                assert result.serverInfo.name == "d365-server"
+        ) as (read_stream, write_stream, get_session_id),
+        ClientSession(
+            read_stream=read_stream,
+            write_stream=write_stream,
+        ) as session,
+    ):
+        result = await session.initialize()
+        assert result.serverInfo.name == "d365-server"
 
-                # Allow time for the background GET stream reconnection attempts
-                await asyncio.sleep(1.0)
+        # Allow time for the background GET stream reconnection attempts
+        await asyncio.sleep(1.0)
 
-                # Session must remain usable after the GET stream failure
-                tools = await session.list_tools()
-                assert tools.tools is not None
+        # Session must remain usable after the GET stream failure
+        tools = await session.list_tools()
+        assert tools.tools is not None
 
 
 # endregion
