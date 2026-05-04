@@ -96,7 +96,7 @@ public class TestReplayAgent(List<List<ChatMessage>> messages, string? id = null
 
     private static List<List<ChatMessage>>? Validate(List<List<ChatMessage>>? candidateMessages)
     {
-        string? currentMessageId = null;
+        string? lastMessageId = null;
 
         if (candidateMessages != null)
         {
@@ -104,11 +104,11 @@ public class TestReplayAgent(List<List<ChatMessage>> messages, string? id = null
             {
                 foreach (ChatMessage message in candidateMessagesTurn)
                 {
-                    if (currentMessageId is null)
+                    if (lastMessageId is null || lastMessageId != message.MessageId)
                     {
-                        currentMessageId = message.MessageId;
+                        lastMessageId = message.MessageId;
                     }
-                    else if (currentMessageId == message.MessageId)
+                    else if (lastMessageId == message.MessageId)
                     {
                         throw new ArgumentException("Duplicate consecutive message ids");
                     }

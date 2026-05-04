@@ -154,8 +154,8 @@ public class MagenticProgressLedger
                 questionBuilder.AppendLine(slot.FormattedQuestion);
 
                 schemaBuilder.AppendLine($"\"{slot.Key}\": {{")
-                             .AppendLine($"   \"{ProgressLedgerSlot.ValueKey}\": string,")
-                             .AppendLine($"   \"{ProgressLedgerSlot.ReasonKey}\": {slot.SchemaType}{slot.SuffixString}")
+                             .AppendLine($"   \"{ProgressLedgerSlot.ValueKey}\": {slot.SchemaType}{slot.SuffixString},")
+                             .AppendLine($"   \"{ProgressLedgerSlot.ReasonKey}\": string")
                              .AppendLine("}");
             }
             schemaBuilder.AppendLine("}");

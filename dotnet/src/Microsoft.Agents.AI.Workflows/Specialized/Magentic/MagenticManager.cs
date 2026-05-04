@@ -105,10 +105,10 @@ internal class MagenticManager(AIAgent managerAgent)
         lastException?.Throw();
     }
 
-    public async ValueTask<ChatMessage> PrepareFinalAnswerAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken canclleationToken)
+    public async ValueTask<ChatMessage> PrepareFinalAnswerAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
     {
         ChatMessage finalAnswerRequest = new(ChatRole.User, taskContext.ToFinalAnswerPrompt());
-        ChatMessage finalAnswer = await this.InvokeAgentAsync([.. taskContext.ChatHistory, finalAnswerRequest], context, canclleationToken)
+        ChatMessage finalAnswer = await this.InvokeAgentAsync([.. taskContext.ChatHistory, finalAnswerRequest], context, cancellationToken)
                                             .ConfigureAwait(false);
 
         return new(ChatRole.Assistant, finalAnswer.Text)

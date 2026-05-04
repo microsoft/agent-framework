@@ -57,7 +57,7 @@ internal sealed class StreamingToolCallResultPairMatcher
 
     private bool TryResolve(CallType callType, string callId, [NotNullWhen(true)] out string? name)
     {
-        CallSummaryKey key = new(CallType.Function, callId);
+        CallSummaryKey key = new(callType, callId);
 
         bool hasMatchingCall = this._callSummaries.TryGetValue(key, out ToolCallSummary callSummary);
         if (hasMatchingCall)

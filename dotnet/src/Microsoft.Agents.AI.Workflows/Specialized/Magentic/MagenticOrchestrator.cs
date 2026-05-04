@@ -198,7 +198,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         {
             string limitType = hitRoundLimit ? "round" : "reset";
 
-            List<ChatMessage> messages = [new(ChatRole.Assistant, $"Task execution stopped due to hitting the maximim {limitType} count limit.")];
+            List<ChatMessage> messages = [new(ChatRole.Assistant, $"Task execution stopped due to hitting the maximum {limitType} count limit.")];
             await context.YieldOutputAsync(messages, cancellationToken).ConfigureAwait(false);
             taskContext.IsTerminated = true;
 
@@ -232,7 +232,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         }
 
         // Check and handle stalls
-        if (taskContext.ProgressLedger.IsInLoop || taskContext.ProgressLedger.IsProgressBeingMade)
+        if (taskContext.ProgressLedger.IsInLoop || !taskContext.ProgressLedger.IsProgressBeingMade)
         {
             taskContext.TaskCounters.StallCount++;
         }

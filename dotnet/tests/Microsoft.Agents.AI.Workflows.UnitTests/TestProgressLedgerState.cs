@@ -29,7 +29,7 @@ public record TestProgressLedgerState(Slot<bool?>? is_request_satisfied = null,
 
     private static readonly JsonSerializerOptions s_options = new()
     {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull | JsonIgnoreCondition.WhenReading
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
     public JsonElement ToJson() => JsonSerializer.SerializeToElement(this, s_options);
