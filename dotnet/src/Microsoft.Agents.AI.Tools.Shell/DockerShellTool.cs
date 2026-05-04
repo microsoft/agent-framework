@@ -6,7 +6,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -512,8 +511,8 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
         argv.Add(command);
 
         var stopwatch = Stopwatch.StartNew();
-        var stdoutBuf = new StringBuilder();
-        var stderrBuf = new StringBuilder();
+        var stdoutBuf = new HeadTailBuffer(this._maxOutputBytes);
+        var stderrBuf = new HeadTailBuffer(this._maxOutputBytes);
 
         var psi = new ProcessStartInfo
         {
@@ -526,8 +525,8 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
         for (var i = 1; i < argv.Count; i++) { psi.ArgumentList.Add(argv[i]); }
 
         using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        proc.OutputDataReceived += (_, e) => { if (e.Data is not null) { _ = stdoutBuf.AppendLine(e.Data); } };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) { _ = stderrBuf.AppendLine(e.Data); } };
+        proc.OutputDataReceived += (_, e) => { if (e.Data is not null) { stdoutBuf.AppendLine(e.Data); } };
+        proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) { stderrBuf.AppendLine(e.Data); } };
 
         try { _ = proc.Start(); }
         catch (Win32Exception ex)
@@ -567,8 +566,8 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
         proc.WaitForExit();
         stopwatch.Stop();
 
-        var (sout, soutT) = ShellSession.TruncateHeadTail(stdoutBuf.ToString(), this._maxOutputBytes);
-        var (serr, serrT) = ShellSession.TruncateHeadTail(stderrBuf.ToString(), this._maxOutputBytes);
+        var (sout, soutT) = stdoutBuf.ToFinalString();
+        var (serr, serrT) = stderrBuf.ToFinalString();
         return new ShellResult(
             Stdout: sout,
             Stderr: serr,
@@ -636,17 +635,22 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
             CreateNoWindow = true,
         };
         for (var i = 1; i < argv.Count; i++) { psi.ArgumentList.Add(argv[i]); }
-        var stdoutBuf = new StringBuilder();
-        var stderrBuf = new StringBuilder();
+        // Cap helper-command output at 1 MiB. These commands (`docker version`,
+        // `docker kill`, `docker pull`) shouldn't produce more than that, but a
+        // chatty `docker pull` progress stream can easily run into hundreds of
+        // KiB; bound the buffer so we never exhaust memory on misbehaviour.
+        const int HelperOutputCap = 1 * 1024 * 1024;
+        var stdoutBuf = new HeadTailBuffer(HelperOutputCap);
+        var stderrBuf = new HeadTailBuffer(HelperOutputCap);
         using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        proc.OutputDataReceived += (_, e) => { if (e.Data is not null) { _ = stdoutBuf.AppendLine(e.Data); } };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) { _ = stderrBuf.AppendLine(e.Data); } };
+        proc.OutputDataReceived += (_, e) => { if (e.Data is not null) { stdoutBuf.AppendLine(e.Data); } };
+        proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) { stderrBuf.AppendLine(e.Data); } };
         _ = proc.Start();
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
         await proc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
         proc.WaitForExit();
-        return (proc.ExitCode, stdoutBuf.ToString(), stderrBuf.ToString());
+        return (proc.ExitCode, stdoutBuf.ToFinalString().text, stderrBuf.ToFinalString().text);
     }
 
     private static string GenerateContainerName()

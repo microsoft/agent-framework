@@ -13,6 +13,43 @@ namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 public sealed class ShellSessionTests
 {
     [Fact]
+    public void QuotePosix_NoSpecialChars_WrapsInSingleQuotes()
+    {
+        Assert.Equal("'/tmp/work'", ShellSession.QuotePosix("/tmp/work"));
+    }
+
+    [Fact]
+    public void QuotePosix_DollarBacktickAndCommandSubstitution_ProducesLiteralString()
+    {
+        // The whole point: these substrings must NOT be interpreted by sh.
+        Assert.Equal("'/tmp/$(touch /pwn)'", ShellSession.QuotePosix("/tmp/$(touch /pwn)"));
+        Assert.Equal("'/tmp/$VAR'", ShellSession.QuotePosix("/tmp/$VAR"));
+        Assert.Equal("'/tmp/`id`'", ShellSession.QuotePosix("/tmp/`id`"));
+    }
+
+    [Fact]
+    public void QuotePosix_EmbeddedSingleQuote_ClosesAndReopens()
+    {
+        // POSIX: single-quoted strings cannot contain a single quote, so we close,
+        // emit an escaped quote, and reopen: a' -> 'a'\''b' -> a'b literal.
+        Assert.Equal("'a'\\''b'", ShellSession.QuotePosix("a'b"));
+    }
+
+    [Fact]
+    public void QuotePowerShell_DollarAndSubexpression_ProducesLiteralString()
+    {
+        Assert.Equal("'C:\\$(throw)'", ShellSession.QuotePowerShell("C:\\$(throw)"));
+        Assert.Equal("'C:\\$env:PATH'", ShellSession.QuotePowerShell("C:\\$env:PATH"));
+    }
+
+    [Fact]
+    public void QuotePowerShell_EmbeddedSingleQuote_DoublesIt()
+    {
+        // PowerShell: 'a''b' is the literal string a'b.
+        Assert.Equal("'a''b'", ShellSession.QuotePowerShell("a'b"));
+    }
+
+    [Fact]
     public void TruncateHeadTail_UnderCap_ReturnsInputUnchanged()
     {
         const string Input = "short";

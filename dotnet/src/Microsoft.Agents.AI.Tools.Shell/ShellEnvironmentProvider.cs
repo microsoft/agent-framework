@@ -27,16 +27,19 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <para>
 /// The provider does not expose any new tools; it augments the system
 /// prompt only (<see cref="AIContext.Instructions"/>). Probe failures
-/// are swallowed in a narrow set of cases — timeout
-/// (<see cref="ShellTimeoutException"/> or
-/// <see cref="OperationCanceledException"/> from the per-probe
-/// <see cref="ShellEnvironmentProviderOptions.ProbeTimeout"/>), policy
-/// rejection (<see cref="ShellCommandRejectedException"/>), and process
-/// spawn failures (<see cref="ShellExecutionException"/>) — and
-/// surfaced as <see langword="null"/> entries in the snapshot. Other
-/// exceptions (e.g. argument errors, internal bugs) propagate normally.
-/// A missing CLI never fails the agent: the model simply sees fewer
-/// hints in its system prompt.
+/// are swallowed in a narrow set of cases — per-probe timeout
+/// (<see cref="ShellTimeoutException"/>, or an
+/// <see cref="OperationCanceledException"/> caused by the
+/// <see cref="ShellEnvironmentProviderOptions.ProbeTimeout"/> linked
+/// token), policy rejection (<see cref="ShellCommandRejectedException"/>),
+/// and process spawn failures (<see cref="ShellExecutionException"/>) —
+/// and surfaced as <see langword="null"/> entries in the snapshot.
+/// Caller-requested cancellation (a <see cref="CancellationToken"/>
+/// passed in by the host) is NOT swallowed and propagates as an
+/// <see cref="OperationCanceledException"/> so shutdown paths work.
+/// Other exceptions (e.g. argument errors, internal bugs) propagate
+/// normally. A missing CLI never fails the agent: the model simply
+/// sees fewer hints in its system prompt.
 /// </para>
 /// <para>
 /// <b>Why <see cref="AIContext.Instructions"/> rather than
@@ -198,7 +201,13 @@ public sealed class ShellEnvironmentProvider : AIContextProvider
         {
             return await this._executor.RunAsync(command, cts.Token).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is OperationCanceledException || ex is ShellCommandRejectedException || ex is ShellExecutionException || ex is ShellTimeoutException)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Probe-timeout-driven cancellation: surface as a null snapshot field.
+            // Caller-driven cancellation is allowed to propagate.
+            return null;
+        }
+        catch (Exception ex) when (ex is ShellCommandRejectedException || ex is ShellExecutionException || ex is ShellTimeoutException)
         {
             return null;
         }

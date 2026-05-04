@@ -615,11 +615,29 @@ internal sealed class ShellSession : IAsyncDisposable
         {
             return command;
         }
-        var quoted = this._workingDirectory!.Replace("\"", "\\\"", StringComparison.Ordinal);
         return this._shell.Kind == ShellKind.PowerShell
-            ? $"Set-Location -LiteralPath \"{quoted}\"\n{command}"
-            : $"cd -- \"{quoted}\"\n{command}";
+            ? $"Set-Location -LiteralPath {QuotePowerShell(this._workingDirectory!)}\n{command}"
+            : $"cd -- {QuotePosix(this._workingDirectory!)}\n{command}";
     }
+
+    /// <summary>
+    /// Wrap <paramref name="value"/> in a PowerShell single-quoted string literal,
+    /// escaping embedded single quotes by doubling. Single-quoted PowerShell
+    /// strings perform no expansion, so this is safe against <c>$(...)</c>,
+    /// <c>$var</c>, and backtick interpolation.
+    /// </summary>
+    internal static string QuotePowerShell(string value) =>
+        "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+
+    /// <summary>
+    /// Wrap <paramref name="value"/> in POSIX single quotes, terminating and
+    /// re-opening the literal around any embedded single quote
+    /// (<c>'\u0027\\\u0027'</c>). POSIX single-quoted strings perform no
+    /// expansion, so this is safe against <c>$VAR</c>, <c>$(...)</c>, and
+    /// backtick interpolation.
+    /// </summary>
+    internal static string QuotePosix(string value) =>
+        "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
 
     /// <summary>
     /// Send SIGINT (POSIX) or Ctrl+Break (Windows) to the live shell so the

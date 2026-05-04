@@ -206,6 +206,61 @@ public sealed class ShellEnvironmentProviderTests
         public ValueTask DisposeAsync() => default;
     }
 
+    [Fact]
+    public async Task RefreshAsync_CallerCancellation_PropagatesAsync()
+    {
+        var fake = new ThrowingShellExecutor(token =>
+        {
+            token.ThrowIfCancellationRequested();
+            return new ShellResult("VERSION=1.0\nCWD=/x\n", "", 0, TimeSpan.Zero);
+        });
+        var provider = new ShellEnvironmentProvider(fake, new()
+        {
+            OverrideFamily = ShellFamily.Posix,
+            ProbeTools = [],
+        });
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => provider.RefreshAsync(cts.Token));
+    }
+
+    [Fact]
+    public async Task RefreshAsync_ProbeTimeout_RecordedAsNullFieldsAsync()
+    {
+        // Executor honors the (linked) probe-timeout token by throwing OCE when it fires.
+        var fake = new ThrowingShellExecutor(token =>
+        {
+            token.WaitHandle.WaitOne(TimeSpan.FromSeconds(5));
+            token.ThrowIfCancellationRequested();
+            return new ShellResult("VERSION=1.0\nCWD=/\n", "", 0, TimeSpan.Zero);
+        });
+        var provider = new ShellEnvironmentProvider(fake, new()
+        {
+            OverrideFamily = ShellFamily.Posix,
+            ProbeTimeout = TimeSpan.FromMilliseconds(50),
+            ProbeTools = ["git"],
+        });
+
+        // Caller-side token stays alive; only the per-probe timeout fires.
+        var snapshot = await provider.RefreshAsync();
+        Assert.Null(snapshot.ShellVersion);
+        Assert.Null(snapshot.ToolVersions["git"]);
+    }
+
+    private sealed class ThrowingShellExecutor : IShellExecutor
+    {
+        private readonly Func<CancellationToken, ShellResult> _factory;
+        public ThrowingShellExecutor(Func<CancellationToken, ShellResult> factory) { this._factory = factory; }
+        public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default) =>
+            Task.FromResult(this._factory(cancellationToken));
+        public ValueTask DisposeAsync() => default;
+    }
+
     private sealed class FakeShellExecutor : IShellExecutor
     {
         public FakeShellExecutor(ShellResult result) { this.NextResult = result; }
