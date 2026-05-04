@@ -20,14 +20,14 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Cross-OS implementation notes (hard-won, mirrors the Python sibling):
+/// Cross-OS implementation notes:
 /// </para>
 /// <list type="bullet">
 /// <item>
 /// PowerShell hosted with <c>-Command -</c> waits for a complete parse before
 /// executing. Multi-line <c>try { ... }</c> blocks therefore stall with stdin
-/// open. We sidestep this by base64-encoding the user command and invoking it
-/// with <c>Invoke-Expression</c> on a single line.
+/// open, so the user command is base64-encoded and invoked with
+/// <c>Invoke-Expression</c> on a single line.
 /// </item>
 /// <item>
 /// <c>Write-Output</c> may drop trailing newlines when stdout is redirected.
@@ -35,13 +35,13 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <c>[Console]::Out.Flush()</c>.
 /// </item>
 /// <item>
-/// <c>$LASTEXITCODE</c> only tracks external-process exits. We derive the rc
-/// from <c>$?</c> and caught exceptions as well.
+/// <c>$LASTEXITCODE</c> only tracks external-process exits, so the rc is
+/// derived from <c>$?</c> and caught exceptions as well.
 /// </item>
 /// <item>
-/// stdout/stderr are drained by long-running reader tasks; per-call we
-/// snapshot buffer offsets before writing the command and scan forward, which
-/// avoids late stderr being attributed to the next command.
+/// stdout/stderr are drained by long-running reader tasks; per-call buffer
+/// offsets are snapshotted before the command is written and scanned forward,
+/// which avoids late stderr being attributed to the next command.
 /// </item>
 /// </list>
 /// </remarks>
@@ -168,7 +168,7 @@ internal sealed class ShellSession : IAsyncDisposable
             {
                 // Strip everything inherited; preserve only PATH / HOME / USER /
                 // USERPROFILE / SystemRoot so the shell itself can locate
-                // itself and basic tools. Mirrors Python's clean_env semantics.
+                // itself and basic tools.
                 var preserved = new[] { "PATH", "HOME", "USER", "USERNAME", "USERPROFILE", "SystemRoot", "TEMP", "TMP" };
                 var keep = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
                 foreach (var name in preserved)
@@ -558,9 +558,9 @@ internal sealed class ShellSession : IAsyncDisposable
 
     private string BuildScript(string command, string sentinel)
     {
-        // Idempotent re-anchor: in confined mode we prefix every command
+        // Idempotent re-anchor: in confined mode every command is prefixed
         // with a `cd` back to the configured workdir so a `cd` inside one
-        // command doesn't leak to the next. Mirrors Python's _maybe_reanchor.
+        // command doesn't leak to the next.
         var effective = this.MaybeReanchor(command);
 
         if (this._shell.Kind == ShellKind.PowerShell)

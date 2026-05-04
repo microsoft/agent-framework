@@ -12,8 +12,8 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <remarks>
 /// <para>
 /// <see cref="LocalShellTool"/> runs commands directly on the host (no
-/// isolation; approval-in-the-loop is the security boundary). A future
-/// <c>DockerShellTool</c> runs them inside a container with resource
+/// isolation; approval-in-the-loop is the security boundary).
+/// <see cref="DockerShellTool"/> runs them inside a container with resource
 /// limits, network isolation, and a non-root user — the container itself
 /// is the security boundary, which is why it can be used without approval
 /// gating for untrusted-input scenarios.

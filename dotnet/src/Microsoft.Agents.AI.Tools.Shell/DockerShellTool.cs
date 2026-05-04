@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Mirrors the public surface of <see cref="LocalShellTool"/> but executes
+/// Exposes the same public surface as <see cref="LocalShellTool"/> but executes
 /// commands inside a container. The container is intended to be the
 /// security boundary, and the defaults set up a hardened-looking
 /// configuration (<c>--network none</c>, non-root user,
@@ -38,13 +38,9 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <para>
 /// Persistent mode reuses <see cref="ShellSession"/> by launching
 /// <c>docker exec -i &lt;container&gt; bash --noprofile --norc</c> as the
-/// long-lived shell — the sentinel protocol works unchanged because we're
-/// still talking to a bash REPL over pipes. Stateless mode runs each call
-/// in a fresh <c>docker run --rm</c>.
-/// </para>
-/// <para>
-/// Mirrors the Python <c>DockerShellTool</c> in
-/// <c>agent_framework_tools.shell._docker</c>.
+/// long-lived shell — the sentinel protocol works unchanged because the
+/// host process is still a bash REPL connected over pipes. Stateless mode
+/// runs each call in a fresh <c>docker run --rm</c>.
 /// </para>
 /// </remarks>
 public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor

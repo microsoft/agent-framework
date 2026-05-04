@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// Resolves which shell binary and which argv to launch for the current OS.
 /// </summary>
 /// <remarks>
-/// Mirrors the Python <c>_resolve.py</c> contract:
+/// Resolution order:
 /// <list type="bullet">
 /// <item><description>Windows: prefer <c>pwsh</c>, fall back to <c>powershell.exe</c>, then <c>cmd.exe</c>.</description></item>
 /// <item><description>Linux / macOS: prefer <c>/bin/bash</c>, fall back to <c>/bin/sh</c>.</description></item>
