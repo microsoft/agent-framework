@@ -3662,6 +3662,61 @@ async def test_ensure_connected_wraps_reconnect_failure() -> None:
         await tool._ensure_connected()
 
 
+async def test_ensure_connected_treats_ping_method_not_found_as_connected() -> None:
+    """When the MCP server does not support the optional ping method, treat as connected."""
+    tool = MCPTool(name="test_tool")
+    tool.session = Mock(
+        send_ping=AsyncMock(
+            side_effect=McpError(types.ErrorData(code=-32601, message="Unsupported method: ping"))
+        )
+    )
+
+    with patch.object(tool, "connect", AsyncMock()) as mock_connect:
+        await tool._ensure_connected()
+
+    mock_connect.assert_not_awaited()
+
+
+async def test_ensure_connected_reconnects_on_non_method_not_found_mcp_error() -> None:
+    """McpError with a code other than -32601 should still trigger reconnection."""
+    tool = MCPTool(name="test_tool")
+    tool.session = Mock(
+        send_ping=AsyncMock(side_effect=McpError(types.ErrorData(code=-32603, message="Internal error")))
+    )
+
+    with patch.object(tool, "connect", AsyncMock()) as mock_connect:
+        await tool._ensure_connected()
+
+    mock_connect.assert_awaited_once_with(reset=True)
+
+
+async def test_ensure_connected_no_infinite_loop_when_ping_unsupported() -> None:
+    """Verify that load_tools does not loop infinitely when the server lacks ping support."""
+    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=False)
+    mock_session = Mock(spec=ClientSession)
+    mock_session.send_ping = AsyncMock(
+        side_effect=McpError(types.ErrorData(code=-32601, message="Method not found: ping"))
+    )
+    mock_session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="example_tool",
+                    description="An example tool",
+                    inputSchema={"type": "object", "properties": {}},
+                )
+            ]
+        )
+    )
+    tool.session = mock_session
+    tool.is_connected = True
+
+    await tool.load_tools()
+
+    assert len(tool._functions) == 1
+    assert tool._functions[0].name == "example_tool"
+
+
 async def test_mcp_tool_filters_framework_kwargs():
     """Test that call_tool filters out framework-specific kwargs before calling MCP session.
 

@@ -1039,8 +1039,28 @@ class MCPTool:
         Raises:
             ToolExecutionException: If reconnection fails.
         """
+        from mcp.shared.exceptions import McpError
+
+        # JSON-RPC error code for "Method not found"
+        METHOD_NOT_FOUND = -32601
+
         try:
             await self.session.send_ping()  # type: ignore[union-attr]
+        except McpError as mcp_exc:
+            # If the server responds with "Method not found", it means the
+            # connection is alive but the server doesn't implement the optional
+            # ping method (per the MCP spec, ping is optional). Treat as connected.
+            if mcp_exc.error.code == METHOD_NOT_FOUND:
+                logger.debug("MCP server does not support ping (method not found). Connection is valid.")
+                return
+            logger.info("MCP connection invalid or closed. Reconnecting...")
+            try:
+                await self.connect(reset=True)
+            except Exception as ex:
+                raise ToolExecutionException(
+                    "Failed to establish MCP connection.",
+                    inner_exception=ex,
+                ) from ex
         except Exception:
             logger.info("MCP connection invalid or closed. Reconnecting...")
             try:
