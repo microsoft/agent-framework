@@ -117,6 +117,13 @@
     <Project Path="samples/02-agents/AgentSkills/Agent_Step04_MixedSkills/Agent_Step04_MixedSkills.csproj" />
     <Project Path="samples/02-agents/AgentSkills/Agent_Step05_SkillsWithDI/Agent_Step05_SkillsWithDI.csproj" />
   </Folder>
+  <Folder Name="/Samples/02-agents/Harness/">
+    <File Path="samples/02-agents/Harness/README.md" />
+    <Project Path="samples/02-agents/Harness/Harness_Shared_Console/Harness_Shared_Console.csproj" />
+    <Project Path="samples/02-agents/Harness/Harness_Step01_Research/Harness_Step01_Research.csproj" />
+    <Project Path="samples/02-agents/Harness/Harness_Step02_Research_WithSubAgents/Harness_Step02_Research_WithSubAgents.csproj" />
+    <Project Path="samples/02-agents/Harness/Harness_Step03_DataProcessing/Harness_Step03_DataProcessing.csproj" />
+  </Folder>
   <Folder Name="/Samples/02-agents/AGUI/Step05_StateManagement/">
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Server/Server.csproj" />

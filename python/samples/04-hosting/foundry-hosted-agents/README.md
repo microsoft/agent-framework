@@ -13,7 +13,8 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 3 | [MCP](responses/03_mcp/) | An agent connected to a remote MCP server (GitHub), demonstrating external MCP tool provider integration. |
 | 4 | [Foundry Toolbox](responses/04_foundry_toolbox/) | An agent using Azure Foundry Toolbox, demonstrating toolbox provisioning and querying available tools at runtime. |
 | 5 | [Workflows](responses/05_workflows/) | An agent with a multi-step orchestrated workflow, demonstrating chaining prompts through an orchestrated flow. |
-| 6 | [Using deployed agent](responses/using_deployed_agent.py) | A sample demonstrating how to invoke an agent that has already been deployed to Foundry, showing how to interact with a hosted agent in code. |
+| 6 | [Files](responses/06_files/) | An agent demonstrating how to work with files in a hosted agent session, including uploading files to a hosted agent session and having the agent read and manipulate those files at runtime. |
+| 7 | [Using deployed agent](responses/using_deployed_agent.py) | A sample demonstrating how to invoke an agent that has already been deployed to Foundry, showing how to interact with a hosted agent in code. |
 
 ### Invocations API
 

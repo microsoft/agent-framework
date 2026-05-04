@@ -1483,6 +1483,183 @@ class TestGitHubCopilotAgentToolConversion:
         assert result[1] == copilot_tool
 
 
+class TestGitHubCopilotAgentFunctionApproval:
+    """Tests that ``approval_mode='always_require'`` is enforced at the agent boundary."""
+
+    async def test_handler_denies_when_no_callback_configured(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Approval-required tool must be denied without executing when no callback is set."""
+        from agent_framework import tool
+
+        invocations: list[Any] = []
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        copilot_tool = agent._tool_to_copilot_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"path": "/critical"}))
+
+        assert invocations == []
+        assert result.result_type == "failure"
+        assert result.error == "approval_denied"
+        assert "no on_function_approval callback is configured" in result.text_result_for_llm
+
+    async def test_handler_denies_when_callback_returns_false(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Falsy callback return value must deny the call and skip execution."""
+        from agent_framework import Content, tool
+
+        invocations: list[Any] = []
+        seen: list[Content] = []
+
+        def deny(call: Content) -> bool:
+            seen.append(call)
+            return False
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"on_function_approval": deny},
+        )
+        copilot_tool = agent._tool_to_copilot_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"path": "/critical"}))
+
+        assert invocations == []
+        assert len(seen) == 1
+        assert seen[0].type == "function_call"
+        assert seen[0].name == "dangerous"  # type: ignore[attr-defined]
+        assert seen[0].arguments == {"path": "/critical"}  # type: ignore[attr-defined]
+        assert result.result_type == "failure"
+        assert result.error == "approval_denied"
+
+    async def test_handler_executes_when_callback_returns_true(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Truthy callback return value must allow the tool to execute normally."""
+        from agent_framework import Content, tool
+
+        def approve(call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"result={x}"
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"on_function_approval": approve},
+        )
+        copilot_tool = agent._tool_to_copilot_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"x": 42}))
+
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "result=42"
+
+    async def test_handler_supports_async_callback(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Async callback must be awaited and respected."""
+        from agent_framework import Content, tool
+
+        async def approve(call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"async={x}"
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"on_function_approval": approve},
+        )
+        copilot_tool = agent._tool_to_copilot_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"x": 7}))
+
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "async=7"
+
+    async def test_callback_failure_denies_safely(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A callback that raises must result in denial, not in tool execution."""
+        from agent_framework import Content, tool
+
+        invocations: list[Any] = []
+
+        def boom(call: Content) -> bool:
+            raise RuntimeError("nope")
+
+        @tool(approval_mode="always_require")
+        def dangerous(x: int) -> str:
+            """A tool that requires human approval."""
+            invocations.append(x)
+            return f"x={x}"
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"on_function_approval": boom},
+        )
+        copilot_tool = agent._tool_to_copilot_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"x": 1}))
+
+        assert invocations == []
+        assert result.result_type == "failure"
+        assert result.error == "approval_denied"
+
+    async def test_handler_does_not_invoke_callback_for_never_require(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Tools without approval_mode='always_require' must not trigger the callback."""
+        from agent_framework import Content, tool
+
+        callback_calls: list[Any] = []
+
+        def approve(call: Content) -> bool:
+            callback_calls.append(call)
+            return True
+
+        @tool
+        def safe(x: int) -> str:
+            """A tool that does not require approval."""
+            return f"safe={x}"
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"on_function_approval": approve},
+        )
+        copilot_tool = agent._tool_to_copilot_tool(safe)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"x": 5}))
+
+        assert callback_calls == []
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "safe=5"
+
+
 class TestGitHubCopilotAgentErrorHandling:
     """Test cases for error handling."""
 
@@ -2128,3 +2305,16 @@ class TestGitHubCopilotAgentContextProviders:
         await agent.run("Hello", session=session, options={"timeout": 120})
 
         assert observed_options.get("timeout") == 120
+
+    async def test_runtime_on_function_approval_rejected(self, mock_client: MagicMock) -> None:
+        """Passing on_function_approval at runtime must raise rather than be silently ignored."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        with pytest.raises(ValueError, match="on_function_approval"):
+            await agent.run("hello", options={"on_function_approval": lambda _c: True})
+
+    async def test_runtime_on_function_approval_rejected_streaming(self, mock_client: MagicMock) -> None:
+        """Passing on_function_approval at runtime must raise on the streaming path too."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        with pytest.raises(ValueError, match="on_function_approval"):
+            async for _ in agent.run("hello", stream=True, options={"on_function_approval": lambda _c: True}):
+                pass
