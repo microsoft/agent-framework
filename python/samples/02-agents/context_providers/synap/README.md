@@ -5,18 +5,32 @@ Demonstrates [SynapContextProvider](https://docs.maximem.ai/integrations/microso
 ## How It Works
 
 `SynapContextProvider` implements two lifecycle hooks:
-- **`before_run`**: fetches Synap context relevant to the user's input and appends it to the agent's instructions via `context.extend_instructions(...)`
+- **`before_run`**: fetches Synap context relevant to the user's input and appends it to the agent's instructions
 - **`after_run`**: records input and response messages to Synap via `sdk.conversation.record_message(...)` for future retrieval
 
-Read failures degrade gracefully — a Synap outage never breaks the agent run. Write failures are logged but not re-raised.
+Read failures degrade gracefully. Write failures are logged but never re-raised.
 
 ## Setup
 
+**1. Install dependencies**
+
 ```bash
-pip install maximem-synap-microsoft-agent
+pip install maximem-synap-microsoft-agent azure-identity python-dotenv
 ```
 
-Set `SYNAP_API_KEY` (get one at [synap.maximem.ai](https://synap.maximem.ai)).
+**2. Configure Azure credentials**
+
+This sample uses [Azure AI Foundry](https://ai.azure.com) as the model provider. Run `az login` to authenticate, or replace `AzureCliCredential` with your preferred credential.
+
+Set the following in a `.env` file or as environment variables:
+
+```
+AZURE_AI_FOUNDRY_PROJECT_ENDPOINT=<your-foundry-endpoint>
+```
+
+**3. Get a Synap API key**
+
+Sign up at [synap.maximem.ai](https://synap.maximem.ai) and set `SYNAP_API_KEY` in your `.env`, or pass it directly to `MaximemSynapSDK(api_key=...)`.
 
 ## Run
 
