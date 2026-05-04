@@ -761,7 +761,15 @@ internal sealed class ShellSession : IAsyncDisposable
                     }
                     if (isStdout)
                     {
+                        // Swap the signal BEFORE completing the old one so any
+                        // consumer that next reads `_stdoutSignal` sees a fresh
+                        // (uncompleted) TCS. Without this, a consumer looping in
+                        // WaitForSentinelAsync would re-read the same completed
+                        // TCS, causing WaitAsync to return synchronously every
+                        // iteration — a tight busy-spin until the sentinel
+                        // arrives or the timeout fires.
                         var prev = this._stdoutSignal;
+                        this._stdoutSignal = NewSignal();
                         _ = prev.TrySetResult(true);
                     }
                 }
