@@ -136,7 +136,11 @@ def _uses_foundry_agent_session(conversation_id: Any) -> bool:
 
 
 def _build_agent_reference(agent_name: str, agent_version: str | None) -> dict[str, str]:
-    """Build the Responses API ``agent_reference`` payload used by Foundry Prompt Agents."""
+    """Build the Responses API ``agent_reference`` payload for non-preview Foundry agent calls.
+
+    Used for both Prompt Agents and HostedAgents on the ``allow_preview=False`` code path —
+    the preview branch instead injects identity via ``project_client.get_openai_client(agent_name=...)``.
+    """
     ref: dict[str, str] = {"name": agent_name, "type": "agent_reference"}
     if agent_version:
         ref["version"] = agent_version

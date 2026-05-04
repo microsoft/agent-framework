@@ -372,6 +372,21 @@ async def test_verbosity_option_merges_with_response_format() -> None:
     assert run_options["text_format"] is OutputStruct
 
 
+async def test_verbosity_option_top_level_overrides_nested_text_verbosity() -> None:
+    """When both top-level and text['verbosity'] are set, the top-level value wins."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={
+            "verbosity": "high",
+            "text": {"verbosity": "low"},
+        },
+    )
+
+    assert "verbosity" not in run_options
+    assert run_options["text"]["verbosity"] == "high"
+
+
 async def test_verbosity_option_merges_with_explicit_text_config() -> None:
     """Verbosity merges into a user-provided text config without overwriting other keys."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

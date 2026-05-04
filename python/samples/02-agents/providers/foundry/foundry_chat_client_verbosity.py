@@ -24,8 +24,10 @@ Responses API endpoint, so ``verbosity`` is a top-level option (parallel to
 ``reasoning``) and is translated to ``text.verbosity`` when sent to the service.
 
 For authentication, run ``az login`` in a terminal or swap ``AzureCliCredential``
-for your preferred credential type. Set the deployment name (e.g. ``gpt-5``) on
-``model=`` to match your Foundry project.
+for your preferred credential type. The sample reads ``FOUNDRY_PROJECT_ENDPOINT``
+and ``FOUNDRY_MODEL`` from the environment (or a local ``.env``) for the project
+endpoint and model deployment name; set ``FOUNDRY_MODEL`` to a GPT-5 deployment
+(e.g. ``gpt-5``) to exercise the verbosity option.
 """
 
 
