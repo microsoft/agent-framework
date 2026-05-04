@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+import pytest
+
 from agent_framework import (
     FileCheckpointStorage,
     InMemoryCheckpointStorage,
@@ -45,6 +47,25 @@ class SlottedApproval:
 @dataclass
 class TimedApproval:
     issued_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+async def test_send_request_info_response_rejects_replay_for_same_request_id() -> None:
+    """Request IDs should be single-use once a response has been accepted."""
+    runner_context = InProcRunnerContext(InMemoryCheckpointStorage())
+    request_info_event = WorkflowEvent.request_info(
+        request_id="request-123",
+        source_executor_id="review_gateway",
+        request_data=MockRequest(),
+        response_type=bool,
+    )
+    await runner_context.add_request_info_event(request_info_event)
+
+    await runner_context.send_request_info_response("request-123", True)
+    pending_requests = await runner_context.get_pending_request_info_events()
+    assert "request-123" not in pending_requests
+
+    with pytest.raises(ValueError, match="No pending request found for request_id: request-123"):
+        await runner_context.send_request_info_response("request-123", False)
 
 
 async def test_rehydrate_request_info_event() -> None:
