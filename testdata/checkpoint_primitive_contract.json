@@ -1,0 +1,19 @@
+{
+  "string": "hello",
+  "integer": 42,
+  "float": 3.5,
+  "boolean": true,
+  "nullValue": null,
+  "list": [
+    1,
+    "two",
+    false,
+    null
+  ],
+  "object": {
+    "nested": {
+      "value": "ok"
+    },
+    "count": 2
+  }
+}
