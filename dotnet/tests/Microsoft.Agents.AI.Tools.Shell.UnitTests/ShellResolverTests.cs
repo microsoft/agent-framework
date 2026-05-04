@@ -4,8 +4,8 @@ namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 
 /// <summary>
 /// Tests for <see cref="ShellResolver.ResolveArgv"/>: bash-only flags like
-/// <c>--noprofile</c> / <c>--norc</c> must NOT be passed to dash / ash /
-/// busybox, which would treat them as filenames.
+/// <c>--noprofile</c> / <c>--norc</c> must only be passed to bash; other
+/// POSIX shells (sh, zsh, dash, ash, ksh, busybox) reject or mishandle them.
 /// </summary>
 public class ShellResolverTests
 {
@@ -20,6 +20,8 @@ public class ShellResolverTests
     [InlineData("/bin/dash")]
     [InlineData("/bin/ash")]
     [InlineData("/usr/bin/busybox")]
+    [InlineData("/usr/bin/zsh")]
+    [InlineData("/bin/ksh")]
     public void ShVariants_StatelessArgv_OmitBashOnlyFlags(string binary)
     {
         var argv = ResolveSingle(binary).StatelessArgvForCommand("echo hi");
@@ -34,6 +36,8 @@ public class ShellResolverTests
     [InlineData("/bin/dash")]
     [InlineData("/bin/ash")]
     [InlineData("/usr/bin/busybox")]
+    [InlineData("/usr/bin/zsh")]
+    [InlineData("/bin/ksh")]
     public void ShVariants_PersistentArgv_OmitBashOnlyFlags(string binary)
     {
         var argv = ResolveSingle(binary).PersistentArgv();
@@ -44,7 +48,6 @@ public class ShellResolverTests
     [Theory]
     [InlineData("/bin/bash")]
     [InlineData("/usr/local/bin/bash")]
-    [InlineData("/usr/bin/zsh")]
     public void BashVariants_StatelessArgv_IncludeBashFlags(string binary)
     {
         var argv = ResolveSingle(binary).StatelessArgvForCommand("echo hi");
@@ -55,7 +58,6 @@ public class ShellResolverTests
     [Theory]
     [InlineData("/bin/bash")]
     [InlineData("/usr/local/bin/bash")]
-    [InlineData("/usr/bin/zsh")]
     public void BashVariants_PersistentArgv_IncludeBashFlags(string binary)
     {
         var argv = ResolveSingle(binary).PersistentArgv();

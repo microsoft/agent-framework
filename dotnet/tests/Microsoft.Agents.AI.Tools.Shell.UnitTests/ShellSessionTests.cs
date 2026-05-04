@@ -51,4 +51,38 @@ public sealed class ShellSessionTests
         Assert.Equal(string.Empty, text);
         Assert.False(truncated);
     }
+
+    [Fact]
+    public void TruncateHeadTail_MultiByteUtf8_RespectsByteBudgetAndRuneBoundaries()
+    {
+        // Each "🔥" is 4 UTF-8 bytes (and 2 UTF-16 code units). 50 of them = 200 bytes.
+        var input = string.Concat(System.Linq.Enumerable.Repeat("🔥", 50));
+        Assert.Equal(200, System.Text.Encoding.UTF8.GetByteCount(input));
+
+        var (text, truncated) = ShellSession.TruncateHeadTail(input, cap: 40);
+
+        Assert.True(truncated);
+
+        // Result must round-trip through UTF-8 unchanged: no rune was split.
+        var roundTripped = System.Text.Encoding.UTF8.GetString(System.Text.Encoding.UTF8.GetBytes(text));
+        Assert.Equal(text, roundTripped);
+
+        // The retained head + tail content must not exceed the byte budget.
+        // (The marker line is appended on top of that budget, by design.)
+        var marker = text[text.IndexOf('\n', StringComparison.Ordinal)..text.LastIndexOf('\n')];
+        var preserved = text.Replace(marker, string.Empty, StringComparison.Ordinal).Replace("\n", string.Empty, StringComparison.Ordinal);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(preserved) <= 40);
+    }
+
+    [Fact]
+    public void TruncateHeadTail_NonAsciiAtBoundary_DoesNotProduceReplacementChar()
+    {
+        // 4-byte UTF-8 emoji surrounded by ASCII; cap chosen so naive char-based
+        // truncation would have split a surrogate pair. The new implementation
+        // must skip the rune that doesn't fit instead of emitting U+FFFD.
+        const string Input = "AAAA🔥BBBBCCCC🔥DDDD";
+        var (text, _) = ShellSession.TruncateHeadTail(Input, cap: 8);
+
+        Assert.DoesNotContain("\uFFFD", text);
+    }
 }

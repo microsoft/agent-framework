@@ -827,15 +827,88 @@ internal sealed class ShellSession : IAsyncDisposable
         return -1;
     }
 
+    /// <summary>
+    /// Truncate <paramref name="data"/> to at most <paramref name="cap"/> UTF-8 bytes
+    /// using a head/tail strategy. Splits between runes (never inside a multi-byte
+    /// UTF-8 sequence) so the result is always valid UTF-8 / .NET text.
+    /// </summary>
+    /// <param name="data">The text to truncate.</param>
+    /// <param name="cap">Maximum number of UTF-8 bytes to retain (excluding the marker line).</param>
+    /// <returns>The (possibly truncated) text and a flag indicating whether truncation occurred.</returns>
     internal static (string text, bool truncated) TruncateHeadTail(string data, int cap)
     {
-        if (data.Length <= cap)
+        if (cap <= 0 || string.IsNullOrEmpty(data))
         {
             return (data, false);
         }
-        var head = data.Substring(0, cap / 2);
-        var tail = data.Substring(data.Length - (cap / 2));
-        return ($"{head}\n[... truncated {data.Length - cap} chars ...]\n{tail}", true);
+
+        var totalBytes = Encoding.UTF8.GetByteCount(data);
+        if (totalBytes <= cap)
+        {
+            return (data, false);
+        }
+
+        var halfCap = cap / 2;
+        var head = TakePrefixByBytes(data, halfCap);
+        var tail = TakeSuffixByBytes(data, halfCap);
+        var droppedBytes = totalBytes - Encoding.UTF8.GetByteCount(head) - Encoding.UTF8.GetByteCount(tail);
+        if (droppedBytes < 0)
+        {
+            droppedBytes = 0;
+        }
+        return ($"{head}\n[... truncated {droppedBytes} bytes ...]\n{tail}", true);
+    }
+
+    private static string TakePrefixByBytes(string data, int maxBytes)
+    {
+        if (maxBytes <= 0)
+        {
+            return string.Empty;
+        }
+        var encoder = Encoding.UTF8.GetEncoder();
+        var chars = data.AsSpan();
+        Span<byte> scratch = stackalloc byte[4];
+        var taken = 0;
+        var byteCount = 0;
+        while (taken < chars.Length)
+        {
+            var charsThisStep = char.IsHighSurrogate(chars[taken]) && taken + 1 < chars.Length ? 2 : 1;
+            scratch.Clear();
+            encoder.Convert(chars.Slice(taken, charsThisStep), scratch, flush: false, out _, out var bytesUsed, out _);
+            if (byteCount + bytesUsed > maxBytes)
+            {
+                break;
+            }
+            byteCount += bytesUsed;
+            taken += charsThisStep;
+        }
+        return data.Substring(0, taken);
+    }
+
+    private static string TakeSuffixByBytes(string data, int maxBytes)
+    {
+        if (maxBytes <= 0)
+        {
+            return string.Empty;
+        }
+        var encoder = Encoding.UTF8.GetEncoder();
+        Span<byte> scratch = stackalloc byte[4];
+        var endExclusive = data.Length;
+        var startInclusive = data.Length;
+        var byteCount = 0;
+        while (startInclusive > 0)
+        {
+            var charsThisStep = startInclusive >= 2 && char.IsLowSurrogate(data[startInclusive - 1]) && char.IsHighSurrogate(data[startInclusive - 2]) ? 2 : 1;
+            scratch.Clear();
+            encoder.Convert(data.AsSpan(startInclusive - charsThisStep, charsThisStep), scratch, flush: false, out _, out var bytesUsed, out _);
+            if (byteCount + bytesUsed > maxBytes)
+            {
+                break;
+            }
+            byteCount += bytesUsed;
+            startInclusive -= charsThisStep;
+        }
+        return data.Substring(startInclusive, endExclusive - startInclusive);
     }
 
     private static void KillProcessTree(Process process)

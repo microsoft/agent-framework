@@ -86,10 +86,11 @@ internal static class ShellResolver
         {
             "PWSH" or "POWERSHELL" => ShellKind.PowerShell,
             "CMD" => ShellKind.Cmd,
-            // Non-bash POSIX shells: treat sh/dash/ash/busybox as plain sh
-            // so we don't pass bash-only flags like --noprofile / --norc.
-            "SH" or "DASH" or "ASH" or "BUSYBOX" => ShellKind.Sh,
-            _ => ShellKind.Bash,
+            "BASH" => ShellKind.Bash,
+            // All other POSIX shells (sh, zsh, dash, ash, ksh, busybox, ...)
+            // are launched as plain sh so we don't pass bash-only flags like
+            // --noprofile / --norc, which zsh and dash reject.
+            _ => ShellKind.Sh,
         };
     }
 
@@ -131,13 +132,13 @@ internal static class ShellResolver
 /// <summary>Identifies the dialect of the resolved shell.</summary>
 internal enum ShellKind
 {
-    /// <summary>POSIX shell (bash, zsh) that accepts <c>--noprofile</c> / <c>--norc</c>.</summary>
+    /// <summary>POSIX bash; supports <c>--noprofile</c> / <c>--norc</c>.</summary>
     Bash,
     /// <summary>PowerShell (pwsh or Windows PowerShell).</summary>
     PowerShell,
     /// <summary>Windows cmd.exe.</summary>
     Cmd,
-    /// <summary>POSIX <c>sh</c> / dash / ash / busybox — does NOT accept <c>--noprofile</c>.</summary>
+    /// <summary>Generic POSIX shell (sh, zsh, dash, ash, ksh, busybox) — bash-only flags are not passed.</summary>
     Sh,
 }
 

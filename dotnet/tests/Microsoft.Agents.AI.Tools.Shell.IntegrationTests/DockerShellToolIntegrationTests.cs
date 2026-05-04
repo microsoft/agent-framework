@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 
-namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
+namespace Microsoft.Agents.AI.Tools.Shell.IntegrationTests;
 
 /// <summary>
 /// End-to-end tests that exercise <see cref="DockerShellTool"/> against a live

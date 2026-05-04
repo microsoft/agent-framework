@@ -105,21 +105,19 @@ public sealed class ShellEnvironmentProviderTests
     {
         var fake = new FakeShellExecutor(
             new ShellResult("VERSION=1.0\nCWD=/tmp\n", "", 0, TimeSpan.Zero));
-        var provider = new ShellEnvironmentProvider(fake, new()
+        var options = new ShellEnvironmentProviderOptions
         {
             OverrideFamily = ShellFamily.Posix,
             ProbeTools = [],
             InstructionsFormatter = _ => "CUSTOM-INSTRUCTIONS",
-        });
+        };
+        var provider = new ShellEnvironmentProvider(fake, options);
         var snapshot = await provider.RefreshAsync();
         Assert.Equal("/tmp", snapshot.WorkingDirectory);
 
-        // ProvideAIContextAsync isn't directly accessible (protected), but we
-        // can verify via the formatter contract: the snapshot is the only
-        // input and it's correct.
-        var custom = (provider.GetType()
-            .GetField("_options", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-            ?.GetValue(provider) as ShellEnvironmentProviderOptions)!.InstructionsFormatter!(snapshot);
+        // ProvideAIContextAsync is protected; assert the formatter contract directly
+        // against the options instance the test owns.
+        var custom = options.InstructionsFormatter!(snapshot);
         Assert.Equal("CUSTOM-INSTRUCTIONS", custom);
     }
 
@@ -144,7 +142,7 @@ public sealed class ShellEnvironmentProviderTests
     }
 
     [Fact]
-    public async Task ProvideAIContext_FirstCall_ProbesOnlyOnceAsync()
+    public async Task RefreshAsync_ReProbesEachCallAsync()
     {
         var fake = new FakeShellExecutor(
             new ShellResult("VERSION=1.0\nCWD=/x\n", "", 0, TimeSpan.Zero));
@@ -154,14 +152,58 @@ public sealed class ShellEnvironmentProviderTests
             ProbeTools = [],
         });
 
-        // Force first probe.
         _ = await provider.RefreshAsync();
         var probesAfterFirst = fake.RunCount;
 
-        // Subsequent ProvideAIContext calls should not re-probe — they hit
-        // the cached _snapshotTask.
         await provider.RefreshAsync();
-        Assert.True(fake.RunCount > probesAfterFirst, "Refresh should re-probe");
+        Assert.True(fake.RunCount > probesAfterFirst, "RefreshAsync should re-probe each call");
+    }
+
+    [Fact]
+    public async Task RefreshAsync_InvalidToolName_RecordedAsNullWithoutInvokingExecutorAsync()
+    {
+        var fake = new FakeShellExecutor(
+            new ShellResult("VERSION=1.0\nCWD=/\n", "", 0, TimeSpan.Zero));
+        var provider = new ShellEnvironmentProvider(fake, new()
+        {
+            OverrideFamily = ShellFamily.Posix,
+            ProbeTools = ["git; rm -rf /", "echo $PATH", "good-tool && bad"],
+        });
+
+        var snapshot = await provider.RefreshAsync();
+        // One probe for shell+CWD; none of the bogus tool names should reach the executor.
+        Assert.Equal(1, fake.RunCount);
+        Assert.Null(snapshot.ToolVersions["git; rm -rf /"]);
+        Assert.Null(snapshot.ToolVersions["echo $PATH"]);
+        Assert.Null(snapshot.ToolVersions["good-tool && bad"]);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_ToolEmitsVersionToStderr_FallsBackToStderrAsync()
+    {
+        // Some CLIs (e.g. java, older gcc) write `--version` output to stderr.
+        var fake = new ScriptedShellExecutor();
+        fake.Responses.Enqueue(new ShellResult("VERSION=1.0\nCWD=/\n", "", 0, TimeSpan.Zero)); // shell+cwd probe
+        fake.Responses.Enqueue(new ShellResult("", "openjdk 21.0.1 2023-10-17\n", 0, TimeSpan.Zero)); // tool probe
+
+        var provider = new ShellEnvironmentProvider(fake, new()
+        {
+            OverrideFamily = ShellFamily.Posix,
+            ProbeTools = ["java"],
+        });
+
+        var snapshot = await provider.RefreshAsync();
+        Assert.Equal("openjdk 21.0.1 2023-10-17", snapshot.ToolVersions["java"]);
+    }
+
+    private sealed class ScriptedShellExecutor : IShellExecutor
+    {
+        public Queue<ShellResult> Responses { get; } = new();
+        public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default) =>
+            Task.FromResult(this.Responses.Dequeue());
+        public ValueTask DisposeAsync() => default;
     }
 
     private sealed class FakeShellExecutor : IShellExecutor

@@ -161,19 +161,33 @@ public sealed class ShellEnvironmentProvider : AIContextProvider
         return (version, cwd);
     }
 
+    private static readonly System.Text.RegularExpressions.Regex s_toolNamePattern =
+        new("^[A-Za-z0-9._-]+$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private async Task<string?> ProbeToolVersionAsync(string tool, CancellationToken cancellationToken)
     {
-        // Quote the tool name to keep the probe predictable in PowerShell.
+        // The tool name is interpolated into a shell command, so reject anything that
+        // isn't a plain identifier. Whitespace, quotes, $, ;, |, &, etc. are not valid
+        // in any real CLI binary name and would otherwise allow shell injection if the
+        // configured tool list is sourced from untrusted input.
+        if (string.IsNullOrEmpty(tool) || !s_toolNamePattern.IsMatch(tool))
+        {
+            return null;
+        }
+
         var probe = $"{tool} --version";
         var result = await this.RunProbeAsync(probe, cancellationToken).ConfigureAwait(false);
         if (result is null || result.ExitCode != 0)
         {
             return null;
         }
-        var firstLine = result.Stdout
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault();
-        return string.IsNullOrWhiteSpace(firstLine) ? null : firstLine.Trim();
+
+        // Some CLIs (java, gcc on older versions) emit `--version` to stderr.
+        var firstLine = FirstNonEmptyLine(result.Stdout) ?? FirstNonEmptyLine(result.Stderr);
+        return string.IsNullOrWhiteSpace(firstLine) ? null : firstLine!.Trim();
+
+        static string? FirstNonEmptyLine(string text) =>
+            text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
     }
 
     private async Task<ShellResult?> RunProbeAsync(string command, CancellationToken cancellationToken)
