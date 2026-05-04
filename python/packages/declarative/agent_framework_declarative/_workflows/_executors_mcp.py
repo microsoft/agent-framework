@@ -163,15 +163,18 @@ def _get_output_path(action_def: Mapping[str, Any], key: str) -> str | None:
 def _format_outputs_for_send(parsed_results: list[Any]) -> str:
     """Render parsed MCP outputs to a string for ``ctx.yield_output(...)``.
 
+    - Empty list → ``""``.
     - All-string list → newline-joined.
-    - Single dict / list → JSON.
-    - Empty / mixed → JSON-dump the whole list.
+    - Single element (any type — scalar, dict, list) → JSON-dumped element.
+      This avoids surprising ``"[42]"`` / ``"[true]"`` / ``"[null]"`` when
+      an MCP tool returns a single scalar JSON value.
+    - Multi-element non-string list → JSON-dump the whole list.
     """
     if not parsed_results:
         return ""
     if all(isinstance(item, str) for item in parsed_results):
         return "\n".join(parsed_results)  # type: ignore[arg-type]
-    if len(parsed_results) == 1 and isinstance(parsed_results[0], (dict, list)):
+    if len(parsed_results) == 1:
         return json.dumps(parsed_results[0], ensure_ascii=False)
     return json.dumps(parsed_results, ensure_ascii=False)
 

@@ -237,6 +237,54 @@ class TestCache:
         assert len(FakeTool.instances) == 1
         assert FakeTool.instances[0].connect_count == 1
 
+    @pytest.mark.asyncio
+    async def test_different_connection_names_create_separate_entries(self) -> None:
+        """Same URL/headers but different ``connection_name`` must dispatch separately."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation(connection_name="conn-A"))
+            await handler.invoke_tool(_invocation(connection_name="conn-B"))
+        assert len(FakeTool.instances) == 2
+
+    @pytest.mark.asyncio
+    async def test_different_server_labels_create_separate_entries(self) -> None:
+        """Same URL/headers but different ``server_label`` must dispatch separately."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation(server_label="LabelA"))
+            await handler.invoke_tool(_invocation(server_label="LabelB"))
+        assert len(FakeTool.instances) == 2
+
+    @pytest.mark.asyncio
+    async def test_full_identity_match_hits_cache(self) -> None:
+        """All four identity components match → single cached entry."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation(server_label="Lbl", connection_name="C", headers={"X": "1"}))
+            await handler.invoke_tool(_invocation(server_label="Lbl", connection_name="C", headers={"X": "1"}))
+        assert len(FakeTool.instances) == 1
+        assert FakeTool.instances[0].connect_count == 1
+
+    @pytest.mark.asyncio
+    async def test_header_name_case_collapses_to_one_cache_entry(self) -> None:
+        """Header name spelling differences (case-only) must share a cache entry."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation(headers={"Authorization": "tk"}))
+            await handler.invoke_tool(_invocation(headers={"authorization": "tk"}))
+            await handler.invoke_tool(_invocation(headers={"AUTHORIZATION": "tk"}))
+        assert len(FakeTool.instances) == 1
+        assert FakeTool.instances[0].connect_count == 1
+
+    @pytest.mark.asyncio
+    async def test_header_value_case_does_not_collapse(self) -> None:
+        """Header *values* remain case-sensitive (different tokens → different sessions)."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation(headers={"Authorization": "Bearer-A"}))
+            await handler.invoke_tool(_invocation(headers={"Authorization": "bearer-a"}))
+        assert len(FakeTool.instances) == 2
+
 
 # ---------- Aclose semantics ----------------------------------------------
 
@@ -279,6 +327,66 @@ class TestAclose:
                 await handler.invoke_tool(_invocation())
             tool = FakeTool.instances[0]
         assert tool.close_count == 1
+
+    @pytest.mark.asyncio
+    async def test_aclose_is_idempotent(self) -> None:
+        """A second ``aclose`` is a no-op (no exception, no double-close)."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.invoke_tool(_invocation(headers={"X": "1"}))
+            await handler.aclose()
+            await handler.aclose()
+        assert FakeTool.instances[0].close_count == 1
+
+    @pytest.mark.asyncio
+    async def test_invoke_after_close_returns_error_result(self) -> None:
+        """Post-close ``invoke_tool`` surfaces a tool error rather than crashing."""
+        handler = DefaultMCPToolHandler()
+        with _patch_tool():
+            await handler.aclose()
+            result = await handler.invoke_tool(_invocation())
+        assert result.is_error is True
+        assert "closed" in (result.error_message or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_aclose_drains_inflight_creation(self) -> None:
+        """An in-flight ``_create_entry`` must not leak when ``aclose`` races with it.
+
+        Reproduces the race described in PR #5630 review-comment 3:
+        task A claims an inflight future and starts a slow connect; task B
+        runs ``aclose``; task A must self-clean (close its tool + httpx
+        client) and surface a closed-handler error rather than orphaning
+        the entry.
+        """
+        handler = DefaultMCPToolHandler()
+        connect_started = asyncio.Event()
+        release_connect = asyncio.Event()
+        original_connect = FakeTool.connect
+
+        async def gated_connect(self: FakeTool) -> None:
+            connect_started.set()
+            await release_connect.wait()
+            await original_connect(self)
+
+        with _patch_tool(), patch.object(FakeTool, "connect", gated_connect):
+            invoke_task = asyncio.create_task(handler.invoke_tool(_invocation(headers={"X": "1"})))
+            # Wait until task A is mid-connect.
+            await connect_started.wait()
+            # Race: kick off aclose. It must wait for the in-flight task.
+            close_task = asyncio.create_task(handler.aclose())
+            # Yield once to ensure aclose has set _closed and is awaiting.
+            await asyncio.sleep(0)
+            # Allow the connect to complete; phase 3 sees _closed and self-cleans.
+            release_connect.set()
+            result = await invoke_task
+            await close_task
+
+        # Entry was created and then closed by the in-flight task itself.
+        assert len(FakeTool.instances) == 1
+        assert FakeTool.instances[0].close_count == 1
+        # The originating invocation surfaces a closed-handler error.
+        assert result.is_error is True
+        assert "closed" in (result.error_message or "").lower()
 
 
 # ---------- Result normalisation ------------------------------------------
@@ -400,16 +508,36 @@ class TestErrorMapping:
 
 class TestCacheKey:
     def test_key_order_independent(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", {"A": "1", "B": "2"})
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", {"B": "2", "A": "1"})
+        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"A": "1", "B": "2"})
+        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"B": "2", "A": "1"})
         assert k1 == k2
 
     def test_key_distinguishes_values(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", {"A": "1"})
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", {"A": "2"})
+        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"A": "1"})
+        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"A": "2"})
         assert k1 != k2
 
     def test_empty_headers_use_fixed_hash(self) -> None:
-        k1 = DefaultMCPToolHandler._cache_key("https://x/", None)
-        k2 = DefaultMCPToolHandler._cache_key("https://x/", {})
+        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, None)
+        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {})
         assert k1 == k2
+
+    def test_key_distinguishes_connection_name(self) -> None:
+        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, "conn-A", None)
+        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, "conn-B", None)
+        assert k1 != k2
+
+    def test_key_distinguishes_server_label(self) -> None:
+        k1 = DefaultMCPToolHandler._cache_key("https://x/", "Lbl-A", None, None)
+        k2 = DefaultMCPToolHandler._cache_key("https://x/", "Lbl-B", None, None)
+        assert k1 != k2
+
+    def test_key_collapses_header_name_case(self) -> None:
+        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"Authorization": "tk"})
+        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"authorization": "tk"})
+        assert k1 == k2
+
+    def test_key_keeps_header_value_case(self) -> None:
+        k1 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"X": "Bearer-A"})
+        k2 = DefaultMCPToolHandler._cache_key("https://x/", None, None, {"X": "bearer-a"})
+        assert k1 != k2

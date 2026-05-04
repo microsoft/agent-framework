@@ -158,10 +158,17 @@ class DefaultMCPToolHandler:
     """Default :class:`MCPToolHandler` backed by :class:`agent_framework.MCPStreamableHTTPTool`.
 
     Caches one :class:`agent_framework.MCPStreamableHTTPTool` instance per
-    ``(server_url, headers_hash)`` in a bounded LRU. The cache prevents
-    re-establishing an MCP session for every invocation while ensuring
-    different header sets (auth tokens) cannot share a session — matches the
-    .NET design intent while bounding cardinality.
+    ``(server_url, server_label, connection_name, headers_hash)`` in a
+    bounded LRU. The cache prevents re-establishing an MCP session for every
+    invocation while ensuring different header sets (auth tokens) cannot
+    share a session — matches the .NET design intent while bounding
+    cardinality. ``server_label`` and ``connection_name`` participate in
+    the key so that callers using ``client_provider`` to dispatch on those
+    fields receive a fresh client per logical connection (see below).
+    Header *names* are lower-cased inside the hash payload only — the
+    headers passed on the wire keep the caller's original casing — so two
+    YAML actions that spell ``Authorization`` differently still share a
+    cache entry.
 
     Construction modes:
 
@@ -197,14 +204,17 @@ class DefaultMCPToolHandler:
             raise ValueError(f"cache_max_size must be positive, got {cache_max_size}")
         self._client_provider = client_provider
         self._cache_max_size = cache_max_size
-        self._cache: OrderedDict[tuple[str, str], _CacheEntry] = OrderedDict()
+        self._cache: OrderedDict[tuple[str, str, str, str], _CacheEntry] = OrderedDict()
         # Outer lock guards the cache + in-flight-future map only — never
         # held across network I/O.
         self._cache_lock = asyncio.Lock()
         # Per-key in-flight futures: while one task is connecting, other
         # tasks awaiting the same key will await the same future and share
         # the resulting cache entry.
-        self._inflight: dict[tuple[str, str], asyncio.Future[_CacheEntry]] = {}
+        self._inflight: dict[tuple[str, str, str, str], asyncio.Future[_CacheEntry]] = {}
+        # Set by ``aclose`` to prevent post-close cache insertions and to
+        # reject new ``invoke_tool`` calls. Once set, never cleared.
+        self._closed = False
 
     async def invoke_tool(self, invocation: MCPToolInvocation) -> MCPToolResult:
         """Invoke ``invocation.tool_name`` on the cached MCP client for the server."""
@@ -279,10 +289,32 @@ class DefaultMCPToolHandler:
 
         Caller-supplied :class:`httpx.AsyncClient` instances (returned by the
         ``client_provider`` callback) are NOT closed.
+
+        Idempotent — a second call returns immediately. Drains any in-flight
+        ``_create_entry`` tasks before returning so their resources are
+        cleaned up; the in-flight tasks see ``self._closed`` in phase 3 of
+        :meth:`_get_or_create_entry`, close their own entry, and resolve
+        their future with ``RuntimeError("DefaultMCPToolHandler is closed")``.
         """
         async with self._cache_lock:
+            if self._closed:
+                return
+            self._closed = True
             entries = list(self._cache.values())
             self._cache.clear()
+            inflight_futures = list(self._inflight.values())
+
+        # Wait for in-flight creations to finish their self-cleanup. Each
+        # in-flight task self-closes its entry under the closed-flag branch
+        # in phase 3 and resolves its future with ``RuntimeError``; we
+        # swallow it here because the failure is expected at shutdown.
+        for fut in inflight_futures:
+            try:
+                await fut
+            except BaseException:
+                logger.debug("DefaultMCPToolHandler: in-flight future raised during aclose", exc_info=True)
+                continue
+
         for entry in entries:
             await self._close_entry(entry)
 
@@ -298,12 +330,19 @@ class DefaultMCPToolHandler:
 
     async def _get_or_create_entry(self, invocation: MCPToolInvocation) -> _CacheEntry:
         """Look up (or create) the cached MCP client for this invocation."""
-        key = self._cache_key(invocation.server_url, invocation.headers)
+        key = self._cache_key(
+            invocation.server_url,
+            invocation.server_label,
+            invocation.connection_name,
+            invocation.headers,
+        )
 
         # Phase 1: check the cache and either claim creation or wait for an
         # already in-flight creation.
         creating = False
         async with self._cache_lock:
+            if self._closed:
+                raise RuntimeError("DefaultMCPToolHandler is closed")
             existing = self._cache.get(key)
             if existing is not None:
                 self._cache.move_to_end(key)
@@ -332,25 +371,44 @@ class DefaultMCPToolHandler:
             raise
 
         # Phase 3: insert with LRU eviction; resolve the in-flight future.
+        # If ``aclose`` ran while we were connecting, ``_closed`` is now
+        # True; don't insert into the cache (it has been drained), close
+        # the just-built entry, and surface the closed-handler error to
+        # all awaiters of the future.
         evicted: _CacheEntry | None = None
         duplicate: _CacheEntry | None = None
+        handler_closed = False
         async with self._cache_lock:
             self._inflight.pop(key, None)
-            existing = self._cache.get(key)
-            if existing is not None:
-                # Another writer beat us; prefer the existing entry and
-                # discard ours after the lock is released.
-                self._cache.move_to_end(key)
-                duplicate = entry
-                entry = existing
+            if self._closed:
+                handler_closed = True
             else:
-                self._cache[key] = entry
-                self._cache.move_to_end(key)
-                if len(self._cache) > self._cache_max_size:
-                    _evicted_key, evicted = self._cache.popitem(last=False)
-            if not inflight.done():
-                inflight.set_result(entry)
+                existing = self._cache.get(key)
+                if existing is not None:
+                    # Another writer beat us; prefer the existing entry and
+                    # discard ours after the lock is released.
+                    self._cache.move_to_end(key)
+                    duplicate = entry
+                    entry = existing
+                else:
+                    self._cache[key] = entry
+                    self._cache.move_to_end(key)
+                    if len(self._cache) > self._cache_max_size:
+                        _evicted_key, evicted = self._cache.popitem(last=False)
+                if not inflight.done():
+                    inflight.set_result(entry)
 
+        if handler_closed:
+            # Close our orphaned entry; resolve the future with a clear
+            # error so the caller (and any other awaiters) surface a
+            # consistent "handler is closed" failure rather than receiving
+            # an entry we are about to close behind their back.
+            await self._close_entry(entry)
+            err = RuntimeError("DefaultMCPToolHandler is closed")
+            if not inflight.done():
+                inflight.set_exception(err)
+            inflight.exception()
+            raise err
         if duplicate is not None:
             await self._close_entry(duplicate)
         if evicted is not None:
@@ -410,11 +468,27 @@ class DefaultMCPToolHandler:
                 logger.debug("DefaultMCPToolHandler: error closing owned httpx client", exc_info=True)
 
     @staticmethod
-    def _cache_key(server_url: str, headers: dict[str, str] | None) -> tuple[str, str]:
-        """Build an order-independent cache key for ``(server_url, headers)``."""
+    def _cache_key(
+        server_url: str,
+        server_label: str | None,
+        connection_name: str | None,
+        headers: dict[str, str] | None,
+    ) -> tuple[str, str, str, str]:
+        """Build an order-independent cache key for the invocation identity.
+
+        The key includes ``server_label`` and ``connection_name`` so that
+        callers using ``client_provider`` to dispatch on those fields
+        receive a fresh client per logical connection (matches the
+        documented dispatch contract).
+
+        Header *names* are lower-cased inside the hash payload only so
+        that ``Authorization`` and ``authorization`` map to the same
+        cache entry. Header values remain case-sensitive (per RFC 7235).
+        """
         if not headers:
             headers_hash = "0"
         else:
-            payload = json.dumps(sorted(headers.items()), ensure_ascii=False)
+            normalized = sorted((k.lower(), v) for k, v in headers.items())
+            payload = json.dumps(normalized, ensure_ascii=False)
             headers_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        return (server_url, headers_hash)
+        return (server_url, server_label or "", connection_name or "", headers_hash)

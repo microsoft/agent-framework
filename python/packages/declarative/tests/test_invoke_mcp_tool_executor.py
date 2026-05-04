@@ -629,3 +629,36 @@ class TestProtocol:
     def test_stub_handler_satisfies_protocol(self) -> None:
         handler = StubMcpHandler(_ok())
         assert isinstance(handler, MCPToolHandler)
+
+
+# ---------- _format_outputs_for_send --------------------------------------
+
+
+class TestFormatOutputsForSend:
+    """Direct tests for the auto-send rendering helper.
+
+    Regression for PR #5630 review-comment 4: a single scalar JSON value
+    must render bare (e.g. ``"42"``) rather than wrapped (``"[42]"``).
+    """
+
+    @pytest.mark.parametrize(
+        ("parsed", "expected"),
+        [
+            ([], ""),
+            (["hello"], "hello"),
+            (["a", "b"], "a\nb"),
+            ([42], "42"),
+            ([3.14], "3.14"),
+            ([True], "true"),
+            ([False], "false"),
+            ([None], "null"),
+            ([{"k": "v"}], '{"k": "v"}'),
+            ([[1, 2]], "[1, 2]"),
+            (["hello", 42], '["hello", 42]'),
+            ([{"a": 1}, {"b": 2}], '[{"a": 1}, {"b": 2}]'),
+        ],
+    )
+    def test_format_outputs_for_send(self, parsed: list[Any], expected: str) -> None:
+        from agent_framework_declarative._workflows._executors_mcp import _format_outputs_for_send
+
+        assert _format_outputs_for_send(parsed) == expected
