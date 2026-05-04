@@ -26,6 +26,7 @@ from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
 
 from dotenv import load_dotenv
+from opentelemetry import context as otel_context
 from opentelemetry import metrics, trace
 
 from . import __version__ as version_info
@@ -1277,27 +1278,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         )
 
         if stream:
-            result_stream = cast(
-                ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-                super_get_response(
-                    messages=messages,
-                    stream=True,
-                    options=opts,
-                    compaction_strategy=compaction_strategy,
-                    tokenizer=tokenizer,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=merged_client_kwargs,
-                ),
-            )
+            span = _start_streaming_span(attributes, OtelAttr.REQUEST_MODEL)
 
-            # Create span directly without trace.use_span() context attachment.
-            # Streaming spans are closed asynchronously in cleanup hooks, which run
-            # in a different async context than creation — using use_span() would
-            # cause "Failed to detach context" errors from OpenTelemetry.
-            operation = attributes.get(OtelAttr.OPERATION, "operation")
-            span_name = attributes.get(OtelAttr.REQUEST_MODEL, "unknown")
-            span = get_tracer().start_span(f"{operation} {span_name}")
-            span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
@@ -1318,6 +1300,24 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
+
+            try:
+                result_stream = cast(
+                    ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                    super_get_response(
+                        messages=messages,
+                        stream=True,
+                        options=opts,
+                        compaction_strategy=compaction_strategy,
+                        tokenizer=tokenizer,
+                        function_invocation_kwargs=function_invocation_kwargs,
+                        client_kwargs=merged_client_kwargs,
+                    ),
+                )
+            except Exception as exception:
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
+                _close_span()
+                raise
 
             async def _finalize_stream() -> None:
                 from ._types import ChatResponse
@@ -1357,11 +1357,18 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 finally:
                     _close_span()
 
-            # Register a weak reference callback to close the span if stream is garbage collected
-            # without being consumed. This ensures spans don't leak if users don't consume streams.
-            wrapped_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = result_stream.with_cleanup_hook(
-                _record_duration
-            ).with_cleanup_hook(_finalize_stream)
+            # The pull context manager attaches the span around each underlying iterator pull so
+            # that child spans created during the pull (e.g. HTTP requests, inner tool execution)
+            # are parented under this chat span. Attach and detach happen in the same async
+            # context as the pull, avoiding cross-context cleanup issues. The weakref finalizer
+            # ensures the span is closed even if the stream is garbage collected without being
+            # consumed.
+            wrapped_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = (
+                result_stream
+                .with_cleanup_hook(_record_duration)
+                .with_cleanup_hook(_finalize_stream)
+                .with_pull_context_manager(lambda: _activate_span(span))
+            )
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
@@ -1543,23 +1550,8 @@ class AgentTelemetryLayer:
         inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
 
         if stream:
-            try:
-                run_result: object = execute()
-                if isinstance(run_result, ResponseStream):
-                    result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
-                elif isinstance(run_result, Awaitable):
-                    result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
-                else:
-                    raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
-            except Exception:
-                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
-                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
-                raise
+            span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
 
-            operation = attributes.get(OtelAttr.OPERATION, "operation")
-            span_name = attributes.get(OtelAttr.AGENT_NAME, "unknown")
-            span = get_tracer().start_span(f"{operation} {span_name}")
-            span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
@@ -1580,6 +1572,21 @@ class AgentTelemetryLayer:
 
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
+
+            try:
+                run_result: object = execute()
+                if isinstance(run_result, ResponseStream):
+                    result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
+                elif isinstance(run_result, Awaitable):
+                    result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+                else:
+                    raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
+            except Exception as exception:
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
+                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                _close_span()
+                raise
 
             async def _finalize_stream() -> None:
                 from ._types import AgentResponse
@@ -1620,9 +1627,18 @@ class AgentTelemetryLayer:
                     INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
                     _close_span()
 
-            wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = result_stream.with_cleanup_hook(
-                _record_duration
-            ).with_cleanup_hook(_finalize_stream)
+            # The pull context manager attaches the span around each underlying iterator pull so
+            # that child spans created during the pull (e.g. inner chat completion spans from the
+            # underlying ChatTelemetryLayer) are parented under this agent invoke span. Attach and
+            # detach happen in the same async context as the pull, avoiding cross-context cleanup
+            # issues. The weakref finalizer ensures the span is closed even if the stream is
+            # garbage collected without being consumed.
+            wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = (
+                result_stream
+                .with_cleanup_hook(_record_duration)
+                .with_cleanup_hook(_finalize_stream)
+                .with_pull_context_manager(lambda: _activate_span(span))
+            )
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
@@ -1810,6 +1826,27 @@ def get_function_span(
 
 
 @contextlib.contextmanager
+def _activate_span(span: trace.Span) -> Generator[None]:
+    """Attach ``span`` as the current span in the OpenTelemetry context.
+
+    Designed to be used as a per-pull context manager registered on a
+    ``ResponseStream`` via ``with_pull_context_manager``: it attaches the span
+    before each underlying iterator pull and detaches immediately after, so
+    child spans created during the pull (HTTP clients, inner chat completions,
+    tool execution) are correctly parented under ``span``.
+
+    Because attach and detach happen within the same ``__anext__`` invocation
+    (and therefore the same async task / contextvars context), there is no risk
+    of "Failed to detach context" warnings from cross-context cleanup.
+    """
+    token = otel_context.attach(trace.set_span_in_context(span))
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
+
+
+@contextlib.contextmanager
 def _get_span(
     attributes: dict[str, Any],
     span_name_attribute: str,
@@ -1829,6 +1866,29 @@ def _get_span(
         set_status_on_exception=False,
     ) as current_span:
         yield current_span
+
+
+def _start_streaming_span(attributes: dict[str, Any], span_name_attribute: str) -> trace.Span:
+    """Start a non-current span for a streaming operation.
+
+    Unlike :func:`_get_span`, the returned span is not attached to the current
+    OpenTelemetry context. The caller is responsible for:
+
+    - Ending the span via cleanup hooks on the wrapped
+      :class:`~agent_framework._types.ResponseStream`.
+    - Activating the span around each iterator pull via
+      :func:`_activate_span` registered with ``with_pull_context_manager`` so
+      that child spans created during stream production inherit it as parent.
+
+    Streaming spans are closed asynchronously in cleanup hooks that run in a
+    different async context than creation, so attaching the span at creation
+    time would cause "Failed to detach context" errors from OpenTelemetry.
+    """
+    operation = attributes.get(OtelAttr.OPERATION, "operation")
+    span_name = attributes.get(span_name_attribute, "unknown")
+    span = get_tracer().start_span(f"{operation} {span_name}")
+    span.set_attributes(attributes)
+    return span
 
 
 def _get_instructions_from_options(options: Any) -> str | list[str] | None:

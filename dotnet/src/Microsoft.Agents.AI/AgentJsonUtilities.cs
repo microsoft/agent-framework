@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -68,6 +69,38 @@ internal static partial class AgentJsonUtilities
     [JsonSerializable(typeof(ChatClientAgentSession))]
     [JsonSerializable(typeof(TextSearchProvider.TextSearchProviderState))]
     [JsonSerializable(typeof(ChatHistoryMemoryProvider.State))]
+
+    // TodoProvider types
+    [JsonSerializable(typeof(TodoState))]
+    [JsonSerializable(typeof(TodoItem))]
+    [JsonSerializable(typeof(TodoItemInput))]
+    [JsonSerializable(typeof(List<int>), TypeInfoPropertyName = "IntList")]
+    [JsonSerializable(typeof(List<TodoItem>), TypeInfoPropertyName = "TodoItemList")]
+    [JsonSerializable(typeof(List<TodoItemInput>), TypeInfoPropertyName = "TodoItemInputList")]
+
+    // AgentModeProvider types
+    [JsonSerializable(typeof(AgentModeState))]
+
+    // ToolApprovalAgent types
+    [JsonSerializable(typeof(ToolApprovalState))]
+    [JsonSerializable(typeof(ToolApprovalRule))]
+    [JsonSerializable(typeof(List<ToolApprovalRule>), TypeInfoPropertyName = "ToolApprovalRuleList")]
+
+    // FileMemoryProvider types
+    [JsonSerializable(typeof(FileMemoryState))]
+    [JsonSerializable(typeof(FileSearchResult))]
+    [JsonSerializable(typeof(List<FileSearchResult>), TypeInfoPropertyName = "FileSearchResultList")]
+    [JsonSerializable(typeof(FileSearchMatch))]
+    [JsonSerializable(typeof(List<FileSearchMatch>), TypeInfoPropertyName = "FileSearchMatchList")]
+    [JsonSerializable(typeof(FileListEntry))]
+    [JsonSerializable(typeof(List<FileListEntry>), TypeInfoPropertyName = "FileListEntryList")]
+
+    // SubAgentsProvider types
+    [JsonSerializable(typeof(SubAgentState))]
+    [JsonSerializable(typeof(SubAgentRuntimeState))]
+    [JsonSerializable(typeof(SubTaskInfo))]
+    [JsonSerializable(typeof(SubTaskStatus))]
+    [JsonSerializable(typeof(List<SubTaskInfo>), TypeInfoPropertyName = "SubTaskInfoList")]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;

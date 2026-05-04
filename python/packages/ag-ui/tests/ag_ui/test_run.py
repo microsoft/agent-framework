@@ -1244,7 +1244,7 @@ class TestEmitTextReasoning:
         assert events[0].message_id == "reason_1"
         assert isinstance(events[1], ReasoningMessageStartEvent)
         assert events[1].message_id == "reason_1"
-        assert events[1].role == "assistant"
+        assert events[1].role == "reasoning"
         assert isinstance(events[2], ReasoningMessageContentEvent)
         assert events[2].message_id == "reason_1"
         assert events[2].delta == "The user is asking about weather, so I should call the weather tool."
@@ -1640,6 +1640,37 @@ class TestReasoningInSnapshot:
         # close: MsgEnd(block2) + End(block2)
         assert isinstance(close[0], ReasoningMessageEndEvent)
         assert close[0].message_id == "block2"
+
+
+class TestReasoningEventRole:
+    """Tests that reasoning events use role='reasoning' per AG-UI spec."""
+
+    def test_reasoning_role_without_flow(self):
+        """ReasoningMessageStartEvent uses role='reasoning' in non-flow mode."""
+        content = Content.from_text_reasoning(
+            id="reason_role_1",
+            text="Thinking about the question.",
+        )
+
+        events = _emit_text_reasoning(content)
+
+        msg_starts = [e for e in events if isinstance(e, ReasoningMessageStartEvent)]
+        assert len(msg_starts) == 1
+        assert msg_starts[0].role == "reasoning"
+
+    def test_reasoning_role_with_flow(self):
+        """ReasoningMessageStartEvent uses role='reasoning' in streaming flow mode."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            id="reason_role_2",
+            text="Reasoning in streaming mode.",
+        )
+
+        events = _emit_text_reasoning(content, flow)
+
+        msg_starts = [e for e in events if isinstance(e, ReasoningMessageStartEvent)]
+        assert len(msg_starts) == 1
+        assert msg_starts[0].role == "reasoning"
 
 
 async def test_session_id_matches_thread_id():

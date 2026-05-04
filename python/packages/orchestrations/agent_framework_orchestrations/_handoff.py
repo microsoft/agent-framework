@@ -352,7 +352,7 @@ class HandoffAgentExecutor(AgentExecutor):
         self._full_conversation.extend(self._cache.copy())
 
         # Check termination condition before running the agent
-        if await self._check_terminate_and_yield(ctx):
+        if await self._should_terminate():
             return
 
         # Run the agent
@@ -410,7 +410,7 @@ class HandoffAgentExecutor(AgentExecutor):
         # Re-evaluate termination after appending and broadcasting this response.
         # Without this check, workflows that become terminal due to the latest assistant
         # message would still emit request_info and require an unnecessary extra resume.
-        if await self._check_terminate_and_yield(ctx):
+        if await self._should_terminate():
             return
 
         # Handle case where no handoff was requested
@@ -447,10 +447,10 @@ class HandoffAgentExecutor(AgentExecutor):
             response: The user's response messages
             ctx: The workflow context
 
-        If the response is empty, it indicates termination of the handoff workflow.
+        If the response is empty, the handoff workflow terminates. Per-agent responses
+        already surfaced as `output` events; no terminal yield is needed.
         """
         if not response:
-            await ctx.yield_output(self._full_conversation)
             return
 
         # Broadcast the user response to all other agents
@@ -520,14 +520,12 @@ class HandoffAgentExecutor(AgentExecutor):
 
         return None
 
-    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Any, Any]) -> bool:
-        """Check termination conditions and yield completion if met.
+    async def _should_terminate(self) -> bool:
+        """Pure predicate: return True iff the configured termination condition is satisfied.
 
-        Args:
-            ctx: Workflow context for yielding output
-
-        Returns:
-            True if termination condition met and output yielded, False otherwise
+        Per-agent responses already surface as `output` events as agents speak, so the
+        handoff workflow has no terminal yield to make — this method only decides whether
+        the workflow should stop iterating.
         """
         if self._termination_condition is None:
             return False
@@ -535,12 +533,7 @@ class HandoffAgentExecutor(AgentExecutor):
         terminated = self._termination_condition(self._full_conversation)
         if inspect.isawaitable(terminated):
             terminated = await terminated
-
-        if terminated:
-            await ctx.yield_output(self._full_conversation)
-            return True
-
-        return False
+        return bool(terminated)
 
     @override
     async def on_checkpoint_save(self) -> dict[str, Any]:
@@ -577,13 +570,15 @@ class HandoffBuilder:
     tool injection, and middleware — capabilities only available on ``Agent``.
 
     Outputs:
-    The final conversation history as a list of Message once the group chat completes.
+    Each agent's response surfaces as a workflow `output` event as it speaks; there is no
+    synthetic terminal event. Consumers iterating events see per-agent ``AgentResponse`` (or
+    ``AgentResponseUpdate`` while streaming) in conversation order. The workflow returns to
+    idle once the termination condition is met (or the user terminates an interactive run).
 
     Note:
     1. Agents in handoff workflows must be ``Agent`` instances and support local tool calls.
-    2. Handoff doesn't support intermediate outputs from agents. All outputs are returned as
-       they become available. This is because agents in handoff workflows are not considered
-       sub-agents of a central orchestrator, thus all outputs are directly emitted.
+    2. Because each agent's response is itself a workflow output, handoff has no separate
+       "intermediate outputs" channel — every per-agent response is the primary output.
     """
 
     def __init__(

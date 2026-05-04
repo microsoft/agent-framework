@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
@@ -71,6 +72,54 @@ logger = logging.getLogger("agent_framework.claude")
 # FunctionTool instances are converted to SDK MCP tools and served
 # through this server, as Claude Code CLI only supports tools via MCP.
 TOOLS_MCP_SERVER_NAME = "_agent_framework_tools"
+
+
+FunctionApprovalCallback = Callable[[Content], "bool | Awaitable[bool]"]
+"""Callback invoked by the agent before executing a FunctionTool that requires approval.
+
+The callback receives a ``FunctionCallContent`` describing the pending call
+(``name``, ``arguments``, and a synthetic ``call_id``) and must return ``True``
+to allow execution or ``False`` to deny it. Both synchronous and ``await``-able
+return values are supported.
+
+The Claude Agent SDK manages its own tool-calling loop, so the framework cannot
+round-trip a ``FunctionApprovalRequestContent`` / ``FunctionApprovalResponseContent``
+pair the way the standard chat-client pipeline does. This callback is the
+agent-level enforcement point for tools declared with
+``approval_mode="always_require"``: when no callback is configured the agent
+denies these calls by default.
+"""
+
+
+async def _resolve_function_approval(
+    callback: FunctionApprovalCallback | None,
+    func_tool: FunctionTool,
+    arguments: Mapping[str, Any] | None,
+) -> bool:
+    """Run the agent-level approval callback for a pending tool call.
+
+    Returns ``True`` only when ``callback`` is configured and explicitly returns
+    a truthy value. A missing callback or any callback failure is treated as a
+    denial so the secure-by-default policy holds even if the user code raises.
+    """
+    if callback is None:
+        return False
+    request = Content.from_function_call(
+        call_id=f"af-claude-approval::{func_tool.name}",
+        name=func_tool.name,
+        arguments=None if arguments is None else dict(arguments),
+    )
+    try:
+        outcome = callback(request)
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
+    except Exception:
+        logger.exception(
+            "on_function_approval callback raised for tool '%s'; denying execution.",
+            func_tool.name,
+        )
+        return False
+    return bool(outcome)
 
 
 class ClaudeAgentSettings(TypedDict, total=False):
@@ -175,6 +224,13 @@ class ClaudeAgentOptions(TypedDict, total=False):
     effort: Literal["low", "medium", "high", "max"]
     """Effort level for thinking depth."""
 
+    on_function_approval: FunctionApprovalCallback
+    """Approval callback for ``FunctionTool`` instances declared with
+    ``approval_mode="always_require"``. The callback is awaited (sync or async)
+    inside the SDK tool-handler before the tool is executed; a falsy return
+    value denies the call. If omitted, calls to such tools are denied with an
+    explanatory message returned to the model."""
+
 
 OptionsT = TypeVar(
     "OptionsT",
@@ -275,6 +331,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         max_turns = opts.pop("max_turns", None)
         max_budget_usd = opts.pop("max_budget_usd", None)
         self._mcp_servers: dict[str, Any] = opts.pop("mcp_servers", None) or {}
+        self._function_approval_handler: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
 
         # Load settings from environment and options
         self._settings = load_settings(
@@ -487,10 +544,29 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         Returns:
             An SdkMcpTool instance.
         """
+        approval_handler = self._function_approval_handler
+        requires_approval = func_tool.approval_mode == "always_require"
 
         async def handler(args: dict[str, Any]) -> dict[str, Any]:
             """Handler that invokes the FunctionTool."""
             try:
+                if requires_approval and not await _resolve_function_approval(approval_handler, func_tool, args):
+                    deny_text = (
+                        f"Tool '{func_tool.name}' requires human approval "
+                        "(approval_mode='always_require') and the request was denied."
+                        if approval_handler is not None
+                        else (
+                            f"Tool '{func_tool.name}' requires human approval "
+                            "(approval_mode='always_require') but no on_function_approval "
+                            "callback is configured on the agent; the request was denied."
+                        )
+                    )
+                    logger.warning(
+                        "Denying execution of tool '%s' (approval_mode='always_require', %s)",
+                        func_tool.name,
+                        "callback denied" if approval_handler is not None else "no callback configured",
+                    )
+                    return {"content": [{"type": "text", "text": deny_text}]}
                 if func_tool.input_model:
                     args_instance = func_tool.input_model(**args)
                     result = await func_tool.invoke(arguments=args_instance)
@@ -537,6 +613,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         """
         if not options or not self._client:
             return
+
+        if "on_function_approval" in options:
+            raise ValueError(
+                "on_function_approval is a security-sensitive option and must be set "
+                "via default_options at agent construction time. It cannot be overridden "
+                "per run."
+            )
 
         if "model" in options:
             await self._client.set_model(options["model"])

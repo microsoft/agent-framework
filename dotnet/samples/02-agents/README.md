@@ -16,6 +16,8 @@ The getting started samples demonstrate the fundamental concepts and functionali
 | [Agent With Anthropic](./AgentWithAnthropic/README.md) | Getting started with agents using Anthropic Claude |
 | [Model Context Protocol](./ModelContextProtocol/README.md) | Getting started with Model Context Protocol |
 | [Agent Skills](./AgentSkills/README.md) | Getting started with Agent Skills |
+| [Agent Harness with built-in tools](./Harness/README.md) | Demonstrating how to build an Agent Harness with built-in planning, todo, and mode management tooling |
 | [Declarative Agents](./DeclarativeAgents) | Loading and executing AI agents from YAML configuration files |
 | [AG-UI](./AGUI/README.md) | Getting started with AG-UI (Agent UI Protocol) servers and clients |
 | [Dev UI](./DevUI/README.md) | Interactive web interface for testing and debugging AI agents during development |
+| [A2A Agents](./A2A/README.md) | Working with Agent-to-Agent (A2A) specific features |

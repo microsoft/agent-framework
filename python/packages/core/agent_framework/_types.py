@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import logging
 import re
@@ -2890,6 +2891,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
         self._map_update: Callable[[Any], UpdateT | Awaitable[UpdateT]] | None = None
+        self._pull_context_manager_factories: list[Callable[[], contextlib.AbstractContextManager[Any]]] = []
 
     def map(
         self,
@@ -3008,11 +3010,18 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         return self
 
     async def __anext__(self) -> UpdateT:
-        if self._iterator is None:
-            stream = await self._get_stream()
-            self._iterator = stream.__aiter__()
         try:
-            update: UpdateT = await self._iterator.__anext__()
+            with contextlib.ExitStack() as stack:
+                for factory in self._pull_context_manager_factories:
+                    stack.enter_context(factory())
+                # Resolve the underlying stream inside the pull contexts so that any
+                # spans/contexts created during stream resolution (e.g. inner chat
+                # completion spans created on the first pull of a wrapped agent stream)
+                # inherit the active context (e.g. an outer agent invoke span).
+                if self._iterator is None:
+                    stream = await self._get_stream()
+                    self._iterator = stream.__aiter__()
+                update: UpdateT = await self._iterator.__anext__()
         except StopAsyncIteration:
             self._consumed = True
             await self._run_cleanup_hooks()
@@ -3038,9 +3047,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 update = hooked
         return update
 
+    async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
+        """Resolve the underlying stream while activating any registered pull context managers.
+
+        Used by ``__await__`` and ``get_final_response`` so that any spans/contexts created
+        during stream resolution (e.g. when the source is an Awaitable that internally
+        creates child telemetry spans) inherit the same active context as iterator pulls.
+        ``__anext__`` resolves the stream inside its own ExitStack and so calls ``_get_stream``
+        directly.
+        """
+        if self._stream is not None:
+            return await self._get_stream()
+        with contextlib.ExitStack() as stack:
+            for factory in self._pull_context_manager_factories:
+                stack.enter_context(factory())
+            return await self._get_stream()
+
     def __await__(self) -> Any:
         async def _wrap() -> ResponseStream[UpdateT, FinalT]:
-            await self._get_stream()
+            await self._resolve_stream_with_pull_contexts()
             return self
 
         return _wrap().__await__()
@@ -3064,10 +3089,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         """
         if self._wrap_inner:
             if self._inner_stream is None:
-                # Use _get_stream() to resolve the awaitable - this properly handles
+                # Use _resolve_stream_with_pull_contexts() so that any spans/contexts
+                # created while resolving the awaitable (e.g. inner telemetry spans)
+                # inherit the same active context as iterator pulls. This also handles
                 # the case where _stream_source and _inner_stream_source are the same
                 # coroutine (e.g., from from_awaitable), avoiding double-await errors.
-                await self._get_stream()
+                await self._resolve_stream_with_pull_contexts()
             if self._inner_stream is None:
                 raise RuntimeError("Inner stream not available")
             if not self._finalized and not self._consumed:
@@ -3177,6 +3204,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._cleanup_hooks.append(hook)
         return self
 
+    def with_pull_context_manager(
+        self,
+        cm_factory: Callable[[], contextlib.AbstractContextManager[Any]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a context manager factory invoked around each underlying iterator pull.
+
+        The factory is called once per ``__anext__`` and the returned context manager wraps
+        the await of the underlying iterator. This is useful for state that needs to be
+        active while the inner async work runs - for example, attaching an OpenTelemetry
+        span to the current context so child spans created by inner code (HTTP clients,
+        tool execution) are correctly parented.
+
+        Because the context manager is entered and exited within the same ``__anext__``
+        invocation, attach/detach style operations remain symmetric in the same async
+        context regardless of where the stream is iterated.
+        """
+        self._pull_context_manager_factories.append(cm_factory)
+        return self
+
     async def _run_cleanup_hooks(self) -> None:
         if self._cleanup_run:
             return
@@ -3200,10 +3246,12 @@ class ToolMode(TypedDict, total=False):
     Fields:
         mode: One of "auto", "required", or "none".
         required_function_name: Optional function name when `mode == "required"`.
+        allowed_tools: Optional list of tool names when `mode` is `"auto"` or `"required"`.
     """
 
     mode: Literal["auto", "required", "none"]
     required_function_name: str
+    allowed_tools: list[str]
 
 
 # region TypedDict-based Chat Options
@@ -3436,7 +3484,7 @@ def validate_tool_mode(
 
     Returns:
         A ToolMode dict (contains keys: "mode", and optionally
-        "required_function_name"), or ``None`` when not provided.
+        "required_function_name" or "allowed_tools"), or ``None`` when not provided.
 
     Raises:
         ContentError: If the tool_choice string is invalid.
@@ -3453,6 +3501,17 @@ def validate_tool_mode(
         raise ContentError(f"Invalid tool choice: {tool_choice['mode']}")
     if tool_choice["mode"] != "required" and "required_function_name" in tool_choice:
         raise ContentError("tool_choice with mode other than 'required' cannot have 'required_function_name'")
+    if tool_choice["mode"] not in ("auto", "required") and "allowed_tools" in tool_choice:
+        raise ContentError("tool_choice 'allowed_tools' is only valid when mode is 'auto' or 'required'")
+    if "allowed_tools" in tool_choice:
+        allowed_tools = tool_choice["allowed_tools"]
+        if isinstance(allowed_tools, str) or not isinstance(allowed_tools, Sequence):
+            raise ContentError("tool_choice 'allowed_tools' must be a non-string sequence of strings")
+        if not all(isinstance(tool_name, str) for tool_name in allowed_tools):
+            raise ContentError("tool_choice 'allowed_tools' must contain only strings")
+        normalized_tool_choice = dict(tool_choice)
+        normalized_tool_choice["allowed_tools"] = list(allowed_tools)
+        return cast(ToolMode, normalized_tool_choice)
     return tool_choice
 
 

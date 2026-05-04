@@ -297,6 +297,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             var agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
             if (agent is not null)
             {
+                FoundryHostingExtensions.TryApplyUserAgent(agent);
                 return FoundryHostingExtensions.ApplyOpenTelemetry(agent);
             }
 
@@ -310,12 +311,13 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var defaultAgent = this._serviceProvider.GetService<AIAgent>();
         if (defaultAgent is not null)
         {
+            FoundryHostingExtensions.TryApplyUserAgent(defaultAgent);
             return FoundryHostingExtensions.ApplyOpenTelemetry(defaultAgent);
         }
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AIAgent is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via AddAIAgent(\"{agentName}\", ...) or as a default AIAgent.";
+            : $"Agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }
@@ -352,7 +354,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AgentSessionStore is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via AddAIAgent(\"{agentName}\", ...) or as a default AgentSessionStore.";
+            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }
