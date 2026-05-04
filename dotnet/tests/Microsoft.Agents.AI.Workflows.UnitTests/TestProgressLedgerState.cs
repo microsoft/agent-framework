@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
-using FluentAssertions;
 using System.Text.Json.Serialization;
+using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 

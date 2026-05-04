@@ -2,10 +2,9 @@
 
 using System;
 using System.Text.Json;
-using Microsoft.Extensions.AI;
-using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using FluentAssertions;
-using System.Text.Json.Serialization;
+using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
