@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -63,26 +64,26 @@ def test_todo_input_round_trips_and_validates() -> None:
         TodoInput.from_dict({"title": "Write tests", "description": 123})
 
 
-def test_todo_session_store_initializes_and_round_trips_state() -> None:
+async def test_todo_session_store_initializes_and_round_trips_state() -> None:
     """Session-backed todo storage should initialize and persist todo state."""
     session = AgentSession(session_id="session-1")
     store = TodoSessionStore()
 
-    items, next_id = store.load_state(session, source_id="todo")
+    items, next_id = await store.load_state(session, source_id="todo")
     assert items == []
     assert next_id == 1
-    assert session.state["todo"] == {"items": [], "next_id": 1}
+    assert session.state["todo"] == {}
 
     todo_item = TodoItem(id=1, title="Ship feature", description="Use session storage")
-    store.save_state(session, [todo_item], next_id=2, source_id="todo")
+    await store.save_state(session, [todo_item], next_id=2, source_id="todo")
 
-    loaded_items, loaded_next_id = store.load_state(session, source_id="todo")
+    loaded_items, loaded_next_id = await store.load_state(session, source_id="todo")
     assert loaded_items == [todo_item]
     assert loaded_next_id == 2
-    assert store.load_items(session, source_id="todo") == [todo_item]
+    assert await store.load_items(session, source_id="todo") == [todo_item]
 
 
-def test_todo_file_store_round_trips_state(tmp_path: Path) -> None:
+async def test_todo_file_store_round_trips_state(tmp_path: Path) -> None:
     """Todo file storage should persist one JSON state file per owner and session."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
@@ -93,14 +94,14 @@ def test_todo_file_store_round_trips_state(tmp_path: Path) -> None:
         owner_state_key="owner_id",
     )
 
-    store.save_state(
+    await store.save_state(
         session,
         [TodoItem(id=1, title="Ship feature", description="Use file storage")],
         next_id=2,
         source_id="todo",
     )
 
-    items, next_id = store.load_state(session, source_id="todo")
+    items, next_id = await store.load_state(session, source_id="todo")
     assert items == [TodoItem(id=1, title="Ship feature", description="Use file storage", is_complete=False)]
     assert next_id == 2
 
@@ -112,29 +113,125 @@ def test_todo_file_store_round_trips_state(tmp_path: Path) -> None:
     }
 
     with pytest.raises(RuntimeError, match="owner_id"):
-        store.load_state(AgentSession(session_id="missing-owner"), source_id="todo")
+        await store.load_state(AgentSession(session_id="missing-owner"), source_id="todo")
 
 
-def test_todo_session_store_rejects_non_mapping_items() -> None:
+async def test_todo_file_store_load_does_not_create_directories(tmp_path: Path) -> None:
+    """Loading from a never-written session must not create empty directories on disk."""
+    session = AgentSession(session_id="session-1")
+    store = TodoFileStore(tmp_path)
+
+    items, next_id = await store.load_state(session, source_id="todo")
+    assert items == []
+    assert next_id == 1
+    assert list(tmp_path.iterdir()) == []  # noqa: ASYNC240
+
+
+async def test_todo_file_store_writes_state_atomically(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A crash between writing the temp file and renaming must not corrupt existing state."""
+    session = AgentSession(session_id="session-1")
+    store = TodoFileStore(tmp_path)
+
+    await store.save_state(session, [TodoItem(id=1, title="Initial")], next_id=2, source_id="todo")
+    state_path = tmp_path / "session-1" / "todos.todo.json"
+    original_contents = state_path.read_text(encoding="utf-8")
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", _boom)
+
+    with pytest.raises(OSError, match="disk full"):
+        await store.save_state(session, [TodoItem(id=2, title="Replacement")], next_id=3, source_id="todo")
+
+    # Original file is untouched, no temp leftovers.
+    assert state_path.read_text(encoding="utf-8") == original_contents
+    assert sorted(p.name for p in state_path.parent.iterdir()) == [state_path.name]
+
+
+async def test_todo_session_store_rejects_non_mapping_items() -> None:
     """Session-backed todo storage should report malformed item entries clearly."""
     session = AgentSession(session_id="session-1")
     session.state["todo"] = {"items": [{"id": 1, "title": "Good"}, "bad"], "next_id": 2}
     store = TodoSessionStore()
 
     with pytest.raises(ValueError, match="index 1.*str"):
-        store.load_state(session, source_id="todo")
+        await store.load_state(session, source_id="todo")
 
 
-def test_todo_file_store_namespaces_state_by_source_id(tmp_path: Path) -> None:
+async def test_todo_session_store_rejects_malformed_state_types() -> None:
+    """Session-backed todo storage should raise for malformed top-level state, mirroring TodoFileStore."""
+    session = AgentSession(session_id="session-1")
+    session.state["todo"] = "not a dict"
+    store = TodoSessionStore()
+
+    with pytest.raises(ValueError, match="must be a dict"):
+        await store.load_state(session, source_id="todo")
+
+    session.state["todo"] = {"items": "not a list", "next_id": 1}
+    with pytest.raises(ValueError, match="non-list 'items'"):
+        await store.load_state(session, source_id="todo")
+
+    session.state["todo"] = {"items": [], "next_id": "1"}
+    with pytest.raises(ValueError, match="non-integer 'next_id'"):
+        await store.load_state(session, source_id="todo")
+
+
+async def test_todo_stores_clamp_next_id_to_avoid_collisions(tmp_path: Path) -> None:
+    """Both stores should clamp ``next_id`` to ``max(item.id) + 1`` to prevent ID collisions."""
+    session_a = AgentSession(session_id="session-a")
+    session_a.state["todo"] = {"items": [{"id": 5, "title": "Seeded"}], "next_id": 1}
+
+    session_store = TodoSessionStore()
+    items, next_id = await session_store.load_state(session_a, source_id="todo")
+    assert next_id == 6  # clamped over the stored next_id of 1
+    assert items == [TodoItem(id=5, title="Seeded")]
+
+    session_b = AgentSession(session_id="session-b")
+    file_store = TodoFileStore(tmp_path)
+    state_path = tmp_path / "session-b" / "todos.todo.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({"items": [{"id": 7, "title": "Seeded"}], "next_id": 1}) + "\n", encoding="utf-8")
+    items, next_id = await file_store.load_state(session_b, source_id="todo")
+    assert next_id == 8
+    assert items == [TodoItem(id=7, title="Seeded")]
+
+
+async def test_todo_provider_evicts_locks_when_session_is_garbage_collected() -> None:
+    """The provider should not retain mutation locks for sessions that have been GC'd."""
+    import gc
+
+    provider = TodoProvider()
+    session = AgentSession(session_id="session-1")
+    provider._mutation_lock(session)  # type: ignore[reportPrivateUsage]
+    assert len(provider._mutation_locks) == 1  # type: ignore[reportPrivateUsage]
+
+    del session
+    gc.collect()
+    assert len(provider._mutation_locks) == 0  # type: ignore[reportPrivateUsage]
+
+
+async def test_todo_file_store_rejects_session_path_traversal(tmp_path: Path) -> None:
+    """File-backed todo storage should not write outside its base path for malicious session IDs."""
+    session = AgentSession(session_id="../escape")
+    store = TodoFileStore(tmp_path)
+
+    with pytest.raises(ValueError, match="session_id.*path separators"):
+        await store.save_state(session, [TodoItem(id=1, title="Escape")], next_id=2, source_id="todo")
+
+    assert list(tmp_path.rglob("*")) == []  # noqa: ASYNC240
+
+
+async def test_todo_file_store_namespaces_state_by_source_id(tmp_path: Path) -> None:
     """File-backed todo storage should isolate providers that share a session."""
     session = AgentSession(session_id="session-1")
     store = TodoFileStore(tmp_path)
 
-    store.save_state(session, [TodoItem(id=1, title="First source")], next_id=2, source_id="first")
-    store.save_state(session, [TodoItem(id=1, title="Second source")], next_id=2, source_id="second")
+    await store.save_state(session, [TodoItem(id=1, title="First source")], next_id=2, source_id="first")
+    await store.save_state(session, [TodoItem(id=1, title="Second source")], next_id=2, source_id="second")
 
-    first_items, _ = store.load_state(session, source_id="first")
-    second_items, _ = store.load_state(session, source_id="second")
+    first_items, _ = await store.load_state(session, source_id="first")
+    second_items, _ = await store.load_state(session, source_id="second")
 
     assert first_items == [TodoItem(id=1, title="First source")]
     assert second_items == [TodoItem(id=1, title="Second source")]
@@ -142,15 +239,33 @@ def test_todo_file_store_namespaces_state_by_source_id(tmp_path: Path) -> None:
     assert (tmp_path / "session-1" / "todos.second.json").exists()
 
 
-def test_todo_file_store_rejects_session_path_traversal(tmp_path: Path) -> None:
-    """File-backed todo storage should not write outside its base path for malicious session IDs."""
-    session = AgentSession(session_id="../escape")
-    store = TodoFileStore(tmp_path)
+async def test_todo_provider_runs_with_file_store(tmp_path: Path, chat_client_base: SupportsChatGetResponse) -> None:
+    """The provider should drive the full add/list flow when backed by ``TodoFileStore``."""
+    session = AgentSession(session_id="session-1")
+    provider = TodoProvider(store=TodoFileStore(tmp_path))
+    agent = Agent(client=chat_client_base, context_providers=[provider])
 
-    with pytest.raises(ValueError, match="session_id.*path separators"):
-        store.save_state(session, [TodoItem(id=1, title="Escape")], next_id=2, source_id="todo")
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Track this work"])],
+    )
+    tools = options["tools"]
+    assert isinstance(tools, list)
 
-    assert list(tmp_path.rglob("*")) == []
+    add_todos = _tool_by_name(tools, "add_todos")
+    get_all_todos = _tool_by_name(tools, "get_all_todos")
+
+    await add_todos.invoke(arguments={"todos": [{"title": "Persist me"}]})
+    state_path = tmp_path / "session-1" / "todos.todo.json"
+    assert state_path.exists()
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["items"] == [{"id": 1, "title": "Persist me", "description": None, "is_complete": False}]
+    assert persisted["next_id"] == 2
+
+    get_all_result = await get_all_todos.invoke()
+    assert json.loads(get_all_result[0].text) == [
+        {"id": 1, "title": "Persist me", "description": None, "is_complete": False}
+    ]
 
 
 async def test_todo_provider_tools_manage_session_state(

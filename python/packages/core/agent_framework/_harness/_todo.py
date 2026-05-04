@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import weakref
 from abc import ABC, abstractmethod
 from base64 import urlsafe_b64encode
 from collections.abc import Mapping, MutableMapping
@@ -156,21 +158,26 @@ def _coerce_todo_input(todo: TodoInput | dict[str, Any] | Any) -> TodoInput:
     raise ValueError("Todo input must be a TodoInput instance or JSON object.")
 
 
+def _safe_next_id(items: list[TodoItem], next_id: int) -> int:
+    """Clamp ``next_id`` so it cannot collide with any persisted item id."""
+    return max(next_id, max((item.id for item in items), default=0) + 1)
+
+
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoStore(ABC):
     """Abstract backing store for session todo items."""
 
     @abstractmethod
-    def load_state(self, session: AgentSession, *, source_id: str) -> tuple[list[TodoItem], int]:
+    async def load_state(self, session: AgentSession, *, source_id: str) -> tuple[list[TodoItem], int]:
         """Load persisted todo items and the next available ID."""
 
     @abstractmethod
-    def save_state(self, session: AgentSession, items: list[TodoItem], *, next_id: int, source_id: str) -> None:
+    async def save_state(self, session: AgentSession, items: list[TodoItem], *, next_id: int, source_id: str) -> None:
         """Persist todo items and the next available ID."""
 
-    def load_items(self, session: AgentSession, *, source_id: str) -> list[TodoItem]:
+    async def load_items(self, session: AgentSession, *, source_id: str) -> list[TodoItem]:
         """Load todo items for one session."""
-        items, _ = self.load_state(session, source_id=source_id)
+        items, _ = await self.load_state(session, source_id=source_id)
         return items
 
 
@@ -178,33 +185,43 @@ class TodoStore(ABC):
 class TodoSessionStore(TodoStore):
     """Store todo state inside ``AgentSession.state``."""
 
-    def load_state(self, session: AgentSession, *, source_id: str) -> tuple[list[TodoItem], int]:
+    async def load_state(self, session: AgentSession, *, source_id: str) -> tuple[list[TodoItem], int]:
         """Load todo state from session state."""
         provider_state_value = session.state.get(source_id)
-        provider_state = cast(dict[str, Any], provider_state_value) if isinstance(provider_state_value, dict) else {}
-        if not isinstance(provider_state_value, dict):
+        if provider_state_value is None:
+            provider_state: dict[str, Any] = {}
             session.state[source_id] = provider_state
+        elif isinstance(provider_state_value, dict):
+            provider_state = cast(dict[str, Any], provider_state_value)
+        else:
+            raise ValueError(
+                f"Session state for source_id {source_id!r} must be a dict; got {type(provider_state_value).__name__}."
+            )
 
-        raw_items = provider_state.get("items")
-        items_payload: list[Any] = cast(Any, raw_items) if isinstance(raw_items, list) else []
+        raw_items = provider_state.get("items", [])
         if not isinstance(raw_items, list):
-            provider_state["items"] = items_payload
-
-        raw_next_id = provider_state.get("next_id")
-        next_id = raw_next_id if isinstance(raw_next_id, int) else 1
+            raise ValueError(
+                f"Session state for source_id {source_id!r} has a non-list 'items' field; "
+                f"got {type(raw_items).__name__}."
+            )
+        raw_next_id = provider_state.get("next_id", 1)
         if not isinstance(raw_next_id, int):
-            provider_state["next_id"] = next_id
+            raise ValueError(
+                f"Session state for source_id {source_id!r} has a non-integer 'next_id' field; "
+                f"got {type(raw_next_id).__name__}."
+            )
+        items_payload: list[Any] = cast(Any, raw_items)
+        items = _parse_todo_items(items_payload, source_description="session todo state")
+        return items, _safe_next_id(items, raw_next_id)
 
-        return _parse_todo_items(items_payload, source_description="session todo state"), next_id
-
-    def save_state(self, session: AgentSession, items: list[TodoItem], *, next_id: int, source_id: str) -> None:
+    async def save_state(self, session: AgentSession, items: list[TodoItem], *, next_id: int, source_id: str) -> None:
         """Persist todo state back into session state."""
         provider_state_value = session.state.get(source_id)
         provider_state = cast(dict[str, Any], provider_state_value) if isinstance(provider_state_value, dict) else {}
         if not isinstance(provider_state_value, dict):
             session.state[source_id] = provider_state
         provider_state["items"] = [item.to_dict(exclude_none=False) for item in items]
-        provider_state["next_id"] = next_id
+        provider_state["next_id"] = _safe_next_id(items, next_id)
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -281,7 +298,6 @@ class TodoFileStore(TodoStore):
         state_path = (session_directory / self._state_filename(source_id)).resolve()
         if not state_path.is_relative_to(self._base_root):
             raise ValueError(f"Todo file path escaped base directory for session_id {session.session_id!r}.")
-        state_path.parent.mkdir(parents=True, exist_ok=True)
         return state_path
 
     @classmethod
@@ -317,9 +333,14 @@ class TodoFileStore(TodoStore):
             return f"{state_path.stem}.{source_segment}{state_path.suffix}"
         return f"{state_path.name}.{source_segment}.json"
 
-    def load_state(self, session: AgentSession, *, source_id: str) -> tuple[list[TodoItem], int]:
+    async def load_state(self, session: AgentSession, *, source_id: str) -> tuple[list[TodoItem], int]:
         """Load todo state from disk."""
         state_path = self._get_state_path(session, source_id=source_id)
+        return await asyncio.to_thread(self._load_state_sync, state_path)
+
+    @staticmethod
+    def _load_state_sync(state_path: Path) -> tuple[list[TodoItem], int]:
+        """Synchronous helper that performs the disk I/O for ``load_state``."""
         if not state_path.exists():
             return [], 1
         payload = cast(dict[str, Any], json.loads(state_path.read_text(encoding="utf-8")))
@@ -332,15 +353,34 @@ class TodoFileStore(TodoStore):
         if not isinstance(raw_next_id, int):
             raise ValueError(f"Todo file {state_path} has a non-integer 'next_id' field.")
         items_payload: list[Any] = cast(Any, raw_items)
-        return _parse_todo_items(items_payload, source_description=f"todo file {state_path}"), raw_next_id
+        items = _parse_todo_items(items_payload, source_description=f"todo file {state_path}")
+        return items, _safe_next_id(items, raw_next_id)
 
-    def save_state(self, session: AgentSession, items: list[TodoItem], *, next_id: int, source_id: str) -> None:
+    async def save_state(self, session: AgentSession, items: list[TodoItem], *, next_id: int, source_id: str) -> None:
         """Persist todo state to disk."""
         state_path = self._get_state_path(session, source_id=source_id)
-        state_path.write_text(
-            json.dumps({"items": [item.to_dict(exclude_none=False) for item in items], "next_id": next_id}) + "\n",
-            encoding="utf-8",
+        payload = (
+            json.dumps({
+                "items": [item.to_dict(exclude_none=False) for item in items],
+                "next_id": _safe_next_id(items, next_id),
+            })
+            + "\n"
         )
+        await asyncio.to_thread(self._save_state_sync, state_path, payload)
+
+    @staticmethod
+    def _save_state_sync(state_path: Path, payload: str) -> None:
+        """Synchronous helper that atomically writes the JSON state file."""
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        # Write to a sibling temp file then atomically replace, so a crash mid-write cannot leave
+        # a truncated state file that breaks every subsequent tool call.
+        temp_path = state_path.with_name(f"{state_path.name}.tmp.{os.getpid()}")
+        try:
+            temp_path.write_text(payload, encoding="utf-8")
+            os.replace(temp_path, state_path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -379,15 +419,16 @@ class TodoProvider(ContextProvider):
         super().__init__(source_id)
         self.instructions = instructions or DEFAULT_TODO_INSTRUCTIONS
         self.store = store or TodoSessionStore()
-        self._mutation_locks: dict[tuple[int, str], asyncio.Lock] = {}
+        # WeakKeyDictionary so per-session locks are evicted automatically when the session is GC'd
+        # rather than accumulating in long-running services that create many sessions.
+        self._mutation_locks: weakref.WeakKeyDictionary[AgentSession, asyncio.Lock] = weakref.WeakKeyDictionary()
 
     def _mutation_lock(self, session: AgentSession) -> asyncio.Lock:
-        """Return the per-session/source lock for read-modify-write todo operations."""
-        key = (id(session), self.source_id)
-        lock = self._mutation_locks.get(key)
+        """Return the per-session lock for read-modify-write todo operations."""
+        lock = self._mutation_locks.get(session)
         if lock is None:
             lock = asyncio.Lock()
-            self._mutation_locks[key] = lock
+            self._mutation_locks[session] = lock
         return lock
 
     async def before_run(
@@ -408,7 +449,7 @@ class TodoProvider(ContextProvider):
                 raise ValueError("todos must contain at least one item.")
 
             async with self._mutation_lock(session):
-                existing_items, next_id = self.store.load_state(session, source_id=self.source_id)
+                existing_items, next_id = await self.store.load_state(session, source_id=self.source_id)
                 created_items: list[TodoItem] = []
                 for raw_todo in todos:
                     todo = _coerce_todo_input(raw_todo)
@@ -421,7 +462,7 @@ class TodoProvider(ContextProvider):
                     created_items.append(created_item)
                     next_id += 1
 
-                self.store.save_state(session, existing_items, next_id=next_id, source_id=self.source_id)
+                await self.store.save_state(session, existing_items, next_id=next_id, source_id=self.source_id)
             return json.dumps([item.to_dict(exclude_none=False) for item in created_items])
 
         @tool(name="complete_todos", approval_mode="never_require")
@@ -431,7 +472,7 @@ class TodoProvider(ContextProvider):
                 raise ValueError("ids must contain at least one todo ID.")
 
             async with self._mutation_lock(session):
-                items, next_id = self.store.load_state(session, source_id=self.source_id)
+                items, next_id = await self.store.load_state(session, source_id=self.source_id)
                 id_set = set(ids)
                 completed_count = 0
                 updated_items: list[TodoItem] = []
@@ -450,7 +491,7 @@ class TodoProvider(ContextProvider):
                         updated_items.append(item)
 
                 if completed_count:
-                    self.store.save_state(session, updated_items, next_id=next_id, source_id=self.source_id)
+                    await self.store.save_state(session, updated_items, next_id=next_id, source_id=self.source_id)
             return json.dumps({"completed": completed_count})
 
         @tool(name="remove_todos", approval_mode="never_require")
@@ -460,23 +501,25 @@ class TodoProvider(ContextProvider):
                 raise ValueError("ids must contain at least one todo ID.")
 
             async with self._mutation_lock(session):
-                items, next_id = self.store.load_state(session, source_id=self.source_id)
+                items, next_id = await self.store.load_state(session, source_id=self.source_id)
                 remaining_items = [item for item in items if item.id not in set(ids)]
                 removed_count = len(items) - len(remaining_items)
                 if removed_count:
-                    self.store.save_state(session, remaining_items, next_id=next_id, source_id=self.source_id)
+                    await self.store.save_state(session, remaining_items, next_id=next_id, source_id=self.source_id)
             return json.dumps({"removed": removed_count})
 
         @tool(name="get_remaining_todos", approval_mode="never_require")
-        def get_remaining_todos() -> str:
+        async def get_remaining_todos() -> str:
             """Retrieve only incomplete todo items for the current session."""
-            items = [item for item in self.store.load_items(session, source_id=self.source_id) if not item.is_complete]
+            items = [
+                item for item in await self.store.load_items(session, source_id=self.source_id) if not item.is_complete
+            ]
             return json.dumps([item.to_dict(exclude_none=False) for item in items])
 
         @tool(name="get_all_todos", approval_mode="never_require")
-        def get_all_todos() -> str:
+        async def get_all_todos() -> str:
             """Retrieve all todo items for the current session."""
-            items = self.store.load_items(session, source_id=self.source_id)
+            items = await self.store.load_items(session, source_id=self.source_id)
             return json.dumps([item.to_dict(exclude_none=False) for item in items])
 
         context.extend_instructions(self.source_id, [self.instructions])
@@ -484,6 +527,7 @@ class TodoProvider(ContextProvider):
             self.source_id,
             [add_todos, complete_todos, remove_todos, get_remaining_todos, get_all_todos],
         )
+        current_items = await self.store.load_items(session, source_id=self.source_id)
         context.extend_messages(
             self.source_id,
             [
@@ -495,7 +539,7 @@ class TodoProvider(ContextProvider):
                             "\n".join(
                                 f"- {item.id} [{'done' if item.is_complete else 'open'}] {item.title}"
                                 + (f": {item.description}" if item.description else "")
-                                for item in self.store.load_items(session, source_id=self.source_id)
+                                for item in current_items
                             )
                             or "- none yet"
                         )
