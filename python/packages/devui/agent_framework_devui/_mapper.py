@@ -1056,6 +1056,7 @@ class MessageMapper:
                         output_index=context["output_index"],
                         sequence_number=self._next_sequence(context),
                         item=executor_item,
+                        created_at=float(time.time()),
                     )
                 ]
 
@@ -1088,6 +1089,7 @@ class MessageMapper:
                         output_index=context.get("output_index", 0),
                         sequence_number=self._next_sequence(context),
                         item=executor_item,
+                        created_at=float(time.time()),
                     )
                 ]
 
@@ -1121,6 +1123,7 @@ class MessageMapper:
                         output_index=context.get("output_index", 0),
                         sequence_number=self._next_sequence(context),
                         item=executor_item,
+                        created_at=float(time.time()),
                     )
                 ]
 
