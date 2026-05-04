@@ -341,6 +341,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         if _uses_foundry_agent_session(conversation_id):
             run_options.pop("previous_response_id", None)
             run_options.pop("conversation", None)
+            run_options.pop("model", None)
             extra_body["agent_session_id"] = conversation_id
         if extra_body:
             run_options["extra_body"] = extra_body
@@ -350,7 +351,6 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         # Strip tools from request body - Foundry API rejects requests with both
         # agent endpoint and tools present. FunctionTools are invoked client-side
         # by the function invocation layer, not sent to the service.
-        run_options.pop("model", None)
         if not self.allow_preview:
             run_options.pop("tools", None)
             run_options.pop("tool_choice", None)
