@@ -136,7 +136,7 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public async Task Ctor_GeneratesUniqueContainerName()
+    public async Task Ctor_GeneratesUniqueContainerNameAsync()
     {
         await using var t1 = new DockerShellTool(mode: ShellMode.Stateless);
         await using var t2 = new DockerShellTool(mode: ShellMode.Stateless);
@@ -146,14 +146,14 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public async Task Ctor_RespectsExplicitContainerName()
+    public async Task Ctor_RespectsExplicitContainerNameAsync()
     {
         await using var t = new DockerShellTool(containerName: "my-explicit-name", mode: ShellMode.Stateless);
         Assert.Equal("my-explicit-name", t.ContainerName);
     }
 
     [Fact]
-    public async Task IShellExecutor_DockerShellTool_ImplementsInterface()
+    public async Task IShellExecutor_DockerShellTool_ImplementsInterfaceAsync()
     {
         await using var t = new DockerShellTool(mode: ShellMode.Stateless);
         IShellExecutor executor = t;
@@ -161,7 +161,7 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public async Task AsAIFunction_HardenedDefaults_AreNotApprovalGated()
+    public async Task AsAIFunction_HardenedDefaults_AreNotApprovalGatedAsync()
     {
         // With the default hardened config (network=none, non-root user,
         // read-only root, no extra args, no host mount) approval should
@@ -174,7 +174,7 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public async Task AsAIFunction_OptInApproval_WrapsInApprovalRequired()
+    public async Task AsAIFunction_OptInApproval_WrapsInApprovalRequiredAsync()
     {
         await using var t = new DockerShellTool(mode: ShellMode.Stateless);
         var fn = t.AsAIFunction(requireApproval: true);
@@ -186,7 +186,7 @@ public sealed class DockerShellToolTests
     [InlineData("none", "0:0", true, true, false)]            // root user => relaxed
     [InlineData("none", "root", true, true, false)]           // root by name => relaxed
     [InlineData("none", "65534:65534", false, true, false)]   // writable root => relaxed
-    public async Task AsAIFunction_RelaxedConfig_DefaultsToApprovalGated(
+    public async Task AsAIFunction_RelaxedConfig_DefaultsToApprovalGatedAsync(
         string network, string user, bool readOnlyRoot, bool mountReadonly, bool _)
     {
         await using var t = new DockerShellTool(
@@ -202,7 +202,7 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public async Task AsAIFunction_ExtraRunArgs_DefaultsToApprovalGated()
+    public async Task AsAIFunction_ExtraRunArgs_DefaultsToApprovalGatedAsync()
     {
         await using var t = new DockerShellTool(
             mode: ShellMode.Stateless,
@@ -214,7 +214,7 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public async Task AsAIFunction_RelaxedButExplicitOptOut_IsNotApprovalGated()
+    public async Task AsAIFunction_RelaxedButExplicitOptOut_IsNotApprovalGatedAsync()
     {
         await using var t = new DockerShellTool(
             mode: ShellMode.Stateless,

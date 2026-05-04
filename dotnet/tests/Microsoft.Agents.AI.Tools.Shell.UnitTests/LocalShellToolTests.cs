@@ -116,7 +116,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task AsAIFunction_DefaultsToApprovalRequired()
+    public async Task AsAIFunction_DefaultsToApprovalRequiredAsync()
     {
         await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         var fn = shell.AsAIFunction();
@@ -126,14 +126,14 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task AsAIFunction_OptOut_RequiresAcknowledgeUnsafe()
+    public async Task AsAIFunction_OptOut_RequiresAcknowledgeUnsafeAsync()
     {
         await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         _ = Assert.Throws<InvalidOperationException>(() => shell.AsAIFunction(requireApproval: false));
     }
 
     [Fact]
-    public async Task AsAIFunction_OptOut_WithAck_ReturnsPlainFunction()
+    public async Task AsAIFunction_OptOut_WithAck_ReturnsPlainFunctionAsync()
     {
         await using var shell = new LocalShellTool(mode: ShellMode.Stateless, acknowledgeUnsafe: true);
         var fn = shell.AsAIFunction(requireApproval: false);
@@ -240,7 +240,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task Ctor_DefaultsToPersistentMode()
+    public async Task Ctor_DefaultsToPersistentModeAsync()
     {
         // Skip on Windows-cmd-only hosts where Persistent throws; safe on
         // any system that has pwsh or bash on PATH (CI, dev boxes).
@@ -350,7 +350,7 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task IShellExecutor_LocalShellTool_ImplementsInterface()
+    public async Task IShellExecutor_LocalShellTool_ImplementsInterfaceAsync()
     {
         await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         IShellExecutor executor = shell;
