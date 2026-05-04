@@ -92,7 +92,6 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
     private readonly ShellPolicy _policy;
     private readonly TimeSpan? _timeout;
     private readonly int _maxOutputBytes;
-    private readonly Action<string>? _onCommand;
     private ShellSession? _session;
     private bool _containerStarted;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
@@ -116,7 +115,6 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
     /// <param name="policy">Optional <see cref="ShellPolicy"/>. Less critical than for <see cref="LocalShellTool"/> since the container provides isolation.</param>
     /// <param name="timeout">Per-command timeout. <see langword="null"/> disables timeouts.</param>
     /// <param name="maxOutputBytes">Per-stream cap before head+tail truncation.</param>
-    /// <param name="onCommand">Audit callback invoked for every allowed command.</param>
     /// <param name="dockerBinary">Override (e.g. <c>podman</c>).</param>
     public DockerShellTool(
         string image = DefaultImage,
@@ -135,7 +133,6 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
         ShellPolicy? policy = null,
         TimeSpan? timeout = null,
         int maxOutputBytes = DefaultMaxOutputBytes,
-        Action<string>? onCommand = null,
         string dockerBinary = "docker")
     {
         if (maxOutputBytes <= 0)
@@ -159,7 +156,6 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
         this._policy = policy ?? new ShellPolicy();
         this._timeout = timeout;
         this._maxOutputBytes = maxOutputBytes;
-        this._onCommand = onCommand;
         this.DockerBinary = dockerBinary ?? "docker";
     }
 
@@ -243,7 +239,6 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
             throw new ShellCommandRejectedException(
                 $"Command rejected by policy: {decision.Reason ?? "(unspecified)"}");
         }
-        this._onCommand?.Invoke(command);
 
         if (this._mode == ShellMode.Persistent)
         {

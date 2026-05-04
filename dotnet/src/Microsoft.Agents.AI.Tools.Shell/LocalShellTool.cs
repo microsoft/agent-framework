@@ -59,7 +59,6 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
     private readonly bool _confineWorkingDirectory;
     private readonly IReadOnlyDictionary<string, string?>? _environment;
     private readonly bool _cleanEnvironment;
-    private readonly Action<string>? _onCommand;
     private readonly bool _acknowledgeUnsafe;
     private ShellSession? _session;
     private readonly object _sessionGate = new();
@@ -79,7 +78,6 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
     /// <param name="policy">Optional <see cref="ShellPolicy"/>. Defaults to a policy seeded with <see cref="ShellPolicy.DefaultDenyList"/>.</param>
     /// <param name="timeout">Per-command timeout. <see langword="null"/> disables timeouts.</param>
     /// <param name="maxOutputBytes">Per-stream cap before head+tail truncation.</param>
-    /// <param name="onCommand">Audit callback invoked for every allowed command.</param>
     /// <param name="acknowledgeUnsafe">
     /// Set to <see langword="true"/> to allow <see cref="AsAIFunction"/> to produce an
     /// AIFunction without an <c>ApprovalRequiredAIFunction</c> wrapper. Required if you pass
@@ -97,7 +95,6 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
         ShellPolicy? policy = null,
         TimeSpan? timeout = null,
         int maxOutputBytes = DefaultMaxOutputBytes,
-        Action<string>? onCommand = null,
         bool acknowledgeUnsafe = false)
     {
         if (maxOutputBytes <= 0)
@@ -118,7 +115,6 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
         this._confineWorkingDirectory = confineWorkingDirectory;
         this._environment = environment;
         this._cleanEnvironment = cleanEnvironment;
-        this._onCommand = onCommand;
         this._acknowledgeUnsafe = acknowledgeUnsafe;
 
         if (mode == ShellMode.Persistent && this._shell.Kind == ShellKind.Cmd)
@@ -151,8 +147,6 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
             throw new ShellCommandRejectedException(
                 $"Command rejected by policy: {decision.Reason ?? "(unspecified)"}");
         }
-
-        this._onCommand?.Invoke(command);
 
         return this._mode == ShellMode.Persistent
             ? await this.RunPersistentAsync(command, cancellationToken).ConfigureAwait(false)

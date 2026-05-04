@@ -154,15 +154,6 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public async Task OnCommand_HookFiredForAllowedCommandsOnlyAsync()
-    {
-        var calls = new System.Collections.Generic.List<string>();
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless, onCommand: cmd => calls.Add(cmd));
-        await Assert.ThrowsAsync<ShellCommandRejectedException>(() => shell.RunAsync("rm -rf /"));
-        Assert.Empty(calls);
-    }
-
-    [Fact]
     public async Task Persistent_CarriesWorkingDirectory_AcrossCallsAsync()
     {
         await using var shell = new LocalShellTool(
