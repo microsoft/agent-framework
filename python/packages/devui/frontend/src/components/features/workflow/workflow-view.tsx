@@ -587,9 +587,14 @@ export function WorkflowView({
                   ? (anyEvent["created_at"] as number)
                   : typeof (anyEvent["response"] as Record<string, unknown> | undefined)?.["created_at"] === "number"
                   ? ((anyEvent["response"] as Record<string, number>)["created_at"] as number)
-                  : typeof (anyEvent["data"] as Record<string, unknown> | undefined)?.["timestamp"] === "string"
-                  ? new Date((anyEvent["data"] as Record<string, string>)["timestamp"]).getTime() / 1000
-                  : undefined;
+                  : (() => {
+                      const ts = (anyEvent["data"] as Record<string, unknown> | undefined)?.["timestamp"];
+                      if (typeof ts !== "string") return undefined;
+                      const ms = new Date(ts).getTime();
+                      // Guard against NaN: Python isoformat() emits microseconds without Z,
+                      // which some JS engines cannot parse. Number.isFinite rejects NaN.
+                      return Number.isFinite(ms) ? ms / 1000 : undefined;
+                    })();
               const baseTimestamp = Math.floor(Date.now() / 1000);
               const lastTimestamp =
                 prev.length > 0
@@ -1018,9 +1023,14 @@ export function WorkflowView({
                 ? (anyEvent["created_at"] as number)
                 : typeof (anyEvent["response"] as Record<string, unknown> | undefined)?.["created_at"] === "number"
                 ? ((anyEvent["response"] as Record<string, number>)["created_at"] as number)
-                : typeof (anyEvent["data"] as Record<string, unknown> | undefined)?.["timestamp"] === "string"
-                ? new Date((anyEvent["data"] as Record<string, string>)["timestamp"]).getTime() / 1000
-                : undefined;
+                : (() => {
+                    const ts = (anyEvent["data"] as Record<string, unknown> | undefined)?.["timestamp"];
+                    if (typeof ts !== "string") return undefined;
+                    const ms = new Date(ts).getTime();
+                    // Guard against NaN: Python isoformat() emits microseconds without Z,
+                    // which some JS engines cannot parse. Number.isFinite rejects NaN.
+                    return Number.isFinite(ms) ? ms / 1000 : undefined;
+                  })();
             const baseTimestamp = Math.floor(Date.now() / 1000);
             const lastTimestamp =
               prev.length > 0
