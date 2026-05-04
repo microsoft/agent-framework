@@ -391,6 +391,42 @@ async def test_executor_failed_event(mapper: MessageMapper, test_request: AgentF
     assert "Executor failed" in str(item["error"])
 
 
+async def test_executor_events_carry_created_at_timestamp(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """REGRESSION TEST: Executor mapped events must include a created_at timestamp.
+
+    Without created_at, the frontend synthesizes timestamps using
+    Math.max(baseTimestamp, lastTimestamp + 1) with second precision, forcing
+    a minimum 1-second gap between sequential events regardless of their actual
+    elapsed time.  This makes instant workflows appear to take multiple seconds
+    in the DevUI timeline.
+    """
+    invoke_event = create_executor_invoked_event(executor_id="exec_ts")
+    complete_event = create_executor_completed_event(executor_id="exec_ts")
+    fail_event = create_executor_failed_event(executor_id="exec_ts_fail")
+
+    invoked_results = await mapper.convert_event(invoke_event, test_request)
+    completed_results = await mapper.convert_event(complete_event, test_request)
+
+    # Set up a separate context for the failed path
+    mapper2 = MessageMapper()
+    await mapper2.convert_event(create_executor_invoked_event(executor_id="exec_ts_fail"), test_request)
+    failed_results = await mapper2.convert_event(fail_event, test_request)
+
+    for label, results in [
+        ("executor_invoked", invoked_results),
+        ("executor_completed", completed_results),
+        ("executor_failed", failed_results),
+    ]:
+        assert results, f"mapper.convert_event should return events for {label}"
+        for event in results:
+            assert getattr(event, "created_at", None) is not None, (
+                f"{label} mapped event {type(event).__name__} is missing 'created_at'. "
+                "The frontend relies on this field for accurate workflow timeline timings."
+            )
+
+
 # =============================================================================
 # Workflow Lifecycle Event Tests
 # =============================================================================

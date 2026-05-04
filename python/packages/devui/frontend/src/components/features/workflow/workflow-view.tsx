@@ -576,17 +576,20 @@ export function WorkflowView({
             openAIEvent.type === "response.workflow_event.complete" // Fallback variant
           ) {
             setOpenAIEvents((prev) => {
-              // Generate unique timestamp for each event
+              // Prefer the event's own created_at for accurate workflow timings.
+              // Fall back to a synthesized timestamp only when created_at is absent.
+              const eventTimestamp =
+                "created_at" in openAIEvent && openAIEvent.created_at
+                  ? (openAIEvent.created_at as number)
+                  : undefined;
               const baseTimestamp = Math.floor(Date.now() / 1000);
               const lastTimestamp =
                 prev.length > 0
                   ? (prev[prev.length - 1] as { _uiTimestamp?: number })
                       ._uiTimestamp || 0
                   : 0;
-              const uniqueTimestamp = Math.max(
-                baseTimestamp,
-                lastTimestamp + 1
-              );
+              const uniqueTimestamp =
+                eventTimestamp ?? Math.max(baseTimestamp, lastTimestamp + 1);
 
               return [
                 ...prev,
@@ -992,14 +995,20 @@ export function WorkflowView({
           openAIEvent.type === "response.workflow_event.completed"
         ) {
           setOpenAIEvents((prev) => {
-            // Generate unique timestamp for each event
+            // Prefer the event's own created_at for accurate workflow timings.
+            // Fall back to a synthesized timestamp only when created_at is absent.
+            const eventTimestamp =
+              "created_at" in openAIEvent && openAIEvent.created_at
+                ? (openAIEvent.created_at as number)
+                : undefined;
             const baseTimestamp = Math.floor(Date.now() / 1000);
             const lastTimestamp =
               prev.length > 0
                 ? (prev[prev.length - 1] as { _uiTimestamp?: number })
                     ._uiTimestamp || 0
                 : 0;
-            const uniqueTimestamp = Math.max(baseTimestamp, lastTimestamp + 1);
+            const uniqueTimestamp =
+              eventTimestamp ?? Math.max(baseTimestamp, lastTimestamp + 1);
 
             return [
               ...prev,
