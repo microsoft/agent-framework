@@ -143,8 +143,12 @@ class _SandboxWorker:
                 exc_type = type(exc)
                 # Capture args (usually (message,)) so the re-raised exception keeps the
                 # original shape for types whose constructor doesn't accept a single str.
-                # Fall back to the str() form if args is empty.
-                exc_args: tuple[Any, ...] = exc.args if exc.args else (str(exc),)
+                # Coerce each arg to ``str`` on the worker thread: if a caller-supplied
+                # callback (or an underlying SDK) constructed the exception with a PyO3
+                # unsendable object in args, forwarding it as-is would re-introduce the
+                # same cross-thread Drop hazard the traceback nulling avoids. Strings
+                # are always sendable. Fall back to the str() form if args is empty.
+                exc_args: tuple[str, ...] = tuple(str(a) for a in exc.args) if exc.args else (str(exc),)
                 # Drop the traceback on the worker thread so frame locals (which
                 # may include PyO3 unsendable objects) are released here, not on
                 # the caller thread that will receive the wrapped exception.
@@ -155,7 +159,7 @@ class _SandboxWorker:
         ok, payload = self._executor.submit(_wrapped).result()
         if ok:
             return cast(_T, payload)
-        exc_type, exc_args = cast(tuple[type[BaseException], tuple[Any, ...]], payload)
+        exc_type, exc_args = cast(tuple[type[BaseException], tuple[str, ...]], payload)
         # Re-raise a fresh instance with no chained traceback frames from the worker.
         # If the exception type's constructor rejects the captured args (rare), fall
         # back to a RuntimeError carrying the string form so we never lose the signal.
