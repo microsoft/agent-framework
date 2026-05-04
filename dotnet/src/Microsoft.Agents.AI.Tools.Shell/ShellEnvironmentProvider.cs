@@ -27,8 +27,16 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <para>
 /// The provider does not expose any new tools; it augments the system
 /// prompt only (<see cref="AIContext.Instructions"/>). Probe failures
-/// are swallowed and surfaced as <see langword="null"/> entries in the
-/// snapshot — a missing CLI never fails the agent.
+/// are swallowed in a narrow set of cases — timeout
+/// (<see cref="ShellTimeoutException"/> or
+/// <see cref="OperationCanceledException"/> from the per-probe
+/// <see cref="ShellEnvironmentProviderOptions.ProbeTimeout"/>), policy
+/// rejection (<see cref="ShellCommandRejectedException"/>), and process
+/// spawn failures (<see cref="ShellExecutionException"/>) — and
+/// surfaced as <see langword="null"/> entries in the snapshot. Other
+/// exceptions (e.g. argument errors, internal bugs) propagate normally.
+/// A missing CLI never fails the agent: the model simply sees fewer
+/// hints in its system prompt.
 /// </para>
 /// <para>
 /// <b>Why <see cref="AIContext.Instructions"/> rather than
