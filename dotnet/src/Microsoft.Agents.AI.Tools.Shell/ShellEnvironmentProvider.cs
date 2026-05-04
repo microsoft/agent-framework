@@ -26,9 +26,22 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </para>
 /// <para>
 /// The provider does not expose any new tools; it augments the system
-/// prompt only. Probe failures are swallowed and surfaced as
-/// <see langword="null"/> entries in the snapshot — a missing CLI never
-/// fails the agent.
+/// prompt only (<see cref="AIContext.Instructions"/>). Probe failures
+/// are swallowed and surfaced as <see langword="null"/> entries in the
+/// snapshot — a missing CLI never fails the agent.
+/// </para>
+/// <para>
+/// <b>Why <see cref="AIContext.Instructions"/> rather than
+/// <see cref="AIContext.Messages"/>?</b> The shell environment
+/// (OS, family, version, CWD, available CLIs) is stable runtime
+/// metadata, not per-turn retrieved data. The framework's
+/// <c>AgentSkillsProvider</c> uses <c>Instructions</c> for the same
+/// reason; <c>TextSearchProvider</c> and <c>ChatHistoryMemoryProvider</c>
+/// use <c>Messages</c> for retrieval payloads that are <em>about</em>
+/// the user's question. System-prompt steering also has higher weight
+/// in major providers (OpenAI, Anthropic) and benefits from prompt
+/// caching, so injecting the env block as a fake user message would
+/// be both weaker and more expensive.
 /// </para>
 /// </remarks>
 public sealed class ShellEnvironmentProvider : AIContextProvider
