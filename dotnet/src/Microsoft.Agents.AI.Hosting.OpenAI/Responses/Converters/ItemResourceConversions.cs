@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
@@ -17,11 +18,36 @@ internal static class ItemResourceConversions
     /// Converts a sequence of <see cref="ItemResource"/> items to a list of <see cref="ChatMessage"/> objects.
     /// Only converts message, function call, and function result items. Other item types are skipped.
     /// </summary>
-    public static List<ChatMessage> ToChatMessages(IEnumerable<ItemResource> items)
+    /// <param name="items">The stored item resources to convert.</param>
+    /// <param name="incomingApprovalResponseIds">
+    /// Optional set of approval request IDs being answered by the current request's input.
+    /// Used to distinguish pending approvals (about to be answered) from orphaned ones.
+    /// </param>
+    public static List<ChatMessage> ToChatMessages(IEnumerable<ItemResource> items, ISet<string>? incomingApprovalResponseIds = null)
     {
         var messages = new List<ChatMessage>();
+        var itemsList = items as IList<ItemResource> ?? items.ToList();
 
-        foreach (var item in items)
+        // Collect IDs of approval requests that have a matching response stored
+        // as a user message containing ItemContentFunctionApprovalResponse.
+        // Orphaned requests (e.g. user refreshed before approving) are skipped
+        // to avoid sending unapproved approval requests to the AI provider.
+        var answeredApprovalIds = new HashSet<string>();
+        foreach (var item in itemsList)
+        {
+            if (item is ResponsesUserMessageItemResource userMsg)
+            {
+                foreach (var content in userMsg.Content)
+                {
+                    if (content is ItemContentFunctionApprovalResponse approval)
+                    {
+                        answeredApprovalIds.Add(approval.RequestId);
+                    }
+                }
+            }
+        }
+
+        foreach (var item in itemsList)
         {
             switch (item)
             {
@@ -56,6 +82,55 @@ internal static class ItemResourceConversions
                     ]));
                     break;
 
+                case MCPApprovalRequestItemResource mcpApproval:
+                    // Skip orphaned approval requests that were never responded to
+                    // (neither in stored history nor in the current incoming request).
+                    if (!answeredApprovalIds.Contains(mcpApproval.Id) &&
+                        !(incomingApprovalResponseIds?.Contains(mcpApproval.Id) ?? false))
+                    {
+                        break;
+                    }
+
+                    var mcpArgs = ParseArguments(mcpApproval.Arguments);
+
+                    // The mcp_approval_request spec item has a single Id field. MEAI reuses it as
+                    // both the McpServerToolCallContent.CallId and the ToolApprovalRequestContent.RequestId
+                    // because the spec doesn't provide a separate call ID.
+                    var mcpToolCall = new McpServerToolCallContent(
+                        mcpApproval.Id, mcpApproval.Name ?? string.Empty, mcpApproval.ServerLabel ?? string.Empty)
+                    {
+                        Arguments = mcpArgs
+                    };
+                    messages.Add(new ChatMessage(ChatRole.Assistant,
+                    [
+                        new ToolApprovalRequestContent(mcpApproval.Id, mcpToolCall)
+                    ]));
+                    break;
+
+                case MCPCallItemResource mcpCall:
+                    var mcpCallArgs = ParseArguments(mcpCall.Arguments);
+
+                    // MEAI adds both the tool call and result as contents in the same
+                    // assistant message, matching AddMcpToolCallContent in OpenAIResponsesChatClient.
+                    var mcpCallContents = new List<AIContent>
+                    {
+                        new McpServerToolCallContent(mcpCall.Id, mcpCall.Name, mcpCall.ServerLabel)
+                        {
+                            Arguments = mcpCallArgs
+                        },
+                        new McpServerToolResultContent(mcpCall.Id)
+                        {
+                            Outputs =
+                            [
+                                mcpCall.Error is not null
+                                    ? new ErrorContent(mcpCall.Error)
+                                    : new TextContent(mcpCall.Output ?? string.Empty)
+                            ],
+                        }
+                    };
+                    messages.Add(new ChatMessage(ChatRole.Assistant, mcpCallContents));
+                    break;
+
                     // Skip all other item types (reasoning, executor_action, web_search, etc.)
                     // They are not relevant for conversation context.
             }
@@ -79,7 +154,7 @@ internal static class ItemResourceConversions
         return result;
     }
 
-    private static Dictionary<string, object?>? ParseArguments(string? argumentsJson)
+    internal static Dictionary<string, object?>? ParseArguments(string? argumentsJson)
     {
         if (string.IsNullOrEmpty(argumentsJson))
         {

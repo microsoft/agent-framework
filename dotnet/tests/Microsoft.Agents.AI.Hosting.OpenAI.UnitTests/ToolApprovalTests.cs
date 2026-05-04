@@ -12,10 +12,10 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
 /// <summary>
-/// Tests for function approval request and response content types.
-/// These are DevUI-specific extensions that allow approval workflows for function calls.
+/// Tests for tool approval request and response content types.
+/// These are DevUI-specific extensions that allow approval workflows for tool calls.
 /// </summary>
-public sealed class FunctionApprovalTests : ConformanceTestBase
+public sealed class ToolApprovalTests : ConformanceTestBase
 {
     // Streaming request JSON for OpenAI Responses API
     private const string StreamingRequestJson = @"{""model"":""gpt-4o-mini"",""input"":""test"",""stream"":true}";
@@ -23,7 +23,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     #region ToolApprovalRequestContent Tests
 
     [Fact]
-    public async Task FunctionApprovalRequest_GeneratesCorrectEvent_SuccessAsync()
+    public async Task ToolApprovalRequest_GeneratesCorrectEvent_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-request-agent";
@@ -65,7 +65,45 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     }
 
     [Fact]
-    public async Task FunctionApprovalRequest_WithComplexArguments_GeneratesCorrectEvent_SuccessAsync()
+    public async Task McpToolApprovalRequest_GeneratesCorrectEvent_SuccessAsync()
+    {
+        // Arrange
+        const string AgentName = "mcp-approval-request-agent";
+        const string RequestId = "req-mcp-123";
+        const string ToolName = "read_file";
+        const string CallId = "call-mcp-abc";
+        const string ServerName = "filesystem";
+        Dictionary<string, object?> arguments = new() { ["path"] = "/tmp/test.txt" };
+
+        McpServerToolCallContent mcpToolCall = new(CallId, ToolName, ServerName) { Arguments = arguments };
+        ToolApprovalRequestContent approvalRequest = new(RequestId, mcpToolCall);
+
+        HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
+            [approvalRequest]);
+
+        // Act
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
+        string sseContent = await httpResponse.Content.ReadAsStringAsync();
+        List<JsonElement> events = ParseSseEvents(sseContent);
+
+        // Assert
+        JsonElement approvalEvent = events.FirstOrDefault(e =>
+            e.GetProperty("type").GetString() == "response.function_approval.requested");
+        Assert.True(approvalEvent.ValueKind != JsonValueKind.Undefined, "approval event not found");
+
+        Assert.Equal(RequestId, approvalEvent.GetProperty("request_id").GetString());
+
+        JsonElement toolCallElement = approvalEvent.GetProperty("function_call");
+        Assert.Equal(CallId, toolCallElement.GetProperty("id").GetString());
+        Assert.Equal(ToolName, toolCallElement.GetProperty("name").GetString());
+        Assert.Equal(ServerName, toolCallElement.GetProperty("server_label").GetString());
+
+        JsonElement argumentsElement = toolCallElement.GetProperty("arguments");
+        Assert.Equal("/tmp/test.txt", argumentsElement.GetProperty("path").GetString());
+    }
+
+    [Fact]
+    public async Task ToolApprovalRequest_WithComplexArguments_GeneratesCorrectEvent_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-request-complex-args-agent";
@@ -107,7 +145,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     }
 
     [Fact]
-    public async Task FunctionApprovalRequest_EmitsCorrectEventSequence_SuccessAsync()
+    public async Task ToolApprovalRequest_EmitsCorrectEventSequence_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-sequence-agent";
@@ -130,7 +168,12 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
         Assert.Equal("response.created", eventTypes[0]);
         Assert.Equal("response.in_progress", eventTypes[1]);
+
+        // Approval requests now emit standard output_item events for MCP storage,
+        // but FCC approvals only emit the custom DevUI event (no storage needed)
+        Assert.DoesNotContain("response.output_item.added", eventTypes);
         Assert.Contains("response.function_approval.requested", eventTypes);
+        Assert.DoesNotContain("response.output_item.done", eventTypes);
         Assert.Contains("response.completed", eventTypes);
 
         // Approval request should come after in_progress and before completed
@@ -143,7 +186,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     }
 
     [Fact]
-    public async Task FunctionApprovalRequest_SequenceNumbersAreCorrect_SuccessAsync()
+    public async Task ToolApprovalRequest_SequenceNumbersAreCorrect_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-seq-num-agent";
@@ -176,7 +219,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     #region ToolApprovalResponseContent Tests
 
     [Fact]
-    public async Task FunctionApprovalResponse_Approved_GeneratesCorrectEvent_SuccessAsync()
+    public async Task ToolApprovalResponse_Approved_GeneratesCorrectEvent_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-response-approved-agent";
@@ -211,7 +254,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     }
 
     [Fact]
-    public async Task FunctionApprovalResponse_Rejected_GeneratesCorrectEvent_SuccessAsync()
+    public async Task ToolApprovalResponse_Rejected_GeneratesCorrectEvent_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-response-rejected-agent";
@@ -242,7 +285,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     }
 
     [Fact]
-    public async Task FunctionApprovalResponse_EmitsCorrectEventSequence_SuccessAsync()
+    public async Task ToolApprovalResponse_EmitsCorrectEventSequence_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-response-sequence-agent";

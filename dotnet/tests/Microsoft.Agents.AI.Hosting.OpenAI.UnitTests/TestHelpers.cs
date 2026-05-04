@@ -603,14 +603,20 @@ internal static class TestHelpers
     /// </summary>
     internal sealed class ConversationMemoryMockChatClient : IChatClient
     {
-        private readonly string _responseText;
+        private readonly Func<int, IEnumerable<ChatMessage>, IList<AIContent>> _contentProvider;
+        private int _callIndex;
 
         /// <summary>Each entry is the messages list received for that call.</summary>
         public List<List<ChatMessage>> CallHistory { get; } = [];
 
         public ConversationMemoryMockChatClient(string responseText = "Test response")
+            : this((_, _) => [new TextContent(responseText)])
         {
-            this._responseText = responseText;
+        }
+
+        public ConversationMemoryMockChatClient(Func<int, IEnumerable<ChatMessage>, IList<AIContent>> contentProvider)
+        {
+            this._contentProvider = contentProvider;
         }
 
         public ChatClientMetadata Metadata { get; } = new("Test", new Uri("https://test.example.com"), "test-model");
@@ -620,9 +626,10 @@ internal static class TestHelpers
             ChatOptions? options = null,
             CancellationToken cancellationToken = default)
         {
-            this.CallHistory.Add(messages.ToList());
-
-            ChatMessage message = new(ChatRole.Assistant, this._responseText);
+            var messageList = messages.ToList();
+            this.CallHistory.Add(messageList);
+            var contents = this._contentProvider(this._callIndex++, messageList);
+            ChatMessage message = new(ChatRole.Assistant, contents.ToList());
             ChatResponse response = new([message])
             {
                 ModelId = "test-model",
@@ -642,22 +649,17 @@ internal static class TestHelpers
             ChatOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            this.CallHistory.Add(messages.ToList());
+            var messageList = messages.ToList();
+            this.CallHistory.Add(messageList);
             await Task.Delay(1, cancellationToken);
+            var contents = this._contentProvider(this._callIndex++, messageList);
 
-            string[] words = this._responseText.Split(' ');
-            for (int i = 0; i < words.Length; i++)
+            for (int i = 0; i < contents.Count; i++)
             {
-                string content = i < words.Length - 1 ? words[i] + " " : words[i];
-                ChatResponseUpdate update = new()
+                List<AIContent> updateContents = [contents[i]];
+                if (i == contents.Count - 1)
                 {
-                    Contents = [new TextContent(content)],
-                    Role = ChatRole.Assistant
-                };
-
-                if (i == words.Length - 1)
-                {
-                    update.Contents.Add(new UsageContent(new UsageDetails
+                    updateContents.Add(new UsageContent(new UsageDetails
                     {
                         InputTokenCount = 10,
                         OutputTokenCount = 5,
@@ -665,7 +667,11 @@ internal static class TestHelpers
                     }));
                 }
 
-                yield return update;
+                yield return new ChatResponseUpdate
+                {
+                    Contents = updateContents,
+                    Role = ChatRole.Assistant
+                };
             }
         }
 
