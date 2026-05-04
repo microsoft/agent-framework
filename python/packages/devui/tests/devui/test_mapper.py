@@ -476,9 +476,7 @@ async def test_executor_completed_maps_to_output_item_done_event(
     )
 
     output_item_done = [r for r in results if r.type == "response.output_item.done"]
-    assert output_item_done, (
-        f"Expected at least one response.output_item.done event; got: {[r.type for r in results]}"
-    )
+    assert output_item_done, f"Expected at least one response.output_item.done event; got: {[r.type for r in results]}"
 
 
 # =============================================================================
