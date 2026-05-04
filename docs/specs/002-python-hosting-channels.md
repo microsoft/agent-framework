@@ -147,7 +147,18 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
     - **SSO / OAuth** via the SDK's MSAL-backed connections, surfaced through `IdentityResolver` and the channel's run hook.
     - **Teams API client + Microsoft Graph client** preconfigured on the SDK's `App`, available to the run hook for Teams-specific lookups (team roster, channel metadata, …) without re-implementing auth.
 
-    Mounts the SDK's `App` into the host's Starlette app via a custom `HttpServerAdapter` that defers `register_route(...)` to `ChannelContribution.routes` — the SDK does **not** start its own server; the host owns the lifecycle. Host-tracked-session family (same as `ActivityChannel`): `from.aadObjectId` populates `ChannelIdentity`. The result projector reads `AgentRunResult.messages[*].contents` and routes the rich content variants to their Teams-native renderings (`TextContent` → markdown body, `DataContent`/structured output → Adaptive Card, citation entries from `additional_properties` → `add_citation`, `ErrorContent` → typed error card). **Reuses `ActivityChannel` for the transport-only path** — deployments that only need plain Activity Protocol over Bot Service stick with `ActivityChannel`; `TeamsChannel` is the upgrade path when Teams-native richness is wanted.
+    Mounts the SDK's `App` into the host's Starlette app via a custom `HttpServerAdapter` that defers `register_route(...)` to `ChannelContribution.routes` — the SDK does **not** start its own server; the host owns the lifecycle. Host-tracked-session family (same as `ActivityChannel`): `from.aadObjectId` populates `ChannelIdentity`. The result projector reads `AgentRunResult.messages[*].contents` and routes the rich content variants to their Teams-native renderings (`TextContent` → markdown body, `DataContent`/structured output → Adaptive Card, citation entries from `additional_properties` → `add_citation`, `ErrorContent` → typed error card).
+
+    **Note on transport.** `TeamsChannel` **still rides on Azure Bot Service in v1** — the `microsoft/teams.py` SDK is a higher-level Pythonic wrapper over the same Activity Protocol pipeline that `ActivityChannel` exposes raw. The difference is **what the developer writes against**, not the underlying network path. A truly Bot-Service-free Teams transport is *not currently possible* and is tracked as a separate, speculative stretch item (req #30); when/if Microsoft ships one, the new transport would slot in under the same `TeamsChannel` package without changing this requirement.
+
+    **`ActivityChannel` vs `TeamsChannel` — pick by audience:**
+
+    | Channel | Built on | Audience |
+    |---|---|---|
+    | `ActivityChannel` (req #27) | Activity Protocol over HTTP, no Teams-specific helpers | Bot Service-fronted channels generically (Teams, Web Chat, Slack-style connectors, DirectLine, …); maximum portability across the Bot Framework / M365 connector ecosystem |
+    | `TeamsChannel` (req #28) | `microsoft/teams.py` `App` mounted via custom `HttpServerAdapter` into the host's Starlette app | Teams-first deployments that want Adaptive Cards, modal Dialogs, Message Extensions, citations, feedback, suggested-prompt chips, and SSO out-of-the-box |
+
+    Deployments that only need plain Activity Protocol over Bot Service stick with `ActivityChannel`; `TeamsChannel` is the upgrade path when Teams-native richness is wanted.
 
 ### Stretch
 29. **WhatsApp channel package** — using the same `Channel` + `ChannelCommand` model, designed so it participates in cross-channel continuity (req #9) and can serve as a `ChannelPush` destination (req #13) when paired with a stable per-user `isolation_key`.
