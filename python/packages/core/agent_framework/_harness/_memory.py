@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import threading
 import weakref
@@ -21,6 +22,7 @@ from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import AgentSession, FileHistoryProvider, HistoryProvider, JsonDumps, JsonLoads, SessionContext
 from .._tools import tool
 from .._types import ChatResponse, Message
+from ..exceptions import ChatClientException
 
 LOGGER = logging.getLogger(__name__)
 
@@ -68,6 +70,22 @@ HistoryMessageFilter = Callable[[Message], Message | None]
 _WORD_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{1,}", flags=re.IGNORECASE)
 
 
+def _payload_preview(text: str, *, limit: int = 120) -> str:
+    """Return a single-line, length-capped preview of an LLM payload for log messages."""
+    flattened = " ".join(text.split())
+    return f"{flattened[:limit]}…" if len(flattened) > limit else flattened
+
+
+# Narrow set of exceptions we treat as transient when calling the chat client during
+# memory extraction/consolidation. Programmer errors (AttributeError, TypeError, KeyError, ...)
+# are intentionally NOT caught so misconfigured clients fail loudly.
+_TRANSIENT_CHAT_CLIENT_ERRORS: Final[tuple[type[BaseException], ...]] = (
+    ChatClientException,
+    asyncio.TimeoutError,
+    OSError,
+)
+
+
 def _normalize_topic(topic: str) -> str:
     normalized = " ".join(topic.strip().split())
     if not normalized:
@@ -80,6 +98,38 @@ def _normalize_memory_text(memory: str) -> str:
     if not normalized:
         raise ValueError("memory must not be empty.")
     return normalized
+
+
+def _escape_markdown_line(line: str) -> str:
+    """Escape a markdown line so it cannot be re-interpreted as a heading on a later read."""
+    if line.lstrip().startswith(("#", "\\#")):
+        return f"\\{line}"
+    return line
+
+
+def _unescape_markdown_line(line: str) -> str:
+    """Reverse :func:`_escape_markdown_line` when reading persisted memory content."""
+    leading_whitespace_length = len(line) - len(line.lstrip())
+    body = line[leading_whitespace_length:]
+    if body.startswith("\\#"):
+        return f"{line[:leading_whitespace_length]}{body[1:]}"
+    return line
+
+
+def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Write text to ``path`` atomically via a sibling temp file plus :func:`os.replace`.
+
+    A crash, OOM, or disk-full mid-write leaves the previous file (if any) intact instead of
+    producing a truncated file that breaks every subsequent read.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    try:
+        temp_path.write_text(text, encoding=encoding)
+        os.replace(temp_path, path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
 
 
 def _slugify_topic(topic: str) -> str:
@@ -400,7 +450,13 @@ class MemoryTopicRecord:
             The canonical markdown representation.
         """
         session_line = ", ".join(self.session_ids) if self.session_ids else "-"
-        memory_lines = [f"- {memory}" for memory in self.memories] or [f"- {DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]}"]
+        # Escape any heading-looking lines in the summary so a future read cannot mistake summary
+        # content (or LLM-supplied consolidation output) for a section delimiter.
+        escaped_summary_lines = [_escape_markdown_line(line) for line in self.summary.splitlines()]
+        escaped_summary = "\n".join(escaped_summary_lines)
+        memory_lines = [f"- {_escape_markdown_line(memory)}" for memory in self.memories] or [
+            f"- {DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]}"
+        ]
         return "\n".join([
             f"# {self.topic}",
             "",
@@ -408,7 +464,7 @@ class MemoryTopicRecord:
             f"Sessions: {session_line}",
             "",
             "## Summary",
-            self.summary,
+            escaped_summary,
             "",
             "## Memories",
             *memory_lines,
@@ -463,10 +519,10 @@ class MemoryTopicRecord:
                 continue
             if current_section == "summary":
                 if stripped:
-                    summary_lines.append(stripped)
+                    summary_lines.append(_unescape_markdown_line(stripped))
                 continue
             if current_section == "memories" and stripped.startswith("- "):
-                memory_text = stripped[2:].strip()
+                memory_text = _unescape_markdown_line(stripped[2:].strip())
                 if memory_text and memory_text != DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]:
                     memories.append(memory_text)
 
@@ -626,7 +682,6 @@ class MemoryFileStore(MemoryStore):
             loads: Callable used to deserialize maintenance state JSON.
         """
         self.base_path = Path(base_path)
-        self.base_path.mkdir(parents=True, exist_ok=True)
         self._base_root = self.base_path.resolve()
         self.kind = kind
         self.owner_prefix = owner_prefix
@@ -683,19 +738,14 @@ class MemoryFileStore(MemoryStore):
         memory_root = (self._base_root / source_component / owner_component / self.kind).resolve()
         if not memory_root.is_relative_to(self._base_root):
             raise ValueError("Memory storage path escaped base_path.")
-        memory_root.mkdir(parents=True, exist_ok=True)
         return memory_root
 
     def _get_topics_directory(self, session: AgentSession, *, source_id: str) -> Path:
-        topics_directory = self._get_memory_root(session, source_id=source_id) / self.topics_directory_name
-        topics_directory.mkdir(parents=True, exist_ok=True)
-        return topics_directory
+        return self._get_memory_root(session, source_id=source_id) / self.topics_directory_name
 
     def get_transcripts_directory(self, session: AgentSession, *, source_id: str) -> Path:
         """Return the owner-level transcript archive directory."""
-        transcripts_directory = self._get_memory_root(session, source_id=source_id) / self.transcripts_directory_name
-        transcripts_directory.mkdir(parents=True, exist_ok=True)
-        return transcripts_directory
+        return self._get_memory_root(session, source_id=source_id) / self.transcripts_directory_name
 
     def _get_index_path(self, session: AgentSession, *, source_id: str) -> Path:
         return self._get_memory_root(session, source_id=source_id) / self.index_file_name
@@ -725,7 +775,10 @@ class MemoryFileStore(MemoryStore):
     def list_topics(self, session: AgentSession, *, source_id: str) -> list[MemoryTopicRecord]:
         """Return all topic memory files visible from the current owner."""
         topics: list[MemoryTopicRecord] = []
-        for topic_path in sorted(self._get_topics_directory(session, source_id=source_id).glob("*.md")):
+        topics_directory = self._get_topics_directory(session, source_id=source_id)
+        if not topics_directory.exists():
+            return topics
+        for topic_path in sorted(topics_directory.glob("*.md")):
             if not topic_path.is_file():
                 continue
             record = MemoryTopicRecord.from_markdown(
@@ -744,10 +797,8 @@ class MemoryFileStore(MemoryStore):
 
     def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
         """Persist one topic memory file."""
-        self._topic_path(session, source_id=source_id, topic=record.slug).write_text(
-            f"{record.to_markdown()}\n",
-            encoding="utf-8",
-        )
+        topic_path = self._topic_path(session, source_id=source_id, topic=record.slug)
+        _atomic_write_text(topic_path, f"{record.to_markdown()}\n")
 
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
         """Delete one topic memory file."""
@@ -777,7 +828,7 @@ class MemoryFileStore(MemoryStore):
         index_path = self._get_index_path(session, source_id=source_id)
         index_file_text = f"{index_text}\n"
         if not index_path.exists() or index_path.read_text(encoding="utf-8") != index_file_text:
-            index_path.write_text(index_file_text, encoding="utf-8")
+            _atomic_write_text(index_path, index_file_text)
         return entries[:line_limit]
 
     def get_index_text(
@@ -803,7 +854,7 @@ class MemoryFileStore(MemoryStore):
             index_path = self._get_index_path(session, source_id=source_id)
             index_file_text = f"{index_text}\n"
             if not index_path.exists() or index_path.read_text(encoding="utf-8") != index_file_text:
-                index_path.write_text(index_file_text, encoding="utf-8")
+                _atomic_write_text(index_path, index_file_text)
         return self._get_index_path(session, source_id=source_id).read_text(encoding="utf-8").strip()
 
     def read_state(self, session: AgentSession, *, source_id: str) -> dict[str, Any]:
@@ -823,10 +874,8 @@ class MemoryFileStore(MemoryStore):
 
     def write_state(self, session: AgentSession, state: Mapping[str, Any], *, source_id: str) -> None:
         """Persist the maintenance state for the current owner."""
-        self._get_state_path(session, source_id=source_id).write_text(
-            f"{self._serialize_json(dict(state), dumps=self.dumps)}\n",
-            encoding="utf-8",
-        )
+        state_path = self._get_state_path(session, source_id=source_id)
+        _atomic_write_text(state_path, f"{self._serialize_json(dict(state), dumps=self.dumps)}\n")
 
     def search_transcripts(
         self,
@@ -842,7 +891,10 @@ class MemoryFileStore(MemoryStore):
         if not normalized_query:
             raise ValueError("query must not be empty.")
         query_casefold = normalized_query.casefold()
-        transcript_files = sorted(self.get_transcripts_directory(session, source_id=source_id).glob("*.jsonl"))
+        transcripts_directory = self.get_transcripts_directory(session, source_id=source_id)
+        if not transcripts_directory.exists():
+            return []
+        transcript_files = sorted(transcripts_directory.glob("*.jsonl"))
         results: list[dict[str, Any]] = []
         for transcript_file in transcript_files:
             decoded_session_id = self._decode_transcript_session_id(transcript_file)
@@ -1063,6 +1115,10 @@ class MemoryContextProvider(HistoryProvider):
             return []
         session = AgentSession(session_id=session_id or FileHistoryProvider.DEFAULT_SESSION_FILE_STEM)
         self.store.import_provider_state(session, state=state)
+        # Skip provider construction (which would mkdir the transcripts directory) when nothing
+        # has been written yet; pure read paths should not have side effects on disk.
+        if not self.store.get_transcripts_directory(session, source_id=self.source_id).exists():
+            return []
         return await self._create_history_provider(session).get_messages(session_id, state=state)
 
     async def save_messages(
@@ -1098,6 +1154,8 @@ class MemoryContextProvider(HistoryProvider):
                 filtered_messages.append(filtered_message)
         if not filtered_messages:
             return
+        transcripts_directory = self.store.get_transcripts_directory(session, source_id=self.source_id)
+        transcripts_directory.mkdir(parents=True, exist_ok=True)
         await self._create_history_provider(session).save_messages(session_id, filtered_messages, state=state)
 
     async def before_run(
@@ -1338,7 +1396,7 @@ class MemoryContextProvider(HistoryProvider):
                 ],
                 stream=False,
             )
-        except Exception as exc:  # pragma: no cover - defensive logging
+        except _TRANSIENT_CHAT_CLIENT_ERRORS as exc:
             LOGGER.warning("Skipping memory extraction: extractor call failed (%s).", exc)
             return []
 
@@ -1355,16 +1413,28 @@ class MemoryContextProvider(HistoryProvider):
             cast(Mapping[str, object], payload).get("memories") if isinstance(payload, Mapping) else payload
         )
         if not isinstance(raw_items, list):
+            LOGGER.warning(
+                "Skipping memory extraction: 'memories' is not a list (payload preview: %r).",
+                _payload_preview(extracted_text),
+            )
             return []
 
         updated_records: list[MemoryTopicRecord] = []
         for raw_item in cast(list[object], raw_items)[: self.max_extractions]:
             if not isinstance(raw_item, Mapping):
+                LOGGER.warning(
+                    "Skipping memory item: not a JSON object (item preview: %r).",
+                    _payload_preview(repr(raw_item)),
+                )
                 continue
             item = cast(Mapping[str, object], raw_item)
             raw_topic = item.get("topic")
             raw_memory = item.get("memory")
             if not isinstance(raw_topic, str) or not isinstance(raw_memory, str):
+                LOGGER.warning(
+                    "Skipping memory item: missing 'topic' or 'memory' string (item preview: %r).",
+                    _payload_preview(repr(item)),
+                )
                 continue
             try:
                 updated_record = await self._merge_memory(
@@ -1419,11 +1489,13 @@ class MemoryContextProvider(HistoryProvider):
         force: bool,
         now: datetime,
     ) -> int:
+        # Read maintenance state and the topic list under the state lock, then release it before
+        # making LLM calls so concurrent before/after_run invocations don't have to wait through
+        # multi-second consolidation calls.
         async with self._state_async_lock(session):
             maintenance_state = self.store.read_state(session, source_id=self.source_id)
             if not force and not self._should_consolidate(maintenance_state, now=now):
                 return 0
-
             topic_records = self.store.list_topics(session, source_id=self.source_id)
             if not topic_records:
                 maintenance_state["last_consolidated_at"] = _timestamp(now)
@@ -1431,27 +1503,36 @@ class MemoryContextProvider(HistoryProvider):
                 self.store.write_state(session, maintenance_state, source_id=self.source_id)
                 return 0
 
-            consolidated_count = 0
-            for record in topic_records:
-                async with self._topic_async_lock(session, record.slug):
-                    try:
-                        current_record = self.store.get_topic(session, source_id=self.source_id, topic=record.slug)
-                    except FileNotFoundError:
-                        continue
-                    consolidated_record = await self._consolidate_topic(client=client, record=current_record, now=now)
+        success_count = 0
+        for record in topic_records:
+            async with self._topic_async_lock(session, record.slug):
+                try:
+                    current_record = self.store.get_topic(session, source_id=self.source_id, topic=record.slug)
+                except FileNotFoundError:
+                    continue
+                consolidated_record, succeeded = await self._consolidate_topic(
+                    client=client, record=current_record, now=now
+                )
+                if succeeded:
                     self.store.write_topic(session, consolidated_record, source_id=self.source_id)
-                    consolidated_count += 1
+                    success_count += 1
 
-            maintenance_state["last_consolidated_at"] = _timestamp(now)
-            maintenance_state["sessions_since_consolidation"] = []
-            self.store.write_state(session, maintenance_state, source_id=self.source_id)
-            self.store.rebuild_index(
-                session,
-                source_id=self.source_id,
-                line_limit=self.index_line_limit,
-                line_length=self.index_line_length,
-            )
-            return consolidated_count
+        # Only advance the maintenance window if at least one topic actually consolidated. If every
+        # topic call hit a transient error we keep the prior `last_consolidated_at` and the queued
+        # session IDs so the next after_run will retry instead of silently sliding the window.
+        if success_count > 0:
+            async with self._state_async_lock(session):
+                maintenance_state = self.store.read_state(session, source_id=self.source_id)
+                maintenance_state["last_consolidated_at"] = _timestamp(now)
+                maintenance_state["sessions_since_consolidation"] = []
+                self.store.write_state(session, maintenance_state, source_id=self.source_id)
+                self.store.rebuild_index(
+                    session,
+                    source_id=self.source_id,
+                    line_limit=self.index_line_limit,
+                    line_length=self.index_line_length,
+                )
+        return success_count
 
     def _should_consolidate(self, state: Mapping[str, Any], *, now: datetime) -> bool:
         session_ids: object = state.get("sessions_since_consolidation")
@@ -1476,15 +1557,25 @@ class MemoryContextProvider(HistoryProvider):
         client: SupportsChatGetResponse[Any] | None,
         record: MemoryTopicRecord,
         now: datetime,
-    ) -> MemoryTopicRecord:
+    ) -> tuple[MemoryTopicRecord, bool]:
+        """Return the consolidated record and a flag indicating whether consolidation succeeded.
+
+        ``succeeded`` is False when the LLM call raises a transient error or returns malformed
+        output. The caller uses this flag to decide whether to overwrite the on-disk record and
+        whether to advance the maintenance window — preventing transient failures from silently
+        sliding the consolidation cadence forward.
+        """
         if client is None:
-            return MemoryTopicRecord(
-                topic=record.topic,
-                slug=record.slug,
-                summary=_coerce_summary(record.summary, record.memories),
-                memories=_dedupe_strings(record.memories),
-                updated_at=_timestamp(now),
-                session_ids=record.session_ids,
+            return (
+                MemoryTopicRecord(
+                    topic=record.topic,
+                    slug=record.slug,
+                    summary=_coerce_summary(record.summary, record.memories),
+                    memories=_dedupe_strings(record.memories),
+                    updated_at=_timestamp(now),
+                    session_ids=record.session_ids,
+                ),
+                True,
             )
 
         try:
@@ -1495,37 +1586,51 @@ class MemoryContextProvider(HistoryProvider):
                 ],
                 stream=False,
             )
-        except Exception as exc:  # pragma: no cover - defensive logging
+        except _TRANSIENT_CHAT_CLIENT_ERRORS as exc:
             LOGGER.warning("Skipping memory consolidation for topic %r: %s", record.topic, exc)
-            return MemoryTopicRecord(
-                topic=record.topic,
-                slug=record.slug,
-                summary=_coerce_summary(record.summary, record.memories),
-                memories=_dedupe_strings(record.memories),
-                updated_at=_timestamp(now),
-                session_ids=record.session_ids,
-            )
+            return record, False
 
         consolidation_text = consolidation_response.text.strip() if consolidation_response.text else ""
         if not consolidation_text:
-            return record
+            LOGGER.warning("Skipping consolidation for topic %r: empty response.", record.topic)
+            return record, False
         try:
             payload: object = json.loads(_extract_json_text(consolidation_text))
-        except (TypeError, ValueError):
-            return record
+        except (TypeError, ValueError) as exc:
+            LOGGER.warning(
+                "Skipping consolidation for topic %r: invalid JSON (%s; payload preview: %r).",
+                record.topic,
+                exc,
+                _payload_preview(consolidation_text),
+            )
+            return record, False
         if not isinstance(payload, Mapping):
-            return record
+            LOGGER.warning(
+                "Skipping consolidation for topic %r: payload is not a JSON object (preview: %r).",
+                record.topic,
+                _payload_preview(consolidation_text),
+            )
+            return record, False
         typed_payload = cast(Mapping[str, object], payload)
         summary = typed_payload.get("summary")
         raw_memories = typed_payload.get("memories")
         if not isinstance(summary, str) or not isinstance(raw_memories, list):
-            return record
+            LOGGER.warning(
+                "Skipping consolidation for topic %r: missing 'summary' string or 'memories' list "
+                "(payload preview: %r).",
+                record.topic,
+                _payload_preview(consolidation_text),
+            )
+            return record, False
         consolidated_memories = [memory for memory in cast(list[object], raw_memories) if isinstance(memory, str)]
-        return MemoryTopicRecord(
-            topic=record.topic,
-            slug=record.slug,
-            summary=summary,
-            memories=consolidated_memories,
-            updated_at=_timestamp(now),
-            session_ids=record.session_ids,
+        return (
+            MemoryTopicRecord(
+                topic=record.topic,
+                slug=record.slug,
+                summary=summary,
+                memories=consolidated_memories,
+                updated_at=_timestamp(now),
+                session_ids=record.session_ids,
+            ),
+            True,
         )

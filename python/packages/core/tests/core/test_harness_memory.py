@@ -581,3 +581,190 @@ def test_memory_harness_classes_are_marked_experimental() -> None:
     assert MemoryFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value
     assert MemoryContextProvider.__feature_id__ == ExperimentalFeature.HARNESS.value
     assert ".. warning:: Experimental" in MemoryContextProvider.__doc__
+
+
+def test_memory_topic_record_round_trips_when_text_contains_section_markers() -> None:
+    """Embedded ``## Summary``/``## Memories`` markers must not be re-interpreted as headings."""
+    record = MemoryTopicRecord(
+        topic="weird",
+        summary="Multi line summary.\n## Summary\nstill summary",
+        memories=[
+            "## Memories pretend",
+            "Real memory.",
+            "  ## Memories nested",
+        ],
+        updated_at="2026-04-21T10:00:00+00:00",
+        session_ids=["session-1"],
+    )
+
+    reparsed = MemoryTopicRecord.from_markdown(record.to_markdown())
+
+    assert reparsed.summary == record.summary
+    assert reparsed.memories == record.memories
+
+
+async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(tmp_path, monkeypatch) -> None:
+    """If ``os.replace`` fails mid-write, the previous topic file must remain intact."""
+    from agent_framework._harness import _memory as memory_module
+
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    original = MemoryTopicRecord(
+        topic="preferences",
+        summary="Prefers concise answers.",
+        memories=["Prefers concise answers."],
+        updated_at="2026-04-21T10:00:00+00:00",
+        session_ids=["session-1"],
+    )
+    store.write_topic(session, original, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    real_replace = memory_module.os.replace
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("simulated disk-full")
+
+    monkeypatch.setattr(memory_module.os, "replace", _boom)
+    with pytest.raises(OSError, match="simulated disk-full"):
+        store.write_topic(
+            session,
+            MemoryTopicRecord(
+                topic="preferences",
+                summary="Updated.",
+                memories=["Updated."],
+                updated_at="2026-04-21T11:00:00+00:00",
+                session_ids=["session-1"],
+            ),
+            source_id=DEFAULT_MEMORY_SOURCE_ID,
+        )
+
+    monkeypatch.setattr(memory_module.os, "replace", real_replace)
+    surviving = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="preferences")
+    assert surviving.summary == "Prefers concise answers."
+    # Temp file should not be left behind.
+    topics_dir = surviving_dir = tmp_path
+    leftover = [path for path in topics_dir.rglob("*.tmp.*")]
+    assert leftover == []
+    del surviving_dir
+
+
+async def test_memory_file_store_does_not_mkdir_on_pure_read_paths(tmp_path) -> None:
+    """List/read calls on a never-written session should not create any directories."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    assert store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == []
+    assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
+        "last_consolidated_at": None,
+        "sessions_since_consolidation": [],
+    }
+    assert store.search_transcripts(session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="anything") == []
+
+    # tmp_path itself was passed in by pytest so it exists; assert no children were created.
+    assert list(tmp_path.iterdir()) == []
+
+
+class _RaisingMemoryClient:
+    """Chat client that raises a transient error for every consolidation request."""
+
+    additional_properties: dict[str, Any]
+
+    def __init__(self) -> None:
+        from agent_framework.exceptions import ChatClientException
+
+        self.additional_properties = {}
+        self.error_class = ChatClientException
+        self.calls: list[str] = []
+
+    async def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: bool = False,
+        options: Mapping[str, Any] | None = None,
+        compaction_strategy: object | None = None,
+        tokenizer: object | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> ChatResponse[Any]:
+        del messages, stream, options, compaction_strategy, tokenizer
+        del function_invocation_kwargs, client_kwargs
+        self.calls.append("call")
+        raise self.error_class("simulated transient failure")
+
+
+class _ProgrammerErrorMemoryClient:
+    """Chat client whose ``get_response`` raises a non-transient programmer error."""
+
+    additional_properties: dict[str, Any]
+
+    def __init__(self) -> None:
+        self.additional_properties = {}
+
+    async def get_response(self, *args: object, **kwargs: object) -> ChatResponse[Any]:
+        del args, kwargs
+        raise AttributeError("misconfigured client")
+
+
+async def test_memory_consolidation_transient_failure_preserves_state(tmp_path) -> None:
+    """A transient consolidation failure must not advance the maintenance window."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    raising_client = _RaisingMemoryClient()
+    provider = MemoryContextProvider(store=store, consolidation_client=raising_client)
+    pre_state = {
+        "last_consolidated_at": "2026-04-20T09:00:00+00:00",
+        "sessions_since_consolidation": ["queued-session"],
+    }
+    store.write_state(session, pre_state, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(
+        session,
+        MemoryTopicRecord(
+            topic="preferences",
+            summary="Prefers concise answers.",
+            memories=["Prefers concise answers."],
+            updated_at="2026-04-21T10:00:00+00:00",
+            session_ids=["session-1"],
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+
+    consolidated_count = await provider._run_consolidation(  # type: ignore[reportPrivateUsage]
+        client=raising_client,
+        session=session,
+        force=True,
+        now=datetime(2026, 4, 22, tzinfo=timezone.utc),
+    )
+
+    assert consolidated_count == 0
+    assert raising_client.calls == ["call"]
+    assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == pre_state
+    surviving = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="preferences")
+    assert surviving.summary == "Prefers concise answers."
+
+
+async def test_memory_extraction_propagates_programmer_errors(tmp_path) -> None:
+    """Non-transient errors from the chat client must surface so misconfigurations fail loudly."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    provider = MemoryContextProvider(store=store)
+    bad_client = _ProgrammerErrorMemoryClient()
+
+    from agent_framework import AgentResponse
+    from agent_framework._sessions import SessionContext
+
+    context = SessionContext(
+        input_messages=[Message(role="user", contents=["q"])],
+    )
+    context._response = AgentResponse(messages=[Message(role="assistant", contents=["a"])])  # type: ignore[reportPrivateUsage]
+
+    with pytest.raises(AttributeError, match="misconfigured client"):
+        await provider._extract_memories(  # type: ignore[reportPrivateUsage]
+            client=bad_client,
+            session=session,
+            context=context,
+            now=datetime(2026, 4, 22, tzinfo=timezone.utc),
+        )
