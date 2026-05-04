@@ -72,12 +72,19 @@ def _normalize_mode(mode: str, *, available_modes: Mapping[str, str]) -> str:
     return normalized
 
 
+def _resolve_default_mode(default_mode: str | None, *, available_modes: Mapping[str, str]) -> str:
+    """Resolve the default mode, falling back to the first configured mode when omitted."""
+    if default_mode is None:
+        return next(iter(available_modes))
+    return _normalize_mode(default_mode, available_modes=available_modes)
+
+
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 def get_agent_mode(
     session: AgentSession,
     *,
     source_id: str = DEFAULT_MODE_SOURCE_ID,
-    default_mode: str = "plan",
+    default_mode: str | None = None,
     available_modes: Sequence[str] | None = None,
 ) -> str:
     """Get the current operating mode from session state.
@@ -87,20 +94,26 @@ def get_agent_mode(
 
     Keyword Args:
         source_id: Unique source ID for the provider state.
-        default_mode: Initial mode used when no mode is stored yet.
+        default_mode: Initial mode used when no mode is stored yet. When omitted, the first entry of
+            ``available_modes`` is used.
         available_modes: Supported modes to validate against. Defaults to the built-in modes.
 
     Returns:
         The current mode string.
     """
     normalized_modes = _normalize_available_modes(tuple(available_modes or DEFAULT_MODE_DESCRIPTIONS))
-    normalized_default_mode = _normalize_mode(default_mode, available_modes=normalized_modes)
+    normalized_default_mode = _resolve_default_mode(default_mode, available_modes=normalized_modes)
     provider_state = _get_mode_state(session, source_id=source_id)
     current_mode = provider_state.get("current_mode")
-    if not isinstance(current_mode, str):
-        provider_state["current_mode"] = normalized_default_mode
-        return normalized_default_mode
-    return _normalize_mode(current_mode, available_modes=normalized_modes)
+    if isinstance(current_mode, str):
+        try:
+            return _normalize_mode(current_mode, available_modes=normalized_modes)
+        except ValueError:
+            # Stored mode is no longer in the configured set (e.g. available_modes was reconfigured).
+            # Fall through and reset to the default mode.
+            pass
+    provider_state["current_mode"] = normalized_default_mode
+    return normalized_default_mode
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -157,7 +170,7 @@ class AgentModeProvider(ContextProvider):
         self,
         source_id: str = DEFAULT_MODE_SOURCE_ID,
         *,
-        default_mode: str = "plan",
+        default_mode: str | None = None,
         mode_descriptions: Mapping[str, str] | None = None,
         instructions: str | None = None,
     ) -> None:
@@ -167,7 +180,8 @@ class AgentModeProvider(ContextProvider):
             source_id: Unique source ID for the provider.
 
         Keyword Args:
-            default_mode: Initial mode used when no mode is stored yet.
+            default_mode: Initial mode used when no mode is stored yet. When omitted, the first entry of
+                ``mode_descriptions`` is used.
             mode_descriptions: Mapping of supported modes to descriptions of when and how to use each mode.
             instructions: Custom instructions for using the mode tools. The instructions can contain an
                 ``{available_modes}`` placeholder for the configured list of modes and a ``{current_mode}`` placeholder
@@ -183,7 +197,7 @@ class AgentModeProvider(ContextProvider):
             raise ValueError("mode_descriptions must contain at least one mode.")
         self.mode_descriptions = {mode.strip().lower(): description for mode, description in mode_descriptions.items()}
         self.available_modes = tuple(self._mode_display_names)
-        self.default_mode = _normalize_mode(default_mode, available_modes=self._mode_display_names)
+        self.default_mode = _resolve_default_mode(default_mode, available_modes=self._mode_display_names)
         self.instructions = instructions
 
     def _build_instructions(self, current_mode: str) -> str:
