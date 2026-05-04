@@ -576,11 +576,19 @@ export function WorkflowView({
             openAIEvent.type === "response.workflow_event.complete" // Fallback variant
           ) {
             setOpenAIEvents((prev) => {
-              // Prefer the event's own created_at for accurate workflow timings.
-              // Fall back to a synthesized timestamp only when created_at is absent.
-              const eventTimestamp =
-                "created_at" in openAIEvent && openAIEvent.created_at
-                  ? (openAIEvent.created_at as number)
+              // Derive a server-side timestamp from the event, in priority order:
+              //   1. top-level created_at  (custom output-item events)
+              //   2. response.created_at   (response.created / lifecycle events)
+              //   3. data.timestamp        (response.workflow_event.completed ISO string)
+              // Fall back to a synthesized timestamp only when none is present.
+              const anyEvent = openAIEvent as Record<string, unknown>;
+              const eventTimestamp: number | undefined =
+                typeof anyEvent["created_at"] === "number" && anyEvent["created_at"]
+                  ? (anyEvent["created_at"] as number)
+                  : typeof (anyEvent["response"] as Record<string, unknown> | undefined)?.["created_at"] === "number"
+                  ? ((anyEvent["response"] as Record<string, number>)["created_at"] as number)
+                  : typeof (anyEvent["data"] as Record<string, unknown> | undefined)?.["timestamp"] === "string"
+                  ? new Date((anyEvent["data"] as Record<string, string>)["timestamp"]).getTime() / 1000
                   : undefined;
               const baseTimestamp = Math.floor(Date.now() / 1000);
               const lastTimestamp =
@@ -588,8 +596,12 @@ export function WorkflowView({
                   ? (prev[prev.length - 1] as { _uiTimestamp?: number })
                       ._uiTimestamp || 0
                   : 0;
+              // When we have a real server timestamp clamp to lastTimestamp (no +1s gap).
+              // When synthesizing, keep the +1 s gap so ordering is always monotonic.
               const uniqueTimestamp =
-                eventTimestamp ?? Math.max(baseTimestamp, lastTimestamp + 1);
+                eventTimestamp !== undefined
+                  ? Math.max(eventTimestamp, lastTimestamp)
+                  : Math.max(baseTimestamp, lastTimestamp + 1);
 
               return [
                 ...prev,
@@ -995,11 +1007,19 @@ export function WorkflowView({
           openAIEvent.type === "response.workflow_event.completed"
         ) {
           setOpenAIEvents((prev) => {
-            // Prefer the event's own created_at for accurate workflow timings.
-            // Fall back to a synthesized timestamp only when created_at is absent.
-            const eventTimestamp =
-              "created_at" in openAIEvent && openAIEvent.created_at
-                ? (openAIEvent.created_at as number)
+            // Derive a server-side timestamp from the event, in priority order:
+            //   1. top-level created_at  (custom output-item events)
+            //   2. response.created_at   (response.created / lifecycle events)
+            //   3. data.timestamp        (response.workflow_event.completed ISO string)
+            // Fall back to a synthesized timestamp only when none is present.
+            const anyEvent = openAIEvent as Record<string, unknown>;
+            const eventTimestamp: number | undefined =
+              typeof anyEvent["created_at"] === "number" && anyEvent["created_at"]
+                ? (anyEvent["created_at"] as number)
+                : typeof (anyEvent["response"] as Record<string, unknown> | undefined)?.["created_at"] === "number"
+                ? ((anyEvent["response"] as Record<string, number>)["created_at"] as number)
+                : typeof (anyEvent["data"] as Record<string, unknown> | undefined)?.["timestamp"] === "string"
+                ? new Date((anyEvent["data"] as Record<string, string>)["timestamp"]).getTime() / 1000
                 : undefined;
             const baseTimestamp = Math.floor(Date.now() / 1000);
             const lastTimestamp =
@@ -1007,8 +1027,12 @@ export function WorkflowView({
                 ? (prev[prev.length - 1] as { _uiTimestamp?: number })
                     ._uiTimestamp || 0
                 : 0;
+            // When we have a real server timestamp clamp to lastTimestamp (no +1s gap).
+            // When synthesizing, keep the +1 s gap so ordering is always monotonic.
             const uniqueTimestamp =
-              eventTimestamp ?? Math.max(baseTimestamp, lastTimestamp + 1);
+              eventTimestamp !== undefined
+                ? Math.max(eventTimestamp, lastTimestamp)
+                : Math.max(baseTimestamp, lastTimestamp + 1);
 
             return [
               ...prev,

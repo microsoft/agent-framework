@@ -425,6 +425,31 @@ async def test_executor_events_carry_created_at_timestamp(
                 f"{label} mapped event {type(event).__name__} is missing 'created_at'. "
                 "The frontend relies on this field for accurate workflow timeline timings."
             )
+            assert event.created_at > 0, (
+                f"{label} mapped event {type(event).__name__} has a non-positive "
+                f"created_at value ({event.created_at!r}); expected a valid Unix timestamp."
+            )
+
+
+def test_custom_output_item_event_models_have_created_at_field() -> None:
+    """MODEL TEST: CustomResponseOutputItemAddedEvent and Done must declare created_at.
+
+    This guards against accidentally removing the field from the model definition.
+    A missing field causes a downstream ValidationError instead of a clear test failure.
+    """
+    from agent_framework_devui.models._openai_custom import (
+        CustomResponseOutputItemAddedEvent,
+        CustomResponseOutputItemDoneEvent,
+    )
+
+    assert "created_at" in CustomResponseOutputItemAddedEvent.model_fields, (
+        "CustomResponseOutputItemAddedEvent is missing 'created_at' in model_fields. "
+        "The frontend uses this field for accurate workflow timeline timings."
+    )
+    assert "created_at" in CustomResponseOutputItemDoneEvent.model_fields, (
+        "CustomResponseOutputItemDoneEvent is missing 'created_at' in model_fields. "
+        "The frontend uses this field for accurate workflow timeline timings."
+    )
 
 
 # =============================================================================
