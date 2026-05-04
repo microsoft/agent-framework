@@ -452,6 +452,35 @@ def test_custom_output_item_event_models_have_created_at_field() -> None:
     )
 
 
+async def test_executor_completed_maps_to_output_item_done_event(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test executor_completed events are mapped to CustomResponseOutputItemDoneEvent.
+
+    Ensures executor_completed does not fall through to the legacy
+    ResponseWorkflowEventComplete path, which lacks a top-level created_at field.
+    """
+    from agent_framework_devui.models._openai_custom import ResponseWorkflowEventComplete
+
+    invoke_event = create_executor_invoked_event(executor_id="exec_output_item")
+    await mapper.convert_event(invoke_event, test_request)
+
+    complete_event = create_executor_completed_event(executor_id="exec_output_item")
+    results = await mapper.convert_event(complete_event, test_request)
+
+    assert results, "mapper.convert_event should return events for executor_completed"
+
+    workflow_events = [r for r in results if isinstance(r, ResponseWorkflowEventComplete)]
+    assert not workflow_events, (
+        "executor_completed should map to CustomResponseOutputItemDoneEvent, not ResponseWorkflowEventComplete."
+    )
+
+    output_item_done = [r for r in results if r.type == "response.output_item.done"]
+    assert output_item_done, (
+        f"Expected at least one response.output_item.done event; got: {[r.type for r in results]}"
+    )
+
+
 # =============================================================================
 # Workflow Lifecycle Event Tests
 # =============================================================================
