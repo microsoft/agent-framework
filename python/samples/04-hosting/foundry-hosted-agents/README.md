@@ -134,17 +134,24 @@ cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
 
 #### Environment setup
 
-1. Navigate to the sample directory you want to explore. Create a virtual environment:
+1. Navigate to the sample directory you want to explore. Create and activate a virtual environment using [uv](https://docs.astral.sh/uv/) (recommended):
 
    ```bash
-   python -m venv .venv
+   uv venv .venv
+   ```
 
-   # Windows
-   .venv\Scripts\Activate
+   ```bash
+   # Windows (PowerShell)
+   .venv\Scripts\Activate.ps1
+
+   # Windows (Command Prompt)
+   .venv\Scripts\activate.bat
 
    # macOS/Linux
    source .venv/bin/activate
    ```
+
+   > **Note:** `python -m venv .venv` also works, but can hang indefinitely on Windows with Microsoft Store Python due to a known `ensurepip` issue. Use `uv venv .venv` to avoid this.
 
 2. Install dependencies:
 
