@@ -3,7 +3,7 @@
  * Features: Entity selection, layout management, debug coordination
  */
 
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { AppHeader, DebugPanel, SettingsModal, DeploymentModal } from "@/components/layout";
 import { GalleryView } from "@/components/features/gallery";
 import { AgentView } from "@/components/features/agent";
@@ -15,10 +15,13 @@ import type {
   AgentInfo,
   WorkflowInfo,
   ExtendedResponseStreamEvent,
+  ResponseTextDeltaEvent,
 } from "@/types";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { useDevUIStore } from "@/stores";
+
+const DEBUG_TEXT_EVENT_FLUSH_INTERVAL_MS = 50;
 
 export default function App() {
   // Local state for auth handling
@@ -26,6 +29,8 @@ export default function App() {
   const [authToken, setAuthToken] = useState("");
   const [isTestingToken, setIsTestingToken] = useState(false);
   const [authError, setAuthError] = useState("");
+  const bufferedDebugTextRef = useRef<ResponseTextDeltaEvent | null>(null);
+  const lastBufferedDebugFlushAtRef = useRef(0);
 
   // Entity state from Zustand
   const agents = useDevUIStore((state) => state.agents);
@@ -303,16 +308,63 @@ export default function App() {
     [selectEntity, updateAgent, updateWorkflow, addToast]
   );
 
+  const flushBufferedDebugText = useCallback(() => {
+    const bufferedEvent = bufferedDebugTextRef.current;
+    if (!bufferedEvent) {
+      return;
+    }
+
+    bufferedDebugTextRef.current = null;
+    lastBufferedDebugFlushAtRef.current = performance.now();
+    addDebugEvent(bufferedEvent);
+  }, [addDebugEvent]);
+
   // Handle debug events from active view
   const handleDebugEvent = useCallback(
     (event: ExtendedResponseStreamEvent | "clear") => {
       if (event === "clear") {
+        bufferedDebugTextRef.current = null;
         clearDebugEvents();
-      } else {
-        addDebugEvent(event);
+        return;
       }
+
+      if (
+        event.type === "response.output_text.delta" &&
+        "delta" in event &&
+        typeof event.delta === "string" &&
+        event.delta.length > 0
+      ) {
+        const bufferedEvent = bufferedDebugTextRef.current;
+        const isSameOutput =
+          bufferedEvent !== null &&
+          bufferedEvent.item_id === event.item_id &&
+          bufferedEvent.output_index === event.output_index &&
+          bufferedEvent.content_index === event.content_index;
+
+        if (isSameOutput && bufferedEvent) {
+          bufferedDebugTextRef.current = {
+            ...bufferedEvent,
+            delta: bufferedEvent.delta + event.delta,
+            sequence_number: event.sequence_number ?? bufferedEvent.sequence_number,
+          };
+        } else {
+          flushBufferedDebugText();
+          bufferedDebugTextRef.current = { ...event } as ResponseTextDeltaEvent;
+        }
+
+        if (
+          performance.now() - lastBufferedDebugFlushAtRef.current >=
+          DEBUG_TEXT_EVENT_FLUSH_INTERVAL_MS
+        ) {
+          flushBufferedDebugText();
+        }
+        return;
+      }
+
+      flushBufferedDebugText();
+      addDebugEvent(event);
     },
-    [addDebugEvent, clearDebugEvents]
+    [addDebugEvent, clearDebugEvents, flushBufferedDebugText]
   );
 
   // Show loading state while initializing

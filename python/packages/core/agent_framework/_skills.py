@@ -35,7 +35,8 @@ from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, runtime_checkable
 
-from ._sessions import BaseContextProvider
+from ._feature_stage import ExperimentalFeature, experimental
+from ._sessions import ContextProvider
 from ._tools import FunctionTool
 
 if TYPE_CHECKING:
@@ -47,13 +48,9 @@ logger = logging.getLogger(__name__)
 # region Models
 
 
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillResource:
     """A named piece of supplementary content attached to a skill.
-
-    .. warning:: Experimental
-
-        This API is experimental and subject to change or removal
-        in future versions without notice.
 
     A resource provides data that an agent can retrieve on demand.  It holds
     either a static ``content`` string or a ``function`` that produces content
@@ -117,13 +114,9 @@ class SkillResource:
             self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
 
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillScript:
     """An executable script attached to a skill.
-
-    .. warning:: Experimental
-
-        This API is experimental and subject to change or removal
-        in future versions without notice.
 
     A script represents executable code that an agent can run.  It holds
     either an inline ``function`` callable (code-defined scripts) or
@@ -202,11 +195,6 @@ class SkillScript:
     def parameters_schema(self) -> dict[str, Any] | None:
         """JSON Schema describing the script's parameters.
 
-        .. warning:: Experimental
-
-            This API is experimental and subject to change or removal
-            in future versions without notice.
-
         Lazily generated from the callable's signature on first access.
         Returns ``None`` for file-based scripts or functions with no
         introspectable parameters.
@@ -219,13 +207,9 @@ class SkillScript:
         return self._parameters_schema
 
 
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class Skill:
     """A skill definition with optional resources.
-
-    .. warning:: Experimental
-
-        This API is experimental and subject to change or removal
-        in future versions without notice.
 
     A skill bundles a set of instructions (``content``) with metadata and
     zero or more :class:`SkillResource` and :class:`SkillScript` instances.
@@ -432,13 +416,9 @@ class Skill:
 
 
 @runtime_checkable
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillScriptRunner(Protocol):
     """Protocol for skill script runners.
-
-    .. warning:: Experimental
-
-        This API is experimental and subject to change or removal
-        in future versions without notice.
 
     A script runner determines how **file-based** skill scripts are
     run. Implementations decide the execution strategy
@@ -506,8 +486,8 @@ YAML_KV_RE = re.compile(
 )
 
 # Validates skill names: lowercase letters, numbers, hyphens only;
-# must not start or end with a hyphen.
-VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$")
+# must not start or end with a hyphen, and must not contain consecutive hyphens.
+VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$")
 
 # Default system prompt template for advertising available skills to the model.
 # Use {skills} as the placeholder for the generated skills XML list.
@@ -538,13 +518,9 @@ SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
 # region SkillsProvider
 
 
-class SkillsProvider(BaseContextProvider):
+@experimental(feature_id=ExperimentalFeature.SKILLS)
+class SkillsProvider(ContextProvider):
     """Context provider that advertises skills and exposes skill tools.
-
-    .. warning:: Experimental
-
-        This API is experimental and subject to change or removal
-        in future versions without notice.
 
     Supports both **file-based** skills (discovered from ``SKILL.md`` files)
     and **code-defined** skills (passed as :class:`Skill` instances).
@@ -1180,7 +1156,8 @@ def _validate_skill_metadata(
     if len(name) > MAX_NAME_LENGTH or not VALID_NAME_RE.match(name):
         return (
             f"Skill from '{source}' has an invalid name '{name}': Must be {MAX_NAME_LENGTH} characters or fewer, "
-            "using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen."
+            "using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen "
+            "or contain consecutive hyphens."
         )
 
     if not description or not description.strip():
@@ -1265,6 +1242,17 @@ def _read_and_parse_skill_file(
         return None
 
     name, description = result
+
+    dir_name = Path(skill_dir_path).name
+    if name != dir_name:
+        logger.error(
+            "SKILL.md at '%s' has frontmatter name '%s' that does not match the directory name '%s'; skipping.",
+            skill_file,
+            name,
+            dir_name,
+        )
+        return None
+
     return name, description, content
 
 

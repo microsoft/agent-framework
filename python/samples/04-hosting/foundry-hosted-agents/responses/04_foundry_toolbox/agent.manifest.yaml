@@ -1,0 +1,33 @@
+name: agent-framework-agent-with-foundry-toolbox-responses
+description: >
+  An Agent Framework agent with Foundry Toolbox integration.
+metadata:
+  tags:
+    - Agent Framework
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Streaming
+template:
+  name: agent-framework-agent-with-foundry-toolbox-responses
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  environment_variables:
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
+    - name: TOOLBOX_NAME
+      value: "agent-tools"
+resources:
+  - kind: model
+    id: gpt-4.1-mini
+    name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+  - kind: toolbox
+    name: agent-tools
+    tools:
+      - type: web_search
+        name: web_search
+      - type: code_interpreter
+        name: code_interpreter
+

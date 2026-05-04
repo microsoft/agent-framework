@@ -30,6 +30,20 @@ Once comfortable with these, explore the rest of the samples below.
 
 ## Samples Overview (by directory)
 
+### functional
+
+Write workflows as plain Python async functions — no graph concepts, no executor classes, no edges. Use native control flow (`if`/`else`, loops, `asyncio.gather`) for branching and parallelism.
+
+| Sample | File | Concepts |
+|---|---|---|
+| Basic Pipeline | [functional/basic_pipeline.py](./functional/basic_pipeline.py) | Sequential steps as plain async functions |
+| Basic Streaming Pipeline | [functional/basic_streaming_pipeline.py](./functional/basic_streaming_pipeline.py) | Stream workflow events in real time with `run(stream=True)` |
+| Parallel Pipeline | [functional/parallel_pipeline.py](./functional/parallel_pipeline.py) | Fan-out/fan-in with `asyncio.gather` |
+| Steps and Checkpointing | [functional/steps_and_checkpointing.py](./functional/steps_and_checkpointing.py) | `@step` decorator for per-step checkpointing and observability |
+| Human-in-the-Loop Review | [functional/hitl_review.py](./functional/hitl_review.py) | HITL with `ctx.request_info()` and replay |
+| Agent Integration | [functional/agent_integration.py](./functional/agent_integration.py) | Calling agents inside workflow steps |
+| Naive Group Chat | [functional/naive_group_chat.py](./functional/naive_group_chat.py) | Simple round-robin group chat as a plain loop |
+
 ### agents
 
 | Sample                                 | File                                                                                                           | Concepts                                                                                             |
@@ -41,7 +55,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py)             | Wrap a workflow so it can behave like an agent (reflection pattern)                                  |
 | Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)               | Extend workflow-as-agent with human-in-the-loop capability                                           |
 | Workflow as Agent with Session         | [agents/workflow_as_agent_with_session.py](./agents/workflow_as_agent_with_session.py)                           | Use AgentSession to maintain conversation history across workflow-as-agent invocations                |
-| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
+| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @tool tools |
 
 ### checkpoint
 
@@ -52,6 +66,8 @@ Once comfortable with these, explore the rest of the samples below.
 | Checkpointed Sub-Workflow      | [checkpoint/sub_workflow_checkpoint.py](./checkpoint/sub_workflow_checkpoint.py)                                           | Save and resume a sub-workflow that pauses for human approval                                      |
 | Handoff + Tool Approval Resume | [orchestrations/handoff_with_tool_approval_checkpoint_resume.py](./orchestrations/handoff_with_tool_approval_checkpoint_resume.py) | Handoff workflow that captures tool-call approvals in checkpoints and resumes with human decisions |
 | Workflow as Agent Checkpoint   | [checkpoint/workflow_as_agent_checkpoint.py](./checkpoint/workflow_as_agent_checkpoint.py)                                 | Enable checkpointing when using workflow.as_agent() with checkpoint_storage parameter              |
+| Cosmos DB Checkpoint Storage   | [checkpoint/cosmos_workflow_checkpointing.py](./checkpoint/cosmos_workflow_checkpointing.py)                               | Use `CosmosCheckpointStorage` for durable workflow checkpointing backed by Azure Cosmos DB NoSQL   |
+| Cosmos DB + Foundry Checkpoint | [checkpoint/cosmos_workflow_checkpointing_foundry.py](./checkpoint/cosmos_workflow_checkpointing_foundry.py)               | Multi-agent workflow using `FoundryChatClient` with `CosmosCheckpointStorage` for durable pause/resume |
 
 ### composition
 
@@ -115,7 +131,9 @@ Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magen
 | Sample                           | File                                                                                             | Concepts                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
 | State with Agents                | [state-management/state_with_agents.py](./state-management/state_with_agents.py) | Store in state once and later reuse across agents                 |
-| Workflow Kwargs (Custom Context) | [state-management/workflow_kwargs.py](./state-management/workflow_kwargs.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools |
+| Workflow Kwargs - Global Context | [state-management/workflow_kwargs_global.py](./state-management/workflow_kwargs_global.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools in all agents |
+| Workflow Kwargs - Per Agent | [state-management/workflow_kwargs_per_agent.py](./state-management/workflow_kwargs_per_agent.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools in individual agents |
+
 
 ### visualization
 
@@ -160,19 +178,19 @@ Sequential orchestration uses a few small adapter nodes for plumbing:
   These may appear in event streams (executor_invoked/executor_completed). They're analogous to
   concurrent’s dispatcher and aggregator and can be ignored if you only care about agent activity.
 
-### AzureOpenAIResponsesClient vs AzureAIAgent
+### Why FoundryChatClient?
 
-Workflow and orchestration samples use `AzureOpenAIResponsesClient` rather than the CRUD-style `AzureAIAgent` client. The key difference:
+Workflow and orchestration samples use `FoundryChatClient` because they create agents locally and do not need
+server-managed agent resources. This lightweight, project-backed chat client is a good fit for orchestration
+patterns such as Sequential, Concurrent, Handoff, GroupChat, and Magentic.
 
-- **`AzureOpenAIResponsesClient`** — A lightweight client that uses the underlying Agent Service V2 (Responses API) for non-CRUD-style agents. Orchestrations use this client because agents are created locally and do not require server-side lifecycle management (create/update/delete). This is the recommended client for orchestration patterns (Sequential, Concurrent, Handoff, GroupChat, Magentic).
-
-- **`AzureAIAgent`** — A CRUD-style client for server-managed agents. Use this when you need persistent, server-side agent definitions with features like file search, code interpreter sessions, or thread management provided by the Azure AI Agent Service.
+If you need persistent server-side agent resources, use the hosted-agent flows rather than these workflow samples.
 
 ### Environment Variables
 
-Workflow samples that use `AzureOpenAIResponsesClient` expect:
+Workflow samples that use `FoundryChatClient` expect:
 
-- `AZURE_AI_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
-- `AZURE_AI_MODEL_DEPLOYMENT_NAME` (model deployment name)
+- `FOUNDRY_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
+- `FOUNDRY_MODEL` (model deployment name)
 
 These values are passed directly into the client constructor via `os.getenv()` in sample code.

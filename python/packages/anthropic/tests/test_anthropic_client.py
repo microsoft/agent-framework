@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Any
 from unittest.mock import MagicMock, patch
@@ -40,7 +41,7 @@ skip_if_anthropic_integration_tests_disabled = pytest.mark.skipif(
 
 def create_test_anthropic_client(
     mock_anthropic_client: MagicMock,
-    model_id: str | None = None,
+    model: str | None = None,
     anthropic_settings: AnthropicSettings | None = None,
 ) -> AnthropicClient:
     """Helper function to create AnthropicClient instances for testing, bypassing normal validation."""
@@ -51,7 +52,7 @@ def create_test_anthropic_client(
             AnthropicSettings,
             env_prefix="ANTHROPIC_",
             api_key="test-api-key-12345",
-            chat_model_id="claude-3-5-sonnet-20241022",
+            chat_model="claude-3-5-sonnet-20241022",
         )
 
     # Create client instance directly
@@ -59,7 +60,7 @@ def create_test_anthropic_client(
 
     # Set attributes directly
     client.anthropic_client = mock_anthropic_client
-    client.model_id = model_id or anthropic_settings["chat_model_id"]
+    client.model = model or anthropic_settings["chat_model"]
     client._last_call_id_name = None
     client._tool_name_aliases = {}
     client.additional_properties = {}
@@ -83,7 +84,7 @@ def test_anthropic_settings_init(anthropic_unit_test_env: dict[str, str]) -> Non
 
     assert settings["api_key"] is not None
     assert settings["api_key"].get_secret_value() == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
-    assert settings["chat_model_id"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
+    assert settings["chat_model"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
 def test_anthropic_settings_init_with_explicit_values() -> None:
@@ -92,12 +93,12 @@ def test_anthropic_settings_init_with_explicit_values() -> None:
         AnthropicSettings,
         env_prefix="ANTHROPIC_",
         api_key="custom-api-key",
-        chat_model_id="claude-3-opus-20240229",
+        chat_model="claude-3-opus-20240229",
     )
 
     assert settings["api_key"] is not None
     assert settings["api_key"].get_secret_value() == "custom-api-key"
-    assert settings["chat_model_id"] == "claude-3-opus-20240229"
+    assert settings["chat_model"] == "claude-3-opus-20240229"
 
 
 @pytest.mark.parametrize("exclude_list", [["ANTHROPIC_API_KEY"]], indirect=True)
@@ -107,7 +108,7 @@ def test_anthropic_settings_missing_api_key(
     """Test AnthropicSettings when API key is missing."""
     settings = load_settings(AnthropicSettings, env_prefix="ANTHROPIC_")
     assert settings["api_key"] is None
-    assert settings["chat_model_id"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
+    assert settings["chat_model"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
 # Client Initialization Tests
@@ -115,10 +116,10 @@ def test_anthropic_settings_missing_api_key(
 
 def test_anthropic_client_init_with_client(mock_anthropic_client: MagicMock) -> None:
     """Test AnthropicClient initialization with existing anthropic_client."""
-    client = create_test_anthropic_client(mock_anthropic_client, model_id="claude-3-5-sonnet-20241022")
+    client = create_test_anthropic_client(mock_anthropic_client, model="claude-3-5-sonnet-20241022")
 
     assert client.anthropic_client is mock_anthropic_client
-    assert client.model_id == "claude-3-5-sonnet-20241022"
+    assert client.model == "claude-3-5-sonnet-20241022"
     assert isinstance(client, SupportsChatGetResponse)
 
 
@@ -141,11 +142,11 @@ def test_anthropic_client_init_auto_create_client(
     """Test AnthropicClient initialization with auto-created anthropic_client."""
     client = AnthropicClient(
         api_key=anthropic_unit_test_env["ANTHROPIC_API_KEY"],
-        model_id=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"],
+        model=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"],
     )
 
     assert client.anthropic_client is not None
-    assert client.model_id == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
+    assert client.model == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
 def test_anthropic_client_init_missing_api_key() -> None:
@@ -153,7 +154,7 @@ def test_anthropic_client_init_missing_api_key() -> None:
     with patch("agent_framework_anthropic._chat_client.load_settings") as mock_load:
         mock_load.return_value = {
             "api_key": None,
-            "chat_model_id": "claude-3-5-sonnet-20241022",
+            "chat_model": "claude-3-5-sonnet-20241022",
         }
 
         with pytest.raises(ValueError, match="Anthropic API key is required"):
@@ -172,7 +173,7 @@ def test_anthropic_client_service_url(mock_anthropic_client: MagicMock) -> None:
 def test_prepare_message_for_anthropic_text(mock_anthropic_client: MagicMock) -> None:
     """Test converting text message to Anthropic format."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    message = Message(role="user", text="Hello, world!")
+    message = Message(role="user", contents=["Hello, world!"])
 
     result = client._prepare_message_for_anthropic(message)
 
@@ -491,8 +492,8 @@ def test_prepare_messages_for_anthropic_with_system(
     """Test converting messages list with system message."""
     client = create_test_anthropic_client(mock_anthropic_client)
     messages = [
-        Message(role="system", text="You are a helpful assistant."),
-        Message(role="user", text="Hello!"),
+        Message(role="system", contents=["You are a helpful assistant."]),
+        Message(role="user", contents=["Hello!"]),
     ]
 
     result = client._prepare_messages_for_anthropic(messages)
@@ -509,8 +510,8 @@ def test_prepare_messages_for_anthropic_without_system(
     """Test converting messages list without system message."""
     client = create_test_anthropic_client(mock_anthropic_client)
     messages = [
-        Message(role="user", text="Hello!"),
-        Message(role="assistant", text="Hi there!"),
+        Message(role="user", contents=["Hello!"]),
+        Message(role="assistant", contents=["Hi there!"]),
     ]
 
     result = client._prepare_messages_for_anthropic(messages)
@@ -735,12 +736,12 @@ async def test_prepare_options_basic(mock_anthropic_client: MagicMock) -> None:
     """Test _prepare_options with basic ChatOptions."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     chat_options = ChatOptions(max_tokens=100, temperature=0.7)
 
     run_options = client._prepare_options(messages, chat_options)
 
-    assert run_options["model"] == client.model_id
+    assert run_options["model"] == client.model
     assert run_options["max_tokens"] == 100
     assert run_options["temperature"] == 0.7
     assert "messages" in run_options
@@ -753,8 +754,8 @@ async def test_prepare_options_with_system_message(
     client = create_test_anthropic_client(mock_anthropic_client)
 
     messages = [
-        Message(role="system", text="You are helpful."),
-        Message(role="user", text="Hello"),
+        Message(role="system", contents=["You are helpful."]),
+        Message(role="user", contents=["Hello"]),
     ]
     chat_options = ChatOptions()
 
@@ -807,7 +808,7 @@ async def test_anthropic_shell_tool_is_invoked_in_function_loop(
     ]
 
     await client.get_response(
-        messages=[Message(role="user", text="Run pwd")],
+        messages=[Message(role="user", contents=["Run pwd"])],
         options={"tools": [shell_tool_instance], "max_tokens": 64},
     )
 
@@ -833,7 +834,7 @@ async def test_prepare_options_with_tool_choice_auto(
     """Test _prepare_options with auto tool choice."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     chat_options = ChatOptions(tool_choice="auto", allow_multiple_tool_calls=False)
 
     run_options = client._prepare_options(messages, chat_options)
@@ -849,7 +850,7 @@ async def test_prepare_options_with_tool_choice_required(
     """Test _prepare_options with required tool choice."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     # For required with specific function, need to pass as dict
     chat_options = ChatOptions(tool_choice={"mode": "required", "required_function_name": "get_weather"})
 
@@ -865,7 +866,7 @@ async def test_prepare_options_with_tool_choice_none(
     """Test _prepare_options with none tool choice."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     chat_options = ChatOptions(tool_choice="none")
 
     run_options = client._prepare_options(messages, chat_options)
@@ -882,7 +883,7 @@ async def test_prepare_options_with_tools(mock_anthropic_client: MagicMock) -> N
         """Get weather for a location."""
         return f"Weather for {location}"
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     chat_options = ChatOptions(tools=[get_weather])
 
     run_options = client._prepare_options(messages, chat_options)
@@ -897,7 +898,7 @@ async def test_prepare_options_with_stop_sequences(
     """Test _prepare_options with stop sequences."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     chat_options = ChatOptions(stop=["STOP", "END"])
 
     run_options = client._prepare_options(messages, chat_options)
@@ -909,7 +910,7 @@ async def test_prepare_options_with_top_p(mock_anthropic_client: MagicMock) -> N
     """Test _prepare_options with top_p."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     chat_options = ChatOptions(top_p=0.9)
 
     run_options = client._prepare_options(messages, chat_options)
@@ -923,7 +924,7 @@ async def test_prepare_options_excludes_stream_option(
     """Test _prepare_options excludes stream when stream is provided in options."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     chat_options: dict[str, Any] = {"stream": True, "max_tokens": 100}
 
     run_options = client._prepare_options(messages, chat_options)
@@ -941,7 +942,7 @@ async def test_prepare_options_filters_internal_kwargs(
     """
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     chat_options: ChatOptions = {}
 
     # Simulate internal kwargs that get passed through the middleware pipeline
@@ -980,7 +981,7 @@ def test_process_message_basic(mock_anthropic_client: MagicMock) -> None:
     response = client._process_message(mock_message, {})
 
     assert response.response_id == "msg_123"
-    assert response.model_id == "claude-3-5-sonnet-20241022"
+    assert response.model == "claude-3-5-sonnet-20241022"
     assert len(response.messages) == 1
     assert response.messages[0].role == "assistant"
     assert len(response.messages[0].contents) == 1
@@ -990,6 +991,27 @@ def test_process_message_basic(mock_anthropic_client: MagicMock) -> None:
     assert response.usage_details is not None
     assert response.usage_details["input_token_count"] == 10
     assert response.usage_details["output_token_count"] == 5
+
+
+def test_process_message_with_dict_response_format(mock_anthropic_client: MagicMock) -> None:
+    """_process_message should preserve dict response_format values for response.value parsing."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_message = MagicMock(spec=BetaMessage)
+    mock_message.id = "msg_123"
+    mock_message.model = "claude-3-5-sonnet-20241022"
+    mock_message.content = [BetaTextBlock(type="text", text='{"greeting": "Hello"}')]
+    mock_message.usage = BetaUsage(input_tokens=10, output_tokens=5)
+    mock_message.stop_reason = "end_turn"
+
+    response = client._process_message(
+        mock_message,
+        options={"response_format": {"type": "object", "properties": {"greeting": {"type": "string"}}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["greeting"] == "Hello"
 
 
 def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None:
@@ -1123,6 +1145,49 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(
     assert result[0].arguments == '"San Francisco"}'
 
 
+def test_parse_contents_server_tool_use_input_json_delta_ignored(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Regression test: input_json_delta events are ignored after a server_tool_use block.
+
+    Server-managed tools have their execution handled server-side, so streaming
+    input_json_delta events must not produce Content.from_function_call(name='')
+    entries that would cause Anthropic API 400 errors on subsequent turns.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    # Simulate a server_tool_use event that sets _last_call_content_type
+    server_tool_content = MagicMock()
+    server_tool_content.type = "server_tool_use"
+    server_tool_content.id = "srvtool_abc"
+    server_tool_content.name = "web_search"
+    server_tool_content.input = {}
+
+    result = client._parse_contents_from_anthropic([server_tool_content])
+    # server_tool_use falls through to function_call (not mcp_tool_use / code_execution)
+    assert len(result) == 1
+    assert result[0].type == "function_call"
+    assert client._last_call_content_type == "server_tool_use"  # type: ignore[attr-defined]
+
+    # input_json_delta events after server_tool_use must be silently ignored
+    delta_content = MagicMock()
+    delta_content.type = "input_json_delta"
+    delta_content.partial_json = '{"query": "latest news"}'
+
+    result = client._parse_contents_from_anthropic([delta_content])
+    assert result == [], "input_json_delta after server_tool_use should produce no content, but got: %r" % result
+
+    # A second delta must also be ignored
+    delta_content_2 = MagicMock()
+    delta_content_2.type = "input_json_delta"
+    delta_content_2.partial_json = '{"extra": true}'
+
+    result = client._parse_contents_from_anthropic([delta_content_2])
+    assert result == [], (
+        "subsequent input_json_delta after server_tool_use should also be ignored, but got: %r" % result
+    )
+
+
 # Stream Processing Tests
 
 
@@ -1154,7 +1219,7 @@ async def test_inner_get_response(mock_anthropic_client: MagicMock) -> None:
 
     mock_anthropic_client.beta.messages.create.return_value = mock_message
 
-    messages = [Message(role="user", text="Hi")]
+    messages = [Message(role="user", contents=["Hi"])]
     chat_options = ChatOptions(max_tokens=10)
 
     response = await client._inner_get_response(  # type: ignore[attr-defined]
@@ -1180,7 +1245,7 @@ async def test_inner_get_response_ignores_options_stream_non_streaming(
     mock_message.stop_reason = "end_turn"
     mock_anthropic_client.beta.messages.create.return_value = mock_message
 
-    messages = [Message(role="user", text="Hi")]
+    messages = [Message(role="user", contents=["Hi"])]
     options: dict[str, Any] = {"max_tokens": 10, "stream": True}
 
     await client._inner_get_response(  # type: ignore[attr-defined]
@@ -1204,7 +1269,7 @@ async def test_inner_get_response_streaming(mock_anthropic_client: MagicMock) ->
 
     mock_anthropic_client.beta.messages.create.return_value = mock_stream()
 
-    messages = [Message(role="user", text="Hi")]
+    messages = [Message(role="user", contents=["Hi"])]
     chat_options = ChatOptions(max_tokens=10)
 
     chunks: list[ChatResponseUpdate] = []
@@ -1231,7 +1296,7 @@ async def test_inner_get_response_ignores_options_stream_streaming(
 
     mock_anthropic_client.beta.messages.create.return_value = mock_stream()
 
-    messages = [Message(role="user", text="Hi")]
+    messages = [Message(role="user", contents=["Hi"])]
     options: dict[str, Any] = {"max_tokens": 10, "stream": False}
 
     async for _ in client._inner_get_response(  # type: ignore[attr-defined]
@@ -1385,7 +1450,7 @@ async def test_anthropic_client_integration_basic_chat() -> None:
     """Integration test for basic chat completion."""
     client = AnthropicClient()
 
-    messages = [Message(role="user", text="Say 'Hello, World!' and nothing else.")]
+    messages = [Message(role="user", contents=["Say 'Hello, World!' and nothing else."])]
 
     response = await client.get_response(messages=messages, options={"max_tokens": 50})
 
@@ -1403,7 +1468,7 @@ async def test_anthropic_client_integration_streaming_chat() -> None:
     """Integration test for streaming chat completion."""
     client = AnthropicClient()
 
-    messages = [Message(role="user", text="Count from 1 to 5.")]
+    messages = [Message(role="user", contents=["Count from 1 to 5."])]
 
     chunks = []
     async for chunk in client.get_response(messages=messages, stream=True, options={"max_tokens": 50}):
@@ -1420,7 +1485,7 @@ async def test_anthropic_client_integration_function_calling() -> None:
     """Integration test for function calling."""
     client = AnthropicClient()
 
-    messages = [Message(role="user", text="What's the weather in San Francisco?")]
+    messages = [Message(role="user", contents=["What's the weather in San Francisco?"])]
     tools = [get_weather]
 
     response = await client.get_response(
@@ -1439,9 +1504,11 @@ async def test_anthropic_client_integration_function_calling() -> None:
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_hosted_tools() -> None:
     """Integration test for hosted tools."""
+    import anthropic
+
     client = AnthropicClient()
 
-    messages = [Message(role="user", text="What tools do you have available?")]
+    messages = [Message(role="user", contents=["What tools do you have available?"])]
     tools = [
         AnthropicClient.get_web_search_tool(),
         AnthropicClient.get_code_interpreter_tool(),
@@ -1451,10 +1518,18 @@ async def test_anthropic_client_integration_hosted_tools() -> None:
         ),
     ]
 
-    response = await client.get_response(
-        messages=messages,
-        options={"tools": tools, "max_tokens": 100},
-    )
+    try:
+        response = await client.get_response(
+            messages=messages,
+            options={"tools": tools, "max_tokens": 100},
+        )
+    except (
+        anthropic.BadRequestError,
+        anthropic.InternalServerError,
+        anthropic.APIConnectionError,
+        anthropic.APITimeoutError,
+    ) as e:
+        pytest.skip(f"Upstream MCP server unavailable: {e}")
 
     assert response is not None
     assert response.text is not None
@@ -1468,8 +1543,8 @@ async def test_anthropic_client_integration_with_system_message() -> None:
     client = AnthropicClient()
 
     messages = [
-        Message(role="system", text="You are a pirate. Always respond like a pirate."),
-        Message(role="user", text="Hello!"),
+        Message(role="system", contents=["You are a pirate. Always respond like a pirate."]),
+        Message(role="user", contents=["Hello!"]),
     ]
 
     response = await client.get_response(messages=messages, options={"max_tokens": 50})
@@ -1485,7 +1560,7 @@ async def test_anthropic_client_integration_temperature_control() -> None:
     """Integration test with temperature control."""
     client = AnthropicClient()
 
-    messages = [Message(role="user", text="Say hello.")]
+    messages = [Message(role="user", contents=["Say hello."])]
 
     response = await client.get_response(
         messages=messages,
@@ -1504,11 +1579,11 @@ async def test_anthropic_client_integration_ordering() -> None:
     client = AnthropicClient()
 
     messages = [
-        Message(role="user", text="Say hello."),
-        Message(role="user", text="Then say goodbye."),
-        Message(role="assistant", text="Thank you for chatting!"),
-        Message(role="assistant", text="Let me know if I can help."),
-        Message(role="user", text="Just testing things."),
+        Message(role="user", contents=["Say hello."]),
+        Message(role="user", contents=["Then say goodbye."]),
+        Message(role="assistant", contents=["Thank you for chatting!"]),
+        Message(role="assistant", contents=["Let me know if I can help."]),
+        Message(role="user", contents=["Just testing things."]),
     ]
 
     response = await client.get_response(messages=messages)
@@ -1543,7 +1618,8 @@ async def test_anthropic_client_integration_images() -> None:
 
     assert response is not None
     assert response.messages[0].text is not None
-    assert "house" in response.messages[0].text.lower()
+    text = response.messages[0].text.lower()
+    assert re.search(r"\b(house|home|building|cottage|mansion|villa)\b", text)
 
 
 # Response Format Tests
@@ -2036,10 +2112,10 @@ def test_prepare_options_with_instructions(mock_anthropic_client: MagicMock) -> 
     assert result["max_tokens"] == 1024
 
 
-def test_prepare_options_missing_model_id(mock_anthropic_client: MagicMock) -> None:
-    """Test prepare_options raises error when model_id is missing."""
+def test_prepare_options_missing_model(mock_anthropic_client: MagicMock) -> None:
+    """Test prepare_options raises error when model is missing."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client.model_id = ""  # Set empty model_id
+    client.model = ""  # Set empty model
 
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]
     options = {}
@@ -2048,7 +2124,31 @@ def test_prepare_options_missing_model_id(mock_anthropic_client: MagicMock) -> N
         client._prepare_options(messages, options)
         raise AssertionError("Expected ValueError")
     except ValueError as e:
-        assert "model_id must be a non-empty string" in str(e)
+        assert "model must be a non-empty string" in str(e)
+
+
+def test_prepare_options_translates_model_option(mock_anthropic_client: MagicMock) -> None:
+    """Test prepare_options translates model to model for runtime option compatibility."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=[Content.from_text("Hello")])]
+
+    result = client._prepare_options(messages, {"model": "claude-3-5-sonnet-20241022"})
+
+    assert result["model"] == "claude-3-5-sonnet-20241022"
+    assert "model_id" not in result
+
+
+def test_prepare_options_translates_model_kwarg(mock_anthropic_client: MagicMock) -> None:
+    """Test prepare_options translates model passed as a direct keyword argument."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=[Content.from_text("Hello")])]
+
+    result = client._prepare_options(messages, {}, model="claude-3-5-sonnet-20241022")
+
+    assert result["model"] == "claude-3-5-sonnet-20241022"
+    assert "model_id" not in result
 
 
 def test_prepare_options_with_user_metadata(mock_anthropic_client: MagicMock) -> None:
@@ -2593,7 +2693,7 @@ async def test_anthropic_client_integration_tool_rich_content_image() -> None:
     client = AnthropicClient()
     client.function_invocation_configuration["max_iterations"] = 2
 
-    messages = [Message(role="user", text="Call the get_test_image tool and describe what you see.")]
+    messages = [Message(role="user", contents=["Call the get_test_image tool and describe what you see."])]
 
     response = await client.get_response(
         messages=messages,

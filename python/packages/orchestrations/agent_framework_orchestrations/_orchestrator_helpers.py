@@ -24,6 +24,11 @@ def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]
     - Drops all non-text content from every message.
     - Drops messages with no remaining text content.
     - Preserves original roles and author names for retained text messages.
+
+    Args:
+        conversation: Full conversation history, including tool-control content
+    Returns:
+        Cleaned conversation history with only text content, suitable for handoff routing
     """
     cleaned: list[Message] = []
     for msg in conversation:
@@ -31,12 +36,14 @@ def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]
         # (function_call/function_result/approval payloads) is runtime-only and
         # must not be replayed in future model turns.
         text_parts = [content.text for content in msg.contents if content.type == "text" and content.text]
+        # TODO(@taochen): This is a simplified check that considers any non-text content as a tool call.
+        # We need to enhance this logic to specifically identify tool related contents.
         if not text_parts:
             continue
 
         msg_copy = Message(
             role=msg.role,
-            text=" ".join(text_parts),
+            contents=[" ".join(text_parts)],
             author_name=msg.author_name,
             additional_properties=dict(msg.additional_properties) if msg.additional_properties else None,
         )
@@ -66,6 +73,6 @@ def create_completion_message(
     message_text = text or f"Conversation {reason}."
     return Message(
         role="assistant",
-        text=message_text,
+        contents=[message_text],
         author_name=author_name,
     )

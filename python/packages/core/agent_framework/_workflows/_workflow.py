@@ -10,14 +10,14 @@ import json
 import logging
 import types
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import Any, Literal, overload
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, overload
 
+from .._sessions import ContextProvider
 from .._types import ResponseStream
 from ..observability import OtelAttr, capture_exception, create_workflow_span
-from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
-from ._const import DEFAULT_MAX_ITERATIONS, WORKFLOW_RUN_KWARGS_KEY
+from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
     EdgeGroup,
     FanOutEdgeGroup,
@@ -34,6 +34,9 @@ from ._runner import Runner
 from ._runner_context import RunnerContext
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
+
+if TYPE_CHECKING:
+    from ._agent import WorkflowAgent
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +183,6 @@ class Workflow(DictConvertible):
         description: str | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         output_executors: list[str] | None = None,
-        **kwargs: Any,
     ):
         """Initialize the workflow with a list of edges.
 
@@ -198,7 +200,6 @@ class Workflow(DictConvertible):
                 WorkflowBuilder, this will be the description of the builder.
             output_executors: Optional list of executor IDs whose outputs will be considered workflow outputs.
                               If None or empty, all executor outputs are treated as workflow outputs.
-            kwargs: Additional keyword arguments. Unused in this implementation.
         """
         self.edge_groups = list(edge_groups)
         self.executors = dict(executors)
@@ -298,9 +299,10 @@ class Workflow(DictConvertible):
     async def _run_workflow_with_tracing(
         self,
         initial_executor_fn: Callable[[], Awaitable[None]] | None = None,
-        reset_context: bool = True,
+        is_continuation: bool = False,
         streaming: bool = False,
-        run_kwargs: dict[str, Any] | None = None,
+        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Private method to run workflow with proper tracing.
 
@@ -308,10 +310,19 @@ class Workflow(DictConvertible):
         of external callers to maintain context across different workflow runs.
 
         Args:
-            initial_executor_fn: Optional function to execute initial executor
-            reset_context: Whether to reset the context for a new run
-            streaming: Whether to enable streaming mode for agents
-            run_kwargs: Optional kwargs to store in State for agent invocations
+            initial_executor_fn: Optional function to execute initial executor.
+            is_continuation: True when this run is a continuation of prior
+                work (a checkpoint restore or a responses-only replay) rather
+                than a fresh new turn delivered via the start executor with
+                ``message=...``. Continuations preserve per-run accounting
+                (iteration counter and run kwargs) from the prior turn;
+                fresh-message runs reset them. Shared workflow state is
+                preserved in both cases.
+            streaming: Whether to enable streaming mode for agents.
+            function_invocation_kwargs: Optional kwargs to store in State for function
+                invocations in subagents.
+            client_kwargs: Optional kwargs to store in State for chat client
+                invocations in subagents.
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
@@ -335,28 +346,48 @@ class Workflow(DictConvertible):
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
                     started = WorkflowEvent.started()
-                yield started
+                yield started  # noqa: RUF070
                 with _framework_event_origin():
                     in_progress = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
-                yield in_progress
+                yield in_progress  # noqa: RUF070
 
-                # Reset context for a new run if supported
-                if reset_context:
+                # Per-run reset for fresh-message runs only. We deliberately
+                # do NOT clear shared workflow state (`_state.clear()`) or the
+                # runner context's in-flight messages (`reset_for_new_run()`)
+                # here - state and pending work persist across `run()` calls
+                # so that a `WorkflowAgent` can deliver multi-turn input on
+                # the same instance and have prior turns' context survive.
+                # Iteration counting and per-run kwargs ARE per-run though,
+                # so they're reset here.
+                if not is_continuation:
                     self._runner.reset_iteration_count()
-                    self._runner.context.reset_for_new_run()
-                    self._state.clear()
 
                 # Store run kwargs in State so executors can access them.
-                # Only overwrite when new kwargs are explicitly provided or state was
-                # just cleared (fresh run). On continuation (reset_context=False) with
-                # no new kwargs, preserve the kwargs from the original run.
-                if run_kwargs is not None:
-                    self._state.set(WORKFLOW_RUN_KWARGS_KEY, run_kwargs)
-                elif reset_context:
+                # Per-run kwargs semantics:
+                # - On a fresh message run, prior kwargs go away (set to {}
+                #   by default, or to the new kwargs if provided). This
+                #   prevents stale kwargs from a prior turn leaking into the
+                #   current turn.
+                # - On a continuation (checkpoint restore or responses), the
+                #   prior run's kwargs are preserved unless the caller
+                #   explicitly provides new kwargs.
+                if function_invocation_kwargs is not None or client_kwargs is not None:
+                    combined_kwargs: dict[str, Any] = {}
+                    if function_invocation_kwargs is not None:
+                        combined_kwargs["function_invocation_kwargs"] = self._resolve_invocation_kwargs(
+                            function_invocation_kwargs, "function_invocation_kwargs"
+                        )
+                    if client_kwargs is not None:
+                        combined_kwargs["client_kwargs"] = self._resolve_invocation_kwargs(
+                            client_kwargs, "client_kwargs"
+                        )
+                    self._state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
+                elif not is_continuation:
                     self._state.set(WORKFLOW_RUN_KWARGS_KEY, {})
                 self._state.commit()  # Commit immediately so kwargs are available
 
-                # Set streaming mode after reset
+                # Set streaming mode (always set explicitly per run since
+                # reset_for_new_run() no longer runs to clear it).
                 self._runner_context.set_streaming(streaming)
 
                 # Execute initial setup if provided
@@ -374,7 +405,7 @@ class Workflow(DictConvertible):
                         emitted_in_progress_pending = True
                         with _framework_event_origin():
                             pending_status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
-                        yield pending_status
+                        yield pending_status  # noqa: RUF070
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     with _framework_event_origin():
@@ -395,10 +426,10 @@ class Workflow(DictConvertible):
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
-                yield failed_event
+                yield failed_event  # noqa: RUF070
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
-                yield failed_status
+                yield failed_status  # noqa: RUF070
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
                     attributes={
@@ -459,10 +490,11 @@ class Workflow(DictConvertible):
         message: Any | None = None,
         *,
         stream: Literal[True],
-        responses: dict[str, Any] | None = None,
+        responses: Mapping[str, Any] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> ResponseStream[WorkflowEvent, WorkflowRunResult]: ...
 
     @overload
@@ -471,11 +503,12 @@ class Workflow(DictConvertible):
         message: Any | None = None,
         *,
         stream: Literal[False] = ...,
-        responses: dict[str, Any] | None = None,
+        responses: Mapping[str, Any] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[WorkflowRunResult]: ...
 
     def run(
@@ -483,11 +516,12 @@ class Workflow(DictConvertible):
         message: Any | None = None,
         *,
         stream: bool = False,
-        responses: dict[str, Any] | None = None,
+        responses: Mapping[str, Any] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> ResponseStream[WorkflowEvent, WorkflowRunResult] | Awaitable[WorkflowRunResult]:
         """Run the workflow, optionally streaming events.
 
@@ -509,7 +543,12 @@ class Workflow(DictConvertible):
                 (restore then send responses).
             checkpoint_storage: Runtime checkpoint storage.
             include_status_events: Whether to include status events (non-streaming only).
-            **kwargs: Additional keyword arguments to pass through to agent invocations.
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations in
+                subagents. Either a mapping for agent name or agent executor id to kwargs,
+                or a flat mapping of kwargs for all tool invocations.
+            client_kwargs: Keyword arguments forwarded to chat client calls in
+                subagents. Either a mapping for agent name or agent executor id to kwargs,
+                or a flat mapping of kwargs for all chat client calls.
 
         Returns:
             When stream=True: A ResponseStream[WorkflowEvent, WorkflowRunResult] for
@@ -530,7 +569,8 @@ class Workflow(DictConvertible):
                 checkpoint_id=checkpoint_id,
                 checkpoint_storage=checkpoint_storage,
                 streaming=stream,
-                **kwargs,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
             ),
             finalizer=functools.partial(self._finalize_events, include_status_events=include_status_events),
             cleanup_hooks=[
@@ -546,11 +586,12 @@ class Workflow(DictConvertible):
         self,
         message: Any | None = None,
         *,
-        responses: dict[str, Any] | None = None,
+        responses: Mapping[str, Any] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         streaming: bool = False,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Single core execution path for both streaming and non-streaming modes.
 
@@ -561,19 +602,34 @@ class Workflow(DictConvertible):
         if checkpoint_storage is not None:
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
 
-        initial_executor_fn, reset_context = self._resolve_execution_mode(
-            message, responses, checkpoint_id, checkpoint_storage
-        )
+        # Async validation: a fresh-message run is only allowed when the
+        # runner context has fully drained from any prior run. If it still
+        # has in-flight executor messages, the prior run didn't complete -
+        # the caller must either resume from a checkpoint or wait for the
+        # prior run to drain. (Pending request_info events are intentionally
+        # NOT blocked here: a follow-up run with message=... is the normal
+        # way to deliver a response to those pending requests, e.g. via
+        # WorkflowAgent._process_pending_requests.)
+        # NOTE: _validate_run_params already enforces that ``message`` is
+        # mutually exclusive with both ``checkpoint_id`` and ``responses``,
+        # so we don't need to re-check those here.
+        if message is not None and await self._runner.context.has_messages():
+            raise RuntimeError(
+                "Cannot start a new run with 'message' while in-flight executor "
+                "messages remain from a prior run. Resume from a checkpoint "
+                "(checkpoint_id=...) or wait for the prior run to complete. "
+                "Workflows that need to recover from a mid-run failure must use "
+                "checkpointing; there is no in-process recovery path."
+            )
+
+        initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
 
         async for event in self._run_workflow_with_tracing(
             initial_executor_fn=initial_executor_fn,
-            reset_context=reset_context,
+            is_continuation=(message is None),
             streaming=streaming,
-            # Empty **kwargs (no caller-provided kwargs) is collapsed to None so that
-            # continuation calls without explicit kwargs preserve the original run's kwargs.
-            # A non-empty kwargs dict (even one with empty values like {"key": {}})
-            # is passed through and will overwrite stored kwargs.
-            run_kwargs=kwargs if kwargs else None,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
         ):
             if event.type == "output" and not self._should_yield_output_event(event):
                 continue
@@ -624,7 +680,7 @@ class Workflow(DictConvertible):
     @staticmethod
     def _validate_run_params(
         message: Any | None,
-        responses: dict[str, Any] | None,
+        responses: Mapping[str, Any] | None,
         checkpoint_id: str | None,
     ) -> None:
         """Validate parameter combinations for run().
@@ -650,15 +706,11 @@ class Workflow(DictConvertible):
     def _resolve_execution_mode(
         self,
         message: Any | None,
-        responses: dict[str, Any] | None,
+        responses: Mapping[str, Any] | None,
         checkpoint_id: str | None,
         checkpoint_storage: CheckpointStorage | None,
-    ) -> tuple[Callable[[], Awaitable[None]], bool]:
-        """Determine the initial executor function and reset_context flag based on parameters.
-
-        Returns:
-            A tuple of (initial_executor_fn, reset_context).
-        """
+    ) -> Callable[[], Awaitable[None]]:
+        """Determine the initial executor function based on parameters."""
         if responses is not None:
             if checkpoint_id is not None:
                 # Combined: restore checkpoint then send responses
@@ -668,19 +720,15 @@ class Workflow(DictConvertible):
             else:
                 # Send responses only (requires pending requests in workflow state)
                 initial_executor_fn = functools.partial(self._send_responses_internal, responses)
-            return initial_executor_fn, False
+            return initial_executor_fn
         # Regular run or checkpoint restoration
-        initial_executor_fn = functools.partial(
-            self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage
-        )
-        reset_context = message is not None and checkpoint_id is None
-        return initial_executor_fn, reset_context
+        return functools.partial(self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage)
 
     async def _restore_and_send_responses(
         self,
         checkpoint_id: str,
         checkpoint_storage: CheckpointStorage | None,
-        responses: dict[str, Any],
+        responses: Mapping[str, Any],
     ) -> None:
         """Restore from a checkpoint then send responses to pending requests.
 
@@ -700,7 +748,7 @@ class Workflow(DictConvertible):
         await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
         await self._send_responses_internal(responses)
 
-    async def _send_responses_internal(self, responses: dict[str, Any]) -> None:
+    async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:
         """Internal method to validate and send responses to the executors."""
         pending_requests = await self._runner_context.get_pending_request_info_events()
         if not pending_requests:
@@ -738,6 +786,44 @@ class Workflow(DictConvertible):
         if executor_id not in self.executors:
             raise ValueError(f"Executor with ID {executor_id} not found.")
         return self.executors[executor_id]
+
+    def _resolve_invocation_kwargs(
+        self,
+        kwargs: Mapping[str, Any],
+        param_name: str,
+    ) -> dict[str, Any]:
+        """Resolve invocation kwargs into a normalized per-executor or global format.
+
+        Detects whether the provided kwargs dict uses per-executor targeting by checking
+        if any top-level key matches a known executor ID in the workflow. If at least one
+        key matches, all entries are treated as per-executor. Otherwise the dict is treated
+        as global kwargs that apply to every executor.
+
+        Args:
+            kwargs: The raw invocation kwargs from the caller.
+            param_name: The parameter name (for logging), e.g. ``"function_invocation_kwargs"``.
+
+        Returns:
+            A dict with either:
+            - ``{"__global__": <original dict>}`` for global kwargs, or
+            - The original dict unchanged for per-executor kwargs.
+        """
+        executor_ids = set(self.executors.keys())
+        matched_ids = kwargs.keys() & executor_ids
+        if matched_ids:
+            logger.info(
+                "Detected per-executor %s: executor ID(s) %s found in keys. "
+                "All entries will be treated as per-executor.",
+                param_name,
+                matched_ids,
+            )
+            return dict(kwargs)
+
+        logger.info(
+            "No executor IDs found in %s keys; treating as global kwargs for all executors.",
+            param_name,
+        )
+        return {GLOBAL_KWARGS_KEY: dict(kwargs)}
 
     def _should_yield_output_event(self, event: WorkflowEvent[Any]) -> bool:
         """Determine if an output event should be yielded as a workflow output.
@@ -854,7 +940,14 @@ class Workflow(DictConvertible):
 
         return list(output_types)
 
-    def as_agent(self, name: str | None = None) -> WorkflowAgent:
+    def as_agent(
+        self,
+        name: str | None = None,
+        *,
+        description: str | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
+        **kwargs: Any,
+    ) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.
 
         The returned agent converts standard agent inputs (strings, Message, or lists of these)
@@ -868,7 +961,10 @@ class Workflow(DictConvertible):
         initialization will fail with a ValueError.
 
         Args:
-            name: Optional name for the agent. If None, a default name will be generated.
+            name: Optional name for the agent. Defaults to workflow name.
+            description: Optional description of the agent. Defaults to workflow description.
+            context_providers: Optional sequence of context providers for the agent.
+            **kwargs: Additional keyword arguments passed to BaseAgent.
 
         Returns:
             A WorkflowAgent instance that wraps this workflow.
@@ -879,4 +975,10 @@ class Workflow(DictConvertible):
         # Import here to avoid circular imports
         from ._agent import WorkflowAgent
 
-        return WorkflowAgent(workflow=self, name=name)
+        return WorkflowAgent(
+            workflow=self,
+            name=name if name is not None else self.name,
+            description=description if description is not None else self.description,
+            context_providers=context_providers,
+            **kwargs,
+        )

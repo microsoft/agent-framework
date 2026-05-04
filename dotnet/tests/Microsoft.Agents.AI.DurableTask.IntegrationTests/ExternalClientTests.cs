@@ -19,6 +19,8 @@ namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 [Trait("Category", "Integration")]
 public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDisposable
 {
+    private const string SkipFlakyTimingTest = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971";
+
     private static readonly TimeSpan s_defaultTimeout = Debugger.IsAttached
         ? TimeSpan.FromMinutes(5)
         : TimeSpan.FromSeconds(60);
@@ -75,7 +77,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         Assert.Contains(agentLogs, log => log.EventId.Name == "LogAgentResponse");
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task CallFunctionToolsAsync()
     {
         int weatherToolInvocationCount = 0;
@@ -127,7 +129,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         Assert.Equal(1, packingListToolInvocationCount);
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task CallLongRunningFunctionToolsAsync()
     {
         [Description("Starts a greeting workflow and returns the workflow instance ID")]

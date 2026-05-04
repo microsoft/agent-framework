@@ -38,7 +38,7 @@ jobs:
             .github
             dotnet
             python
-            workflow-samples
+            declarative-agents
 
       - name: Start Azure Cosmos DB Emulator
         if: runner.os == 'Windows'

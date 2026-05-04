@@ -28,7 +28,7 @@ dotnet/samples/
 │   ├── AGUI/                          # AG-UI protocol samples
 │   ├── DeclarativeAgents/             # Declarative agent definitions
 │   ├── DevUI/                         # DevUI samples
-│   ├── FoundryAgents/                 # Azure AI Foundry agent samples
+│   ├── AgentsWithFoundry/             # Microsoft Foundry samples (FoundryAgent + AsAIAgent extensions)
 │   └── ModelContextProtocol/          # MCP server/client patterns
 ├── 03-workflows/                      # Workflow patterns
 │   ├── _StartHere/                    # Introductory workflow samples
@@ -85,7 +85,7 @@ using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
@@ -97,7 +97,7 @@ AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredent
 
 Environment variables:
 - `AZURE_OPENAI_ENDPOINT` — Your Azure OpenAI endpoint
-- `AZURE_OPENAI_DEPLOYMENT_NAME` — Model deployment name (defaults to `gpt-4o-mini`)
+- `AZURE_OPENAI_DEPLOYMENT_NAME` — Model deployment name (defaults to `gpt-5.4-mini`)
 
 For authentication, run `az login` before running samples.
 

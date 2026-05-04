@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import os
 
 from agent_framework.declarative import AgentFactory
 from azure.identity.aio import AzureCliCredential
@@ -17,7 +18,7 @@ Prerequisites:
 - `pip install agent-framework-foundry agent-framework-declarative --pre`
 - Set the following environment variables in a .env file or your environment:
     - FOUNDRY_PROJECT_ENDPOINT
-    - AZURE_OPENAI_MODEL
+    - FOUNDRY_MODEL
 """
 
 
@@ -30,17 +31,18 @@ instructions: Specialized diagnostic and issue detection agent for systems with 
 description: A agent that performs diagnostics on systems and can escalate issues when critical errors are detected.
 
 model:
-  id: =Env.AZURE_OPENAI_MODEL
-  connection:
-    kind: remote
-    endpoint: =Env.FOUNDRY_PROJECT_ENDPOINT
+  id: =Env.FOUNDRY_MODEL
 """
     # create the agent from the yaml
     async with (
         AzureCliCredential() as credential,
-        AgentFactory(client_kwargs={"credential": credential}, safe_mode=False).create_agent_from_yaml(
-            yaml_definition
-        ) as agent,
+        AgentFactory(
+            client_kwargs={
+                "credential": credential,
+                "project_endpoint": os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            },
+            safe_mode=False,
+        ).create_agent_from_yaml(yaml_definition) as agent,
     ):
         response = await agent.run("What can you do for me?")
         print("Agent response:", response.text)

@@ -268,6 +268,19 @@ def executor(
             forward references. When provided, takes precedence over introspection from the
             ``WorkflowContext`` second generic parameter (W_OutT).
 
+    Warning:
+        When placing a custom ``@executor`` **between** two ``AgentExecutor`` nodes, be
+        careful about the output type.  If the custom executor receives an
+        ``AgentExecutorResponse`` but emits a plain ``str``, the downstream
+        ``AgentExecutor.from_str`` handler is invoked instead of ``from_response``.
+        This resets the conversation context because only the new string is added to
+        the cache and all prior messages from the upstream agent are lost.
+
+        To preserve the full conversation, use
+        ``AgentExecutorResponse.with_text(new_text)`` to create a new response that
+        keeps the prior history, and set ``output=AgentExecutorResponse`` on the
+        decorator.
+
     Returns:
         A FunctionExecutor instance that can be wired into a Workflow.
 
@@ -325,10 +338,25 @@ def _validate_function_signature(
     if not skip_message_annotation and message_param.annotation == inspect.Parameter.empty:
         raise ValueError(f"Function instance {func.__name__} must have a type annotation for the message parameter")
 
-    type_hints = typing.get_type_hints(func)
+    # Resolve string annotations from `from __future__ import annotations`.
+    # Fall back to raw annotations if resolution fails (e.g. unresolvable forward refs,
+    # AttributeError, or RecursionError), so registration failures are easier to diagnose.
+    try:
+        type_hints = typing.get_type_hints(func)
+    except (NameError, AttributeError, RecursionError):
+        type_hints = {p.name: p.annotation for p in params}
     message_type = type_hints.get(message_param.name, message_param.annotation)
     if message_type == inspect.Parameter.empty:
         message_type = None
+
+    # Reject unresolved TypeVar in message annotation -- these are not supported
+    # for workflow type validation and must be replaced with concrete types.
+    if not skip_message_annotation and isinstance(message_type, typing.TypeVar):
+        raise ValueError(
+            f"Function instance {func.__name__} has an unresolved TypeVar '{message_type}' as its message type "
+            "annotation. Generic TypeVar annotations are not supported for workflow type validation. "
+            "Use @executor(input=<concrete_type>, output=<concrete_type>) to specify explicit types."
+        )
 
     # Check if there's a context parameter
     if len(params) == 2:

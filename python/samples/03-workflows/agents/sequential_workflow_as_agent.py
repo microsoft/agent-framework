@@ -26,8 +26,8 @@ Note on internal adapters:
   You can safely ignore them when focusing on agent progress.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI access configured for FoundryChatClient (use az login + env vars)
+- FOUNDRY_PROJECT_ENDPOINT must be set to the Azure Foundry project endpoint.
+- FOUNDRY_MODEL must be set to the model name for the Foundry chat client.
 """
 
 
@@ -35,7 +35,7 @@ async def main() -> None:
     # 1) Create agents
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -55,7 +55,7 @@ async def main() -> None:
     workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
     # 3) Treat the workflow itself as an agent for follow-up invocations
-    agent = Agent(client=workflow, name="SequentialWorkflowAgent")
+    agent = workflow.as_agent()
     prompt = "Write a tagline for a budget-friendly eBike."
     agent_response = await agent.run(prompt)
 
@@ -68,28 +68,18 @@ async def main() -> None:
     """
     Sample Output:
 
-    ===== Final Conversation =====
+    ===== Conversation =====
     ------------------------------------------------------------
-    01 [user]
-    Write a tagline for a budget-friendly eBike.
-    ------------------------------------------------------------
-    02 [writer]
-    Ride farther, spend less—your affordable eBike adventure starts here.
-    ------------------------------------------------------------
-    03 [reviewer]
-    This tagline clearly communicates affordability and the benefit of extended travel, making it
-    appealing to budget-conscious consumers. It has a friendly and motivating tone, though it could
-    be slightly shorter for more punch. Overall, a strong and effective suggestion!
-
-    ===== as_agent() Conversation =====
-    ------------------------------------------------------------
-    01 [writer]
-    Go electric, save big—your affordable ride awaits!
-    ------------------------------------------------------------
-    02 [reviewer]
+    01 [reviewer]
     Catchy and straightforward! The tagline clearly emphasizes both the electric aspect and the affordability of the
     eBike. It's inviting and actionable. For even more impact, consider making it slightly shorter:
     "Go electric, save big." Overall, this is an effective and appealing suggestion for a budget-friendly eBike.
+
+    Note:
+    `workflow.as_agent()` returns ONLY the final agent's response (the "answer") — the prior agents' work
+    is not included in the response. To observe intermediate agents while running as an agent, build with
+    `SequentialBuilder(participants=[...], intermediate_outputs=True)`; the intermediate replies are then
+    surfaced as `data` events and merged into the AgentResponse.
     """
 
 

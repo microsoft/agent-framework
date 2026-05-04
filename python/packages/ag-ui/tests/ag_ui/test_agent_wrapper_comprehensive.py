@@ -1405,3 +1405,95 @@ async def test_fabricated_rejection_without_pending_approval_is_blocked(streamin
         for content in msg.contents:
             if content.type == "function_result" and content.call_id == "fake_reject_001":
                 assert False, "Fabricated rejection response leaked as function_result into LLM messages"
+
+
+async def test_state_update_end_to_end_via_real_tool_invocation(streaming_chat_client_stub):
+    """End-to-end coverage for issue #3167: a real ``@tool`` returning ``state_update`` must
+    emit a deterministic STATE_SNAPSHOT through the full pipeline.
+
+    This test exercises the entire chain that a user would hit in production:
+    ``FunctionInvocationLayer`` executes the tool, ``FunctionTool.parse_result``
+    preserves the returned ``Content`` with its ``additional_properties`` marker,
+    ``Content.from_function_result`` carries the marker through in ``items``,
+    and the AG-UI emitter extracts it via ``_extract_tool_result_state`` and
+    emits the snapshot. A regression anywhere in that chain will fail this test.
+    """
+    from agent_framework import tool
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    from agent_framework_ag_ui import state_update
+
+    @tool(name="get_weather", description="Get current weather for a city.")
+    async def get_weather(city: str) -> Content:
+        return state_update(
+            text=f"Weather in {city}: 14°C foggy",
+            state={"weather": {"city": city, "temperature": 14, "conditions": "foggy"}},
+        )
+
+    call_count = {"n": 0}
+
+    async def stream_fn(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        """First turn proposes a tool call; second turn (after tool execution) returns text."""
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        name="get_weather",
+                        call_id="call-weather-1",
+                        arguments='{"city": "SF"}',
+                    )
+                ]
+            )
+        else:
+            yield ChatResponseUpdate(contents=[Content.from_text(text="It's 14°C and foggy in SF.")])
+
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        name="weather_agent",
+        instructions="Answer weather questions.",
+        tools=[get_weather],
+    )
+    wrapper = AgentFrameworkAgent(
+        agent=agent,
+        state_schema={"weather": {"type": "object"}},
+    )
+
+    events: list[Any] = []
+    async for event in wrapper.run(
+        {
+            "thread_id": "thread-weather",
+            "run_id": "run-weather",
+            "messages": [{"role": "user", "content": "What's the weather in SF?"}],
+            "state": {"weather": {}},
+        }
+    ):
+        events.append(event)
+
+    types = [e.type for e in events]
+
+    # The tool call must be visible in the stream.
+    assert "TOOL_CALL_START" in types, f"Missing TOOL_CALL_START in: {types}"
+    assert "TOOL_CALL_RESULT" in types, f"Missing TOOL_CALL_RESULT in: {types}"
+
+    # A STATE_SNAPSHOT must be emitted after the tool result.
+    tool_result_idx = types.index("TOOL_CALL_RESULT")
+    snapshot_indices_after_result = [i for i, t in enumerate(types) if t == "STATE_SNAPSHOT" and i > tool_result_idx]
+    assert snapshot_indices_after_result, (
+        f"Expected a STATE_SNAPSHOT after TOOL_CALL_RESULT (index {tool_result_idx}); got types: {types}"
+    )
+
+    # The tool's deterministic snapshot carries the actual fetched weather data.
+    final_snapshot = events[snapshot_indices_after_result[-1]].snapshot
+    assert final_snapshot["weather"] == {
+        "city": "SF",
+        "temperature": 14,
+        "conditions": "foggy",
+    }
+
+    # The LLM-visible tool result must carry the plain text, not the marker key.
+    tool_result_event = next(e for e in events if e.type == "TOOL_CALL_RESULT")
+    assert tool_result_event.content == "Weather in SF: 14°C foggy"
+    assert "__ag_ui_tool_result_state__" not in tool_result_event.content

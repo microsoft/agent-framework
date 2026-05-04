@@ -6,22 +6,30 @@ import base64
 import struct
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from copy import copy
-from typing import Any, ClassVar, Generic, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, overload
 
 from agent_framework._clients import BaseEmbeddingClient
-from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
+from agent_framework._settings import SecretString
+from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
 from agent_framework.observability import EmbeddingTelemetryLayer
-from openai import AsyncOpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI
 
-from ._shared import OpenAISettings, get_api_key
+from ._shared import AzureTokenProvider, load_openai_service_settings
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+
+if TYPE_CHECKING:
+    from azure.core.credentials import TokenCredential
+    from azure.core.credentials_async import AsyncTokenCredential
+
+    AzureCredentialTypes = TokenCredential | AsyncTokenCredential
+
+
+DEFAULT_AZURE_OPENAI_EMBEDDING_API_VERSION = "2024-10-21"
 
 
 class OpenAIEmbeddingOptions(EmbeddingGenerationOptions, total=False):
@@ -61,95 +69,181 @@ class RawOpenAIEmbeddingClient(
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
 
+    @overload
     def __init__(
         self,
         *,
         model: str | None = None,
-        model_id: str | None = None,
         api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a raw OpenAI embedding client.
 
         Keyword Args:
-            model: OpenAI embedding model name.
-            model_id: Deprecated alias for ``model``.
-            api_key: OpenAI API key, SecretString, or callable returning a key.
-            org_id: OpenAI organization ID.
-            base_url: Custom API base URL.
+            model: Embedding model identifier. When not provided, the constructor reads
+                ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
+                ``OPENAI_API_KEY``. A callable API key is also supported.
+            org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
+                ``OPENAI_ORG_ID``.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``OPENAI_BASE_URL``.
             default_headers: Additional HTTP headers.
-            async_client: Pre-configured AsyncOpenAI client (skips client creation).
-            env_file_path: Path to .env file for settings.
-            env_file_encoding: Encoding for .env file.
-            kwargs: Additional keyword arguments forwarded to ``BaseEmbeddingClient``.
+            async_client: Pre-configured OpenAI client.
+            additional_properties: Additional properties stored on the client instance.
+            env_file_path: Optional ``.env`` file that is checked before the process environment
+                for ``OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
         """
-        if model_id is not None and model is None:
-            import warnings
+        ...
 
-            warnings.warn("model_id is deprecated, use model instead", DeprecationWarning, stacklevel=2)
-            model = model_id
+    @overload
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        azure_endpoint: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        api_version: str | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
+        base_url: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize a raw OpenAI embedding client.
 
-        if not async_client:
-            openai_settings = load_settings(
-                OpenAISettings,
-                env_prefix="OPENAI_",
-                api_key=api_key,
-                org_id=org_id,
-                base_url=base_url,
-                embedding_model=model,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
+        Keyword Args:
+            model: Embedding deployment name. When not provided, the constructor reads
+                ``AZURE_OPENAI_EMBEDDING_MODEL`` and then
+                ``AZURE_OPENAI_MODEL``.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
+                reads ``AZURE_OPENAI_ENDPOINT``.
+            credential: Azure credential or token provider for Entra auth.
+            api_version: Azure API version. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_API_VERSION`` and then uses the embedding default.
+            api_key: API key. For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted, but ``credential`` is the preferred
+                Azure auth surface.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_BASE_URL``. Use this instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI.
+            additional_properties: Additional properties stored on the client instance.
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables for ``AZURE_OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
 
-            api_key_value = openai_settings.get("api_key")
-            resolved_model = openai_settings.get("embedding_model") or model
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        org_id: str | None = None,
+        base_url: str | None = None,
+        azure_endpoint: str | None = None,
+        api_version: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize a raw OpenAI embedding client.
 
-            # Only create a client when we have enough configuration.
-            # Subclasses that manage their own client pass no args here
-            if api_key_value:
-                if not resolved_model:
-                    raise ValueError(
-                        "OpenAI embedding model is required. "
-                        "Set via 'model' parameter or 'OPENAI_EMBEDDING_MODEL' environment variable."
-                    )
-                model = resolved_model
+        Keyword Args:
+            model: Embedding model or Azure OpenAI deployment name. When not provided, the
+                constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_MODEL``
+                and then ``AZURE_OPENAI_MODEL``.
+            api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
+                For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key auth.
+                A callable token provider is also accepted for backwards compatibility,
+                but ``credential`` is the preferred Azure auth surface.
+            credential: Azure credential or token provider for Azure OpenAI auth. Passing this
+                is an explicit Azure signal, even when ``OPENAI_API_KEY`` is also configured.
+                Credential objects require the optional ``azure-identity`` package.
+            org_id: OpenAI organization ID. Used only for OpenAI and resolved from
+                ``OPENAI_ORG_ID`` when not provided.
+            base_url: Base URL override. For OpenAI this maps to ``OPENAI_BASE_URL``.
+                For Azure this may be used instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure
+                falls back to ``AZURE_OPENAI_ENDPOINT``.
+            api_version: Azure API version to use for Azure requests. When not provided explicitly,
+                Azure falls back to
+                ``AZURE_OPENAI_API_VERSION`` and then the embedding default.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI.
+            additional_properties: Additional properties stored on the client instance.
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
+                lookups.
+            env_file_encoding: Encoding for the ``.env`` file.
 
-                resolved_api_key = get_api_key(api_key_value)
+        Notes:
+            Environment resolution precedence is:
 
-                # Merge APP_INFO into the headers
-                merged_headers = dict(copy(default_headers)) if default_headers else {}
-                if APP_INFO:
-                    merged_headers.update(APP_INFO)
-                    merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
+            1. Explicit Azure inputs (``azure_endpoint`` or ``credential``)
+            2. Explicit OpenAI API key or ``OPENAI_API_KEY``
+            3. Azure environment fallback
 
-                client_args: dict[str, Any] = {"api_key": resolved_api_key, "default_headers": merged_headers}
-                if resolved_org_id := openai_settings.get("org_id"):
-                    client_args["organization"] = resolved_org_id
-                if resolved_base_url := openai_settings.get("base_url"):
-                    client_args["base_url"] = resolved_base_url
+            OpenAI reads ``OPENAI_API_KEY``, ``OPENAI_EMBEDDING_MODEL``,
+            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure reads
+            ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_MODEL``,
+            ``AZURE_OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
+        """
+        settings, client, use_azure_client = load_openai_service_settings(
+            model=model,
+            api_key=api_key,
+            credential=credential,
+            org_id=org_id,
+            base_url=base_url,
+            endpoint=azure_endpoint,
+            api_version=api_version,
+            default_azure_api_version=DEFAULT_AZURE_OPENAI_EMBEDDING_API_VERSION,
+            default_headers=default_headers,
+            client=async_client,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            openai_model_fields=("embedding_model", "model"),
+            azure_model_fields=("embedding_model", "model"),
+        )
 
-                async_client = AsyncOpenAI(**client_args)
-
-        self.client = async_client
-        self.model: str | None = model.strip() if model else None
+        self.client = client
+        resolved_model = settings.get("model")
+        self.model: str | None = resolved_model.strip() if isinstance(resolved_model, str) and resolved_model else None
 
         # Store configuration for serialization
-        self.org_id = org_id
-        self.base_url = str(base_url) if base_url else None
+        self.org_id = settings.get("org_id")
+        self.base_url = settings.get("base_url")
+        self.azure_endpoint = settings.get("endpoint")
+        self.api_version = settings.get("api_version")
         if default_headers:
             self.default_headers: dict[str, Any] | None = {
                 k: v for k, v in default_headers.items() if k != USER_AGENT_KEY
             }
         else:
             self.default_headers = None
+        if use_azure_client:
+            self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
-        super().__init__(**kwargs)
+        super().__init__(additional_properties=additional_properties)
 
     def service_url(self) -> str:
         """Get the URL of the service."""
@@ -177,8 +271,7 @@ class RawOpenAIEmbeddingClient(
             return GeneratedEmbeddings([], options=options)  # type: ignore
 
         opts: dict[str, Any] = options or {}  # type: ignore
-        # backward compat: accept model_id in options
-        model = opts.get("model") or opts.get("model_id") or self.model
+        model = opts.get("model") or self.model
         if not model:
             raise ValueError("model is required")
 
@@ -225,45 +318,11 @@ class OpenAIEmbeddingClient(
     RawOpenAIEmbeddingClient[OpenAIEmbeddingOptionsT],
     Generic[OpenAIEmbeddingOptionsT],
 ):
-    """OpenAI embedding client with telemetry support.
-
-    Keyword Args:
-        model: The embedding model (e.g. "text-embedding-3-small").
-            Can also be set via environment variable OPENAI_EMBEDDING_MODEL.
-        model_id: Deprecated alias for ``model``.
-        api_key: OpenAI API key.
-            Can also be set via environment variable OPENAI_API_KEY.
-        org_id: OpenAI organization ID.
-        default_headers: Additional HTTP headers.
-        async_client: Pre-configured AsyncOpenAI client.
-        base_url: Custom API base URL.
-        otel_provider_name: Override the OpenTelemetry provider name for telemetry.
-        env_file_path: Path to .env file for settings.
-        env_file_encoding: Encoding for .env file.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework.openai import OpenAIEmbeddingClient
-
-            # Using environment variables
-            # Set OPENAI_API_KEY=sk-...
-            # Set OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-            client = OpenAIEmbeddingClient()
-
-            # Or passing parameters directly
-            client = OpenAIEmbeddingClient(
-                model="text-embedding-3-small",
-                api_key="sk-...",
-            )
-
-            # Generate embeddings
-            result = await client.get_embeddings(["Hello, world!"])
-            print(result[0].vector)
-    """
+    """OpenAI embedding client with telemetry support."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
+    @overload
     def __init__(
         self,
         *,
@@ -277,27 +336,165 @@ class OpenAIEmbeddingClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize an OpenAI embedding client."""
+        """Initialize an OpenAI embedding client.
+
+        Keyword Args:
+            model: Embedding model identifier. When not provided, the constructor reads
+                ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
+                ``OPENAI_API_KEY``. A callable API key is also supported.
+            org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
+                ``OPENAI_ORG_ID``.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured OpenAI client.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``OPENAI_BASE_URL``.
+            otel_provider_name: Optional telemetry provider name override.
+            env_file_path: Optional ``.env`` file that is checked before the process environment
+                for ``OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        azure_endpoint: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        api_version: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        base_url: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
+        otel_provider_name: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an OpenAI embedding client.
+
+        Keyword Args:
+            model: Embedding deployment name. When not provided, the constructor reads
+                ``AZURE_OPENAI_EMBEDDING_MODEL`` and then
+                ``AZURE_OPENAI_MODEL``.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
+                reads ``AZURE_OPENAI_ENDPOINT``.
+            credential: Azure credential or token provider for Entra auth.
+            api_version: Azure API version. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_API_VERSION`` and then uses the embedding default.
+            api_key: API key. For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted, but ``credential`` is the preferred
+                Azure auth surface.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_BASE_URL``. Use this instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI.
+            otel_provider_name: Optional telemetry provider name override.
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables for ``AZURE_OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
+
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
+        org_id: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
+        base_url: str | None = None,
+        azure_endpoint: str | None = None,
+        api_version: str | None = None,
+        otel_provider_name: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an OpenAI embedding client.
+
+        Keyword Args:
+            model: Embedding model or Azure OpenAI deployment name. When not provided, the
+                constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_MODEL``
+                and then ``AZURE_OPENAI_MODEL``.
+            api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
+                For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key auth.
+                A callable token provider is also accepted for backwards compatibility,
+                but ``credential`` is the preferred Azure auth surface.
+            credential: Azure credential or token provider for Azure OpenAI auth. Passing this
+                is an explicit Azure signal, even when ``OPENAI_API_KEY`` is also configured.
+                Credential objects require the optional ``azure-identity`` package.
+            org_id: OpenAI organization ID. Used only for OpenAI and resolved from
+                ``OPENAI_ORG_ID`` when not provided.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI.
+            base_url: Base URL override. For OpenAI this maps to ``OPENAI_BASE_URL``.
+                For Azure this may be used instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure
+                falls back to ``AZURE_OPENAI_ENDPOINT``.
+            api_version: Azure API version to use for Azure requests. When not provided explicitly,
+                Azure falls back to
+                ``AZURE_OPENAI_API_VERSION`` and then the embedding default.
+            otel_provider_name: Override the OpenTelemetry provider name.
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
+                lookups.
+            env_file_encoding: Encoding for the ``.env`` file.
+
+        Notes:
+            Environment resolution precedence is:
+
+            1. Explicit Azure inputs (``azure_endpoint`` or ``credential``)
+            2. Explicit OpenAI API key or ``OPENAI_API_KEY``
+            3. Azure environment fallback
+
+            OpenAI reads ``OPENAI_API_KEY``, ``OPENAI_EMBEDDING_MODEL``,
+            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure reads
+            ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_MODEL``,
+            ``AZURE_OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIEmbeddingClient
+
+                # Using environment variables
+                # Set OPENAI_API_KEY=sk-...
+                # Set OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+                client = OpenAIEmbeddingClient()
+
+                # Or passing OpenAI parameters directly
+                client = OpenAIEmbeddingClient(
+                    model="text-embedding-3-small",
+                    api_key="sk-...",
+                )
+
+                # Or using Azure OpenAI with an Azure credential
+                client = OpenAIEmbeddingClient(
+                    model="text-embedding-3-small",
+                    azure_endpoint="https://example-resource.openai.azure.com/",
+                    credential=my_azure_credential,
+                )
+        """
         super().__init__(
             model=model,
             api_key=api_key,
+            credential=credential,
             org_id=org_id,
             base_url=base_url,
+            azure_endpoint=azure_endpoint,
+            api_version=api_version,
             default_headers=default_headers,
             async_client=async_client,
+            otel_provider_name=otel_provider_name,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        if otel_provider_name is not None:
-            self.OTEL_PROVIDER_NAME = otel_provider_name  # type: ignore[misc]
-
-        # Validate that the client was created successfully (from explicit args or env vars)
-        if self.client is None:
-            raise ValueError(
-                "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
-            )
-        if not self.model:
-            raise ValueError(
-                "OpenAI embedding model is required. "
-                "Set via 'model' parameter or 'OPENAI_EMBEDDING_MODEL' environment variable."
-            )

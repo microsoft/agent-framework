@@ -3,14 +3,18 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 #pragma warning disable SYSLIB1045 // Use GeneratedRegex
 #pragma warning disable RCS1186 // Use Regex instance instead of static method
@@ -51,6 +55,51 @@ public class AgentWorkflowBuilderTests
 
         var noDescriptionAgent = new ChatClientAgent(new MockChatClient(delegate { return new(); }));
         Assert.Throws<ArgumentException>("to", () => handoffs.WithHandoff(agent, noDescriptionAgent));
+
+        var emptyDescriptionAgent = new MockChatClient(delegate { return new(); }).AsAIAgent(description: "");
+        Assert.Throws<ArgumentException>("to", () => handoffs.WithHandoff(agent, emptyDescriptionAgent));
+
+        var emptyNameAgent = new MockChatClient(delegate { return new(); }).AsAIAgent(name: "");
+        Assert.Throws<ArgumentException>("to", () => handoffs.WithHandoff(agent, emptyNameAgent));
+    }
+
+    private sealed class NullLogger : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull
+        {
+            return null;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return false;
+        }
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+        }
+    }
+
+    [Fact]
+    public void BuildHandoffs_DelegatingAIAgent_DoesNotThrow()
+    {
+        DoubleEchoAgent agent = new("agent");
+        HandoffWorkflowBuilder handoffs = AgentWorkflowBuilder.CreateHandoffBuilderWith(agent);
+        Assert.NotNull(handoffs);
+
+        ChatClientAgent instructionsOnlyAgent = new MockChatClient(delegate { return new(); }).AsAIAgent(instructions: "instructions");
+        LoggingAgent delegatingAgent = new(instructionsOnlyAgent, new NullLogger());
+
+        handoffs.WithHandoff(agent, delegatingAgent);
+
+        // get the _targets field from the HandoffWorkflowBuilder (need to use the base type)
+        FieldInfo field = typeof(HandoffWorkflowBuilder).BaseType!.GetField("_targets", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Dictionary<AIAgent, HashSet<HandoffTarget>>? targets = field.GetValue(handoffs) as Dictionary<AIAgent, HashSet<HandoffTarget>>;
+
+        targets.Should().NotBeNull();
+
+        HandoffTarget target = targets[agent].Single();
+        target.Reason.Should().Be("instructions");
     }
 
     [Fact]
@@ -147,7 +196,7 @@ public class AgentWorkflowBuilderTests
         for (int iter = 0; iter < 3; iter++)
         {
             const string UserInput = "abc";
-            (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+            (string updateText, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
 
             Assert.NotNull(result);
             Assert.Equal(numAgents + 1, result.Count);
@@ -225,7 +274,7 @@ public class AgentWorkflowBuilderTests
             barrier.Value = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             remaining.Value = 2;
 
-            (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
+            (string updateText, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
             Assert.NotEmpty(updateText);
             Assert.NotNull(result);
 
@@ -258,7 +307,7 @@ public class AgentWorkflowBuilderTests
             }), description: "nop"))
             .Build();
 
-        (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
+        (string updateText, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
 
         Assert.Equal("Hello from agent1", updateText);
         Assert.NotNull(result);
@@ -296,7 +345,7 @@ public class AgentWorkflowBuilderTests
             .WithHandoff(initialAgent, nextAgent)
             .Build();
 
-        (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
+        (string updateText, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
 
         Assert.Equal("Hello from agent2", updateText);
         Assert.NotNull(result);
@@ -406,7 +455,7 @@ public class AgentWorkflowBuilderTests
             .WithHandoff(secondAgent, thirdAgent)
             .Build();
 
-        (string updateText, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
+        (string updateText, _, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
 
         Assert.Contains("Hello from agent3", updateText);
 
@@ -604,7 +653,7 @@ public class AgentWorkflowBuilderTests
             .WithHandoff(secondAgent, thirdAgent)
             .Build();
 
-        (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
+        (string updateText, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
 
         Assert.Equal("Hello from agent3", updateText);
         Assert.NotNull(result);
@@ -634,6 +683,232 @@ public class AgentWorkflowBuilderTests
         Assert.Contains("thirdAgent", result[5].AuthorName);
     }
 
+    [Fact]
+    public async Task Handoffs_TwoTransfers_SecondAgentUserApproval_ResponseServedByThirdAgentAsync()
+    {
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            ChatMessage message = Assert.Single(messages);
+            Assert.Equal("abc", Assert.IsType<TextContent>(Assert.Single(message.Contents)).Text);
+
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            // Only a handoff function call.
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "initialAgent");
+
+        bool secondAgentInvoked = false;
+
+        const string SomeOtherFunctionCallId = "call2first";
+
+        AIFunction someOtherFunction = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(SomeOtherFunction));
+
+        var secondAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            if (!secondAgentInvoked)
+            {
+                secondAgentInvoked = true;
+                return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent(SomeOtherFunctionCallId, someOtherFunction.Name)]));
+            }
+
+            // Second agent should receive the conversation so far (including previous assistant + tool messages eventually).
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call2", transferFuncName)]));
+        }), name: "secondAgent", description: "The second agent", tools: [someOtherFunction]);
+
+        var thirdAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "Hello from agent3"))),
+            name: "thirdAgent",
+            description: "The third / final agent");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, secondAgent)
+            .WithHandoff(secondAgent, thirdAgent)
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        const ExecutionEnvironment Environment = ExecutionEnvironment.InProcess_Lockstep;
+
+        (string updateText, List<ChatMessage>? result, CheckpointInfo? lastCheckpoint, List<RequestInfoEvent> requests) =
+            await RunWorkflowCheckpointedAsync(workflow, [new ChatMessage(ChatRole.User, "abc")], Environment, checkpointManager);
+
+        Assert.Null(result);
+        Assert.NotNull(requests);
+
+        requests.Should().HaveCount(1);
+        ExternalRequest request = requests[0].Request;
+
+        ToolApprovalRequestContent approvalRequest =
+            request.Data.As<ToolApprovalRequestContent>().Should().NotBeNull()
+                                                              .And.Subject.As<ToolApprovalRequestContent>();
+
+        approvalRequest.ToolCall.CallId.Should().Be(SomeOtherFunctionCallId);
+
+        ExternalResponse response = request.CreateResponse(approvalRequest.CreateResponse(false, "Denied"));
+
+        (updateText, result, _, requests) =
+            await RunWorkflowCheckpointedAsync(workflow, response, Environment, checkpointManager, lastCheckpoint);
+
+        Assert.Equal("Hello from agent3", updateText);
+        Assert.NotNull(result);
+
+        // User + (assistant empty + tool) for each of first two agents + final assistant with text.
+        Assert.Equal(10, result.Count);
+
+        Assert.Equal(ChatRole.User, result[0].Role);
+        Assert.Equal("abc", result[0].Text);
+
+        Assert.Equal(ChatRole.Assistant, result[1].Role);
+        Assert.Equal("", result[1].Text);
+        Assert.Contains("initialAgent", result[1].AuthorName);
+
+        Assert.Equal(ChatRole.Tool, result[2].Role);
+        Assert.Contains("initialAgent", result[2].AuthorName);
+
+        // Non-handoff tool invocation (and user denial)
+        Assert.Equal(ChatRole.Assistant, result[3].Role);
+        Assert.Equal("", result[3].Text);
+        Assert.Contains("secondAgent", result[3].AuthorName);
+
+        Assert.Equal(ChatRole.User, result[4].Role);
+        Assert.Equal("", result[4].Text);
+
+        // Rejected tool call
+        Assert.Equal(ChatRole.Assistant, result[5].Role);
+        Assert.Equal("", result[5].Text);
+        Assert.Contains("secondAgent", result[5].AuthorName);
+
+        Assert.Equal(ChatRole.Tool, result[6].Role);
+        Assert.Contains("secondAgent", result[6].AuthorName);
+
+        // Handoff invocation
+        Assert.Equal(ChatRole.Assistant, result[7].Role);
+        Assert.Equal("", result[7].Text);
+        Assert.Contains("secondAgent", result[7].AuthorName);
+
+        Assert.Equal(ChatRole.Tool, result[8].Role);
+        Assert.Contains("secondAgent", result[8].AuthorName);
+
+        Assert.Equal(ChatRole.Assistant, result[9].Role);
+        Assert.Equal("Hello from agent3", result[9].Text);
+        Assert.Contains("thirdAgent", result[9].AuthorName);
+
+        static bool SomeOtherFunction() => true;
+    }
+
+    [Fact]
+    public async Task Handoffs_TwoTransfers_SecondAgentToolCall_ResponseServedByThirdAgentAsync()
+    {
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            ChatMessage message = Assert.Single(messages);
+            Assert.Equal("abc", Assert.IsType<TextContent>(Assert.Single(message.Contents)).Text);
+
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            // Only a handoff function call.
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "initialAgent");
+
+        bool secondAgentInvoked = false;
+
+        const string SomeOtherFunctionName = "SomeOtherFunction";
+        const string SomeOtherFunctionCallId = "call2first";
+
+        JsonElement otherFunctionSchema = AIFunctionFactory.Create(() => true).JsonSchema;
+        AIFunctionDeclaration someOtherFunction = AIFunctionFactory.CreateDeclaration(SomeOtherFunctionName, "Another function", otherFunctionSchema);
+
+        var secondAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            if (!secondAgentInvoked)
+            {
+                secondAgentInvoked = true;
+                return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent(SomeOtherFunctionCallId, SomeOtherFunctionName)]));
+            }
+
+            // Second agent should receive the conversation so far (including previous assistant + tool messages eventually).
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call2", transferFuncName)]));
+        }), name: "secondAgent", description: "The second agent", tools: [someOtherFunction]);
+
+        var thirdAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "Hello from agent3"))),
+            name: "thirdAgent",
+            description: "The third / final agent");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, secondAgent)
+            .WithHandoff(secondAgent, thirdAgent)
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        const ExecutionEnvironment Environment = ExecutionEnvironment.InProcess_Lockstep;
+
+        (string updateText, List<ChatMessage>? result, CheckpointInfo? lastCheckpoint, List<RequestInfoEvent> requests) =
+            await RunWorkflowCheckpointedAsync(workflow, [new ChatMessage(ChatRole.User, "abc")], Environment, checkpointManager);
+
+        Assert.Null(result);
+        Assert.NotNull(requests);
+
+        requests.Should().HaveCount(1);
+        ExternalRequest request = requests[0].Request;
+
+        FunctionCallContent functionCall = request.Data.As<FunctionCallContent>().Should().NotBeNull()
+                                                                                 .And.Subject.As<FunctionCallContent>();
+
+        functionCall.CallId.Should().Be(SomeOtherFunctionCallId);
+        functionCall.Name.Should().Be(SomeOtherFunctionName);
+
+        ExternalResponse response = request.CreateResponse(new FunctionResultContent(functionCall.CallId, true));
+
+        (updateText, result, _, requests) =
+            await RunWorkflowCheckpointedAsync(workflow, response, Environment, checkpointManager, lastCheckpoint);
+
+        Assert.Equal("Hello from agent3", updateText);
+        Assert.NotNull(result);
+
+        // User + (assistant empty + tool) for each of first two agents + final assistant with text.
+        Assert.Equal(8, result.Count);
+
+        Assert.Equal(ChatRole.User, result[0].Role);
+        Assert.Equal("abc", result[0].Text);
+
+        Assert.Equal(ChatRole.Assistant, result[1].Role);
+        Assert.Equal("", result[1].Text);
+        Assert.Contains("initialAgent", result[1].AuthorName);
+
+        Assert.Equal(ChatRole.Tool, result[2].Role);
+        Assert.Contains("initialAgent", result[2].AuthorName);
+
+        // Non-handoff tool invocation
+        Assert.Equal(ChatRole.Assistant, result[3].Role);
+        Assert.Equal("", result[3].Text);
+        Assert.Contains("secondAgent", result[3].AuthorName);
+
+        Assert.Equal(ChatRole.Tool, result[4].Role);
+        Assert.Contains("secondAgent", result[4].AuthorName);
+
+        // Handoff invocation
+        Assert.Equal(ChatRole.Assistant, result[5].Role);
+        Assert.Equal("", result[5].Text);
+        Assert.Contains("secondAgent", result[5].AuthorName);
+
+        Assert.Equal(ChatRole.Tool, result[6].Role);
+        Assert.Contains("secondAgent", result[6].AuthorName);
+
+        Assert.Equal(ChatRole.Assistant, result[7].Role);
+        Assert.Equal("Hello from agent3", result[7].Text);
+        Assert.Contains("thirdAgent", result[7].AuthorName);
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
@@ -651,7 +926,7 @@ public class AgentWorkflowBuilderTests
         for (int iter = 0; iter < 3; iter++)
         {
             const string UserInput = "abc";
-            (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+            (string updateText, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
 
             Assert.NotNull(result);
             Assert.Equal(maxIterations + 1, result.Count);
@@ -680,35 +955,243 @@ public class AgentWorkflowBuilderTests
         }
     }
 
-    private static async Task<(string UpdateText, List<ChatMessage>? Result)> RunWorkflowAsync(
-        Workflow workflow, List<ChatMessage> input, ExecutionEnvironment executionEnvironment = ExecutionEnvironment.InProcess_Lockstep)
+    [Fact]
+    public async Task Handoffs_ReturnToPrevious_DisabledByDefault_SecondTurnRoutesViaCoordinatorAsync()
     {
-        StringBuilder sb = new();
+        int coordinatorCallCount = 0;
 
-        InProcessExecutionEnvironment environment = executionEnvironment.ToWorkflowExecutionEnvironment();
-        await using StreamingRun run = await environment.RunStreamingAsync(workflow, input);
+        var coordinator = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            coordinatorCallCount++;
+            if (coordinatorCallCount == 1)
+            {
+                string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+                Assert.NotNull(transferFuncName);
+                return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+            }
+            return new(new ChatMessage(ChatRole.Assistant, "coordinator responded on turn 2"));
+        }), name: "coordinator");
+
+        var specialist = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "specialist responded"))),
+            name: "specialist", description: "The specialist agent");
+
+        var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(coordinator)
+            .WithHandoff(coordinator, specialist)
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        const ExecutionEnvironment Environment = ExecutionEnvironment.InProcess_Lockstep;
+
+        // Turn 1: coordinator hands off to specialist
+        WorkflowRunResult result = await RunWorkflowCheckpointedAsync(workflow, [new ChatMessage(ChatRole.User, "book an appointment")], Environment, checkpointManager);
+        Assert.Equal(1, coordinatorCallCount);
+
+        // Turn 2: without ReturnToPrevious, coordinator should be invoked again
+        _ = await RunWorkflowCheckpointedAsync(workflow, [new ChatMessage(ChatRole.User, "my id is 12345")], Environment, checkpointManager, result.LastCheckpoint);
+        Assert.Equal(2, coordinatorCallCount);
+    }
+
+    [Fact]
+    public async Task Handoffs_ReturnToPrevious_Enabled_SecondTurnRoutesDirectlyToSpecialistAsync()
+    {
+        int coordinatorCallCount = 0;
+        int specialistCallCount = 0;
+
+        var coordinator = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            coordinatorCallCount++;
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "coordinator");
+
+        var specialist = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            specialistCallCount++;
+            return new(new ChatMessage(ChatRole.Assistant, "specialist responded"));
+        }), name: "specialist", description: "The specialist agent");
+
+        var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(coordinator)
+            .WithHandoff(coordinator, specialist)
+            .EnableReturnToPrevious()
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        const ExecutionEnvironment Environment = ExecutionEnvironment.InProcess_Lockstep;
+
+        // Turn 1: coordinator hands off to specialist
+        WorkflowRunResult result = await RunWorkflowCheckpointedAsync(workflow, [new ChatMessage(ChatRole.User, "book an appointment")], Environment, checkpointManager);
+        Assert.Equal(1, coordinatorCallCount);
+        Assert.Equal(1, specialistCallCount);
+
+        // Turn 2: with ReturnToPrevious, specialist should be invoked directly, coordinator should NOT be called again
+        _ = await RunWorkflowCheckpointedAsync(workflow, [new ChatMessage(ChatRole.User, "my id is 12345")], Environment, checkpointManager, result.LastCheckpoint);
+        Assert.Equal(1, coordinatorCallCount); // coordinator NOT called again
+        Assert.Equal(2, specialistCallCount);  // specialist called again
+    }
+
+    [Fact]
+    public async Task Handoffs_ReturnToPrevious_Enabled_BeforeAnyHandoff_RoutesViaInitialAgentAsync()
+    {
+        int coordinatorCallCount = 0;
+
+        var coordinator = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            coordinatorCallCount++;
+            return new(new ChatMessage(ChatRole.Assistant, "coordinator responded"));
+        }), name: "coordinator");
+
+        var specialist = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            Assert.Fail("Specialist should not be invoked.");
+            return new();
+        }), name: "specialist", description: "The specialist agent");
+
+        var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(coordinator)
+            .WithHandoff(coordinator, specialist)
+            .EnableReturnToPrevious()
+            .Build();
+
+        // First turn with no prior handoff: should route to initial (coordinator) agent
+        _ = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "hello")]);
+        Assert.Equal(1, coordinatorCallCount);
+    }
+
+    [Fact]
+    public async Task Handoffs_ReturnToPrevious_Enabled_AfterHandoffBackToCoordinator_NextTurnRoutesViaCoordinatorAsync()
+    {
+        int coordinatorCallCount = 0;
+        int specialistCallCount = 0;
+
+        var coordinator = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            coordinatorCallCount++;
+            if (coordinatorCallCount == 1)
+            {
+                // First call: hand off to specialist
+                string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+                Assert.NotNull(transferFuncName);
+                return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+            }
+            // Subsequent calls: respond without handoff
+            return new(new ChatMessage(ChatRole.Assistant, "coordinator responded"));
+        }), name: "coordinator");
+
+        var specialist = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            specialistCallCount++;
+            // Specialist hands back to coordinator
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call2", transferFuncName)]));
+        }), name: "specialist", description: "The specialist agent");
+
+        var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(coordinator)
+            .WithHandoff(coordinator, specialist)
+            .WithHandoff(specialist, coordinator)
+            .EnableReturnToPrevious()
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        const ExecutionEnvironment Environment = ExecutionEnvironment.InProcess_Lockstep;
+
+        // Turn 1: coordinator → specialist → coordinator (specialist hands back)
+        WorkflowRunResult result = await RunWorkflowCheckpointedAsync(workflow, [new ChatMessage(ChatRole.User, "book an appointment")], Environment, checkpointManager);
+        Assert.Equal(2, coordinatorCallCount); // called twice: initial handoff + receiving handback
+        Assert.Equal(1, specialistCallCount);  // specialist called once, then handed back
+
+        // Turn 2: after handoff back to coordinator, should route to coordinator (not specialist)
+        _ = await RunWorkflowCheckpointedAsync(workflow, [new ChatMessage(ChatRole.User, "never mind")], Environment, checkpointManager, result.LastCheckpoint);
+        Assert.Equal(3, coordinatorCallCount); // coordinator called again on turn 2
+        Assert.Equal(1, specialistCallCount);  // specialist NOT called
+    }
+
+    private sealed record WorkflowRunResult(string UpdateText, List<ChatMessage>? Result, CheckpointInfo? LastCheckpoint, List<RequestInfoEvent> PendingRequests);
+
+    private static Task<WorkflowRunResult> RunWorkflowCheckpointedAsync(
+        Workflow workflow, List<ChatMessage> input, ExecutionEnvironment executionEnvironment, CheckpointManager checkpointManager, CheckpointInfo? fromCheckpoint = null)
+    {
+        InProcessExecutionEnvironment environment = executionEnvironment.ToWorkflowExecutionEnvironment()
+                                                                        .WithCheckpointing(checkpointManager);
+
+        return RunWorkflowCheckpointedAsync(workflow, input, environment, fromCheckpoint);
+    }
+
+    private static Task<WorkflowRunResult> RunWorkflowCheckpointedAsync(
+        Workflow workflow, ExternalResponse response, ExecutionEnvironment executionEnvironment, CheckpointManager checkpointManager, CheckpointInfo? fromCheckpoint = null)
+    {
+        InProcessExecutionEnvironment environment = executionEnvironment.ToWorkflowExecutionEnvironment()
+                                                                        .WithCheckpointing(checkpointManager);
+
+        return RunWorkflowCheckpointedAsync(workflow, response, environment, fromCheckpoint);
+    }
+
+    private static async Task<WorkflowRunResult> RunWorkflowCheckpointedAsync(
+        Workflow workflow, List<ChatMessage> input, InProcessExecutionEnvironment environment, CheckpointInfo? fromCheckpoint = null)
+    {
+        await using StreamingRun run =
+            fromCheckpoint != null ? await environment.ResumeStreamingAsync(workflow, fromCheckpoint)
+                                   : await environment.OpenStreamingAsync(workflow);
+
+        await run.TrySendMessageAsync(input);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
+        return await ProcessWorkflowRunAsync(run);
+    }
+
+    private static async Task<WorkflowRunResult> RunWorkflowCheckpointedAsync(
+        Workflow workflow, ExternalResponse response, InProcessExecutionEnvironment environment, CheckpointInfo? fromCheckpoint = null)
+    {
+        await using StreamingRun run =
+            fromCheckpoint != null ? await environment.ResumeStreamingAsync(workflow, fromCheckpoint)
+                                   : await environment.OpenStreamingAsync(workflow);
+
+        await run.SendResponseAsync(response);
+
+        return await ProcessWorkflowRunAsync(run);
+    }
+
+    private static async Task<WorkflowRunResult> ProcessWorkflowRunAsync(StreamingRun run)
+    {
+        StringBuilder sb = new();
         WorkflowOutputEvent? output = null;
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        CheckpointInfo? lastCheckpoint = null;
+
+        List<RequestInfoEvent> pendingRequests = [];
+
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false).ConfigureAwait(false))
         {
-            if (evt is AgentResponseUpdateEvent executorComplete)
+            switch (evt)
             {
-                sb.Append(executorComplete.Data);
-            }
-            else if (evt is WorkflowOutputEvent e)
-            {
-                output = e;
-                break;
-            }
-            else if (evt is WorkflowErrorEvent errorEvent)
-            {
-                Assert.Fail($"Workflow execution failed with error: {errorEvent.Exception}");
+                case AgentResponseUpdateEvent responseUpdate:
+                    sb.Append(responseUpdate.Data);
+                    break;
+
+                case RequestInfoEvent requestInfo:
+                    pendingRequests.Add(requestInfo);
+                    break;
+
+                case WorkflowOutputEvent e:
+                    output = e;
+                    break;
+
+                case WorkflowErrorEvent errorEvent:
+                    Assert.Fail($"Workflow execution failed with error: {errorEvent.Exception}");
+                    break;
+
+                case SuperStepCompletedEvent stepCompleted:
+                    lastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
+                    break;
             }
         }
 
-        return (sb.ToString(), output?.As<List<ChatMessage>>());
+        return new(sb.ToString(), output?.As<List<ChatMessage>>(), lastCheckpoint, pendingRequests);
     }
+
+    private static Task<WorkflowRunResult> RunWorkflowAsync(
+        Workflow workflow, List<ChatMessage> input, ExecutionEnvironment executionEnvironment = ExecutionEnvironment.InProcess_Lockstep)
+        => RunWorkflowCheckpointedAsync(workflow, input, executionEnvironment.ToWorkflowExecutionEnvironment());
 
     private sealed class DoubleEchoAgentWithBarrier(string name, StrongBox<TaskCompletionSource<bool>> barrier, StrongBox<int> remaining) : DoubleEchoAgent(name)
     {

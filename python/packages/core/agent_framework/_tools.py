@@ -8,11 +8,11 @@ import json
 import logging
 import sys
 import typing
-import warnings
 from collections.abc import (
     AsyncIterable,
     Awaitable,
     Callable,
+    Iterable,
     Mapping,
     Sequence,
 )
@@ -90,8 +90,36 @@ logger = logging.getLogger("agent_framework")
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
+ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+
+
+class _SkipParsingSentinel:
+    """Sentinel signaling that :meth:`FunctionTool.invoke` should return the raw value.
+
+    When passed as ``result_parser`` to :class:`FunctionTool` (or the ``@tool`` decorator),
+    the default :meth:`FunctionTool.parse_result` is bypassed and the wrapped function's
+    return value is returned unchanged from :meth:`FunctionTool.invoke`. Callers may also
+    request the raw value on a per-call basis by passing ``skip_parsing=True`` to
+    :meth:`FunctionTool.invoke`.
+
+    Use the module-level ``SKIP_PARSING`` singleton — do not instantiate this class.
+    """
+
+    _instance: ClassVar[_SkipParsingSentinel | None] = None
+
+    def __new__(cls) -> _SkipParsingSentinel:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "SKIP_PARSING"
+
+
+SKIP_PARSING: Final[_SkipParsingSentinel] = _SkipParsingSentinel()
+"""Sentinel for ``FunctionTool(result_parser=...)`` meaning "do not parse the result"."""
 
 # region Helpers
 
@@ -271,14 +299,14 @@ class FunctionTool(SerializationMixin):
         *,
         name: str,
         description: str = "",
-        approval_mode: Literal["always_require", "never_require"] | None = None,
+        approval_mode: ApprovalMode | None = None,
         kind: str | None = None,
         max_invocations: int | None = None,
         max_invocation_exceptions: int | None = None,
         additional_properties: dict[str, Any] | None = None,
         func: Callable[..., Any] | None = None,
         input_model: type[BaseModel] | Mapping[str, Any] | None = None,
-        result_parser: Callable[[Any], str | list[Content]] | None = None,
+        result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the FunctionTool.
@@ -326,9 +354,11 @@ class FunctionTool(SerializationMixin):
             result_parser: An optional callable with signature ``Callable[[Any], str]`` that
                 overrides the default result parsing behavior. When provided, this callable
                 is used to convert the raw function return value to a string instead of the
-                built-in :meth:`parse_result` logic. Depending on your function, it may be
-                easiest to just do the serialization directly in the function body rather
-                than providing a custom ``result_parser``.
+                built-in :meth:`parse_result` logic. Pass the :data:`SKIP_PARSING` sentinel
+                instead of a callable to opt out of parsing entirely; in that case
+                :meth:`invoke` returns the wrapped function's raw return value. Depending
+                on your function, it may be easiest to just do the serialization directly
+                in the function body rather than providing a custom ``result_parser``.
             **kwargs: Additional keyword arguments.
         """
         # Core attributes (formerly from BaseTool)
@@ -344,8 +374,6 @@ class FunctionTool(SerializationMixin):
         self._instance = None  # Store the instance for bound methods
         self._context_parameter_name: str | None = None
         self._input_model_explicitly_provided = input_model is not None
-        # TODO(Copilot): Delete once legacy ``**kwargs`` runtime injection is removed.
-        self._forward_runtime_kwargs: bool = False
         if self.func:
             self._discover_injected_parameters()
 
@@ -390,10 +418,6 @@ class FunctionTool(SerializationMixin):
         for name, param in signature.parameters.items():
             if name in {"self", "cls"}:
                 continue
-            if param.kind == inspect.Parameter.VAR_KEYWORD:
-                self._forward_runtime_kwargs = True
-                continue
-
             annotation = type_hints.get(name, param.annotation)
             if self._is_context_parameter(name, annotation):
                 if self._context_parameter_name is not None:
@@ -513,27 +537,65 @@ class FunctionTool(SerializationMixin):
             self.invocation_exception_count += 1
             raise
 
+    @overload
     async def invoke(
         self,
         *,
         arguments: BaseModel | Mapping[str, Any] | None = None,
         context: FunctionInvocationContext | None = None,
+        tool_call_id: str | None = None,
+        skip_parsing: Literal[True],
         **kwargs: Any,
-    ) -> list[Content]:
+    ) -> Any: ...
+
+    @overload
+    async def invoke(
+        self,
+        *,
+        arguments: BaseModel | Mapping[str, Any] | None = None,
+        context: FunctionInvocationContext | None = None,
+        tool_call_id: str | None = None,
+        skip_parsing: Literal[False] = False,
+        **kwargs: Any,
+    ) -> list[Content]: ...
+
+    async def invoke(
+        self,
+        *,
+        arguments: BaseModel | Mapping[str, Any] | None = None,
+        context: FunctionInvocationContext | None = None,
+        tool_call_id: str | None = None,
+        skip_parsing: bool = False,
+        **kwargs: Any,
+    ) -> list[Content] | Any:
         """Run the AI function with the provided arguments as a Pydantic model.
 
         The raw return value of the wrapped function is automatically parsed into a
         ``list[Content]`` using :meth:`parse_result` or the custom ``result_parser``
-        if one was provided.  Every result — text, rich media, or serialized objects —
-        is represented uniformly as Content items.
+        configured on the tool. Every result — text, rich media, or serialized
+        objects — is represented uniformly as Content items.
+
+        Parsing can be skipped in two ways: configure the tool with
+        ``result_parser=SKIP_PARSING`` to always skip parsing, or pass
+        ``skip_parsing=True`` per call. Either way the wrapped function's raw value
+        is returned. This is intended for callers (e.g. sandboxed runtimes) that
+        consume the value from Python directly and would otherwise undo the
+        ``Content`` wrapping.
 
         Keyword Args:
             arguments: A mapping or model instance containing the arguments for the function.
             context: Explicit function invocation context carrying runtime kwargs.
-            kwargs: Deprecated keyword arguments to pass to the function. Use ``context`` instead.
+            tool_call_id: Optional tool call identifier used for telemetry and tracing.
+            skip_parsing: When ``True``, bypass parsing and return the wrapped function's
+                raw value instead of a ``list[Content]``. Defaults to ``False``.
+            kwargs: Direct function argument values. When provided, every keyword
+                must match a declared tool parameter. Runtime data must be passed
+                via ``context``.
 
         Returns:
-            A list of Content items representing the tool output.
+            ``list[Content]`` by default. The raw function return value (``Any``) when
+            ``skip_parsing=True`` (or the tool was constructed with
+            ``result_parser=SKIP_PARSING``).
 
         Raises:
             TypeError: If arguments is not mapping-like or fails schema checks.
@@ -545,25 +607,22 @@ class FunctionTool(SerializationMixin):
         from ._types import Content
         from .observability import OBSERVABILITY_SETTINGS
 
-        parser = self.result_parser or FunctionTool.parse_result
+        configured_parser = self.result_parser
+        skip_parsing = skip_parsing or configured_parser is SKIP_PARSING
+        parser = configured_parser if callable(configured_parser) else FunctionTool.parse_result
 
         parameter_names = set(self.parameters().get("properties", {}).keys())
         direct_argument_kwargs = (
             {key: value for key, value in kwargs.items() if key in parameter_names} if arguments is None else {}
         )
         runtime_kwargs = dict(context.kwargs) if context is not None else {}
-        deprecated_runtime_kwargs = {
-            key: value for key, value in kwargs.items() if key not in direct_argument_kwargs and key != "tool_call_id"
-        }
-        if deprecated_runtime_kwargs:
-            warnings.warn(
-                "Passing runtime keyword arguments directly to FunctionTool.invoke() is deprecated; "
-                "pass them via FunctionInvocationContext instead.",
-                DeprecationWarning,
-                stacklevel=2,
+        unexpected_kwargs = {key: value for key, value in kwargs.items() if key not in direct_argument_kwargs}
+        if unexpected_kwargs:
+            unexpected_names = ", ".join(sorted(unexpected_kwargs))
+            raise TypeError(
+                f"Unexpected keyword argument(s) for tool '{self.name}': {unexpected_names}. "
+                "Pass runtime data via FunctionInvocationContext instead."
             )
-        runtime_kwargs.update(deprecated_runtime_kwargs)
-        tool_call_id = kwargs.get("tool_call_id", runtime_kwargs.pop("tool_call_id", None))
         if arguments is None and direct_argument_kwargs:
             arguments = direct_argument_kwargs
         if arguments is None and context is not None:
@@ -614,17 +673,6 @@ class FunctionTool(SerializationMixin):
 
         call_kwargs = dict(validated_arguments)
         observable_kwargs = dict(validated_arguments)
-
-        # Legacy runtime kwargs injection path retained for backwards compatibility with tools
-        # that still declare ``**kwargs``. New tools should consume runtime data via ``ctx``.
-        legacy_runtime_kwargs = dict(runtime_kwargs)
-        if self._forward_runtime_kwargs and legacy_runtime_kwargs:
-            for key, value in legacy_runtime_kwargs.items():
-                if key not in call_kwargs:
-                    call_kwargs[key] = value
-                if key not in observable_kwargs:
-                    observable_kwargs[key] = value
-
         if self._context_parameter_name is not None and effective_context is not None:
             call_kwargs[self._context_parameter_name] = effective_context
 
@@ -633,6 +681,10 @@ class FunctionTool(SerializationMixin):
             logger.debug(f"Function arguments: {observable_kwargs}")
             res = self.__call__(**call_kwargs)
             result = await res if inspect.isawaitable(res) else res
+            if skip_parsing:
+                logger.info(f"Function {self.name} succeeded.")
+                logger.debug(f"Function result: {type(result).__name__}")
+                return result
             try:
                 parsed = parser(result)
             except Exception:
@@ -688,6 +740,13 @@ class FunctionTool(SerializationMixin):
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:
+                if skip_parsing:
+                    logger.info(f"Function {self.name} succeeded.")
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                        result_str = str(result)
+                        span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
+                        logger.debug(f"Function result: {result_str}")
+                    return result
                 try:
                     parsed = parser(result)
                 except Exception:
@@ -877,6 +936,15 @@ def normalize_tools(
     Returns:
         A normalized list where callable inputs are converted to ``FunctionTool``
         using :func:`tool`, and existing tool objects are passed through unchanged.
+
+    Tool-collection wrappers are flattened in two forms:
+
+    - non-tool, non-callable iterables
+    - mapping-like objects that expose a ``.tools`` collection (for example
+      ``ToolboxVersionObject`` from azure-ai-projects)
+
+    This lets callers write ``tools=[toolbox, my_func]`` and have the
+    toolbox's contents spread in alongside individual tools.
     """
     if not tools:
         return []
@@ -901,6 +969,24 @@ def normalize_tools(
         if callable(tool_item):  # type: ignore[reportUnknownArgumentType]
             normalized.append(tool(tool_item))
             continue
+        # Mapping-like tool collections (for example ToolboxVersionObject) are
+        # not flattened by the generic Iterable branch below because they are
+        # also Mapping instances. If they expose a ``tools`` collection, spread
+        # that collection into the normalized list.
+        collection_tools = getattr(tool_item, "tools", None)  # type: ignore[reportUnknownArgumentType]
+        if isinstance(collection_tools, Iterable) and not isinstance(
+            collection_tools, (str, bytes, bytearray, Mapping)
+        ):
+            normalized.extend(normalize_tools(list(collection_tools)))  # type: ignore[reportUnknownArgumentType]
+            continue
+        # Tool-collection wrapper (e.g. FoundryToolbox): a non-tool, non-callable
+        # iterable. Flatten its contents so ``tools=[toolbox, my_func]`` works.
+        # Strings, mappings, and Pydantic BaseModel are excluded — BaseModel
+        # instances iterate over (field, value) tuples, not tools, so they
+        # should pass through as leaf tool specs (handled below).
+        if isinstance(tool_item, Iterable) and not isinstance(tool_item, (str, bytes, bytearray, Mapping, BaseModel)):
+            normalized.extend(normalize_tools(list(tool_item)))  # type: ignore[reportUnknownArgumentType]
+            continue
         normalized.append(tool_item)  # type: ignore[reportUnknownArgumentType]
     return normalized
 
@@ -924,6 +1010,9 @@ def _tools_to_dict(  # pyright: ignore[reportUnusedFunction]
     for tool_item in normalized_tools:
         if isinstance(tool_item, FunctionTool):
             results.append(tool_item.to_json_schema_spec())
+            continue
+        if isinstance(tool_item, BaseModel):
+            results.append(tool_item.model_dump(exclude_none=True))
             continue
         if isinstance(tool_item, SerializationMixin):
             results.append(tool_item.to_dict())
@@ -1049,12 +1138,12 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
-    approval_mode: Literal["always_require", "never_require"] | None = None,
+    approval_mode: ApprovalMode | None = None,
     kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str | list[Content]] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
 ) -> FunctionTool: ...
 
 
@@ -1065,12 +1154,12 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
-    approval_mode: Literal["always_require", "never_require"] | None = None,
+    approval_mode: ApprovalMode | None = None,
     kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str | list[Content]] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
 ) -> Callable[[Callable[..., Any]], FunctionTool]: ...
 
 
@@ -1080,12 +1169,12 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
-    approval_mode: Literal["always_require", "never_require"] | None = None,
+    approval_mode: ApprovalMode | None = None,
     kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str | list[Content]] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | _SkipParsingSentinel | None = None,
 ) -> FunctionTool | Callable[[Callable[..., Any]], FunctionTool]:
     """Decorate a function to turn it into a FunctionTool that can be passed to models and executed automatically.
 
@@ -1420,7 +1509,7 @@ async def _auto_invoke_function(
         # No middleware - execute directly
         try:
             direct_context = None
-            if getattr(tool, "_forward_runtime_kwargs", False) or getattr(tool, "_context_parameter_name", None):
+            if getattr(tool, "_context_parameter_name", None):
                 direct_context = FunctionInvocationContext(
                     function=tool,
                     arguments=args,
@@ -1705,6 +1794,34 @@ def _update_conversation_id(
     # Also update options since some clients (e.g., AssistantsClient) read conversation_id from options
     if options is not None:
         options["conversation_id"] = conversation_id
+
+
+def _update_continuation_state(
+    kwargs: dict[str, Any],
+    response: ChatResponse[Any],
+    *,
+    session: AgentSession | None,
+    options: dict[str, Any] | None = None,
+) -> None:
+    """Update in-flight and persisted continuation state from a response."""
+    conversation_id = response.conversation_id
+    if conversation_id is None:
+        return
+
+    _update_conversation_id(kwargs, conversation_id, options)
+    if (
+        session is not None
+        and not response.has_internal_conversation_id()
+        and session.service_session_id != conversation_id
+    ):
+        session.service_session_id = conversation_id
+
+
+def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse[Any]:
+    if response.has_internal_conversation_id():
+        response.conversation_id = None
+        response.clear_internal_conversation_id()
+    return response
 
 
 def _extract_tools(
@@ -2078,7 +2195,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -2093,7 +2209,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -2108,7 +2223,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
@@ -2122,7 +2236,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         from ._middleware import categorize_middleware
         from ._types import (
@@ -2133,14 +2246,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
 
         super_get_response = super().get_response  # type: ignore[misc]
-        if kwargs:
-            warnings.warn(
-                "Passing client-specific keyword arguments directly to get_response() is deprecated; "
-                "pass them via client_kwargs instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if middleware is not None:
             existing = effective_client_kwargs.get("middleware", [])
@@ -2176,19 +2281,23 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
         )
-        filtered_kwargs = {k: v for k, v in {**effective_client_kwargs, **kwargs}.items() if k != "session"}
+        filtered_kwargs = {k: v for k, v in effective_client_kwargs.items() if k != "session"}
 
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}
         # Remove additional_function_arguments from options passed to underlying chat client
         # It's for tool invocation only and not recognized by chat service APIs
         mutable_options.pop("additional_function_arguments", None)
-        # Support tools passed via kwargs in direct client.get_response(...) calls.
-        if "tools" in filtered_kwargs:
-            if mutable_options.get("tools") is None:
-                mutable_options["tools"] = filtered_kwargs["tools"]
-            filtered_kwargs.pop("tools", None)
-
+        if not self.function_invocation_configuration.get("enabled", True):
+            return super_get_response(  # type: ignore[no-any-return]
+                messages=messages,
+                stream=stream,
+                options=mutable_options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=filtered_kwargs,
+            )
         if not stream:
 
             async def _get_response() -> ChatResponse[Any]:
@@ -2233,9 +2342,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         ),
                     )
                     aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
+                    _update_continuation_state(
+                        filtered_kwargs,
+                        response,
+                        session=invocation_session,
+                        options=mutable_options,
+                    )
 
                     if response.conversation_id is not None:
-                        _update_conversation_id(kwargs, response.conversation_id, mutable_options)
                         prepped_messages = []
 
                     result = await _process_function_requests(
@@ -2250,7 +2364,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     )
                     if result.get("action") == "return":
                         response.usage_details = aggregated_usage
-                        return response
+                        return _clear_internal_conversation_id(response)
                     total_function_calls += result.get("function_call_count", 0)
                     if result.get("action") == "stop":
                         # Error threshold reached: force a final non-tool turn so
@@ -2306,16 +2420,21 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     ),
                 )
                 aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
+                _update_continuation_state(
+                    filtered_kwargs,
+                    response,
+                    session=invocation_session,
+                    options=mutable_options,
+                )
                 response.usage_details = aggregated_usage
                 if fcc_messages:
                     for msg in reversed(fcc_messages):
                         response.messages.insert(0, msg)
-                return response
+                return _clear_internal_conversation_id(response)
 
             return _get_response()
 
         response_format = mutable_options.get("response_format") if mutable_options else None
-        output_format_type: type[BaseModel] | None = response_format if isinstance(response_format, type) else None
         stream_result_hooks: list[Callable[[ChatResponse], Any]] = []
 
         async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -2370,6 +2489,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 # Get the finalized response from the inner stream
                 # This triggers the inner stream's finalizer and result hooks
                 response = await inner_stream.get_final_response()
+                _update_continuation_state(
+                    filtered_kwargs,
+                    response,
+                    session=invocation_session,
+                    options=mutable_options,
+                )
 
                 if not any(
                     item.type in ("function_call", "function_approval_request")
@@ -2379,7 +2504,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     return
 
                 if response.conversation_id is not None:
-                    _update_conversation_id(kwargs, response.conversation_id, mutable_options)
                     prepped_messages = []
 
                 result = await _process_function_requests(
@@ -2457,11 +2581,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             async for update in final_inner_stream:
                 yield update
             # Finalize the inner stream to trigger its hooks
-            await final_inner_stream.get_final_response()
+            final_response = await final_inner_stream.get_final_response()
+            _update_continuation_state(
+                filtered_kwargs,
+                final_response,
+                session=invocation_session,
+                options=mutable_options,
+            )
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
             # Note: stream_result_hooks are already run via inner stream's get_final_response()
             # We don't need to run them again here
-            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+            return ChatResponse.from_updates(updates, output_format_type=response_format)
 
         return ResponseStream(_stream(), finalizer=_finalize)

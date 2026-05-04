@@ -85,6 +85,8 @@ from agent_framework.orchestrations import (
 
 **Handoff workflow tip**: Handoff workflows maintain the full conversation history including any `Message.additional_properties` emitted by your agents. This ensures routing metadata remains intact across all agent transitions. For specialist-to-specialist handoffs, use `.add_handoff(source, targets)` to configure which agents can route to which others with a fluent, type-safe API.
 
+**Handoff `require_per_service_call_history_persistence`**: All agents in a handoff workflow **must** set `require_per_service_call_history_persistence=True`. `HandoffBuilder.build()` will raise a `ValueError` if any participant is missing this flag. This is required because handoff middleware short-circuits tool calls via `MiddlewareTermination`, and without per-service-call history persistence, local history would store tool results the service never received, causing mismatches on subsequent turns.
+
 **Sequential orchestration note**: Sequential orchestration uses a few small adapter nodes for plumbing:
 - `input-conversation` normalizes input to `list[Message]`
 - `to-conversation:<participant>` converts agent responses into the shared conversation
@@ -92,15 +94,17 @@ from agent_framework.orchestrations import (
 
 These may appear in event streams (executor_invoked/executor_completed). They're analogous to concurrent's dispatcher and aggregator and can be ignored if you only care about agent activity.
 
-## Why AzureOpenAIResponsesClient?
+## Why FoundryChatClient?
 
-Orchestration samples use `AzureOpenAIResponsesClient` rather than the CRUD-style `AzureAIAgent` client. Orchestrations create agents locally and do not require server-side lifecycle management (create/update/delete). `AzureOpenAIResponsesClient` is a lightweight client that uses the underlying Agent Service V2 (Responses API) for non-CRUD-style agents, which is ideal for orchestration patterns like Sequential, Concurrent, Handoff, GroupChat, and Magentic.
+Orchestration samples use `FoundryChatClient` because they create agents locally and do not require
+server-side lifecycle management. `FoundryChatClient` is a lightweight, project-backed client that fits
+patterns like Sequential, Concurrent, Handoff, GroupChat, and Magentic.
 
 ## Environment Variables
 
-Orchestration samples that use `AzureOpenAIResponsesClient` expect:
+Orchestration samples that use `FoundryChatClient` expect:
 
-- `AZURE_AI_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
-- `AZURE_AI_MODEL_DEPLOYMENT_NAME` (model deployment name)
+- `FOUNDRY_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
+- `FOUNDRY_MODEL` (model deployment name)
 
 These values are passed directly into the client constructor via `os.getenv()` in sample code.

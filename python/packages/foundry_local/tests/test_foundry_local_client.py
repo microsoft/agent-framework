@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -33,7 +34,7 @@ def test_foundry_local_settings_init_with_explicit_values() -> None:
 
 @pytest.mark.parametrize("exclude_list", [["FOUNDRY_LOCAL_MODEL"]], indirect=True)
 def test_foundry_local_settings_missing_model(foundry_local_unit_test_env: dict[str, str]) -> None:
-    """Test FoundryLocalSettings when model_id is missing raises error."""
+    """Test FoundryLocalSettings when model is missing raises error."""
     with pytest.raises(SettingNotFoundError, match="Required setting 'model'"):
         load_settings(
             FoundryLocalSettings,
@@ -64,6 +65,15 @@ def test_foundry_local_client_init(mock_foundry_local_manager: MagicMock) -> Non
         assert client.model == "test-model-id"
         assert client.manager is mock_foundry_local_manager
         assert isinstance(client, SupportsChatGetResponse)
+
+
+def test_foundry_local_client_get_response_uses_explicit_runtime_buckets() -> None:
+    """Foundry Local should expose explicit runtime buckets instead of raw kwargs."""
+    signature = inspect.signature(FoundryLocalClient.get_response)
+
+    assert "client_kwargs" in signature.parameters
+    assert "function_invocation_kwargs" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
 def test_foundry_local_client_init_with_bootstrap_false(mock_foundry_local_manager: MagicMock) -> None:
@@ -147,15 +157,15 @@ def test_foundry_local_client_init_with_device(mock_foundry_local_manager: Magic
         FoundryLocalClient(model="test-model-id", device=DeviceType.CPU)
 
         mock_foundry_local_manager.get_model_info.assert_called_once_with(
-            alias_or_model_id="test-model-id",
+            "test-model-id",
             device=DeviceType.CPU,
         )
         mock_foundry_local_manager.download_model.assert_called_once_with(
-            alias_or_model_id="test-model-id",
+            "test-model-id",
             device=DeviceType.CPU,
         )
         mock_foundry_local_manager.load_model.assert_called_once_with(
-            alias_or_model_id="test-model-id",
+            "test-model-id",
             device=DeviceType.CPU,
         )
 
@@ -197,10 +207,10 @@ def test_foundry_local_client_init_calls_download_and_load(mock_foundry_local_ma
         FoundryLocalClient(model="test-model-id")
 
         mock_foundry_local_manager.download_model.assert_called_once_with(
-            alias_or_model_id="test-model-id",
+            "test-model-id",
             device=None,
         )
         mock_foundry_local_manager.load_model.assert_called_once_with(
-            alias_or_model_id="test-model-id",
+            "test-model-id",
             device=None,
         )

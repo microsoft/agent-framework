@@ -26,6 +26,7 @@ from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
 
 from dotenv import load_dotenv
+from opentelemetry import context as otel_context
 from opentelemetry import metrics, trace
 
 from . import __version__ as version_info
@@ -49,8 +50,9 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._agents import SupportsAgentRun
     from ._clients import SupportsChatGetResponse
     from ._compaction import CompactionStrategy, TokenizerProtocol
+    from ._middleware import MiddlewareTypes
     from ._sessions import AgentSession
-    from ._tools import FunctionTool
+    from ._tools import FunctionTool, ToolTypes
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
@@ -1191,7 +1193,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -1203,7 +1206,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -1215,7 +1219,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
@@ -1226,7 +1231,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics.
 
@@ -1238,25 +1244,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             tokenizer: Optional tokenizer used by token-aware compaction strategies.
 
         Keyword Args:
-            kwargs: Compatibility keyword arguments from higher client layers. This layer does
-                not consume ``function_invocation_kwargs`` directly; if present, it is ignored
-                because function invocation has already been processed above. If a ``client_kwargs``
-                mapping is present, it is flattened into ordinary keyword arguments for tracing and
-                forwarding so clients that use those values continue to work while clients that
-                ignore extra kwargs remain compatible.
+            function_invocation_kwargs: Keyword arguments forwarded only to tool invocation layers.
+            client_kwargs: Additional client-specific keyword arguments for downstream chat clients.
         """
         from ._types import ChatResponse, ChatResponseUpdate, ResponseStream  # type: ignore[reportUnusedImport]
 
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
-        compatibility_client_kwargs = kwargs.pop("client_kwargs", None)
-        kwargs.pop("function_invocation_kwargs", None)
-        merged_client_kwargs = (
-            dict(cast(Mapping[str, Any], compatibility_client_kwargs))
-            if isinstance(compatibility_client_kwargs, Mapping)
-            else {}
-        )
-        merged_client_kwargs.update(kwargs)
+        merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
             return super_get_response(  # type: ignore[no-any-return]
@@ -1265,45 +1260,26 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 options=options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
-                **merged_client_kwargs,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=merged_client_kwargs,
             )
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
-        model_id = (
-            merged_client_kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
-        )
+        model = merged_client_kwargs.get("model") or opts.get("model") or getattr(self, "model", None) or "unknown"
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
             operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
             provider_name=provider_name,
-            model=model_id,
+            model=model,
             service_url=service_url,
             **merged_client_kwargs,
         )
 
         if stream:
-            result_stream = cast(
-                ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-                super_get_response(
-                    messages=messages,
-                    stream=True,
-                    options=opts,
-                    compaction_strategy=compaction_strategy,
-                    tokenizer=tokenizer,
-                    **merged_client_kwargs,
-                ),
-            )
+            span = _start_streaming_span(attributes, OtelAttr.REQUEST_MODEL)
 
-            # Create span directly without trace.use_span() context attachment.
-            # Streaming spans are closed asynchronously in cleanup hooks, which run
-            # in a different async context than creation — using use_span() would
-            # cause "Failed to detach context" errors from OpenTelemetry.
-            operation = attributes.get(OtelAttr.OPERATION, "operation")
-            span_name = attributes.get(OtelAttr.REQUEST_MODEL, "unknown")
-            span = get_tracer().start_span(f"{operation} {span_name}")
-            span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
@@ -1325,10 +1301,34 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
 
+            try:
+                result_stream = cast(
+                    ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                    super_get_response(
+                        messages=messages,
+                        stream=True,
+                        options=opts,
+                        compaction_strategy=compaction_strategy,
+                        tokenizer=tokenizer,
+                        function_invocation_kwargs=function_invocation_kwargs,
+                        client_kwargs=merged_client_kwargs,
+                    ),
+                )
+            except Exception as exception:
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
+                _close_span()
+                raise
+
             async def _finalize_stream() -> None:
                 from ._types import ChatResponse
 
                 try:
+                    if result_stream._stream_error is not None:  # pyright: ignore[reportPrivateUsage]
+                        # Stream errored; skip get_final_response() to avoid firing
+                        # result hooks such as after_run context providers on error
+                        # paths. Capture the error on the span before returning.
+                        capture_exception(span=span, exception=result_stream._stream_error, timestamp=time_ns())  # pyright: ignore[reportPrivateUsage]
+                        return
                     response: ChatResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(attributes, response)
@@ -1357,11 +1357,18 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 finally:
                     _close_span()
 
-            # Register a weak reference callback to close the span if stream is garbage collected
-            # without being consumed. This ensures spans don't leak if users don't consume streams.
-            wrapped_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = result_stream.with_cleanup_hook(
-                _record_duration
-            ).with_cleanup_hook(_finalize_stream)
+            # The pull context manager attaches the span around each underlying iterator pull so
+            # that child spans created during the pull (e.g. HTTP requests, inner tool execution)
+            # are parented under this chat span. Attach and detach happen in the same async
+            # context as the pull, avoiding cross-context cleanup issues. The weakref finalizer
+            # ensures the span is closed even if the stream is garbage collected without being
+            # consumed.
+            wrapped_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = (
+                result_stream
+                .with_cleanup_hook(_record_duration)
+                .with_cleanup_hook(_finalize_stream)
+                .with_pull_context_manager(lambda: _activate_span(span))
+            )
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
@@ -1384,7 +1391,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                             options=opts,
                             compaction_strategy=compaction_strategy,
                             tokenizer=tokenizer,
-                            **merged_client_kwargs,
+                            function_invocation_kwargs=function_invocation_kwargs,
+                            client_kwargs=merged_client_kwargs,
                         ),
                     )
                 except Exception as exception:
@@ -1452,13 +1460,13 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
-        model_id = opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
+        model = opts.get("model") or getattr(self, "model", None) or "unknown"
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
             operation_name=OtelAttr.EMBEDDING_OPERATION,
             provider_name=provider_name,
-            model=model_id,
+            model=model,
             service_url=service_url,
         )
 
@@ -1505,72 +1513,25 @@ class AgentTelemetryLayer:
         self.token_usage_histogram = _get_token_usage_histogram()
         self.duration_histogram = _get_duration_histogram()
 
-    @overload
-    def run(
+    def _trace_agent_invocation(
         self,
-        messages: AgentRunInputs | None = None,
         *,
-        stream: Literal[False] = ...,
-        session: AgentSession | None = None,
-        compaction_strategy: CompactionStrategy | None = None,
-        tokenizer: TokenizerProtocol | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse[Any]]: ...
-
-    @overload
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[True],
-        session: AgentSession | None = None,
-        compaction_strategy: CompactionStrategy | None = None,
-        tokenizer: TokenizerProtocol | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
-
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        compaction_strategy: CompactionStrategy | None = None,
-        tokenizer: TokenizerProtocol | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
+        messages: AgentRunInputs | None,
+        session: AgentSession | None,
+        merged_options: Mapping[str, Any],
+        client_kwargs: Mapping[str, Any] | None,
+        stream: bool,
+        execute: Callable[[], Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]],
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
-        """Trace agent runs with OpenTelemetry spans and metrics."""
+        """Trace an agent invocation while delegating execution to ``execute``."""
         global OBSERVABILITY_SETTINGS
-        from ._types import ResponseStream, merge_chat_options
+        from ._types import ResponseStream
 
-        super_run = cast(
-            "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
-            super().run,  # type: ignore[misc]
-        )
-        provider_name = str(self.otel_provider_name)
         if not OBSERVABILITY_SETTINGS.ENABLED:
-            return super_run(  # type: ignore[no-any-return]
-                messages=messages,
-                stream=stream,
-                session=session,
-                compaction_strategy=compaction_strategy,
-                tokenizer=tokenizer,
-                function_invocation_kwargs=function_invocation_kwargs,
-                client_kwargs=client_kwargs,
-                **kwargs,
-            )
+            return execute()
 
-        default_options = getattr(self, "default_options", {})
-        options = kwargs.get("options")
+        provider_name = str(self.otel_provider_name)
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
-        merged_client_kwargs.update(kwargs)
-        merged_options: dict[str, Any] = merge_chat_options(default_options, options or {})
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1578,7 +1539,7 @@ class AgentTelemetryLayer:
             agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
             agent_description=getattr(self, "description", None),
             thread_id=session.service_session_id if session else None,
-            all_options=merged_options,
+            all_options=dict(merged_options),
             **merged_client_kwargs,
         )
 
@@ -1589,42 +1550,14 @@ class AgentTelemetryLayer:
         inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
 
         if stream:
-            try:
-                run_result: object = super_run(
-                    messages=messages,
-                    stream=True,
-                    session=session,
-                    compaction_strategy=compaction_strategy,
-                    tokenizer=tokenizer,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
-                    **kwargs,
-                )
-                if isinstance(run_result, ResponseStream):
-                    result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
-                elif isinstance(run_result, Awaitable):
-                    result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
-                else:
-                    raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
-            except Exception:
-                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
-                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
-                raise
+            span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
 
-            # Create span directly without trace.use_span() context attachment.
-            # Streaming spans are closed asynchronously in cleanup hooks, which run
-            # in a different async context than creation — using use_span() would
-            # cause "Failed to detach context" errors from OpenTelemetry.
-            operation = attributes.get(OtelAttr.OPERATION, "operation")
-            span_name = attributes.get(OtelAttr.AGENT_NAME, "unknown")
-            span = get_tracer().start_span(f"{operation} {span_name}")
-            span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_options(merged_options),
+                    system_instructions=_get_instructions_from_options(dict(merged_options)),
                 )
 
             span_state = {"closed": False}
@@ -1640,10 +1573,31 @@ class AgentTelemetryLayer:
             def _record_duration() -> None:
                 duration_state["duration"] = perf_counter() - start_time
 
+            try:
+                run_result: object = execute()
+                if isinstance(run_result, ResponseStream):
+                    result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
+                elif isinstance(run_result, Awaitable):
+                    result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+                else:
+                    raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
+            except Exception as exception:
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
+                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                _close_span()
+                raise
+
             async def _finalize_stream() -> None:
                 from ._types import AgentResponse
 
                 try:
+                    if result_stream._stream_error is not None:  # pyright: ignore[reportPrivateUsage]
+                        # Stream errored; skip get_final_response() to avoid firing
+                        # result hooks such as after_run context providers on error
+                        # paths. Capture the error on the span before returning.
+                        capture_exception(span=span, exception=result_stream._stream_error, timestamp=time_ns())  # pyright: ignore[reportPrivateUsage]
+                        return
                     response: AgentResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(
@@ -1673,15 +1627,22 @@ class AgentTelemetryLayer:
                     INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
                     _close_span()
 
-            # Register a weak reference callback to close the span if stream is garbage collected
-            # without being consumed. This ensures spans don't leak if users don't consume streams.
-            wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = result_stream.with_cleanup_hook(
-                _record_duration
-            ).with_cleanup_hook(_finalize_stream)
+            # The pull context manager attaches the span around each underlying iterator pull so
+            # that child spans created during the pull (e.g. inner chat completion spans from the
+            # underlying ChatTelemetryLayer) are parented under this agent invoke span. Attach and
+            # detach happen in the same async context as the pull, avoiding cross-context cleanup
+            # issues. The weakref finalizer ensures the span is closed even if the stream is
+            # garbage collected without being consumed.
+            wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = (
+                result_stream
+                .with_cleanup_hook(_record_duration)
+                .with_cleanup_hook(_finalize_stream)
+                .with_pull_context_manager(lambda: _activate_span(span))
+            )
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
-        async def _run() -> AgentResponse:
+        async def _run() -> AgentResponse[Any]:
             try:
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
                     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1689,20 +1650,11 @@ class AgentTelemetryLayer:
                             span=span,
                             provider_name=provider_name,
                             messages=messages,
-                            system_instructions=_get_instructions_from_options(merged_options),
+                            system_instructions=_get_instructions_from_options(dict(merged_options)),
                         )
                     start_time_stamp = perf_counter()
                     try:
-                        response: AgentResponse[Any] = await super_run(
-                            messages=messages,
-                            stream=False,
-                            session=session,
-                            compaction_strategy=compaction_strategy,
-                            tokenizer=tokenizer,
-                            function_invocation_kwargs=function_invocation_kwargs,
-                            client_kwargs=client_kwargs,
-                            **kwargs,
-                        )
+                        response: AgentResponse[Any] = await execute()
                     except Exception as exception:
                         capture_exception(span=span, exception=exception, timestamp=time_ns())
                         raise
@@ -1730,6 +1682,103 @@ class AgentTelemetryLayer:
                 INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
 
         return _run()
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[ResponseModelBoundT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Trace agent runs with OpenTelemetry spans and metrics."""
+        from ._types import merge_chat_options
+
+        super_run = cast(
+            "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
+            super().run,  # type: ignore[misc]
+        )
+        super_run_kwargs: dict[str, Any] = {
+            "messages": messages,
+            "stream": stream,
+            "session": session,
+            "tools": tools,
+            "options": options,
+            "compaction_strategy": compaction_strategy,
+            "tokenizer": tokenizer,
+            "function_invocation_kwargs": function_invocation_kwargs,
+            "client_kwargs": client_kwargs,
+        }
+        if middleware is not None:
+            super_run_kwargs["middleware"] = middleware
+
+        default_options = dict(getattr(self, "default_options", {}))
+        merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        merged_options: dict[str, Any] = merge_chat_options(
+            default_options, dict(options) if options is not None else {}
+        )
+        return self._trace_agent_invocation(
+            messages=messages,
+            session=session,
+            merged_options=merged_options,
+            client_kwargs=merged_client_kwargs,
+            stream=stream,
+            execute=lambda: super_run(**super_run_kwargs),
+        )
 
 
 # region Otel Helpers
@@ -1777,6 +1826,27 @@ def get_function_span(
 
 
 @contextlib.contextmanager
+def _activate_span(span: trace.Span) -> Generator[None]:
+    """Attach ``span`` as the current span in the OpenTelemetry context.
+
+    Designed to be used as a per-pull context manager registered on a
+    ``ResponseStream`` via ``with_pull_context_manager``: it attaches the span
+    before each underlying iterator pull and detaches immediately after, so
+    child spans created during the pull (HTTP clients, inner chat completions,
+    tool execution) are correctly parented under ``span``.
+
+    Because attach and detach happen within the same ``__anext__`` invocation
+    (and therefore the same async task / contextvars context), there is no risk
+    of "Failed to detach context" warnings from cross-context cleanup.
+    """
+    token = otel_context.attach(trace.set_span_in_context(span))
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
+
+
+@contextlib.contextmanager
 def _get_span(
     attributes: dict[str, Any],
     span_name_attribute: str,
@@ -1796,6 +1866,29 @@ def _get_span(
         set_status_on_exception=False,
     ) as current_span:
         yield current_span
+
+
+def _start_streaming_span(attributes: dict[str, Any], span_name_attribute: str) -> trace.Span:
+    """Start a non-current span for a streaming operation.
+
+    Unlike :func:`_get_span`, the returned span is not attached to the current
+    OpenTelemetry context. The caller is responsible for:
+
+    - Ending the span via cleanup hooks on the wrapped
+      :class:`~agent_framework._types.ResponseStream`.
+    - Activating the span around each iterator pull via
+      :func:`_activate_span` registered with ``with_pull_context_manager`` so
+      that child spans created during stream production inherit it as parent.
+
+    Streaming spans are closed asynchronously in cleanup hooks that run in a
+    different async context than creation, so attaching the span at creation
+    time would cause "Failed to detach context" errors from OpenTelemetry.
+    """
+    operation = attributes.get(OtelAttr.OPERATION, "operation")
+    span_name = attributes.get(span_name_attribute, "unknown")
+    span = get_tracer().start_span(f"{operation} {span_name}")
+    span.set_attributes(attributes)
+    return span
 
 
 def _get_instructions_from_options(options: Any) -> str | list[str] | None:
@@ -1843,8 +1936,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     "agent_id": (OtelAttr.AGENT_ID, None, False, None),
     "agent_name": (OtelAttr.AGENT_NAME, None, False, None),
     "agent_description": (OtelAttr.AGENT_DESCRIPTION, None, False, None),
-    # Multiple source keys - checks model_id in options, then model in kwargs, then model_id in kwargs
-    ("model_id", "model"): (OtelAttr.REQUEST_MODEL, None, True, None),
+    "model": (OtelAttr.REQUEST_MODEL, None, True, None),
     # Tools with validation - returns None if no valid tools
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
@@ -2031,8 +2123,8 @@ def _get_response_attributes(
         )
     if finish_reason:
         attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason])
-    if model_id := getattr(response, "model_id", None):
-        attributes[OtelAttr.RESPONSE_MODEL] = model_id
+    if model := getattr(response, "model", None):
+        attributes[OtelAttr.RESPONSE_MODEL] = model
     if capture_usage and (usage := response.usage_details):
         input_tokens = usage.get("input_token_count")
         if input_tokens:

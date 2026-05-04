@@ -168,7 +168,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         string filePath = Path.Combine(this.Directory.FullName, fileName);
 
         if (!this.CheckpointIndex.Contains(key) ||
-            !File.Exists(fileName))
+            !File.Exists(filePath))
         {
             throw new KeyNotFoundException($"Checkpoint '{key.CheckpointId}' not found in store at '{this.Directory.FullName}'.");
         }

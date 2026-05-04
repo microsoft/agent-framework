@@ -10,6 +10,9 @@ Available web tools:
 - "WebFetch": Fetch content from URLs
 - "WebSearch": Search the web
 
+Environment variables:
+- ANTHROPIC_API_KEY: Your Anthropic API key
+
 SECURITY NOTE: Only enable URL permissions when you trust the agent's actions.
 URL fetching allows the agent to access any URL accessible from your network.
 """
@@ -17,6 +20,10 @@ URL fetching allows the agent to access any URL accessible from your network.
 import asyncio
 
 from agent_framework.anthropic import ClaudeAgent
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

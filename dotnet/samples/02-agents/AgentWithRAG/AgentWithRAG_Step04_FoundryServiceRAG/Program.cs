@@ -4,15 +4,17 @@
 
 using System.ClientModel;
 using Azure.AI.Projects;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
+using Microsoft.Agents.AI.Foundry;
 using OpenAI;
 using OpenAI.Files;
+using OpenAI.Responses;
 using OpenAI.VectorStores;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 
 // Create an AI Project client and get an OpenAI client that works with the foundry service.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
@@ -37,14 +39,20 @@ ClientResult<VectorStore> vectorStoreCreate = await vectorStoreClient.CreateVect
     FileIds = { uploadResult.Value.Id }
 });
 
-var fileSearchTool = new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreCreate.Value.Id)] };
+// Use the native OpenAI SDK FileSearchTool directly with the vector store ID.
+#pragma warning disable OPENAI001
+FileSearchTool fileSearchTool = new([vectorStoreCreate.Value.Id]);
+#pragma warning restore OPENAI001
 
-AIAgent agent = await aiProjectClient
-    .CreateAIAgentAsync(
-        model: deploymentName,
-        name: "AskContoso",
-        instructions: "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
-        tools: [fileSearchTool]);
+ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
+    "AskContoso",
+    new ProjectsAgentVersionCreationOptions(
+        new DeclarativeAgentDefinition(model: deploymentName)
+        {
+            Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
+            Tools = { fileSearchTool }
+        }));
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
 AgentSession session = await agent.CreateSessionAsync();
 
@@ -60,4 +68,4 @@ Console.WriteLine(await agent.RunAsync("What is the best way to maintain the Tra
 // Cleanup
 await fileClient.DeleteFileAsync(uploadResult.Value.Id);
 await vectorStoreClient.DeleteVectorStoreAsync(vectorStoreCreate.Value.Id);
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(agent.Name);

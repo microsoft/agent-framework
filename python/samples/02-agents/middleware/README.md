@@ -13,19 +13,19 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 | [`exception_handling_with_middleware.py`](./exception_handling_with_middleware.py) | Shows how middleware can handle failures and recover cleanly. |
 | [`function_based_middleware.py`](./function_based_middleware.py) | Shows function-based agent and function middleware. |
 | [`middleware_termination.py`](./middleware_termination.py) | Demonstrates stopping a middleware pipeline early. |
-| [`override_result_with_middleware.py`](./override_result_with_middleware.py) | Shows how middleware can replace the normal result. |
-| [`runtime_context_delegation.py`](./runtime_context_delegation.py) | Demonstrates delegating work with runtime context data. |
+| [`override_result_with_middleware.py`](./override_result_with_middleware.py) | Shows how middleware can replace regular and streaming results, then post-process the final response. |
+| [`runtime_context_delegation.py`](./runtime_context_delegation.py) | Demonstrates delegating arguments with runtime context data. |
 | [`session_behavior_middleware.py`](./session_behavior_middleware.py) | Shows how middleware interacts with session-backed runs. |
 | [`shared_state_middleware.py`](./shared_state_middleware.py) | Demonstrates sharing mutable state across middleware invocations. |
 | [`usage_tracking_middleware.py`](./usage_tracking_middleware.py) | Demonstrates one chat middleware function that tracks per-call usage in non-streaming and streaming tool-loop runs. |
 
 ## Running the usage tracking sample
 
-The new usage tracking sample uses `OpenAIResponsesClient`, so set the usual OpenAI responses environment variables first:
+The new usage tracking sample uses `OpenAIChatClient`, so set the usual OpenAI responses environment variables first:
 
 ```bash
 export OPENAI_API_KEY="your-openai-api-key"
-export OPENAI_RESPONSES_MODEL_ID="gpt-4.1-mini"
+export OPENAI_CHAT_MODEL="gpt-4.1-mini"
 ```
 
 Then run:
