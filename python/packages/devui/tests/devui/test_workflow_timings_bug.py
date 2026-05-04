@@ -7,15 +7,16 @@ CustomResponseOutputItemAddedEvent and CustomResponseOutputItemDoneEvent lack a
 1-second gaps between events, making instant workflows appear to take 3+ seconds.
 """
 
+from conftest import (
+    create_executor_completed_event,
+    create_executor_invoked_event,
+)
+
 from agent_framework_devui._mapper import MessageMapper
 from agent_framework_devui.models._openai_custom import (
     AgentFrameworkRequest,
     CustomResponseOutputItemAddedEvent,
     CustomResponseOutputItemDoneEvent,
-)
-from conftest import (
-    create_executor_completed_event,
-    create_executor_invoked_event,
 )
 
 
@@ -92,8 +93,7 @@ async def test_rapid_workflow_events_have_no_top_level_timestamps(
     # legacy workflow-event type so this test stays meaningful.
     workflow_events = [r for r in results if isinstance(r, ResponseWorkflowEventComplete)]
     assert not workflow_events, (
-        "executor_completed should map to CustomResponseOutputItemDoneEvent, "
-        "not ResponseWorkflowEventComplete."
+        "executor_completed should map to CustomResponseOutputItemDoneEvent, not ResponseWorkflowEventComplete."
     )
 
     # Confirm data.timestamp (used by the fallback legacy path) is a Python isoformat
