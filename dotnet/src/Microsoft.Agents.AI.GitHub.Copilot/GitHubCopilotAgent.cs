@@ -185,6 +185,14 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(usageEvent));
                         break;
 
+                    case ToolExecutionStartEvent toolStart:
+                        channel.Writer.TryWrite(this.ConvertToolStartToAgentResponseUpdate(toolStart));
+                        break;
+
+                    case ToolExecutionCompleteEvent toolComplete:
+                        channel.Writer.TryWrite(this.ConvertToolCompleteToAgentResponseUpdate(toolComplete));
+                        break;
+
                     case SessionIdleEvent idleEvent:
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(idleEvent));
                         channel.Writer.TryComplete();
@@ -428,6 +436,78 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             AgentId = this.Id,
             CreatedAt = sessionEvent.Timestamp
         };
+    }
+
+    internal AgentResponseUpdate ConvertToolStartToAgentResponseUpdate(ToolExecutionStartEvent toolStart)
+    {
+        IDictionary<string, object?>? arguments = null;
+        if (toolStart.Data?.Arguments is JsonElement jsonArgs)
+        {
+            arguments = ConvertJsonElementToArguments(jsonArgs);
+        }
+
+        string toolName = toolStart.Data?.McpToolName ?? toolStart.Data?.ToolName ?? string.Empty;
+        string callId = toolStart.Data?.ToolCallId ?? string.Empty;
+
+        FunctionCallContent functionCallContent = new(callId, toolName, arguments)
+        {
+            RawRepresentation = toolStart
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [functionCallContent])
+        {
+            AgentId = this.Id,
+            MessageId = callId,
+            CreatedAt = toolStart.Timestamp
+        };
+    }
+
+    internal AgentResponseUpdate ConvertToolCompleteToAgentResponseUpdate(ToolExecutionCompleteEvent toolComplete)
+    {
+        string callId = toolComplete.Data?.ToolCallId ?? string.Empty;
+        object? result = toolComplete.Data?.Result?.Content
+            ?? toolComplete.Data?.Error?.Message;
+
+        FunctionResultContent functionResultContent = new(callId, result)
+        {
+            RawRepresentation = toolComplete
+        };
+
+        return new AgentResponseUpdate(ChatRole.Tool, [functionResultContent])
+        {
+            AgentId = this.Id,
+            MessageId = callId,
+            CreatedAt = toolComplete.Timestamp
+        };
+    }
+
+    private static Dictionary<string, object?>? ConvertJsonElementToArguments(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        Dictionary<string, object?> arguments = [];
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            arguments[property.Name] = property.Value.ValueKind switch
+            {
+                JsonValueKind.String => property.Value.GetString(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Null => null,
+                JsonValueKind.Number => property.Value.TryGetInt64(out long l)
+                    ? (object?)l
+                    : property.Value.GetDouble(),
+                JsonValueKind.Object => property.Value.Clone(),
+                JsonValueKind.Array => property.Value.Clone(),
+                JsonValueKind.Undefined => null,
+                _ => property.Value.GetRawText()
+            };
+        }
+
+        return arguments;
     }
 
     private static SessionConfig? GetSessionConfig(IList<AITool>? tools, string? instructions)

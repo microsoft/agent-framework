@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading.Tasks;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
@@ -242,5 +243,243 @@ public sealed class GitHubCopilotAgentTests
         // The content should be delivered through TextContent in the Contents collection instead.
         Assert.Empty(result.Text);
         Assert.DoesNotContain(result.Contents, c => c is TextContent);
+    }
+
+    [Fact]
+    public void ConvertToolStartToAgentResponseUpdate_WithMcpToolName_ReturnsFunctionCallContent()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        const string AgentId = "agent-id";
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: AgentId, tools: null);
+        var timestamp = DateTimeOffset.UtcNow;
+        var toolStart = new ToolExecutionStartEvent
+        {
+            Data = new ToolExecutionStartData
+            {
+                ToolCallId = "call-123",
+                ToolName = "fallback_tool",
+                McpToolName = "mcp_tool",
+                Arguments = JsonSerializer.SerializeToElement(new { param1 = "value1", count = 42 })
+            },
+            Timestamp = timestamp
+        };
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToolStartToAgentResponseUpdate(toolStart);
+
+        // Assert
+        Assert.Equal(ChatRole.Assistant, result.Role);
+        Assert.Equal(AgentId, result.AgentId);
+        Assert.Equal("call-123", result.MessageId);
+        Assert.Equal(timestamp, result.CreatedAt);
+        FunctionCallContent content = Assert.IsType<FunctionCallContent>(Assert.Single(result.Contents));
+        Assert.Equal("call-123", content.CallId);
+        Assert.Equal("mcp_tool", content.Name);
+        Assert.NotNull(content.Arguments);
+        Assert.Equal("value1", content.Arguments["param1"]);
+        Assert.Equal(42L, content.Arguments["count"]);
+        Assert.Same(toolStart, content.RawRepresentation);
+    }
+
+    [Fact]
+    public void ConvertToolStartToAgentResponseUpdate_WithToolNameFallback_UsesToolName()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var toolStart = new ToolExecutionStartEvent
+        {
+            Data = new ToolExecutionStartData
+            {
+                ToolCallId = "call-456",
+                ToolName = "local_tool",
+            }
+        };
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToolStartToAgentResponseUpdate(toolStart);
+
+        // Assert
+        FunctionCallContent content = Assert.IsType<FunctionCallContent>(Assert.Single(result.Contents));
+        Assert.Equal("local_tool", content.Name);
+        Assert.Null(content.Arguments);
+    }
+
+    [Fact]
+    public void ConvertToolStartToAgentResponseUpdate_WithNonObjectJsonArguments_ReturnsNullArguments()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var toolStart = new ToolExecutionStartEvent
+        {
+            Data = new ToolExecutionStartData
+            {
+                ToolCallId = "call-789",
+                ToolName = "some_tool",
+                Arguments = JsonSerializer.SerializeToElement("just a string")
+            }
+        };
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToolStartToAgentResponseUpdate(toolStart);
+
+        // Assert
+        FunctionCallContent content = Assert.IsType<FunctionCallContent>(Assert.Single(result.Contents));
+        Assert.Null(content.Arguments);
+    }
+
+    [Fact]
+    public void ConvertToolStartToAgentResponseUpdate_WithAllJsonValueKinds_ConvertsCorrectly()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var toolStart = new ToolExecutionStartEvent
+        {
+            Data = new ToolExecutionStartData
+            {
+                ToolCallId = "call-kinds",
+                ToolName = "multi_type_tool",
+                Arguments = JsonSerializer.SerializeToElement(new
+                {
+                    strVal = "hello",
+                    boolTrue = true,
+                    boolFalse = false,
+                    nullVal = (string?)null,
+                    intVal = 100,
+                    floatVal = 3.14,
+                    objVal = new { nested = "value" },
+                    arrVal = new List<int> { 1, 2, 3 }
+                })
+            }
+        };
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToolStartToAgentResponseUpdate(toolStart);
+
+        // Assert
+        FunctionCallContent content = Assert.IsType<FunctionCallContent>(Assert.Single(result.Contents));
+        Assert.NotNull(content.Arguments);
+        Assert.Equal("hello", content.Arguments["strVal"]);
+        Assert.Equal(true, content.Arguments["boolTrue"]);
+        Assert.Equal(false, content.Arguments["boolFalse"]);
+        Assert.Null(content.Arguments["nullVal"]);
+        Assert.Equal(100L, content.Arguments["intVal"]);
+        Assert.Equal(3.14, (double)content.Arguments["floatVal"]!, 2);
+        JsonElement objValElement = Assert.IsType<JsonElement>(content.Arguments["objVal"]);
+        Assert.Equal(JsonValueKind.Object, objValElement.ValueKind);
+        Assert.Equal("value", objValElement.GetProperty("nested").GetString());
+        JsonElement arrValElement = Assert.IsType<JsonElement>(content.Arguments["arrVal"]);
+        Assert.Equal(JsonValueKind.Array, arrValElement.ValueKind);
+        Assert.Equal(3, arrValElement.GetArrayLength());
+    }
+
+    [Fact]
+    public void ConvertToolCompleteToAgentResponseUpdate_WithResult_ReturnsFunctionResultContent()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        const string AgentId = "agent-id";
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: AgentId, tools: null);
+        var timestamp = DateTimeOffset.UtcNow;
+        var toolComplete = new ToolExecutionCompleteEvent
+        {
+            Data = new ToolExecutionCompleteData
+            {
+                ToolCallId = "call-123",
+                Success = true,
+                Result = new ToolExecutionCompleteDataResult { Content = "tool output" }
+            },
+            Timestamp = timestamp
+        };
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToolCompleteToAgentResponseUpdate(toolComplete);
+
+        // Assert
+        Assert.Equal(ChatRole.Tool, result.Role);
+        Assert.Equal(AgentId, result.AgentId);
+        Assert.Equal("call-123", result.MessageId);
+        Assert.Equal(timestamp, result.CreatedAt);
+        FunctionResultContent content = Assert.IsType<FunctionResultContent>(Assert.Single(result.Contents));
+        Assert.Equal("call-123", content.CallId);
+        Assert.Equal("tool output", content.Result);
+        Assert.Same(toolComplete, content.RawRepresentation);
+    }
+
+    [Fact]
+    public void ConvertToolCompleteToAgentResponseUpdate_WithError_ReturnsErrorMessage()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var toolComplete = new ToolExecutionCompleteEvent
+        {
+            Data = new ToolExecutionCompleteData
+            {
+                ToolCallId = "call-err",
+                Success = false,
+                Error = new ToolExecutionCompleteDataError { Message = "Something went wrong" }
+            }
+        };
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToolCompleteToAgentResponseUpdate(toolComplete);
+
+        // Assert
+        FunctionResultContent content = Assert.IsType<FunctionResultContent>(Assert.Single(result.Contents));
+        Assert.Equal("call-err", content.CallId);
+        Assert.Equal("Something went wrong", content.Result);
+    }
+
+    [Fact]
+    public void ConvertToolCompleteToAgentResponseUpdate_ResultTakesPrecedenceOverError()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var toolComplete = new ToolExecutionCompleteEvent
+        {
+            Data = new ToolExecutionCompleteData
+            {
+                ToolCallId = "call-both",
+                Success = true,
+                Result = new ToolExecutionCompleteDataResult { Content = "actual result" },
+                Error = new ToolExecutionCompleteDataError { Message = "should be ignored" }
+            }
+        };
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToolCompleteToAgentResponseUpdate(toolComplete);
+
+        // Assert
+        FunctionResultContent content = Assert.IsType<FunctionResultContent>(Assert.Single(result.Contents));
+        Assert.Equal("actual result", content.Result);
+    }
+
+    [Fact]
+    public void ConvertToolCompleteToAgentResponseUpdate_WithNoResultOrError_ReturnsNullResult()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var toolComplete = new ToolExecutionCompleteEvent
+        {
+            Data = new ToolExecutionCompleteData
+            {
+                ToolCallId = "call-empty",
+                Success = true
+            }
+        };
+
+        // Act
+        AgentResponseUpdate result = agent.ConvertToolCompleteToAgentResponseUpdate(toolComplete);
+
+        // Assert
+        FunctionResultContent content = Assert.IsType<FunctionResultContent>(Assert.Single(result.Contents));
+        Assert.Equal("call-empty", content.CallId);
+        Assert.Null(content.Result);
     }
 }
