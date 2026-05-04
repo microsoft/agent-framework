@@ -102,7 +102,7 @@ internal static partial class ChatMessageExtensions
         return builder.ToString();
     }
 
-    private const string FencedJsonRegexPattern = @"```(?<lang>)?\s*(?<json>\{[\s\S]*?\})\s*```";
+    private const string FencedJsonRegexPattern = @"```(?<lang>[a-z]+)?\s*(?<json>\{[\s\S]*?\})\s*```";
 #if NET
     [GeneratedRegex(FencedJsonRegexPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture)]
     public static partial Regex FencedJsonRegex();
