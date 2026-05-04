@@ -19,6 +19,8 @@ from ._workflows import (
     MCPToolHandler,
     MCPToolInvocation,
     MCPToolResult,
+    ToolApprovalRequest,
+    ToolApprovalResponse,
     WorkflowFactory,
     WorkflowState,
 )
@@ -48,6 +50,8 @@ __all__ = [
     "MCPToolResult",
     "ProviderLookupError",
     "ProviderTypeMapping",
+    "ToolApprovalRequest",
+    "ToolApprovalResponse",
     "WorkflowFactory",
     "WorkflowState",
     "__version__",

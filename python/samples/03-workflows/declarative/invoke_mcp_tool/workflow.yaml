@@ -19,6 +19,12 @@
 #   How do I configure logging in the Agent Framework?
 #   Gpt-5.4-mini
 #
+# Workflow inputs (set by the host via ``workflow.run({...})``):
+#   text:            The user's question (required).
+#   requireApproval: Optional bool. When true, the MCP tool call pauses for
+#                    human approval before contacting the server. Defaults
+#                    to false when omitted.
+#
 kind: Workflow
 trigger:
 
@@ -31,18 +37,23 @@ trigger:
     - kind: SetVariable
       id: capture_query
       variable: Local.SearchQuery
-      value: =System.LastMessage.Text
+      value: =Workflow.Inputs.text
 
     # Invoke microsoft_docs_search on the Microsoft Learn Docs MCP server.
     # The result is parsed into Local.SearchResults and also added to the
     # conversation (via conversationId) so the agent below can answer the
     # user's question based on it.
+    #
+    # ``requireApproval`` reads from Workflow.Inputs so the host can toggle
+    # the human-approval flow without editing this YAML. When the input is
+    # absent or evaluates to a falsy value, the tool runs without pausing.
     - kind: InvokeMcpTool
       id: search_docs
       conversationId: =System.ConversationId
       serverUrl: https://learn.microsoft.com/api/mcp
       serverLabel: MicrosoftLearnDocs
       toolName: microsoft_docs_search
+      requireApproval: =Workflow.Inputs.requireApproval
       arguments:
         query: =Local.SearchQuery
       output:
@@ -51,14 +62,16 @@ trigger:
 
     # Use the agent to answer the user's question using the conversation
     # context (which now contains the MCP search results). The user's
-    # original message is already in the conversation as System.LastMessage,
-    # and the executor's input fallback chain extracts its ``Text`` field
-    # automatically when ``input.messages`` is omitted.
+    # question is supplied via ``input.messages`` (sourced from the workflow
+    # inputs), and the prior conversation history is bound via
+    # ``conversationId``.
     - kind: InvokeAzureAgent
       id: answer_question
       conversationId: =System.ConversationId
       agent:
         name: DocsAgent
+      input:
+        messages: =Workflow.Inputs.text
       output:
         autoSend: true
         messages: Local.AgentResponse

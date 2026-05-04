@@ -37,6 +37,8 @@ _IMPORTS = [
     "MCPToolResult",
     "ProviderLookupError",
     "ProviderTypeMapping",
+    "ToolApprovalRequest",
+    "ToolApprovalResponse",
     "WorkflowFactory",
     "WorkflowState",
 ]

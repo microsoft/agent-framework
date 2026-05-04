@@ -20,6 +20,8 @@ from agent_framework_declarative import (
     MCPToolResult,
     ProviderLookupError,
     ProviderTypeMapping,
+    ToolApprovalRequest,
+    ToolApprovalResponse,
     WorkflowFactory,
     WorkflowState,
 )
@@ -44,6 +46,8 @@ __all__ = [
     "MCPToolResult",
     "ProviderLookupError",
     "ProviderTypeMapping",
+    "ToolApprovalRequest",
+    "ToolApprovalResponse",
     "WorkflowFactory",
     "WorkflowState",
 ]
