@@ -1,11 +1,13 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsReleased>true</IsReleased>
-    <VersionSuffix>preview</VersionSuffix>
     <!-- Modern targets only; the underlying P/Invokes (setsid) and
          async patterns are not validated against netstandard2.0/net472. -->
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <RootNamespace>Microsoft.Agents.AI.Tools.Shell</RootNamespace>
+    <VersionSuffix>preview</VersionSuffix>
+    <Title>Microsoft Agent Framework - Shell Tools</Title>
+    <Description>Cross-platform shell tools for the Microsoft Agent Framework. Includes LocalShellTool and DockerShellTool with approval-in-the-loop semantics, plus ShellEnvironmentProvider for environment-aware system prompts.</Description>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -16,7 +18,7 @@
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
-  <!-- Disable package validation baseline until the first release. -->
+  <!-- Disable package validation baseline until the first release -->
   <PropertyGroup>
     <PackageValidationBaselineVersion />
     <EnablePackageValidation>false</EnablePackageValidation>
@@ -29,12 +31,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
   </ItemGroup>
-
-  <PropertyGroup>
-    <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Framework - Shell Tools</Title>
-    <Description>Cross-platform shell tools for the Microsoft Agent Framework. Includes LocalShellTool and DockerShellTool with approval-in-the-loop semantics, plus ShellEnvironmentProvider for environment-aware system prompts.</Description>
-  </PropertyGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Tools.Shell.UnitTests" />
