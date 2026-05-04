@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import uuid
+import os
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
@@ -18,11 +18,11 @@ async def main() -> None:
     """Example of persistent cross-session memory with SynapContextProvider."""
     print("=== Synap Context Provider Example ===")
 
-    # Use a stable user_id so memories persist across runs.
+    # Stable user_id so memories persist across runs.
     # In production, derive this from the authenticated user's identity.
-    user_id = str(uuid.uuid4())
+    user_id = "demo-user-001"
 
-    sdk = MaximemSynapSDK(api_key="your-synap-api-key")  # or set SYNAP_API_KEY env var
+    sdk = MaximemSynapSDK(api_key=os.environ["SYNAP_API_KEY"])
 
     # For Azure authentication, run `az login` or replace AzureCliCredential with
     # your preferred authentication option.
