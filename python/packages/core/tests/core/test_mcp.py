@@ -4178,3 +4178,187 @@ async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context(
 
 
 # endregion
+
+
+# region: MCPStreamableHTTPTool GET stream resilience
+
+
+async def test_streamable_http_get_stream_405_does_not_crash_session():
+    """Test that a 405 response on the GET SSE notification stream is handled gracefully.
+
+    Some MCP servers (e.g. Learn MCP) reject GET requests with 405 because they only
+    support the modern Streamable HTTP transport. The background GET notification task
+    must not propagate that failure to the main session.
+    """
+    import asyncio
+
+    import httpx
+    from mcp.client.streamable_http import streamable_http_client
+
+    session_id = "test-session-resilience"
+
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                status_code=405,
+                headers={"content-type": "text/plain"},
+                content=b"This endpoint does not support SSE transport.",
+            )
+
+        if request.method == "POST":
+            body = json.loads(request.content)
+            method = body.get("method")
+
+            if method == "initialize":
+                return httpx.Response(
+                    status_code=200,
+                    headers={
+                        "content-type": "application/json",
+                        "mcp-session-id": session_id,
+                    },
+                    content=json.dumps({
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {"tools": {"listChanged": True}},
+                            "serverInfo": {"name": "learn-mcp", "version": "1.0.0"},
+                        },
+                    }).encode(),
+                )
+
+            if method == "notifications/initialized":
+                return httpx.Response(status_code=202)
+
+            if method == "tools/list":
+                return httpx.Response(
+                    status_code=200,
+                    headers={"content-type": "application/json"},
+                    content=json.dumps({
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {
+                            "tools": [{
+                                "name": "search_docs",
+                                "description": "Search documentation",
+                                "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+                            }]
+                        },
+                    }).encode(),
+                )
+
+            return httpx.Response(status_code=202)
+
+        if request.method == "DELETE":
+            return httpx.Response(status_code=200)
+
+        return httpx.Response(status_code=404)
+
+    transport = httpx.MockTransport(handle_request)
+    http_client = httpx.AsyncClient(transport=transport)
+
+    async with http_client:
+        async with streamable_http_client(
+            url="http://test-server/mcp",
+            http_client=http_client,
+            terminate_on_close=False,
+        ) as (read_stream, write_stream, get_session_id):
+            async with ClientSession(
+                read_stream=read_stream,
+                write_stream=write_stream,
+            ) as session:
+                result = await session.initialize()
+                assert result.serverInfo.name == "learn-mcp"
+
+                # Allow time for the background GET stream attempt to fail
+                await asyncio.sleep(0.5)
+
+                # Session must remain usable after the GET stream failure
+                tools = await session.list_tools()
+                assert len(tools.tools) == 1
+                assert tools.tools[0].name == "search_docs"
+
+
+async def test_streamable_http_get_stream_connection_error_does_not_crash_session():
+    """Test that a connection error on GET SSE notification stream is handled gracefully.
+
+    Some MCP servers only accept POST and the background GET either resets or refuses
+    the connection. This must not cancel the main session task.
+    """
+    import asyncio
+
+    import httpx
+    from mcp.client.streamable_http import streamable_http_client
+
+    async def handle_request(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            raise httpx.ConnectError("Connection reset by peer")
+
+        if request.method == "POST":
+            body = json.loads(request.content)
+            method = body.get("method")
+
+            if method == "initialize":
+                return httpx.Response(
+                    status_code=200,
+                    headers={
+                        "content-type": "application/json",
+                        "mcp-session-id": "d365-session",
+                    },
+                    content=json.dumps({
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {"tools": {}},
+                            "serverInfo": {"name": "d365-server", "version": "1.0.0"},
+                        },
+                    }).encode(),
+                )
+
+            if method == "notifications/initialized":
+                return httpx.Response(status_code=202)
+
+            if method == "tools/list":
+                return httpx.Response(
+                    status_code=200,
+                    headers={"content-type": "application/json"},
+                    content=json.dumps({
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"tools": []},
+                    }).encode(),
+                )
+
+            return httpx.Response(status_code=202)
+
+        if request.method == "DELETE":
+            return httpx.Response(status_code=200)
+
+        return httpx.Response(status_code=404)
+
+    transport = httpx.MockTransport(handle_request)
+    http_client = httpx.AsyncClient(transport=transport)
+
+    async with http_client:
+        async with streamable_http_client(
+            url="http://test-server/mcp",
+            http_client=http_client,
+            terminate_on_close=False,
+        ) as (read_stream, write_stream, get_session_id):
+            async with ClientSession(
+                read_stream=read_stream,
+                write_stream=write_stream,
+            ) as session:
+                result = await session.initialize()
+                assert result.serverInfo.name == "d365-server"
+
+                # Allow time for the background GET stream reconnection attempts
+                await asyncio.sleep(1.0)
+
+                # Session must remain usable after the GET stream failure
+                tools = await session.list_tools()
+                assert tools.tools is not None
+
+
+# endregion
