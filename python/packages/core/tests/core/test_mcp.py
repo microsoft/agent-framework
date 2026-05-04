@@ -4196,9 +4196,11 @@ async def test_streamable_http_get_stream_405_does_not_crash_session():
     from mcp.client.streamable_http import streamable_http_client
 
     session_id = "test-session-resilience"
+    get_attempted = asyncio.Event()
 
     async def handle_request(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
+            get_attempted.set()
             return httpx.Response(
                 status_code=405,
                 headers={"content-type": "text/plain"},
@@ -4274,8 +4276,8 @@ async def test_streamable_http_get_stream_405_does_not_crash_session():
         result = await session.initialize()
         assert result.serverInfo.name == "learn-mcp"
 
-        # Allow time for the background GET stream attempt to fail
-        await asyncio.sleep(0.5)
+        # Wait for the background GET stream to be attempted
+        await asyncio.wait_for(get_attempted.wait(), timeout=5.0)
 
         # Session must remain usable after the GET stream failure
         tools = await session.list_tools()
@@ -4294,8 +4296,11 @@ async def test_streamable_http_get_stream_connection_error_does_not_crash_sessio
     import httpx
     from mcp.client.streamable_http import streamable_http_client
 
+    get_attempted = asyncio.Event()
+
     async def handle_request(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
+            get_attempted.set()
             raise httpx.ConnectError("Connection reset by peer")
 
         if request.method == "POST":
@@ -4359,8 +4364,8 @@ async def test_streamable_http_get_stream_connection_error_does_not_crash_sessio
         result = await session.initialize()
         assert result.serverInfo.name == "d365-server"
 
-        # Allow time for the background GET stream reconnection attempts
-        await asyncio.sleep(1.0)
+        # Wait for the background GET stream to be attempted
+        await asyncio.wait_for(get_attempted.wait(), timeout=5.0)
 
         # Session must remain usable after the GET stream failure
         tools = await session.list_tools()
