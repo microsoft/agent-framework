@@ -2122,6 +2122,60 @@ def test_replace_approval_contents_with_results_skips_results_without_call_id() 
     assert [(content.call_id, content.result) for content in messages[1].contents] == [("call_1", "first result")]
 
 
+def test_replace_approval_contents_with_results_prunes_emptied_messages() -> None:
+    """Messages whose contents are fully consumed during the first pass should be removed.
+
+    When approval responses are paired with placeholder results, the responses are marked
+    for removal in the first pass. If a message contained only such responses, it ends up
+    with an empty `contents` list and the second pass should drop it from `messages`.
+    """
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    call_one, request_one, response_one = _build_approved_tool_roundtrip(
+        call_id="call_1", approval_id="approval_1", tool_name="first_tool"
+    )
+    call_two, request_two, response_two = _build_approved_tool_roundtrip(
+        call_id="call_2", approval_id="approval_2", tool_name="second_tool"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[call_one, request_one, call_two, request_two]),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="call_1", result="[APPROVAL_PENDING] first placeholder"),
+                Content.from_function_result(call_id="call_2", result="[APPROVAL_PENDING] second placeholder"),
+            ],
+        ),
+        # This user message holds only approval_responses whose placeholders are replaced
+        # in the tool message above, so every content here is marked for removal and the
+        # message itself becomes empty -> it must be pruned by the second pass.
+        Message(role="user", contents=[response_one, response_two]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [
+            Content.from_function_result(call_id="call_1", result="first result"),
+            Content.from_function_result(call_id="call_2", result="second result"),
+        ],
+    )
+
+    # The now-empty user message should have been pruned, leaving just the assistant
+    # message and the tool message with the resolved results.
+    assert len(messages) == 2
+    assert messages[0].role == "assistant"
+    assert messages[0].contents == [call_one, call_two]
+    assert messages[1].role == "tool"
+    assert [(content.call_id, content.result) for content in messages[1].contents] == [
+        ("call_1", "first result"),
+        ("call_2", "second result"),
+    ]
+    # Sanity-check: no leftover empty messages.
+    assert all(msg.contents for msg in messages)
+
+
 async def test_mixed_local_and_hosted_approval_flow(chat_client_base: SupportsChatGetResponse):
     """Test that mixed local + hosted MCP approvals are handled correctly.
 
