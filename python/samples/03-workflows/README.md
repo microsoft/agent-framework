@@ -89,6 +89,7 @@ Write workflows as plain Python async functions — no graph concepts, no execut
 | Multi-Selection Edge Group | [control-flow/multi_selection_edge_group.py](./control-flow/multi_selection_edge_group.py) | Select one or many targets dynamically (subset fan-out) |
 | Simple Loop                | [control-flow/simple_loop.py](./control-flow/simple_loop.py)                               | Feedback loop where an agent judges ABOVE/BELOW/MATCHED |
 | Workflow Cancellation      | [control-flow/workflow_cancellation.py](./control-flow/workflow_cancellation.py)           | Cancel a running workflow using asyncio tasks           |
+| Intermediate vs Terminal Outputs | [control-flow/intermediate_vs_terminal_outputs.py](./control-flow/intermediate_vs_terminal_outputs.py) | Designate output executors so non-designated yields surface as `type='intermediate'` events (and `text_reasoning` content via `as_agent`) |
 
 ### human-in-the-loop
 

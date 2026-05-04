@@ -200,10 +200,12 @@ class MessageMapper:
         try:
             from agent_framework import AgentResponse, AgentResponseUpdate, WorkflowEvent
 
-            # Handle WorkflowEvent with type='output' or 'data' wrapping AgentResponseUpdate
-            # This must be checked BEFORE generic WorkflowEvent check
-            # Note: AgentExecutor uses type='output' for streaming updates
-            if isinstance(raw_event, WorkflowEvent) and raw_event.type in ("output", "data"):
+            # Handle WorkflowEvent with type='output', 'intermediate', or 'data' wrapping
+            # AgentResponseUpdate. This must be checked BEFORE generic WorkflowEvent check.
+            # Note: AgentExecutor uses type='output' for streaming updates from designated
+            # executors and type='intermediate' from non-designated executors. type='data'
+            # is the deprecated legacy variant retained for backward compat.
+            if isinstance(raw_event, WorkflowEvent) and raw_event.type in ("output", "intermediate", "data"):
                 event_data = getattr(cast(Any, raw_event), "data", None)
                 if isinstance(event_data, AgentResponseUpdate):
                     # Preserve executor_id in context for proper output routing

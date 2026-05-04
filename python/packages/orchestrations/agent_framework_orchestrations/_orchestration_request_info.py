@@ -220,8 +220,14 @@ class AgentApprovalExecutor(WorkflowExecutor):
         request_info_cls = _TerminalAgentRequestInfoExecutor if terminal else AgentRequestInfoExecutor
         request_info_executor = request_info_cls(id="agent_request_info_executor")
 
+        # Both inner executors yield the inner workflow's terminal output (the agent
+        # during its turn; the _TerminalAgentRequestInfoExecutor after approval), so
+        # both must be designated for WorkflowExecutor.get_outputs() to surface them.
         return (
-            WorkflowBuilder(start_executor=agent_executor)
+            WorkflowBuilder(
+                start_executor=agent_executor,
+                output_executors=[agent_executor, request_info_executor],
+            )
             # Create a loop between agent executor and request info executor
             .add_edge(agent_executor, request_info_executor)
             .add_edge(request_info_executor, agent_executor)

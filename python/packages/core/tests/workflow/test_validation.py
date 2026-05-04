@@ -609,15 +609,20 @@ def test_output_validation_fails_for_executor_without_output_types():
 
 
 def test_output_validation_empty_list_passes():
-    """Test that output validation passes with an empty output executors list."""
+    """Test that output validation passes with an explicit empty output executors list.
+
+    Under the strict-output contract, ``output_executors=[]`` means "no terminals" —
+    no executor's yield is type='output'. This is distinct from the legacy default
+    (``output_executors=None``) which treats every executor as an output.
+    """
     executor1 = OutputExecutor(id="executor1")
     executor2 = OutputExecutor(id="executor2")
 
     workflow = WorkflowBuilder(start_executor=executor1, output_executors=[]).add_edge(executor1, executor2).build()
 
     assert workflow is not None
-    # All executors are outputs
-    assert workflow._output_executors == ["executor1", "executor2"]  # type: ignore
+    # Explicit empty list = strict mode with zero designated outputs.
+    assert workflow._output_executors == []  # type: ignore[attr-defined]
 
 
 def test_output_validation_with_direct_validate_workflow_graph():

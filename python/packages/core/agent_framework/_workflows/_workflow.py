@@ -198,8 +198,10 @@ class Workflow(DictConvertible):
                 better observability and management.
             description: Optional description of what the workflow does. If the workflow is built using
                 WorkflowBuilder, this will be the description of the builder.
-            output_executors: Optional list of executor IDs whose outputs will be considered workflow outputs.
-                              If None or empty, all executor outputs are treated as workflow outputs.
+            output_executors: List of executor IDs designated as terminal outputs, or
+                ``None`` for legacy mode (every yield is ``type='output'``). Any list
+                (including ``[]``) opts into strict mode where only designated yields are
+                ``type='output'``; see ``WorkflowBuilder`` for the canonical contract.
         """
         self.edge_groups = list(edge_groups)
         self.executors = dict(executors)
@@ -215,9 +217,10 @@ class Workflow(DictConvertible):
         self.graph_signature = self._compute_graph_signature()
         self.graph_signature_hash = self._hash_graph_signature(self.graph_signature)
 
-        # Output events (WorkflowEvent with type='output') from these executors are treated as workflow outputs.
-        # If None or empty, all executor outputs are considered workflow outputs.
-        self._output_executors = list(output_executors) if output_executors else list(self.executors.keys())
+        # Stored as the original nullable shape so legacy (None) and strict-no-terminals ([])
+        # are distinguishable; consumed by `_should_yield_output_event` and the runner's
+        # labeling check.
+        self._output_executors: list[str] | None = list(output_executors) if output_executors is not None else None
 
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
@@ -289,7 +292,13 @@ class Workflow(DictConvertible):
         return self.executors[self.start_executor_id]
 
     def get_output_executors(self) -> list[Executor]:
-        """Get the list of output executors in the workflow."""
+        """Get the list of output executors in the workflow.
+
+        In legacy mode (no explicit ``output_executors``), returns every executor in the
+        workflow. In strict mode, returns only the designated output executors.
+        """
+        if self._output_executors is None:
+            return list(self.executors.values())
         return [self.executors[executor_id] for executor_id in self._output_executors]
 
     def get_executors_list(self) -> list[Executor]:
@@ -834,11 +843,10 @@ class Workflow(DictConvertible):
         Returns:
             True if the event should be yielded as a workflow output, False otherwise.
         """
-        # If no specific output executors are defined, yield all outputs
-        if not self._output_executors:
+        # Legacy mode: every yield is treated as a workflow output.
+        if self._output_executors is None:
             return True
-
-        # Check if the event's source executor is in the list of output executors
+        # Strict mode: only yields from designated executors are workflow outputs.
         return event.executor_id in self._output_executors
 
     # Graph signature helpers

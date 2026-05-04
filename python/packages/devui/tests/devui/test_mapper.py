@@ -429,7 +429,7 @@ async def test_magentic_executor_event_with_agent_delta_metadata(
     """Test that WorkflowEvent[AgentResponseUpdate] with magentic_event_type='agent_delta' is handled correctly.
 
     This tests the ACTUAL event format Magentic emits - not a fake MagenticAgentDeltaEvent class.
-    Magentic uses WorkflowEvent.emit() with additional_properties containing magentic_event_type.
+    Magentic uses WorkflowEvent.intermediate() with additional_properties containing magentic_event_type.
     """
     from agent_framework._types import AgentResponseUpdate
     from agent_framework._workflows._events import WorkflowEvent
@@ -444,7 +444,7 @@ async def test_magentic_executor_event_with_agent_delta_metadata(
             "agent_id": "writer_agent",
         },
     )
-    event = WorkflowEvent.emit(executor_id="magentic_executor", data=update)
+    event = WorkflowEvent.intermediate(executor_id="magentic_executor", data=update)
 
     events = await mapper.convert_event(event, test_request)
 
@@ -459,7 +459,7 @@ async def test_magentic_executor_event_with_agent_delta_metadata(
 async def test_magentic_orchestrator_message_event(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test that WorkflowEvent[AgentResponseUpdate] with magentic_event_type='orchestrator_message' is handled.
 
-    Magentic emits orchestrator planning/instruction messages using WorkflowEvent.emit()
+    Magentic emits orchestrator planning/instruction messages using WorkflowEvent.intermediate()
     with additional_properties containing magentic_event_type='orchestrator_message'.
     """
     from agent_framework._types import AgentResponseUpdate
@@ -476,7 +476,7 @@ async def test_magentic_orchestrator_message_event(mapper: MessageMapper, test_r
             "orchestrator_id": "magentic_orchestrator",
         },
     )
-    event = WorkflowEvent.emit(executor_id="magentic_orchestrator", data=update)
+    event = WorkflowEvent.intermediate(executor_id="magentic_orchestrator", data=update)
 
     events = await mapper.convert_event(event, test_request)
 
@@ -507,7 +507,7 @@ async def test_magentic_events_use_same_event_class_as_other_workflows(
         contents=[Content.from_text(text="Regular workflow response")],
         role="assistant",
     )
-    regular_event = WorkflowEvent.emit(executor_id="regular_executor", data=regular_update)
+    regular_event = WorkflowEvent.intermediate(executor_id="regular_executor", data=regular_update)
 
     # 2. Magentic workflow (with additional_properties)
     magentic_update = AgentResponseUpdate(
@@ -515,7 +515,7 @@ async def test_magentic_events_use_same_event_class_as_other_workflows(
         role="assistant",
         additional_properties={"magentic_event_type": "agent_delta"},
     )
-    magentic_event = WorkflowEvent.emit(executor_id="magentic_executor", data=magentic_update)
+    magentic_event = WorkflowEvent.intermediate(executor_id="magentic_executor", data=magentic_update)
 
     # Both should be the SAME class
     assert type(regular_event) is type(magentic_event)
@@ -592,6 +592,27 @@ async def test_workflow_output_event_with_list_data(mapper: MessageMapper, test_
 
     assert len(events) == 1
     assert events[0].type == "response.output_item.added"
+
+
+async def test_workflow_intermediate_event_with_agent_response_update_dispatched(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """A WorkflowEvent with type='intermediate' wrapping an AgentResponseUpdate is mapped
+    just like type='output' / type='data' — to OpenAI text-delta events."""
+    from agent_framework._workflows._events import WorkflowEvent
+
+    update = AgentResponseUpdate(
+        contents=[Content.from_text(text="intermediate progress")],
+        role="assistant",
+        author_name="non-designated-agent",
+    )
+    event = WorkflowEvent.intermediate(executor_id="non_designated", data=update)
+    events = await mapper.convert_event(event, test_request)
+
+    assert len(events) >= 1
+    text_events = [e for e in events if getattr(e, "type", "") == "response.output_text.delta"]
+    assert len(text_events) >= 1
+    assert text_events[0].delta == "intermediate progress"
 
 
 # =============================================================================

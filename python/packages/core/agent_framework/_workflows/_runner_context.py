@@ -7,7 +7,10 @@ import logging
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
+
+if TYPE_CHECKING:
+    from ._workflow import Workflow
 
 from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
 from ._const import INTERNAL_SOURCE_ID
@@ -192,6 +195,19 @@ class RunnerContext(Protocol):
         """
         ...
 
+    def should_label_as_intermediate(self, executor_id: str) -> bool:
+        """Whether yields from ``executor_id`` should be labeled type='intermediate'.
+
+        Returns True only when the workflow was built with explicit ``output_executors``
+        AND ``executor_id`` is not in that designated set. In legacy mode (no explicit
+        ``output_executors``), always returns False — every yield is type='output'.
+
+        RunnerContext subclasses that don't support intermediate labeling may inherit the
+        Protocol's no-op default body, which returns ``None`` (falsy) — yielding legacy
+        behavior automatically.
+        """
+        ...
+
     async def create_checkpoint(
         self,
         workflow_name: str,
@@ -286,6 +302,12 @@ class InProcRunnerContext:
 
         # Streaming flag - set by workflow's run(..., stream=True) vs run(..., stream=False)
         self._streaming: bool = False
+
+        # Back-reference to the Workflow this context serves; assigned once by
+        # WorkflowBuilder.build() after both objects exist (chicken-and-egg: the workflow
+        # needs the context for its Runner). The runner consults the Workflow as the
+        # single source of truth for output designation rather than caching a copy.
+        self._workflow: Workflow | None = None
 
     # region Messaging and Events
     async def send_message(self, message: WorkflowMessage) -> None:
@@ -430,6 +452,11 @@ class InProcRunnerContext:
             True if streaming mode is enabled, False otherwise.
         """
         return self._streaming
+
+    def should_label_as_intermediate(self, executor_id: str) -> bool:
+        if self._workflow is None or self._workflow._output_executors is None:
+            return False  # not yet bound, or legacy mode
+        return executor_id not in self._workflow._output_executors
 
     async def add_request_info_event(self, event: WorkflowEvent[Any]) -> None:
         """Add a request_info event to the context and track it for correlation.
