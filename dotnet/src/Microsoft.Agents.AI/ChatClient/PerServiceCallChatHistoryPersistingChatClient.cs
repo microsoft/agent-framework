@@ -188,7 +188,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
         while (hasUpdates)
         {
             var update = enumerator.Current;
-            responseUpdates.Add(update);
+            responseUpdates.Add(update.Clone());
 
             // If the service returned a real ConversationId on any update, remember that.
             // Otherwise stamp our sentinel so FICC treats this as service-managed —

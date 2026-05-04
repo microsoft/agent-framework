@@ -15,6 +15,8 @@ public sealed class AgentFileSkill : AgentSkill
 {
     private readonly IReadOnlyList<AgentSkillResource> _resources;
     private readonly IReadOnlyList<AgentSkillScript> _scripts;
+    private readonly string _originalContent;
+    private string? _content;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFileSkill"/> class.
@@ -32,7 +34,7 @@ public sealed class AgentFileSkill : AgentSkill
         IReadOnlyList<AgentSkillScript>? scripts = null)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
-        this.Content = Throw.IfNull(content);
+        this._originalContent = Throw.IfNull(content);
         this.Path = Throw.IfNullOrWhitespace(path);
         this._resources = resources ?? [];
         this._scripts = scripts ?? [];
@@ -42,7 +44,18 @@ public sealed class AgentFileSkill : AgentSkill
     public override AgentSkillFrontmatter Frontmatter { get; }
 
     /// <inheritdoc/>
-    public override string Content { get; }
+    /// <remarks>
+    /// Returns the raw SKILL.md content. When the skill has scripts, a
+    /// <c>&lt;scripts&gt;&lt;script name="..."&gt;&lt;parameters_schema&gt;...&lt;/parameters_schema&gt;&lt;/script&gt;&lt;/scripts&gt;</c>
+    /// block is appended with a per-script entry describing the expected argument format.
+    /// The result is cached after the first access.
+    /// </remarks>
+    public override string Content
+    {
+        get => this._content ??= this._scripts is { Count: > 0 }
+            ? this._originalContent + AgentInlineSkillContentBuilder.BuildScriptsBlock(this._scripts)
+            : this._originalContent;
+    }
 
     /// <summary>
     /// Gets the directory path where the skill was discovered.

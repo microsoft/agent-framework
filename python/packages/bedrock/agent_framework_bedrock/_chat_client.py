@@ -405,6 +405,8 @@ class BedrockChatClient(
 
         tool_config = self._prepare_tools(options.get("tools"))
         if tool_mode := validate_tool_mode(options.get("tool_choice")):
+            if "allowed_tools" in tool_mode:
+                logger.warning("allowed_tools is not supported by Bedrock; the setting will be ignored")
             match tool_mode.get("mode"):
                 case "none":
                     # Bedrock doesn't support toolChoice "none".
