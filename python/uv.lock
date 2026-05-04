@@ -48,6 +48,7 @@ members = [
     "agent-framework-gemini",
     "agent-framework-github-copilot",
     "agent-framework-hosting",
+    "agent-framework-hosting-telegram",
     "agent-framework-hyperlight",
     "agent-framework-lab",
     "agent-framework-mem0",
@@ -629,6 +630,23 @@ provides-extras = ["serve"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "httpx", specifier = ">=0.28.1" }]
+
+[[package]]
+name = "agent-framework-hosting-telegram"
+version = "1.0.0a260424"
+source = { editable = "packages/hosting-telegram" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-hosting", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-hosting", editable = "packages/hosting" },
+    { name = "httpx", specifier = ">=0.27,<1" },
+]
 
 [[package]]
 name = "agent-framework-hyperlight"
