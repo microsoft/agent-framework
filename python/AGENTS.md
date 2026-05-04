@@ -69,6 +69,7 @@ python/
 
 ### Azure Integrations
 - [foundry](packages/foundry/README.md) - Microsoft Foundry chat, agent, memory, and embedding integrations
+- [azure-contentunderstanding](packages/azure-contentunderstanding/AGENTS.md) - Azure Content Understanding context provider
 - [azure-ai-search](packages/azure-ai-search/AGENTS.md) - Azure AI Search RAG
 - [azure-cosmos](packages/azure-cosmos/AGENTS.md) - Azure Cosmos DB-backed history provider
 - [azurefunctions](packages/azurefunctions/AGENTS.md) - Azure Functions hosting

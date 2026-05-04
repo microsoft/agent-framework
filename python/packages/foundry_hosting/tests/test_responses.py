@@ -879,6 +879,30 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].result == "result text"
 
+    def test_custom_tool_call_output_with_mcp_call_id_routes_to_mcp_server_tool_result(self) -> None:
+        """When the host wrote a hosted-MCP result via
+        `aoutput_item_custom_tool_call_output`, the persisted call_id keeps
+        its `mcp_*` prefix. On read, that result must reconstruct as a
+        `mcp_server_tool_result` Content (not `function_result`), so the
+        chat-client serialize layer treats it as a hosted-MCP result and
+        does not produce an orphan `function_call_output`.
+        """
+        from azure.ai.agentserver.responses.models import OutputItemCustomToolCallOutput
+
+        item = OutputItemCustomToolCallOutput({
+            "type": "custom_tool_call_output",
+            "call_id": "mcp_06b686e11f118cf40169f0e5badb3081979842929d5cf04920",
+            "output": "found 10 cats",
+        })
+        msg = _output_item_to_message(item)
+        assert msg.role == "tool"
+        assert len(msg.contents) == 1
+        c = msg.contents[0]
+        assert c.type == "mcp_server_tool_result", (
+            f"expected mcp_server_tool_result for mcp_-prefixed call_id; got {c.type}"
+        )
+        assert c.call_id == "mcp_06b686e11f118cf40169f0e5badb3081979842929d5cf04920"
+
     def test_apply_patch_call(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchUpdateFileOperation, OutputItemApplyPatchToolCall
 
@@ -1329,6 +1353,32 @@ class TestItemToMessage:
         assert msg is not None
         assert msg.contents[0].result == "123"
 
+    def test_custom_tool_call_output_with_mcp_call_id_routes_to_mcp_server_tool_result(self) -> None:
+        """Issue #5546: input items carrying a hosted-MCP result (from a
+        prior turn that the framework wrote via
+        `aoutput_item_custom_tool_call_output`) must reconstruct as a
+        `mcp_server_tool_result` Content, not `function_result`. Otherwise
+        the chat-client serialize layer turns it into an orphan
+        `function_call_output` with `mcp_*` call_id and the Responses API
+        rejects the next turn.
+        """
+        from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
+
+        item = ItemCustomToolCallOutput({
+            "type": "custom_tool_call_output",
+            "call_id": "mcp_06b686e11f118cf40169f0e5badb3081979842929d5cf04920",
+            "output": "found 10 cats",
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "tool"
+        assert len(msg.contents) == 1
+        c = msg.contents[0]
+        assert c.type == "mcp_server_tool_result", (
+            f"expected mcp_server_tool_result for mcp_-prefixed call_id; got {c.type}"
+        )
+        assert c.call_id == "mcp_06b686e11f118cf40169f0e5badb3081979842929d5cf04920"
+
     def test_apply_patch_call(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallItemParam, ApplyPatchUpdateFileOperation
 
@@ -1506,6 +1556,121 @@ class TestMultiTurnMixedContent:
         assert messages[0].contents[0].text == "Summarize this document"
         assert messages[0].contents[1].type == "uri"
         assert messages[0].contents[1].uri == "https://example.com/doc.pdf"
+
+    async def test_text_and_file_data_input_single_turn(self) -> None:
+        """Agent receives a message with text and file content via inline file_data."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("File received")])])
+        )
+        server = _make_server(agent)
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Summarize this document"},
+                            {
+                                "type": "input_file",
+                                "file_data": "data:application/pdf;base64,JVBERi0xLjQ=",
+                                "filename": "doc.pdf",
+                            },
+                        ],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        messages = agent.run.call_args.kwargs["messages"]
+        assert len(messages) == 1
+        assert len(messages[0].contents) == 2
+        assert messages[0].contents[0].type == "text"
+        assert messages[0].contents[0].text == "Summarize this document"
+        assert messages[0].contents[1].type == "data"
+        assert messages[0].contents[1].uri == "data:application/pdf;base64,JVBERi0xLjQ="
+
+    async def test_text_mime_file_data_decoded(self) -> None:
+        """Agent receives a text/* file_data that is base64-decoded to plain text."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Got it")])])
+        )
+        server = _make_server(agent)
+
+        import base64
+
+        encoded = base64.b64encode(b"Hello, world!").decode()
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_file",
+                                "file_data": f"data:text/plain;base64,{encoded}",
+                                "filename": "greeting.txt",
+                            },
+                        ],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+
+        messages = agent.run.call_args.kwargs["messages"]
+        assert len(messages) == 1
+        assert messages[0].contents[0].type == "text"
+        assert messages[0].contents[0].text == "[File: greeting.txt]\nHello, world!"
+
+    async def test_text_mime_file_data_invalid_base64_falls_through(self) -> None:
+        """Invalid base64 in a text/* file_data falls through to URI passthrough."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Got it")])])
+        )
+        server = _make_server(agent)
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_file",
+                                "file_data": "data:text/plain;base64,!!!invalid!!!",
+                                "filename": "bad.txt",
+                            },
+                        ],
+                    }
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+
+        messages = agent.run.call_args.kwargs["messages"]
+        assert len(messages) == 1
+        assert messages[0].contents[0].type == "data"
+        assert messages[0].contents[0].uri == "data:text/plain;base64,!!!invalid!!!"
 
     async def test_mixed_text_and_image_input(self) -> None:
         """Agent receives a single message with both text and image content."""

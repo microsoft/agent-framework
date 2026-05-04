@@ -35,7 +35,8 @@ public abstract class AgentSkill
     /// Gets the full skill content.
     /// </summary>
     /// <remarks>
-    /// For file-based skills this is the raw SKILL.md file content.
+    /// For file-based skills this is the raw SKILL.md file content, optionally
+    /// augmented with a synthesized scripts block when scripts are present.
     /// For code-defined skills this is a synthesized XML document
     /// containing name, description, and body (instructions, resources, scripts).
     /// </remarks>

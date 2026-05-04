@@ -2,7 +2,6 @@
 
 """Tests for AgentFrameworkException inner_exception handling."""
 
-
 from agent_framework import AgentFrameworkException
 
 
