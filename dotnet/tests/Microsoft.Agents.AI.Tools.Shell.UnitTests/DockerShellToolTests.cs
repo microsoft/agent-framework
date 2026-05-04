@@ -136,37 +136,37 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public void Ctor_GeneratesUniqueContainerName()
+    public async Task Ctor_GeneratesUniqueContainerName()
     {
-        using var t1 = new DockerShellTool(mode: ShellMode.Stateless);
-        using var t2 = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t1 = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t2 = new DockerShellTool(mode: ShellMode.Stateless);
         Assert.StartsWith("af-shell-", t1.ContainerName, StringComparison.Ordinal);
         Assert.StartsWith("af-shell-", t2.ContainerName, StringComparison.Ordinal);
         Assert.NotEqual(t1.ContainerName, t2.ContainerName);
     }
 
     [Fact]
-    public void Ctor_RespectsExplicitContainerName()
+    public async Task Ctor_RespectsExplicitContainerName()
     {
-        using var t = new DockerShellTool(containerName: "my-explicit-name", mode: ShellMode.Stateless);
+        await using var t = new DockerShellTool(containerName: "my-explicit-name", mode: ShellMode.Stateless);
         Assert.Equal("my-explicit-name", t.ContainerName);
     }
 
     [Fact]
-    public void IShellExecutor_DockerShellTool_ImplementsInterface()
+    public async Task IShellExecutor_DockerShellTool_ImplementsInterface()
     {
-        using var t = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t = new DockerShellTool(mode: ShellMode.Stateless);
         IShellExecutor executor = t;
         Assert.NotNull(executor);
     }
 
     [Fact]
-    public void AsAIFunction_HardenedDefaults_AreNotApprovalGated()
+    public async Task AsAIFunction_HardenedDefaults_AreNotApprovalGated()
     {
         // With the default hardened config (network=none, non-root user,
         // read-only root, no extra args, no host mount) approval should
         // remain opt-in.
-        using var t = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t = new DockerShellTool(mode: ShellMode.Stateless);
         Assert.True(t.IsHardenedConfiguration);
         var fn = t.AsAIFunction();
         Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
@@ -174,9 +174,9 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public void AsAIFunction_OptInApproval_WrapsInApprovalRequired()
+    public async Task AsAIFunction_OptInApproval_WrapsInApprovalRequired()
     {
-        using var t = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t = new DockerShellTool(mode: ShellMode.Stateless);
         var fn = t.AsAIFunction(requireApproval: true);
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
     }
@@ -186,10 +186,10 @@ public sealed class DockerShellToolTests
     [InlineData("none", "0:0", true, true, false)]            // root user => relaxed
     [InlineData("none", "root", true, true, false)]           // root by name => relaxed
     [InlineData("none", "65534:65534", false, true, false)]   // writable root => relaxed
-    public void AsAIFunction_RelaxedConfig_DefaultsToApprovalGated(
+    public async Task AsAIFunction_RelaxedConfig_DefaultsToApprovalGated(
         string network, string user, bool readOnlyRoot, bool mountReadonly, bool _)
     {
-        using var t = new DockerShellTool(
+        await using var t = new DockerShellTool(
             mode: ShellMode.Stateless,
             network: network,
             user: user,
@@ -202,9 +202,9 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public void AsAIFunction_ExtraRunArgs_DefaultsToApprovalGated()
+    public async Task AsAIFunction_ExtraRunArgs_DefaultsToApprovalGated()
     {
-        using var t = new DockerShellTool(
+        await using var t = new DockerShellTool(
             mode: ShellMode.Stateless,
             extraRunArgs: s_privilegedExtraRunArgs);
         Assert.False(t.IsHardenedConfiguration);
@@ -214,9 +214,9 @@ public sealed class DockerShellToolTests
     }
 
     [Fact]
-    public void AsAIFunction_RelaxedButExplicitOptOut_IsNotApprovalGated()
+    public async Task AsAIFunction_RelaxedButExplicitOptOut_IsNotApprovalGated()
     {
-        using var t = new DockerShellTool(
+        await using var t = new DockerShellTool(
             mode: ShellMode.Stateless,
             network: "host");
         var fn = t.AsAIFunction(requireApproval: false);
@@ -235,7 +235,7 @@ public sealed class DockerShellToolTests
     {
         // Pure policy path: the policy check runs before any docker invocation,
         // so this exercises rejection without needing a Docker daemon.
-        using var t = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t = new DockerShellTool(mode: ShellMode.Stateless);
         await Assert.ThrowsAsync<ShellCommandRejectedException>(
             () => t.RunAsync("rm -rf /"));
     }

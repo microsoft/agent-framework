@@ -38,7 +38,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// refuse to return a non-approval-gated function.
 /// </para>
 /// </remarks>
-public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecutor
+public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
 {
     private const int DefaultMaxOutputBytes = 64 * 1024;
 
@@ -390,14 +390,6 @@ public sealed class LocalShellTool : IDisposable, IAsyncDisposable, IShellExecut
             });
 
         return requireApproval ? new ApprovalRequiredAIFunction(fn) : fn;
-    }
-
-    /// <inheritdoc />
-    public void Dispose()
-    {
-#pragma warning disable VSTHRD002 // best-effort sync drain for users that didn't await DisposeAsync
-        this.DisposeAsync().AsTask().GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002
     }
 
     /// <inheritdoc />

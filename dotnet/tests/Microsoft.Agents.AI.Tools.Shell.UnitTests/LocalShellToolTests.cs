@@ -116,9 +116,9 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public void AsAIFunction_DefaultsToApprovalRequired()
+    public async Task AsAIFunction_DefaultsToApprovalRequired()
     {
-        using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         var fn = shell.AsAIFunction();
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
@@ -126,16 +126,16 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public void AsAIFunction_OptOut_RequiresAcknowledgeUnsafe()
+    public async Task AsAIFunction_OptOut_RequiresAcknowledgeUnsafe()
     {
-        using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         _ = Assert.Throws<InvalidOperationException>(() => shell.AsAIFunction(requireApproval: false));
     }
 
     [Fact]
-    public void AsAIFunction_OptOut_WithAck_ReturnsPlainFunction()
+    public async Task AsAIFunction_OptOut_WithAck_ReturnsPlainFunction()
     {
-        using var shell = new LocalShellTool(mode: ShellMode.Stateless, acknowledgeUnsafe: true);
+        await using var shell = new LocalShellTool(mode: ShellMode.Stateless, acknowledgeUnsafe: true);
         var fn = shell.AsAIFunction(requireApproval: false);
         Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
@@ -240,13 +240,13 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public void Ctor_DefaultsToPersistentMode()
+    public async Task Ctor_DefaultsToPersistentMode()
     {
         // Skip on Windows-cmd-only hosts where Persistent throws; safe on
         // any system that has pwsh or bash on PATH (CI, dev boxes).
         try
         {
-            using var shell = new LocalShellTool();
+            await using var shell = new LocalShellTool();
             Assert.NotNull(shell);
         }
         catch (NotSupportedException)
@@ -350,9 +350,9 @@ public sealed class LocalShellToolTests
     }
 
     [Fact]
-    public void IShellExecutor_LocalShellTool_ImplementsInterface()
+    public async Task IShellExecutor_LocalShellTool_ImplementsInterface()
     {
-        using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
         IShellExecutor executor = shell;
         Assert.NotNull(executor);
     }
