@@ -333,6 +333,61 @@ async def test_get_response_with_all_parameters() -> None:
     assert run_options["input"][1]["content"][0]["text"] == "Test message"
 
 
+def test_openai_chat_options_declares_verbosity_field() -> None:
+    """OpenAIChatOptions declares verbosity as a typed Literal field."""
+    from typing import get_args, get_type_hints
+
+    from agent_framework_openai import OpenAIChatOptions
+
+    annotations = get_type_hints(OpenAIChatOptions)
+    assert "verbosity" in annotations
+    assert {"low", "medium", "high"} <= set(get_args(annotations["verbosity"]))
+
+
+async def test_verbosity_option_translates_to_text_field() -> None:
+    """Top-level verbosity is translated to text.verbosity for the Responses API."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={"verbosity": "low"},
+    )
+
+    assert "verbosity" not in run_options
+    assert run_options["text"] == {"verbosity": "low"}
+
+
+async def test_verbosity_option_merges_with_response_format() -> None:
+    """Verbosity merges into text config alongside response_format-derived format."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={
+            "verbosity": "high",
+            "response_format": OutputStruct,
+        },
+    )
+
+    assert "verbosity" not in run_options
+    assert run_options["text"]["verbosity"] == "high"
+    assert run_options["text_format"] is OutputStruct
+
+
+async def test_verbosity_option_merges_with_explicit_text_config() -> None:
+    """Verbosity merges into a user-provided text config without overwriting other keys."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={
+            "verbosity": "medium",
+            "text": {"format": {"type": "text"}},
+        },
+    )
+
+    assert "verbosity" not in run_options
+    assert run_options["text"]["verbosity"] == "medium"
+    assert run_options["text"]["format"] == {"type": "text"}
+
+
 @pytest.mark.asyncio
 async def test_web_search_tool_with_location() -> None:
     """Test web search tool with location parameters."""

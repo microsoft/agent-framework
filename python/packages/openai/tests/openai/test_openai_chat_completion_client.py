@@ -1563,6 +1563,27 @@ def test_prepare_options_removes_parallel_tool_calls_when_no_tools(
     assert "parallel_tool_calls" not in prepared_options
 
 
+def test_openai_chat_completion_options_declares_verbosity_field() -> None:
+    """OpenAIChatCompletionOptions declares verbosity as a typed Literal field."""
+    from typing import get_args, get_type_hints
+
+    from agent_framework_openai import OpenAIChatCompletionOptions
+
+    annotations = get_type_hints(OpenAIChatCompletionOptions)
+    assert "verbosity" in annotations
+    assert {"low", "medium", "high"} <= set(get_args(annotations["verbosity"]))
+
+
+def test_prepare_options_forwards_verbosity(openai_unit_test_env: dict[str, str]) -> None:
+    """Verbosity passes through unchanged for the Chat Completions API."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    prepared_options = client._prepare_options(messages, {"verbosity": "low"})
+
+    assert prepared_options["verbosity"] == "low"
+
+
 def test_prepare_options_excludes_conversation_id(openai_unit_test_env: dict[str, str]) -> None:
     """Test that conversation_id is excluded from prepared options for chat completions."""
     client = OpenAIChatCompletionClient()

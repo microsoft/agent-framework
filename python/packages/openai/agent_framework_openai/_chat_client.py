@@ -196,6 +196,11 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
     """Configuration for reasoning models (gpt-5, o-series).
     See: https://platform.openai.com/docs/guides/reasoning"""
 
+    verbosity: Literal["low", "medium", "high"]
+    """Output verbosity for GPT-5 family models. Lower values yield shorter responses.
+    Translated to ``text.verbosity`` when sent to the Responses API.
+    See: https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools#1-verbosity-parameter"""
+
     safety_identifier: str
     """A stable identifier for detecting policy violations.
     Recommend hashing username/email to avoid sending identifying info."""
@@ -1314,6 +1319,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         response_format, text_config = self._prepare_response_and_text_format(
             response_format=response_format, text_config=text_config
         )
+        # The Responses API nests verbosity under ``text.verbosity``; surface it as a
+        # top-level option for parity with ``reasoning`` and translate here.
+        if (verbosity := run_options.pop("verbosity", None)) is not None:
+            text_config = dict(text_config) if text_config else {}
+            text_config["verbosity"] = verbosity
         if text_config:
             run_options["text"] = text_config
         if response_format:

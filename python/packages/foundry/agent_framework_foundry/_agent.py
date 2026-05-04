@@ -135,6 +135,14 @@ def _uses_foundry_agent_session(conversation_id: Any) -> bool:
     )
 
 
+def _build_agent_reference(agent_name: str, agent_version: str | None) -> dict[str, str]:
+    """Build the Responses API ``agent_reference`` payload used by Foundry Prompt Agents."""
+    ref: dict[str, str] = {"name": agent_name, "type": "agent_reference"}
+    if agent_version:
+        ref["version"] = agent_version
+    return ref
+
+
 class RawFoundryAgentChatClient(  # type: ignore[misc]
     RawOpenAIChatClient[FoundryAgentOptionsT],
     Generic[FoundryAgentOptionsT],
@@ -342,6 +350,12 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             run_options.pop("previous_response_id", None)
             run_options.pop("conversation", None)
             extra_body["agent_session_id"] = conversation_id
+        # Non-preview Prompt/Hosted Agent calls need agent_reference in the request body to
+        # tell the Responses API which Foundry agent (and version) is in use, since ``model``
+        # is stripped below. The preview path injects the reference via the OpenAI client kwarg
+        # ``agent_name`` instead, so skip there. See issue #5582.
+        if not self.allow_preview:
+            extra_body.setdefault("agent_reference", _build_agent_reference(self.agent_name, self.agent_version))
         if extra_body:
             run_options["extra_body"] = extra_body
 
