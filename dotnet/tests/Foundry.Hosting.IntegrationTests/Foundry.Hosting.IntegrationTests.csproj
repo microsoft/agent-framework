@@ -1,7 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <!--
+      Constrained to net10.0: Microsoft.Agents.AI.Foundry.Hosting targets net8/9/10 only
+      (no net472 — depends on ASP.NET Core), while AgentConformance.IntegrationTests
+      inherits the default tests TFM list (net10.0;net472). The intersection is net10.0.
+    -->
+    <TargetFrameworks>net10.0</TargetFrameworks>
     <NoWarn>$(NoWarn);CS8793;NU1605;NU1903;AAIP001</NoWarn>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>

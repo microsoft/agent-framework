@@ -3,8 +3,6 @@
 using System;
 using System.Threading.Tasks;
 using Foundry.Hosting.IntegrationTests.Fixtures;
-using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 
 namespace Foundry.Hosting.IntegrationTests;
 

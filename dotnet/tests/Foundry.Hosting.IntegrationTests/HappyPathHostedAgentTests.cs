@@ -1,12 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
 using System.Threading.Tasks;
+using Azure.AI.Projects;
 using Foundry.Hosting.IntegrationTests.Fixtures;
 using Microsoft.Agents.AI;
-using Azure.AI.Projects;
-using Azure.AI.Extensions.OpenAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 

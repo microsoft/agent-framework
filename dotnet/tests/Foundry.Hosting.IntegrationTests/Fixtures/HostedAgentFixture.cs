@@ -1,13 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.ClientModel.Primitives;
-using System.Linq;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
@@ -40,10 +38,6 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     private const string EnableVnextExperienceMetadataKey = "enableVnextExperience";
 
     private AgentAdministrationClient _adminClient = null!;
-    private AIProjectClient _projectClient = null!;
-    private string _agentName = null!;
-    private string _agentVersion = null!;
-    private FoundryAgent _agent = null!;
 
     /// <summary>
     /// Scenario keyword passed to the container as <c>IT_SCENARIO</c>. Derived fixtures override.
@@ -68,23 +62,23 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     /// <summary>
     /// The wrapped <see cref="FoundryAgent"/>. Available after <see cref="InitializeAsync"/>.
     /// </summary>
-    public FoundryAgent Agent => this._agent;
+    public FoundryAgent Agent { get; private set; } = null!;
 
     /// <summary>
     /// The unique agent name registered in Foundry (e.g. <c>it-happy-path-a1b2c3d4</c>).
     /// </summary>
-    public string AgentName => this._agentName;
+    public string AgentName { get; private set; } = null!;
 
     /// <summary>
     /// The agent version assigned by Foundry on creation.
     /// </summary>
-    public string AgentVersion => this._agentVersion;
+    public string AgentVersion { get; private set; } = null!;
 
     /// <summary>
     /// The underlying <see cref="AIProjectClient"/>, useful for tests that need to talk
     /// to the conversations or responses APIs directly (e.g. to assert chain visibility).
     /// </summary>
-    public AIProjectClient ProjectClient => this._projectClient;
+    public AIProjectClient ProjectClient { get; private set; } = null!;
 
     /// <summary>
     /// Creates a server side conversation that tests can pass via <c>ChatOptions.ConversationId</c>
@@ -92,7 +86,7 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     /// </summary>
     public async Task<string> CreateConversationAsync()
     {
-        var response = await this._projectClient.GetProjectOpenAIClient().GetProjectConversationsClient().CreateProjectConversationAsync().ConfigureAwait(false);
+        var response = await this.ProjectClient.GetProjectOpenAIClient().GetProjectConversationsClient().CreateProjectConversationAsync().ConfigureAwait(false);
         return response.Value.Id;
     }
 
@@ -103,7 +97,7 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     {
         try
         {
-            await this._projectClient.GetProjectOpenAIClient().GetProjectConversationsClient().DeleteConversationAsync(conversationId).ConfigureAwait(false);
+            await this.ProjectClient.GetProjectOpenAIClient().GetProjectConversationsClient().DeleteConversationAsync(conversationId).ConfigureAwait(false);
         }
         catch
         {
@@ -118,7 +112,7 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     public async Task<int> CountConversationItemsAsync(string conversationId)
     {
         var count = 0;
-        await foreach (var _ in this._projectClient.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc").ConfigureAwait(false))
+        await foreach (var _ in this.ProjectClient.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc").ConfigureAwait(false))
         {
             count++;
         }
@@ -136,9 +130,9 @@ public abstract class HostedAgentFixture : IAsyncLifetime
         var adminOptions = new AgentAdministrationClientOptions();
         adminOptions.AddPolicy(new FoundryFeaturesPolicy(HostedAgentsFeatureValue), PipelinePosition.PerCall);
         this._adminClient = new AgentAdministrationClient(endpoint, credential, adminOptions);
-        this._projectClient = new AIProjectClient(endpoint, credential);
+        this.ProjectClient = new AIProjectClient(endpoint, credential);
 
-        this._agentName = GenerateUniqueAgentName(this.ScenarioName);
+        this.AgentName = GenerateUniqueAgentName(this.ScenarioName);
 
         var definition = new HostedAgentDefinition(cpu: this.Cpu, memory: this.Memory)
         {
@@ -153,26 +147,26 @@ public abstract class HostedAgentFixture : IAsyncLifetime
         var creationOptions = new ProjectsAgentVersionCreationOptions(definition);
         creationOptions.Metadata[EnableVnextExperienceMetadataKey] = "true";
 
-        var version = await this._adminClient.CreateAgentVersionAsync(this._agentName, creationOptions).ConfigureAwait(false);
+        var version = await this._adminClient.CreateAgentVersionAsync(this.AgentName, creationOptions).ConfigureAwait(false);
         var activeVersion = await WaitForActiveAsync(this._adminClient, version.Value, this.ProvisioningTimeout).ConfigureAwait(false);
-        this._agentVersion = activeVersion.Version;
+        this.AgentVersion = activeVersion.Version;
 
-        var record = await this._adminClient.GetAgentAsync(this._agentName).ConfigureAwait(false);
-        this._agent = this._projectClient.AsAIAgent(record.Value);
+        var record = await this._adminClient.GetAgentAsync(this.AgentName).ConfigureAwait(false);
+        this.Agent = this.ProjectClient.AsAIAgent(record.Value);
     }
 
     public async ValueTask DisposeAsync()
     {
         GC.SuppressFinalize(this);
 
-        if (this._adminClient is null || this._agentName is null)
+        if (this._adminClient is null || this.AgentName is null)
         {
             return;
         }
 
         try
         {
-            await this._adminClient.DeleteAgentAsync(this._agentName).ConfigureAwait(false);
+            await this._adminClient.DeleteAgentAsync(this.AgentName).ConfigureAwait(false);
         }
         catch
         {
@@ -228,13 +222,13 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     {
         public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
         {
-            SetHeader(message);
+            this.SetHeader(message);
             ProcessNext(message, pipeline, currentIndex);
         }
 
         public override async ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
         {
-            SetHeader(message);
+            this.SetHeader(message);
             await ProcessNextAsync(message, pipeline, currentIndex).ConfigureAwait(false);
         }
 

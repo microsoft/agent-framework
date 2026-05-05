@@ -1,9 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Linq;
 using System.Threading.Tasks;
 using Foundry.Hosting.IntegrationTests.Fixtures;
-using Microsoft.Agents.AI;
 
 namespace Foundry.Hosting.IntegrationTests;
 
