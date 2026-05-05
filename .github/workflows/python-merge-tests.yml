@@ -67,7 +67,6 @@ jobs:
             misc:
               - 'python/packages/anthropic/**'
               - 'python/packages/hyperlight/**'
-              - 'python/packages/mistral/**'
               - 'python/packages/ollama/**'
               - 'python/packages/core/agent_framework/_mcp.py'
               - 'python/packages/core/tests/core/test_mcp.py'
@@ -278,8 +277,6 @@ jobs:
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
-      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-      MISTRAL_EMBEDDING_MODEL: ${{ vars.MISTRAL_EMBEDDING_MODEL_ID }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
     defaults:
       run:
@@ -299,12 +296,11 @@ jobs:
           fallback_url: ${{ env.LOCAL_MCP_URL }}
       - name: Prefer local MCP URL when available
         run: echo "LOCAL_MCP_URL=${{ steps.local-mcp.outputs.effective_url }}" >> "$GITHUB_ENV"
-      - name: Test with pytest (Anthropic, Hyperlight, Mistral, Ollama, MCP integration)
+      - name: Test with pytest (Anthropic, Hyperlight, Ollama, MCP integration)
         run: >
           uv run pytest --import-mode=importlib
           packages/anthropic/tests
           packages/hyperlight/tests
-          packages/mistral/tests
           packages/ollama/tests
           packages/core/tests/core/test_mcp.py
           -m integration
