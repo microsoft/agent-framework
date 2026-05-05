@@ -1,20 +1,20 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Stateless LocalShellTool with a strict allow-list (no approval loop).
-
-Every command must match one of the allow-list regexes and the deny-list
-still wins. Approval is disabled because the allow-list is doing the
-gating. This is the safest fully-automatic configuration.
-"""
-
-from __future__ import annotations
-
 import asyncio
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_tools.shell import LocalShellTool, ShellPolicy
 from dotenv import load_dotenv
+
+"""
+LocalShellTool with a strict allow-list (no approval loop).
+
+Every command must match one of the allow-list regexes and the deny-list
+still wins. Approval is disabled because the allow-list is doing the
+gating; this is the safest fully-automatic configuration of
+``LocalShellTool``.
+"""
 
 load_dotenv()
 
@@ -24,7 +24,8 @@ async def main() -> None:
 
     shell = LocalShellTool(
         mode="stateless",
-        approval_mode="never_require", acknowledge_unsafe=True,
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
         policy=ShellPolicy(
             allowlist=[
                 r"^ls(\s|$)",

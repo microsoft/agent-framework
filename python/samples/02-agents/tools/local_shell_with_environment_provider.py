@@ -1,6 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""LocalShellTool wired with a ShellEnvironmentProvider context provider.
+import asyncio
+
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+from agent_framework_tools.shell import (
+    LocalShellTool,
+    ShellEnvironmentProvider,
+    ShellEnvironmentProviderOptions,
+)
+from dotenv import load_dotenv
+
+"""
+LocalShellTool wired with a ShellEnvironmentProvider context provider.
 
 The provider probes the underlying shell once per provider lifetime and
 injects an instructions block describing the shell family, OS, working
@@ -18,20 +30,6 @@ Two phases are demonstrated:
 Approval gating is disabled so the demo runs unattended. Real
 applications should keep approval on, or use ``DockerShellTool``.
 """
-
-from __future__ import annotations
-
-import asyncio
-
-from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient
-from dotenv import load_dotenv
-
-from agent_framework_tools.shell import (
-    LocalShellTool,
-    ShellEnvironmentProvider,
-    ShellEnvironmentProviderOptions,
-)
 
 load_dotenv()
 
@@ -58,7 +56,6 @@ async def _ask(agent: Agent, query: str) -> None:
 
 
 async def main() -> None:
-    """Run the stateless and persistent demos."""
     client = OpenAIChatClient(model="gpt-5.4-nano")
     options = ShellEnvironmentProviderOptions(
         probe_tools=("git", "python", "uv", "node"),
