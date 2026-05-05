@@ -124,7 +124,7 @@ class TestBeforeRun:
         )  # type: ignore[arg-type]
 
         query_kwargs = container.query_items.call_args.kwargs
-        assert "ORDER BY VectorDistance(c.embedding, @query_vector) ASC" in query_kwargs["query"]
+        assert "ORDER BY VectorDistance(c.embedding, @query_vector)" in query_kwargs["query"]
         assert query_kwargs["parameters"] == [{"name": "@query_vector", "value": [1.0, 0.0]}]
 
     async def test_hybrid_mode_builds_rrf_query_with_weights(self) -> None:
@@ -238,8 +238,9 @@ class TestBeforeRun:
 
         container.query_items.assert_called_once()
 
-    async def test_hybrid_skips_when_no_text_terms(self) -> None:
+    async def test_hybrid_falls_back_to_vector_when_no_text_terms(self) -> None:
         container = MagicMock()
+        container.query_items = MagicMock(return_value=_to_async_iter([{"content": "Emoji result"}]))
         provider = CosmosContextProvider(
             container_client=container,
             embedding_function=_stub_embed,
@@ -252,7 +253,11 @@ class TestBeforeRun:
             agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        container.query_items.assert_not_called()
+        # With no text terms, hybrid gracefully falls back to vector-only via RRF
+        container.query_items.assert_called_once()
+        query_kwargs = container.query_items.call_args.kwargs
+        assert "VectorDistance(" in query_kwargs["query"]
+        assert "FullTextScore(" not in query_kwargs["query"]
 
     async def test_message_field_deserialized_when_valid(self) -> None:
         container = MagicMock()
@@ -499,3 +504,190 @@ class TestLifecycle:
 
         await provider.close()
         cosmos_client.close.assert_awaited_once()
+
+
+class TestFullTextChunking:
+    """Tests for the RRF chunking bypass of the 5-term FullTextScore limit."""
+
+    async def test_full_text_5_terms_no_rrf(self) -> None:
+        """With exactly 5 terms, use a single FullTextScore (no RRF wrapping)."""
+        container = MagicMock()
+        container.query_items = MagicMock(return_value=_to_async_iter([{"content": "Result."}]))
+        provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
+        session = AgentSession(session_id="s")
+        # 5 unique words
+        context = SessionContext(
+            input_messages=[Message(role="user", contents=["alpha beta gamma delta epsilon"])], session_id="s1"
+        )
+
+        await provider.before_run(
+            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        query_kwargs = container.query_items.call_args.kwargs
+        assert "ORDER BY RANK FullTextScore(c.content" in query_kwargs["query"]
+        assert "RRF(" not in query_kwargs["query"]
+        assert len(query_kwargs["parameters"]) == 5
+
+    async def test_full_text_6_terms_uses_rrf(self) -> None:
+        """With 6 terms, chunk into RRF(FTS(5), FTS(1))."""
+        container = MagicMock()
+        container.query_items = MagicMock(return_value=_to_async_iter([{"content": "Result."}]))
+        provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
+        session = AgentSession(session_id="s")
+        context = SessionContext(
+            input_messages=[Message(role="user", contents=["alpha beta gamma delta epsilon zeta"])], session_id="s1"
+        )
+
+        await provider.before_run(
+            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        query_kwargs = container.query_items.call_args.kwargs
+        query = query_kwargs["query"]
+        assert "ORDER BY RANK RRF(" in query
+        # Two FullTextScore components
+        assert query.count("FullTextScore(") == 2
+        assert len(query_kwargs["parameters"]) == 6
+
+    async def test_full_text_10_terms_two_batches(self) -> None:
+        """With 10 terms, chunk into RRF(FTS(5), FTS(5))."""
+        container = MagicMock()
+        container.query_items = MagicMock(return_value=_to_async_iter([{"content": "Result."}]))
+        provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
+        session = AgentSession(session_id="s")
+        terms = " ".join(f"word{i}" for i in range(10))
+        context = SessionContext(input_messages=[Message(role="user", contents=[terms])], session_id="s1")
+
+        await provider.before_run(
+            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        query_kwargs = container.query_items.call_args.kwargs
+        query = query_kwargs["query"]
+        assert "ORDER BY RANK RRF(" in query
+        assert query.count("FullTextScore(") == 2
+        assert len(query_kwargs["parameters"]) == 10
+        # No weights for full-text-only RRF
+        rrf_section = query.split("RRF(", 1)[1]
+        assert "[" not in rrf_section
+
+    async def test_full_text_7_terms_batch_5_plus_2(self) -> None:
+        """With 7 terms, chunk into RRF(FTS(5), FTS(2))."""
+        container = MagicMock()
+        container.query_items = MagicMock(return_value=_to_async_iter([{"content": "Result."}]))
+        provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
+        session = AgentSession(session_id="s")
+        terms = " ".join(f"term{i}" for i in range(7))
+        context = SessionContext(input_messages=[Message(role="user", contents=[terms])], session_id="s1")
+
+        await provider.before_run(
+            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        query_kwargs = container.query_items.call_args.kwargs
+        query = query_kwargs["query"]
+        assert query.count("FullTextScore(") == 2
+        # First batch has 5 params, second has 2
+        params = query_kwargs["parameters"]
+        assert params[0]["name"] == "@term0"
+        assert params[4]["name"] == "@term4"
+        assert params[5]["name"] == "@term5"
+        assert params[6]["name"] == "@term6"
+        assert len(params) == 7
+
+    async def test_hybrid_6_terms_uses_rrf_with_all_components(self) -> None:
+        """Hybrid with 6 terms: RRF(FTS(5), FTS(1), VD)."""
+        container = MagicMock()
+        container.query_items = MagicMock(return_value=_to_async_iter([{"content": "Result."}]))
+        provider = CosmosContextProvider(
+            container_client=container,
+            embedding_function=_stub_embed,
+            search_mode=CosmosContextSearchMode.HYBRID,
+        )
+        session = AgentSession(session_id="s")
+        context = SessionContext(
+            input_messages=[Message(role="user", contents=["alpha beta gamma delta epsilon zeta"])], session_id="s1"
+        )
+
+        await provider.before_run(
+            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        query_kwargs = container.query_items.call_args.kwargs
+        query = query_kwargs["query"]
+        assert "ORDER BY RANK RRF(" in query
+        assert query.count("FullTextScore(") == 2
+        assert "VectorDistance(" in query
+        # 6 term params + 1 vector param
+        assert len(query_kwargs["parameters"]) == 7
+
+    async def test_hybrid_6_terms_with_weights_expands_correctly(self) -> None:
+        """Hybrid with 6 terms + weights=[2.0, 1.0]: expands to [1, 1, 1] (2/2 per FTS batch, 1 for VD)."""
+        container = MagicMock()
+        container.query_items = MagicMock(return_value=_to_async_iter([{"content": "Result."}]))
+        provider = CosmosContextProvider(
+            container_client=container,
+            embedding_function=_stub_embed,
+            search_mode=CosmosContextSearchMode.HYBRID,
+            weights=[2.0, 1.0],
+        )
+        session = AgentSession(session_id="s")
+        context = SessionContext(
+            input_messages=[Message(role="user", contents=["alpha beta gamma delta epsilon zeta"])], session_id="s1"
+        )
+
+        await provider.before_run(
+            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        query_kwargs = container.query_items.call_args.kwargs
+        query = query_kwargs["query"]
+        # 2 FTS batches + 1 VD = 3 components, weights should be [2/2, 2/2, 1] = [1, 1, 1]
+        assert "[1, 1, 1]" in query
+
+    async def test_hybrid_5_terms_with_weights_unchanged(self) -> None:
+        """Hybrid with ≤5 terms + weights: single FTS, no expansion needed."""
+        container = MagicMock()
+        container.query_items = MagicMock(return_value=_to_async_iter([{"content": "Result."}]))
+        provider = CosmosContextProvider(
+            container_client=container,
+            embedding_function=_stub_embed,
+            search_mode=CosmosContextSearchMode.HYBRID,
+            weights=[2.0, 1.0],
+        )
+        session = AgentSession(session_id="s")
+        context = SessionContext(input_messages=[Message(role="user", contents=["alpha beta gamma"])], session_id="s1")
+
+        await provider.before_run(
+            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        query_kwargs = container.query_items.call_args.kwargs
+        query = query_kwargs["query"]
+        assert "[2, 1]" in query
+        assert query.count("FullTextScore(") == 1
+
+    async def test_hybrid_many_terms_weights_preserve_balance(self) -> None:
+        """With 15 terms and weights=[6.0, 3.0], each of 3 FTS batches gets 2.0, VD gets 3.0."""
+        container = MagicMock()
+        container.query_items = MagicMock(return_value=_to_async_iter([{"content": "Result."}]))
+        provider = CosmosContextProvider(
+            container_client=container,
+            embedding_function=_stub_embed,
+            search_mode=CosmosContextSearchMode.HYBRID,
+            weights=[6.0, 3.0],
+        )
+        session = AgentSession(session_id="s")
+        terms = " ".join(f"w{i}" for i in range(15))
+        context = SessionContext(input_messages=[Message(role="user", contents=[terms])], session_id="s1")
+
+        await provider.before_run(
+            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        query_kwargs = container.query_items.call_args.kwargs
+        query = query_kwargs["query"]
+        assert query.count("FullTextScore(") == 3
+        # 3 batches × 2.0 + VD 3.0
+        assert "[2, 2, 2, 3]" in query

@@ -35,6 +35,11 @@ AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 COSMOS_USER_AGENT_SUFFIX = f"{AGENT_FRAMEWORK_USER_AGENT} CosmosContextProvider"
 
+# Cosmos DB FullTextScore has an undocumented limit of 5 search term arguments
+# per function call. Exceeding this returns error SC3032. We chunk terms into
+# batches of this size and merge via RRF() when a query exceeds the limit.
+_FULLTEXT_MAX_TERMS_PER_CALL = 5
+
 
 class CosmosContextSearchMode(str, Enum):
     """Supported Azure Cosmos DB retrieval modes for the context provider."""
@@ -291,7 +296,6 @@ class CosmosContextProvider(ContextProvider):
 
     async def _execute_retrieval_query(self, query_text: str, query_terms: tuple[str, ...]) -> list[dict[str, Any]]:
         """Build and execute the Cosmos retrieval query for the configured search mode."""
-        # add a way to have user add a where clause in constructor
         fields = list(self.content_field_names)
         if self.message_field_name and self.message_field_name not in fields:
             fields.append(self.message_field_name)
@@ -302,11 +306,12 @@ class CosmosContextProvider(ContextProvider):
 
         if self.search_mode is CosmosContextSearchMode.FULL_TEXT:
             search_field = self.content_field_names[0]
-            # FullTextScore requires each keyword as a separate argument.
-            term_params = [f"@term{i}" for i in range(len(query_terms))]
-            term_args = ", ".join(term_params)
-            query = f"{base} ORDER BY RANK FullTextScore(c.{search_field}, {term_args})"
-            parameters.extend({"name": name, "value": term} for name, term in zip(term_params, query_terms))
+            ft_components = self._build_fulltext_components(search_field, query_terms, parameters)
+            if len(ft_components) == 1:
+                query = f"{base} ORDER BY RANK {ft_components[0]}"
+            else:
+                rrf_args = ", ".join(ft_components)
+                query = f"{base} ORDER BY RANK RRF({rrf_args})"
 
         elif self.search_mode is CosmosContextSearchMode.VECTOR:
             query_vector = await self._get_query_vector(query_text)
@@ -316,18 +321,20 @@ class CosmosContextProvider(ContextProvider):
         elif self.search_mode is CosmosContextSearchMode.HYBRID:
             query_vector = await self._get_query_vector(query_text)
             search_field = self.content_field_names[0]
-            # FullTextScore requires each keyword as a separate argument.
-            term_params = [f"@term{i}" for i in range(len(query_terms))]
-            term_args = ", ".join(term_params)
-            ft = f"FullTextScore(c.{search_field}, {term_args})"
+            ft_components = self._build_fulltext_components(search_field, query_terms, parameters)
             vd = f"VectorDistance(c.{self.vector_field_name}, @query_vector)"
-            if self.weights is not None:
-                wl = "[" + ", ".join(f"{w:g}" for w in self.weights) + "]"
-                rrf = f"RRF({ft}, {vd}, {wl})"
+            if not ft_components:
+                # No text terms — fall back to vector-only ordering
+                query = f"{base} ORDER BY {vd}"
             else:
-                rrf = f"RRF({ft}, {vd})"
-            query = f"{base} ORDER BY RANK {rrf}"
-            parameters.extend({"name": name, "value": term} for name, term in zip(term_params, query_terms))
+                rrf_parts = [*ft_components, vd]
+                if self.weights is not None:
+                    expanded_weights = self._expand_hybrid_weights(len(ft_components))
+                    wl = "[" + ", ".join(f"{w:g}" for w in expanded_weights) + "]"
+                    rrf = "RRF(" + ", ".join(rrf_parts) + ", " + wl + ")"
+                else:
+                    rrf = "RRF(" + ", ".join(rrf_parts) + ")"
+                query = f"{base} ORDER BY RANK {rrf}"
             parameters.append({"name": "@query_vector", "value": query_vector})
 
         else:
@@ -340,6 +347,59 @@ class CosmosContextProvider(ContextProvider):
         if self.partition_key is not None:
             query_kwargs["partition_key"] = self.partition_key
         return [item async for item in container.query_items(**query_kwargs)]
+
+    @staticmethod
+    def _build_fulltext_components(
+        search_field: str,
+        query_terms: tuple[str, ...],
+        parameters: list[dict[str, object]],
+    ) -> list[str]:
+        """Build parameterized FullTextScore expressions, chunking to respect the per-call term limit.
+
+        Args:
+            search_field: The Cosmos document field to search.
+            query_terms: Unique search terms extracted from the query.
+            parameters: Mutable list to which query parameters are appended.
+
+        Returns:
+            List of ``FullTextScore(c.field, @term0, ...)`` expression strings.
+        """
+        components: list[str] = []
+        for batch_start in range(0, len(query_terms), _FULLTEXT_MAX_TERMS_PER_CALL):
+            batch = query_terms[batch_start : batch_start + _FULLTEXT_MAX_TERMS_PER_CALL]
+            term_params: list[str] = []
+            for i, term in enumerate(batch):
+                param_name = f"@term{batch_start + i}"
+                term_params.append(param_name)
+                parameters.append({"name": param_name, "value": term})
+            term_args = ", ".join(term_params)
+            components.append(f"FullTextScore(c.{search_field}, {term_args})")
+        return components
+
+    def _expand_hybrid_weights(self, num_ft_components: int) -> tuple[float, ...]:
+        """Expand user-provided hybrid weights to match the chunked RRF component count.
+
+        When the user provides exactly 2 weights ``[fulltext_weight, vector_weight]``,
+        the fulltext weight is distributed evenly across the N FullTextScore batches
+        so that the total full-text influence is preserved. The vector weight is
+        appended unchanged.
+
+        If the user provides a different number of weights, they are returned as-is
+        (the user is responsible for matching the component count).
+
+        Args:
+            num_ft_components: Number of FullTextScore batches produced by chunking.
+
+        Returns:
+            Tuple of weights matching the total RRF component count.
+        """
+        if self.weights is None:
+            return ()
+        if len(self.weights) == 2 and num_ft_components > 1:
+            ft_weight, vd_weight = self.weights
+            per_batch_weight = ft_weight / num_ft_components
+            return (*([per_batch_weight] * num_ft_components), vd_weight)
+        return self.weights
 
     def _shape_context_message(self, item: dict[str, Any]) -> Message | None:
         """Convert a Cosmos item into a context Message."""
