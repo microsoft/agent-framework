@@ -49,7 +49,7 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddResponsesServer();
-        services.TryAddSingleton<AgentSessionStore, InMemoryAgentSessionStore>();
+        services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
     }
@@ -76,7 +76,7 @@ public static class FoundryHostingExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
-    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, an in-memory session store will be used.</param>
+    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, a file-system session store is used, rooted at <c>/.checkpoints</c> when running in a Foundry hosted environment and <c>{cwd}/.checkpoints</c> locally.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryResponses(this IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore = null)
     {
@@ -84,7 +84,7 @@ public static class FoundryHostingExtensions
         ArgumentNullException.ThrowIfNull(agent);
 
         services.AddResponsesServer();
-        agentSessionStore ??= new InMemoryAgentSessionStore();
+        agentSessionStore ??= FileSystemAgentSessionStore.CreateDefault();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
         {
@@ -185,8 +185,6 @@ public static class FoundryHostingExtensions
 
     /// <summary>
     /// The ActivitySource name for the Responses hosting pipeline.
-    /// Matches the value previously exposed by <c>AgentHostTelemetry.ResponsesSourceName</c>
-    /// in <c>Azure.AI.AgentServer.Core</c>.
     /// </summary>
     private const string ResponsesSourceName = "Azure.AI.AgentServer.Responses";
 
@@ -210,7 +208,7 @@ public static class FoundryHostingExtensions
 
     /// <summary>
     /// Attempts to wrap the agent's underlying <see cref="ResponsesClient"/>
-    /// with a <see cref="DelegatingResponsesClient"/> so every outgoing Responses-API request
+    /// with a <see cref="UserAgentResponsesClient"/> so every outgoing Responses-API request
     /// carries the hosted-agent <c>User-Agent</c> segment.
     /// </summary>
     /// <remarks>
@@ -219,7 +217,7 @@ public static class FoundryHostingExtensions
     /// <list type="bullet">
     /// <item><description><paramref name="agent"/> exposes no <see cref="IChatClient"/>;</description></item>
     /// <item><description>the chat client is not backed by MEAI's internal <c>OpenAIResponsesChatClient</c> (e.g., a non-OpenAI provider or a custom impl);</description></item>
-    /// <item><description>the inner <see cref="ResponsesClient"/> is already a <see cref="DelegatingResponsesClient"/>.</description></item>
+    /// <item><description>the inner <see cref="ResponsesClient"/> is already a <see cref="UserAgentResponsesClient"/>.</description></item>
     /// </list>
     /// </para>
     /// <para>
@@ -261,12 +259,12 @@ public static class FoundryHostingExtensions
         }
 
         var current = field.GetValue(meaiInstance) as ResponsesClient;
-        if (current is null or DelegatingResponsesClient)
+        if (current is null or UserAgentResponsesClient)
         {
             return agent;
         }
 
-        field.SetValue(meaiInstance, new DelegatingResponsesClient(current));
+        field.SetValue(meaiInstance, new UserAgentResponsesClient(current));
         return agent;
     }
 

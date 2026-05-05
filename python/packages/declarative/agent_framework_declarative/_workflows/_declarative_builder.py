@@ -26,6 +26,7 @@ from ._declarative_base import (
     DeclarativeActionExecutor,
     LoopIterationResult,
 )
+from ._errors import DeclarativeWorkflowError
 from ._executors_agents import AGENT_ACTION_EXECUTORS, InvokeAzureAgentExecutor
 from ._executors_basic import BASIC_ACTION_EXECUTORS
 from ._executors_control_flow import (
@@ -39,7 +40,9 @@ from ._executors_control_flow import (
     SwitchEvaluatorExecutor,
 )
 from ._executors_external_input import EXTERNAL_INPUT_EXECUTORS
+from ._executors_http import HTTP_ACTION_EXECUTORS, HttpRequestActionExecutor
 from ._executors_tools import TOOL_ACTION_EXECUTORS, InvokeFunctionToolExecutor
+from ._http_handler import HttpRequestHandler
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +54,7 @@ ALL_ACTION_EXECUTORS = {
     **AGENT_ACTION_EXECUTORS,
     **EXTERNAL_INPUT_EXECUTORS,
     **TOOL_ACTION_EXECUTORS,
+    **HTTP_ACTION_EXECUTORS,
 }
 
 # Action kinds that terminate control flow (no fall-through to successor)
@@ -85,6 +89,7 @@ ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
     "WaitForHumanInput": ["variable"],
     "EmitEvent": ["event"],
     "InvokeFunctionTool": ["functionName"],
+    "HttpRequestAction": ["url"],
 }
 
 # Alternate field names that satisfy required field requirements
@@ -129,6 +134,7 @@ class DeclarativeWorkflowBuilder:
         checkpoint_storage: Any | None = None,
         validate: bool = True,
         max_iterations: int | None = None,
+        http_request_handler: HttpRequestHandler | None = None,
     ):
         """Initialize the builder.
 
@@ -141,6 +147,9 @@ class DeclarativeWorkflowBuilder:
             validate: Whether to validate the workflow definition before building (default: True)
             max_iterations: Maximum runner supersteps. Falls back to the YAML ``maxTurns``
                 field, then to the core default (100).
+            http_request_handler: Handler used to dispatch HttpRequestAction requests.
+                Must be supplied when the workflow contains any HttpRequestAction;
+                otherwise build raises ``DeclarativeWorkflowError``.
         """
         self._yaml_def = yaml_definition
         self._workflow_id = workflow_id or yaml_definition.get("name", "declarative_workflow")
@@ -152,6 +161,7 @@ class DeclarativeWorkflowBuilder:
         self._pending_gotos: list[tuple[Any, str]] = []  # (goto_executor, target_id)
         self._validate = validate
         self._seen_explicit_ids: set[str] = set()  # Track explicit IDs for duplicate detection
+        self._http_request_handler = http_request_handler
         # Resolve max_iterations: explicit arg > YAML maxTurns > core default
         resolved = max_iterations if max_iterations is not None else yaml_definition.get("maxTurns")
         if resolved is not None and (not isinstance(resolved, int) or resolved <= 0):
@@ -458,6 +468,19 @@ class DeclarativeWorkflowBuilder:
             executor = InvokeAzureAgentExecutor(action_def, id=action_id, agents=self._agents)
         elif kind == "InvokeFunctionTool":
             executor = InvokeFunctionToolExecutor(action_def, id=action_id, tools=self._tools)
+        elif kind == "HttpRequestAction":
+            if self._http_request_handler is None:
+                raise DeclarativeWorkflowError(
+                    f"Workflow defines HttpRequestAction '{action_id}' but no "
+                    "http_request_handler was supplied to WorkflowFactory. Pass "
+                    "http_request_handler=DefaultHttpRequestHandler() (or a custom "
+                    "implementation) to enable HTTP requests."
+                )
+            executor = HttpRequestActionExecutor(
+                action_def,
+                id=action_id,
+                http_request_handler=self._http_request_handler,
+            )
         else:
             executor = executor_class(action_def, id=action_id)
         self._executors[action_id] = executor

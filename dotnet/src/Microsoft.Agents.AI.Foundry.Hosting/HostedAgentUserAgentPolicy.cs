@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </para>
 /// <para>
 /// This policy is added at request time (per-call <see cref="PipelinePosition"/>)
-/// by <see cref="DelegatingResponsesClient"/> when invoking the wrapped
+/// by <see cref="UserAgentResponsesClient"/> when invoking the wrapped
 /// <see cref="OpenAI.Responses.ResponsesClient"/>. It is only registered when an agent is
 /// resolved by the Foundry hosting layer.
 /// </para>

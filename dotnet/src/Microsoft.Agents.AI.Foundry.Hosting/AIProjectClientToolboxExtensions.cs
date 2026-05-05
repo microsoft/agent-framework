@@ -19,8 +19,7 @@ namespace Azure.AI.Projects;
 /// Foundry toolbox definitions as server-side tools.
 /// </summary>
 /// <remarks>
-/// These extensions mirror Python's <c>FoundryChatClient.get_toolbox()</c> pattern,
-/// allowing a single call on the project client to retrieve tools ready for use
+/// Provides a single call on the project client to retrieve tools ready for use
 /// with <c>AsAIAgent(model, instructions, tools: ...)</c>.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]

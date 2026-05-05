@@ -13,7 +13,9 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 3 | [MCP](responses/03_mcp/) | An agent connected to a remote MCP server (GitHub), demonstrating external MCP tool provider integration. |
 | 4 | [Foundry Toolbox](responses/04_foundry_toolbox/) | An agent using Azure Foundry Toolbox, demonstrating toolbox provisioning and querying available tools at runtime. |
 | 5 | [Workflows](responses/05_workflows/) | An agent with a multi-step orchestrated workflow, demonstrating chaining prompts through an orchestrated flow. |
-| 6 | [Using deployed agent](responses/using_deployed_agent.py) | A sample demonstrating how to invoke an agent that has already been deployed to Foundry, showing how to interact with a hosted agent in code. |
+| 6 | [Files](responses/06_files/) | An agent demonstrating how to work with files in a hosted agent session, including uploading files to a hosted agent session and having the agent read and manipulate those files at runtime. |
+| 7 | [Observability](responses/07_observability/) | A sample demonstrating how to enable observability for the agent deployed to Foundry. |
+| 8 | [Using deployed agent](responses/using_deployed_agent.py) | A sample demonstrating how to invoke an agent that has already been deployed to Foundry, showing how to interact with a hosted agent in code. |
 
 ### Invocations API
 
@@ -133,17 +135,24 @@ cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
 
 #### Environment setup
 
-1. Navigate to the sample directory you want to explore. Create a virtual environment:
+1. Navigate to the sample directory you want to explore. Create and activate a virtual environment using [uv](https://docs.astral.sh/uv/) (recommended):
 
    ```bash
-   python -m venv .venv
+   uv venv .venv
+   ```
 
-   # Windows
-   .venv\Scripts\Activate
+   ```bash
+   # Windows (PowerShell)
+   .venv\Scripts\Activate.ps1
+
+   # Windows (Command Prompt)
+   .venv\Scripts\activate.bat
 
    # macOS/Linux
    source .venv/bin/activate
    ```
+
+   > **Note:** `python -m venv .venv` also works, but can hang indefinitely on Windows with Microsoft Store Python due to a known `ensurepip` issue. Use `uv venv .venv` to avoid this.
 
 2. Install dependencies:
 

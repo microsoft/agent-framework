@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import inspect
 import json
@@ -119,6 +120,15 @@ async def create_vector_store(
     )
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
+
+    # Wait for the vector store index to be fully searchable.
+    # create_and_poll confirms file processing, but the search index is eventually consistent.
+    for _ in range(10):
+        vs = await client.client.vector_stores.retrieve(vector_store.id)
+        if vs.file_counts.completed >= 1 and vs.file_counts.in_progress == 0:
+            break
+        await asyncio.sleep(1)
+    await asyncio.sleep(2)
 
     return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
@@ -331,6 +341,76 @@ async def test_get_response_with_all_parameters() -> None:
     assert run_options["input"][0]["content"][0]["text"] == "You are a helpful assistant"
     assert run_options["input"][1]["role"] == "user"
     assert run_options["input"][1]["content"][0]["text"] == "Test message"
+
+
+def test_openai_chat_options_declares_verbosity_field() -> None:
+    """OpenAIChatOptions declares verbosity as a typed Literal field."""
+    from typing import get_args, get_type_hints
+
+    from agent_framework_openai import OpenAIChatOptions
+
+    annotations = get_type_hints(OpenAIChatOptions)
+    assert "verbosity" in annotations
+    assert {"low", "medium", "high"} <= set(get_args(annotations["verbosity"]))
+
+
+async def test_verbosity_option_translates_to_text_field() -> None:
+    """Top-level verbosity is translated to text.verbosity for the Responses API."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={"verbosity": "low"},
+    )
+
+    assert "verbosity" not in run_options
+    assert run_options["text"] == {"verbosity": "low"}
+
+
+async def test_verbosity_option_merges_with_response_format() -> None:
+    """Verbosity merges into text config alongside response_format-derived format."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={
+            "verbosity": "high",
+            "response_format": OutputStruct,
+        },
+    )
+
+    assert "verbosity" not in run_options
+    assert run_options["text"]["verbosity"] == "high"
+    assert run_options["text_format"] is OutputStruct
+
+
+async def test_verbosity_option_top_level_overrides_nested_text_verbosity() -> None:
+    """When both top-level and text['verbosity'] are set, the top-level value wins."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={
+            "verbosity": "high",
+            "text": {"verbosity": "low"},
+        },
+    )
+
+    assert "verbosity" not in run_options
+    assert run_options["text"]["verbosity"] == "high"
+
+
+async def test_verbosity_option_merges_with_explicit_text_config() -> None:
+    """Verbosity merges into a user-provided text config without overwriting other keys."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={
+            "verbosity": "medium",
+            "text": {"format": {"type": "text"}},
+        },
+    )
+
+    assert "verbosity" not in run_options
+    assert run_options["text"]["verbosity"] == "medium"
+    assert run_options["text"]["format"] == {"type": "text"}
 
 
 @pytest.mark.asyncio
@@ -4385,10 +4465,6 @@ async def test_integration_web_search() -> None:
     assert response.text is not None
 
 
-@pytest.mark.skip(
-    reason="Unreliable due to OpenAI vector store indexing potential "
-    "race condition. See https://github.com/microsoft/agent-framework/issues/1669"
-)
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
@@ -4398,31 +4474,29 @@ async def test_integration_file_search() -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
-    # Use static method for file search tool
-    file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
-    # Test that the client will use the file search tool
-    response = await openai_responses_client.get_response(
-        messages=[
-            Message(
-                role="user",
-                contents=["What is the weather today? Do a file search to find the answer."],
-            )
-        ],
-        options={
-            "tool_choice": "auto",
-            "tools": [file_search_tool],
-        },
-    )
+    try:
+        # Use static method for file search tool
+        file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+        # Test that the client will use the file search tool
+        response = await openai_responses_client.get_response(
+            messages=[
+                Message(
+                    role="user",
+                    contents=["What is the weather today? Do a file search to find the answer."],
+                )
+            ],
+            options={
+                "tool_choice": "auto",
+                "tools": [file_search_tool],
+            },
+        )
 
-    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
-    assert "sunny" in response.text.lower()
-    assert "75" in response.text
+        assert "sunny" in response.text.lower()
+        assert "75" in response.text
+    finally:
+        await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
 
 
-@pytest.mark.skip(
-    reason="Unreliable due to OpenAI vector store indexing "
-    "potential race condition. See https://github.com/microsoft/agent-framework/issues/1669"
-)
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
@@ -4432,35 +4506,37 @@ async def test_integration_streaming_file_search() -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
-    # Use static method for file search tool
-    file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
-    # Test that the client will use the web search tool
-    response = openai_responses_client.get_streaming_response(
-        messages=[
-            Message(
-                role="user",
-                contents=["What is the weather today? Do a file search to find the answer."],
-            )
-        ],
-        options={
-            "tool_choice": "auto",
-            "tools": [file_search_tool],
-        },
-    )
+    try:
+        # Use static method for file search tool
+        file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+        # Test that the client will use the file search tool
+        response = openai_responses_client.get_response(
+            messages=[
+                Message(
+                    role="user",
+                    contents=["What is the weather today? Do a file search to find the answer."],
+                )
+            ],
+            stream=True,
+            options={
+                "tool_choice": "auto",
+                "tools": [file_search_tool],
+            },
+        )
 
-    assert response is not None
-    full_message: str = ""
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if content.type == "text" and content.text:
-                full_message += content.text
+        assert response is not None
+        full_message: str = ""
+        async for chunk in response:
+            assert chunk is not None
+            assert isinstance(chunk, ChatResponseUpdate)
+            for content in chunk.contents:
+                if content.type == "text" and content.text:
+                    full_message += content.text
 
-    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
-
-    assert "sunny" in full_message.lower()
-    assert "75" in full_message
+        assert "sunny" in full_message.lower()
+        assert "75" in full_message
+    finally:
+        await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
 
 
 @pytest.mark.flaky
@@ -5131,6 +5207,139 @@ def test_prepare_messages_for_openai_filters_none_fc_id() -> None:
     # The None fc_id should result in an auto-generated id
     fc_item = fc_items[0]
     assert fc_item["id"].startswith("fc_")
+
+
+# region: hosted MCP round-trip (issue #5546)
+
+
+def test_prepare_messages_for_openai_serializes_mcp_server_tool_call_as_mcp_call_input_item() -> None:
+    """A Message containing only an mcp_server_tool_call Content should produce
+    a top-level mcp_call input item, not be silently dropped (which today's
+    _prepare_content_for_openai default branch does).
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
+    assert len(mcp_items) == 1, f"expected exactly one mcp_call item; got result={result}"
+    item = mcp_items[0]
+    assert item["id"] == "mcp_abc123"
+    assert item["server_label"] == "api_specs"
+    assert item["name"] == "search"
+    assert item["arguments"] == '{"q": "cats"}'
+    assert "output" not in item or item["output"] is None
+
+
+def test_prepare_messages_for_openai_coalesces_mcp_call_and_result_into_single_item() -> None:
+    """An mcp_server_tool_call followed by an mcp_server_tool_result with the
+    same call_id (in same or separate Messages) must produce ONE mcp_call
+    input item carrying both arguments and output. Two items would let the
+    Responses API see an orphaned output and reject the request.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_abc123",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
+    assert len(mcp_items) == 1, f"expected one coalesced mcp_call item carrying both arguments and output; got {result}"
+    item = mcp_items[0]
+    assert item["id"] == "mcp_abc123"
+    assert item["arguments"] == '{"q": "cats"}'
+    assert item.get("output") == "found 10 cats"
+
+    # And no orphaned function_call_output should appear anywhere in the input.
+    fco_items = [item for item in result if isinstance(item, dict) and item.get("type") == "function_call_output"]
+    assert fco_items == [], f"unexpected orphan function_call_output items: {fco_items}"
+
+
+def test_prepare_messages_for_openai_drops_orphan_mcp_server_tool_result() -> None:
+    """When an mcp_server_tool_result has no matching mcp_server_tool_call in
+    the message list, it must be dropped, NOT serialized as a
+    function_call_output. An orphan function_call_output is what triggers the
+    Responses API 400 reported in #5546.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_orphan_id",
+                    output=[Content.from_text(text="dangling output")],
+                )
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    fco_items = [item for item in result if isinstance(item, dict) and item.get("type") == "function_call_output"]
+    assert fco_items == [], f"orphan mcp_server_tool_result must not serialize as function_call_output; got {fco_items}"
+    mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
+    assert mcp_items == [], f"orphan mcp_server_tool_result must not synthesize a stand-alone mcp_call; got {mcp_items}"
+
+
+def test_stringify_mcp_output_extracts_text_from_dict_entries() -> None:
+    """A list of dicts in the canonical MCP text-content shape
+    (`{"type": "text", "text": "..."}`, e.g. from raw-JSON-decoded MCP
+    responses) must unwrap to plain text rather than Python `repr`.
+    """
+    result = OpenAIChatClient._stringify_mcp_output([{"type": "text", "text": "found 10 cats"}])
+    assert result == "found 10 cats"
+
+
+def test_stringify_mcp_output_falls_back_to_json_for_non_text_dict_entries() -> None:
+    """Dict entries that are not in the canonical text-content shape must
+    serialize as JSON, not Python `repr`. Python `repr` for a dict uses
+    single quotes and would not round-trip through any JSON-aware consumer.
+    """
+    result = OpenAIChatClient._stringify_mcp_output([{"type": "image", "url": "https://example.com/x"}])
+    # Valid JSON: starts with `{`, contains the keys, no Python-repr single quotes.
+    assert result.startswith("{")
+    assert '"url"' in result
+    assert "'" not in result
+
+
+# endregion
 
 
 # endregion
