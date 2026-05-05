@@ -542,13 +542,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # send_and_wait returns only the final ASSISTANT_MESSAGE event;
         # other events (deltas, tool calls) are handled internally by the SDK.
         if response_event and response_event.type == SessionEventType.ASSISTANT_MESSAGE:
-            message_id = response_event.data.message_id
+            data: Any = response_event.data
+            message_id = data.message_id
 
-            if response_event.data.content:
+            if data.content:
                 response_messages.append(
                     Message(
                         role="assistant",
-                        contents=[Content.from_text(response_event.data.content)],
+                        contents=[Content.from_text(data.content)],
                         message_id=message_id,
                         raw_representation=response_event,
                     )
@@ -622,12 +623,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         def event_handler(event: SessionEvent) -> None:
             if event.type == SessionEventType.ASSISTANT_MESSAGE_DELTA:
-                if event.data.delta_content:
+                data: Any = event.data
+                if data.delta_content:
                     update = AgentResponseUpdate(
                         role="assistant",
-                        contents=[Content.from_text(event.data.delta_content)],
-                        response_id=event.data.message_id,
-                        message_id=event.data.message_id,
+                        contents=[Content.from_text(data.delta_content)],
+                        response_id=data.message_id,
+                        message_id=data.message_id,
                         raw_representation=event,
                     )
                     queue.put_nowait(update)
@@ -671,7 +673,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             elif event.type == SessionEventType.SESSION_IDLE:
                 queue.put_nowait(None)
             elif event.type == SessionEventType.SESSION_ERROR:
-                error_msg = event.data.message or "Unknown error"
+                error_data: Any = event.data
+                error_msg = error_data.message or "Unknown error"
                 queue.put_nowait(AgentException(f"GitHub Copilot session error: {error_msg}"))
 
         unsubscribe = copilot_session.on(event_handler)
@@ -887,7 +890,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         )
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
-        instruction_directories = opts.get("instruction_directories") or self._instruction_directories or None
+        instruction_directories = opts.get("instruction_directories", self._instruction_directories)
         tools = self._prepare_tools(self._tools) if self._tools else None
 
         return await self._client.create_session(
@@ -898,7 +901,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             tools=tools or None,
             mcp_servers=mcp_servers or None,
             provider=provider or None,
-            instruction_directories=instruction_directories or None,
+            instruction_directories=instruction_directories,
         )
 
     async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:

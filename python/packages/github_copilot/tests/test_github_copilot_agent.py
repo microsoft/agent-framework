@@ -1108,9 +1108,7 @@ class TestGitHubCopilotAgentSessionManagement:
         )
         await agent.start()
 
-        runtime_options: GitHubCopilotOptions = {
-            "instruction_directories": ["/runtime/path"]
-        }
+        runtime_options: GitHubCopilotOptions = {"instruction_directories": ["/runtime/path"]}
         await agent._get_or_create_session(AgentSession(), runtime_options=runtime_options)  # type: ignore
 
         call_args = mock_client.create_session.call_args
@@ -1131,6 +1129,25 @@ class TestGitHubCopilotAgentSessionManagement:
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
         assert config["instruction_directories"] is None
+
+    async def test_instruction_directories_empty_list_clears_defaults(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that an explicit empty list at runtime clears the agent-level defaults."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"instruction_directories": ["/default/path"]},
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {"instruction_directories": []}
+        await agent._get_or_create_session(AgentSession(), runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] == []
 
 
 class TestGitHubCopilotAgentMCPServers:
