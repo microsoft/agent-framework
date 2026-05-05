@@ -114,4 +114,35 @@ public static class ChatClientBuilderExtensions
     {
         return builder.Use(innerClient => new PerServiceCallChatHistoryPersistingChatClient(innerClient));
     }
+
+    /// <summary>
+    /// Adds an <see cref="AutoApprovedFunctionRemovingChatClient"/> to the chat client pipeline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This decorator should be positioned above the <see cref="FunctionInvokingChatClient"/> in the pipeline
+    /// so that it can intercept approval requests for tools that do not require approval. When
+    /// <see cref="FunctionInvokingChatClient"/> converts all function calls to approval requests (because at
+    /// least one tool requires approval), this decorator removes the requests for non-approval-required tools,
+    /// stores them in the session, and automatically re-injects them as approved on the next request.
+    /// </para>
+    /// <para>
+    /// This extension method is intended for use with custom chat client stacks when
+    /// <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="false"/> (the default),
+    /// the <see cref="ChatClientAgent"/> automatically injects this decorator when
+    /// <see cref="ChatClientAgentOptions.StoreAutoApprovedFunctionCalls"/> is <see langword="true"/>.
+    /// </para>
+    /// <para>
+    /// This decorator only works within the context of a running <see cref="ChatClientAgent"/> with
+    /// an active session, and will throw an exception if used in any other stack.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The <see cref="ChatClientBuilder"/> to add the decorator to.</param>
+    /// <returns>The <paramref name="builder"/> for chaining.</returns>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public static ChatClientBuilder UseAutoApprovedFunctionRemoval(this ChatClientBuilder builder)
+    {
+        return builder.Use(innerClient => new AutoApprovedFunctionRemovingChatClient(innerClient));
+    }
 }
