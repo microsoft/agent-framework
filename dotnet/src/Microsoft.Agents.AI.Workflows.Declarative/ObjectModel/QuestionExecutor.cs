@@ -43,8 +43,6 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
 
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        await this._promptCount.WriteAsync(context, 0).ConfigureAwait(false);
-
         InitializablePropertyPath variable = Throw.IfNull(this.Model.Variable);
         bool isValueUndefined = context.ReadState(variable.Path) is BlankValue;
         // Snapshot prior-execution state before we mutate it below so the SkipQuestionMode
@@ -72,7 +70,9 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
 
         if (proceed)
         {
-            await this.PromptAsync(context, cancellationToken).ConfigureAwait(false);
+            // Initial prompt: count is 0 because no responses have been received yet for this turn.
+            // _promptCount itself is tracked in CaptureResponseAsync's scope (see comment on _promptCount).
+            await this.PromptAsync(context, actualCount: 0, cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -84,14 +84,18 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
 
     public async ValueTask PrepareResponseAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
-        int count = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
         ExternalInputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
         await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
-        await this._promptCount.WriteAsync(context, count + 1).ConfigureAwait(false);
     }
 
     public async ValueTask CaptureResponseAsync(IWorkflowContext context, ExternalInputResponse response, CancellationToken cancellationToken)
     {
+        // _promptCount is tracked in this (Capture) executor's scope so reads and writes are coherent.
+        // Each Capture invocation represents an attempt to satisfy the question; increment up front
+        // and pass the value to PromptAsync explicitly so the retry/default decision is scope-independent.
+        int promptCount = await this._promptCount.ReadAsync(context).ConfigureAwait(false) + 1;
+        await this._promptCount.WriteAsync(context, promptCount).ConfigureAwait(false);
+
         FormulaValue? extractedValue = null;
         if (!response.HasMessages)
         {
@@ -114,10 +118,12 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
 
         if (extractedValue is null)
         {
-            await this.PromptAsync(context, cancellationToken).ConfigureAwait(false);
+            await this.PromptAsync(context, promptCount, cancellationToken).ConfigureAwait(false);
         }
         else
         {
+            // Reset for any subsequent Question turn (e.g. via GotoAction re-entry) so the next attempt starts fresh.
+            await this._promptCount.WriteAsync(context, 0).ConfigureAwait(false);
             bool autoSend = true;
 
             if (this.Model.ExtensionData?.Properties.TryGetValue("autoSend", out DataValue? autoSendValue) ?? false)
@@ -150,10 +156,9 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask PromptAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    private async ValueTask PromptAsync(IWorkflowContext context, int actualCount, CancellationToken cancellationToken)
     {
         long repeatCount = this.Evaluator.GetValue(this.Model.RepeatCount).Value;
-        int actualCount = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
         if (actualCount >= repeatCount)
         {
             DataValue defaultValue = DataValue.Blank();
@@ -165,6 +170,8 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
             await this.AssignAsync(Throw.IfNull(this.Model.Variable).Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
             string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
             await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim()), cancellationToken).ConfigureAwait(false);
+            // Reset for any subsequent Question turn (e.g. via GotoAction re-entry) so the next attempt starts fresh.
+            await this._promptCount.WriteAsync(context, 0).ConfigureAwait(false);
             await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
         else
