@@ -40,6 +40,7 @@ Only use skills from trusted sources.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -49,9 +50,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeVar, runtime_checkable
-
-import asyncio
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeVar, cast, runtime_checkable
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
@@ -188,8 +187,8 @@ class InlineSkillResource(SkillResource):
         if self.content is not None:
             return self.content
 
-        assert self.function is not None  # Guaranteed by constructor
-        result = self.function(**kwargs) if self._accepts_kwargs else self.function()
+        func = cast(Callable[..., Any], self.function)
+        result = func(**kwargs) if self._accepts_kwargs else func()
         if inspect.isawaitable(result):
             return await result
         return result
@@ -1041,6 +1040,14 @@ class SkillsProvider(ContextProvider):
                 )
             )
             provider = SkillsProvider(source)
+
+    .. note::
+
+        By default, skills are cached after first load.  Set
+        ``disable_caching=True`` to re-query the source on every agent
+        run, so that updates to file-based skills or code-defined skill
+        lists are always picked up while filtering and deduplication
+        remain in effect.
 
     Attributes:
         DEFAULT_SOURCE_ID: Default value for the ``source_id`` used by this provider.
