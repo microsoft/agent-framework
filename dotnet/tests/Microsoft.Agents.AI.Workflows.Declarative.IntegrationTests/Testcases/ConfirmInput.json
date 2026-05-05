@@ -1,5 +1,5 @@
 ﻿{
-  "description": "Human in the loop sample - RequestExternalInput.yaml.",
+  "description": "Human in the loop sample - ConfirmInput.yaml. First response mismatches to exercise the GotoAction re-prompt path; second response matches and completes the workflow.",
   "setup": {
     "input": {
       "type": "String",
@@ -8,18 +8,28 @@
     "responses": [
       {
         "type": "String",
+        "value": "9999"
+      },
+      {
+        "type": "String",
         "value": "1234"
       }
     ]
   },
   "validation": {
     "conversation_count": 1,
-    "min_action_count": 4,
+    "min_action_count": 6,
     "max_action_count": -1,
     "min_response_count": 0,
     "actions": {
       "start": [
-        "set_project"
+        "set_project",
+        "question_confirm"
+      ],
+      "repeat": [
+        "sendActivity_mismatch",
+        "goto_again",
+        "question_confirm"
       ],
       "final": [
         "sendActivity_confirmed"

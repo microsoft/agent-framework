@@ -47,6 +47,9 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
 
         InitializablePropertyPath variable = Throw.IfNull(this.Model.Variable);
         bool isValueUndefined = context.ReadState(variable.Path) is BlankValue;
+        // Snapshot prior-execution state before we mutate it below so the SkipQuestionMode
+        // evaluation reflects whether this is the first time the action has run.
+        bool hasExecutedPreviously = await this._hasExecuted.ReadAsync(context).ConfigureAwait(false);
         bool proceed = this.Evaluator.GetValue(this.Model.AlwaysPrompt).Value;
 
         if (!proceed)
@@ -55,12 +58,17 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
             proceed =
                 mode switch
                 {
-                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => isValueUndefined && !await this._hasExecuted.ReadAsync(context).ConfigureAwait(false),
+                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => isValueUndefined || hasExecutedPreviously,
                     SkipQuestionMode.AlwaysSkipIfVariableHasValue => isValueUndefined,
                     SkipQuestionMode.AlwaysAsk => true,
                     _ => true,
                 };
         }
+
+        // Record that the action has executed in the same executor scope as the read above.
+        // (CaptureResponseAsync runs in a different executor's state scope, so writing it there
+        // would not be visible to subsequent ExecuteAsync invocations triggered by GotoAction.)
+        await this._hasExecuted.WriteAsync(context, true).ConfigureAwait(false);
 
         if (proceed)
         {
@@ -133,7 +141,6 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
             }
 
             await this.AssignAsync(Throw.IfNull(this.Model.Variable).Path, extractedValue, context).ConfigureAwait(false);
-            await this._hasExecuted.WriteAsync(context, true).ConfigureAwait(false);
             await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
     }
