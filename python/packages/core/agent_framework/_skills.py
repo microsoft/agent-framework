@@ -188,11 +188,11 @@ class InlineSkillResource(SkillResource):
         if self.content is not None:
             return self.content
 
-        if self.function is not None:
-            result = self.function(**kwargs) if self._accepts_kwargs else self.function()
-            if inspect.isawaitable(result):
-                return await result
-            return result
+        assert self.function is not None  # Guaranteed by constructor
+        result = self.function(**kwargs) if self._accepts_kwargs else self.function()
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
 
 class _FileSkillResource(SkillResource):
