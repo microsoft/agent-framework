@@ -24,18 +24,16 @@ from agent_framework import (
     SupportsAgentRun,
     Workflow,
 )
-from agent_framework.exceptions import WorkflowException
 
 from .._loader import AgentFactory
 from ._declarative_builder import DeclarativeWorkflowBuilder
+from ._errors import DeclarativeWorkflowError
+from ._http_handler import HttpRequestHandler
 
 logger = logging.getLogger("agent_framework.declarative")
 
 
-class DeclarativeWorkflowError(WorkflowException):
-    """Exception raised for errors in declarative workflow processing."""
-
-    pass
+__all__ = ["WorkflowFactory"]
 
 
 class WorkflowFactory:
@@ -92,6 +90,7 @@ class WorkflowFactory:
         env_file: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         max_iterations: int | None = None,
+        http_request_handler: HttpRequestHandler | None = None,
     ) -> None:
         """Initialize the workflow factory.
 
@@ -105,6 +104,12 @@ class WorkflowFactory:
             max_iterations: Optional maximum runner supersteps.  Overrides the YAML ``maxTurns``
                 field and the core default (100).  Workflows with ``GotoAction`` loops (e.g.
                 DeepResearch) typically need a higher value.
+            http_request_handler: Optional handler used to dispatch HTTP requests for
+                ``HttpRequestAction``. Required if the workflow contains any
+                ``HttpRequestAction``; build will fail with :class:`DeclarativeWorkflowError`
+                otherwise. Use :class:`agent_framework.declarative.DefaultHttpRequestHandler`
+                for a no-policy ``httpx``-based default, or supply your own implementation
+                to enforce SSRF guards, allowlisting, or auth resolution.
 
         Examples:
             .. code-block:: python
@@ -144,6 +149,7 @@ class WorkflowFactory:
         self._tools: dict[str, Any] = {}  # Tool registry for InvokeFunctionTool actions
         self._checkpoint_storage = checkpoint_storage
         self._max_iterations = max_iterations
+        self._http_request_handler = http_request_handler
 
     def create_workflow_from_yaml_path(
         self,
@@ -387,6 +393,7 @@ class WorkflowFactory:
                 tools=self._tools,
                 checkpoint_storage=self._checkpoint_storage,
                 max_iterations=self._max_iterations,
+                http_request_handler=self._http_request_handler,
             )
             workflow = graph_builder.build()
         except ValueError as e:
