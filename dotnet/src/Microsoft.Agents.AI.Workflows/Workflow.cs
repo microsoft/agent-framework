@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Behaviors;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Observability;
@@ -81,6 +82,11 @@ public class Workflow
     /// Gets the telemetry context for the workflow.
     /// </summary>
     internal WorkflowTelemetryContext TelemetryContext { get; }
+
+    /// <summary>
+    /// Gets the behavior pipeline for the workflow, if configured.
+    /// </summary>
+    internal BehaviorPipeline? BehaviorPipeline { get; init; }
 
     internal bool AllowConcurrent => this.ExecutorBindings.Values.All(registration => registration.SupportsConcurrentSharedExecution);
 
