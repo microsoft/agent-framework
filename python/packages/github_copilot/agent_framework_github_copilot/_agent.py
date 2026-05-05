@@ -140,12 +140,18 @@ class GitHubCopilotSettings(TypedDict, total=False):
             Can be set via environment variable GITHUB_COPILOT_TIMEOUT.
         log_level: CLI log level.
             Can be set via environment variable GITHUB_COPILOT_LOG_LEVEL.
+        copilot_home: Directory where the CLI stores session state, configuration,
+            and other persistent data. Can be set via environment variable
+            GITHUB_COPILOT_COPILOT_HOME. Defaults to ~/.copilot when not set.
+            Only applicable when the SDK spawns the CLI process (ignored when
+            connecting to an external server via a pre-configured client).
     """
 
     cli_path: str | None
     model: str | None
     timeout: float | None
     log_level: str | None
+    copilot_home: str | None
 
 
 class GitHubCopilotOptions(TypedDict, total=False):
@@ -185,6 +191,12 @@ class GitHubCopilotOptions(TypedDict, total=False):
     """Custom API provider configuration for BYOK (Bring Your Own Key) scenarios.
     Allows routing requests through your own OpenAI, Azure, or Anthropic endpoint
     instead of the default GitHub Copilot backend.
+    """
+
+    instruction_directories: list[str]
+    """Additional directories to search for custom instruction files.
+    Lets applications point the CLI at project-specific or team-shared instruction
+    files beyond the default locations.
     """
 
     on_function_approval: FunctionApprovalCallback
@@ -300,7 +312,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         on_permission_request: PermissionHandlerType | None = opts.pop("on_permission_request", None)
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
         provider: ProviderConfig | None = opts.pop("provider", None)
+        instruction_directories: list[str] | None = opts.pop("instruction_directories", None)
         on_function_approval: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
+        copilot_home = opts.pop("copilot_home", None)
 
         self._settings = load_settings(
             GitHubCopilotSettings,
@@ -309,6 +323,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             model=model,
             timeout=timeout,
             log_level=log_level,
+            copilot_home=copilot_home,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
@@ -318,6 +333,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._function_approval_handler: FunctionApprovalCallback | None = on_function_approval
         self._mcp_servers = mcp_servers
         self._provider = provider
+        self._instruction_directories = instruction_directories
         self._default_options = opts
         self._started = False
 
@@ -346,10 +362,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if self._client is None:
             cli_path = self._settings.get("cli_path") or None
             log_level = self._settings.get("log_level") or None
+            copilot_home = self._settings.get("copilot_home") or None
 
             subprocess_kwargs: dict[str, Any] = {"cli_path": cli_path}
             if log_level:
                 subprocess_kwargs["log_level"] = log_level
+            if copilot_home:
+                subprocess_kwargs["copilot_home"] = copilot_home
             self._client = CopilotClient(SubprocessConfig(**subprocess_kwargs))
 
         try:
@@ -868,6 +887,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         )
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
+        instruction_directories = opts.get("instruction_directories") or self._instruction_directories or None
         tools = self._prepare_tools(self._tools) if self._tools else None
 
         return await self._client.create_session(
@@ -878,6 +898,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             tools=tools or None,
             mcp_servers=mcp_servers or None,
             provider=provider or None,
+            instruction_directories=instruction_directories or None,
         )
 
     async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:

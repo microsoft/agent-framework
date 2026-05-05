@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.2.2,<2",
-    "github-copilot-sdk>=0.2.1,<=0.2.1; python_version >= '3.11'",
+    "github-copilot-sdk>=1.0.0b1,<=1.0.0b1; python_version >= '3.11'",
 ]
 
 [tool.uv]
