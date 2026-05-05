@@ -121,6 +121,14 @@ OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY = "openai.local_shell_command_parts"
 OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL = "shell_call_output"
 OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL = "local_shell_call_output"
 
+# Internal marker emitted by `_prepare_content_for_openai` for an
+# `mcp_server_tool_result` Content. The Responses API expects an `mcp_call`
+# input item to carry both arguments and output as one item, so result
+# Contents cannot be serialized standalone. `_prepare_messages_for_openai`
+# coalesces these markers into the most recent matching `mcp_call` input
+# item before returning, dropping any that are unmatched.
+_AF_MCP_PENDING_OUTPUT_KEY = "__af_pending_mcp_result__"
+
 
 class OpenAIContinuationToken(ContinuationToken):
     """Continuation token for OpenAI Responses API background operations."""
@@ -195,6 +203,11 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
     reasoning: ReasoningOptions
     """Configuration for reasoning models (gpt-5, o-series).
     See: https://platform.openai.com/docs/guides/reasoning"""
+
+    verbosity: Literal["low", "medium", "high"]
+    """Output verbosity for GPT-5 family models. Lower values yield shorter responses.
+    Translated to ``text.verbosity`` when sent to the Responses API.
+    See: https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools#1-verbosity-parameter"""
 
     safety_identifier: str
     """A stable identifier for detecting policy violations.
@@ -654,7 +667,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     response = await client.responses.retrieve(continuation_token["response_id"])
                 except Exception as ex:
                     self._handle_request_error(ex)
-                return self._parse_response_from_openai(response, options=validated_options)
+                chat_response = self._parse_response_from_openai(response, options=validated_options)
+                # Once the background response completes, drop the continuation_token from
+                # the caller's options dict. FunctionInvocationLayer reuses the same dict
+                # across tool-loop iterations, so leaving it in place makes the next iteration
+                # retrieve the same completed response again instead of POSTing tool results
+                # (issue #5394). Keep `background` so subsequent iterations still create
+                # background responses.
+                if chat_response.continuation_token is None and isinstance(options, dict):
+                    options.pop("continuation_token", None)
+                return chat_response
             client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
@@ -1296,6 +1318,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             "type": "function",
                             "name": func_name,
                         }
+                    elif mode == "auto" and (allowed := tool_mode.get("allowed_tools")) is not None:
+                        run_options["tool_choice"] = {
+                            "type": "allowed_tools",
+                            "mode": "auto",
+                            "tools": [{"type": "function", "name": name} for name in allowed],
+                        }
                     else:
                         run_options["tool_choice"] = mode
         else:
@@ -1308,6 +1336,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         response_format, text_config = self._prepare_response_and_text_format(
             response_format=response_format, text_config=text_config
         )
+        # The Responses API nests verbosity under ``text.verbosity``; surface it as a
+        # top-level option for parity with ``reasoning`` and translate here.
+        if (verbosity := run_options.pop("verbosity", None)) is not None:
+            text_config = dict(text_config) if text_config else {}
+            text_config["verbosity"] = verbosity
         if text_config:
             run_options["text"] = text_config
         if response_format:
@@ -1357,7 +1390,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             for message in chat_messages
         ]
         # Flatten the list of lists into a single list
-        return list(chain.from_iterable(list_of_list))
+        flat = list(chain.from_iterable(list_of_list))
+        # Coalesce hosted-MCP result markers onto matching mcp_call input
+        # items (drop unmatched). See `_AF_MCP_PENDING_OUTPUT_KEY`.
+        return self._coalesce_pending_mcp_results(flat)
 
     def _prepare_message_for_openai(
         self,
@@ -1422,6 +1458,18 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     )
                     if prepared:
                         all_messages.append(prepared)
+                case "mcp_server_tool_call" | "mcp_server_tool_result":
+                    # Hosted MCP call/result contents serialize as a single
+                    # top-level mcp_call input item; the result side emits an
+                    # internal marker that `_prepare_messages_for_openai`
+                    # coalesces onto the matching call (or drops if unmatched).
+                    prepared_mcp = self._prepare_content_for_openai(
+                        message.role,
+                        content,
+                        replays_local_storage=replays_local_storage,
+                    )
+                    if prepared_mcp:
+                        all_messages.append(prepared_mcp)
                 case _:
                     prepared_content = self._prepare_content_for_openai(
                         message.role,
@@ -1600,6 +1648,24 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     "approval_request_id": content.id,
                     "approve": content.approved,
                 }
+            case "mcp_server_tool_call":
+                if not content.call_id:
+                    return {}
+                return {
+                    "type": "mcp_call",
+                    "id": content.call_id,
+                    "server_label": content.server_name or "",
+                    "name": content.tool_name or "",
+                    "arguments": self._stringify_mcp_arguments(content.arguments),
+                }
+            case "mcp_server_tool_result":
+                if not content.call_id:
+                    return {}
+                return {
+                    _AF_MCP_PENDING_OUTPUT_KEY: True,
+                    "call_id": content.call_id,
+                    "output": self._stringify_mcp_output(content.output),
+                }
             case "hosted_file":
                 # `input_file` is an input-only content type in the Responses API and is rejected
                 # inside an assistant message. Hosted-file content on an assistant message
@@ -1674,6 +1740,91 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     def _join_shell_commands(commands: Sequence[str]) -> str:
         """Join shell commands into a single executable command string."""
         return "\n".join(command for command in commands if command).strip()
+
+    @staticmethod
+    def _stringify_mcp_arguments(arguments: Any) -> str:
+        """Render hosted-MCP tool-call arguments as a JSON string for the Responses API."""
+        if arguments is None:
+            return ""
+        if isinstance(arguments, str):
+            return arguments
+        try:
+            return json.dumps(arguments)
+        except (TypeError, ValueError):
+            return str(arguments)
+
+    @staticmethod
+    def _stringify_mcp_output(output: Any) -> str:
+        """Render a hosted-MCP tool-call result into the string `mcp_call.output` field.
+
+        Accepts a string, a list of text-bearing Content objects (the form
+        the chat client produces when parsing an `mcp_call` Responses item),
+        or any other value. List entries that are dicts with the canonical
+        MCP text-content shape (`{"text": "..."}`) are unwrapped to their
+        text. Anything else falls back to JSON encoding rather than Python
+        `repr`, so the wire payload stays parseable for downstream callers.
+        """
+        if output is None:
+            return ""
+        if isinstance(output, str):
+            return output
+        if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
+            # cast is for pyright (reportUnknownVariableType); mypy considers
+            # it redundant after the isinstance narrowing.
+            entries = cast(Sequence[Any], output)  # type: ignore[redundant-cast]
+            parts: list[str] = []
+            for entry in entries:
+                if isinstance(entry, str):
+                    parts.append(entry)
+                    continue
+                text = getattr(entry, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+                    continue
+                if isinstance(entry, Mapping):
+                    mapping_text = cast(Any, entry).get("text")
+                    if isinstance(mapping_text, str):
+                        parts.append(mapping_text)
+                        continue
+                parts.append(json.dumps(entry, default=str))
+            return "".join(parts)
+        return json.dumps(output, default=str)
+
+    @staticmethod
+    def _coalesce_pending_mcp_results(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Merge pending hosted-MCP result markers onto matching mcp_call input items.
+
+        See `_AF_MCP_PENDING_OUTPUT_KEY`. The Responses API expects a single
+        `mcp_call` input item carrying both `arguments` and `output`, so a
+        result Content cannot be its own input item. Any unmatched markers
+        are dropped (debug-logged); surfacing them as standalone items
+        would produce the orphan `function_call_output` / `mcp_call_output`
+        the API rejects.
+        """
+        out: list[dict[str, Any]] = []
+        for item in items:
+            if item.get(_AF_MCP_PENDING_OUTPUT_KEY):
+                target_call_id = item.get("call_id")
+                target = next(
+                    (
+                        existing
+                        for existing in reversed(out)
+                        if existing.get("type") == "mcp_call" and existing.get("id") == target_call_id
+                    ),
+                    None,
+                )
+                if target is not None:
+                    if target.get("output") is None:
+                        target["output"] = item.get("output")
+                else:
+                    logger.debug(
+                        "Dropping orphan mcp_server_tool_result for call_id=%s; "
+                        "no matching mcp_call appeared in input.",
+                        target_call_id,
+                    )
+                continue
+            out.append(item)
+        return out
 
     @staticmethod
     def _serialize_provider_payload(value: Any) -> Any:

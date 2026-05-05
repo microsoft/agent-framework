@@ -3,16 +3,15 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
 using Azure.Identity;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Shared.DiagnosticIds;
+using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -36,7 +35,7 @@ public static class FoundryHostingExtensions
     /// <para>
     /// Example:
     /// <code>
-    /// builder.AddAIAgent("my-agent", ...);
+    /// builder.Services.AddKeyedSingleton&lt;AIAgent&gt;("my-agent", myAgent);
     /// builder.Services.AddFoundryResponses();
     ///
     /// var app = builder.Build();
@@ -50,7 +49,7 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddResponsesServer();
-        services.TryAddSingleton<AgentSessionStore, InMemoryAgentSessionStore>();
+        services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
     }
@@ -77,7 +76,7 @@ public static class FoundryHostingExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
-    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, an in-memory session store will be used.</param>
+    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, a file-system session store is used, rooted at <c>/.checkpoints</c> when running in a Foundry hosted environment and <c>{cwd}/.checkpoints</c> locally.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryResponses(this IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore = null)
     {
@@ -85,7 +84,7 @@ public static class FoundryHostingExtensions
         ArgumentNullException.ThrowIfNull(agent);
 
         services.AddResponsesServer();
-        agentSessionStore ??= new InMemoryAgentSessionStore();
+        agentSessionStore ??= FileSystemAgentSessionStore.CreateDefault();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
         {
@@ -181,20 +180,11 @@ public static class FoundryHostingExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         endpoints.MapResponsesServer(prefix);
-
-        if (endpoints is IApplicationBuilder app)
-        {
-            // Ensure the middleware is added to the pipeline
-            app.UseMiddleware<AgentFrameworkUserAgentMiddleware>();
-        }
-
         return endpoints;
     }
 
     /// <summary>
     /// The ActivitySource name for the Responses hosting pipeline.
-    /// Matches the value previously exposed by <c>AgentHostTelemetry.ResponsesSourceName</c>
-    /// in <c>Azure.AI.AgentServer.Core</c>.
     /// </summary>
     private const string ResponsesSourceName = "Azure.AI.AgentServer.Responses";
 
@@ -216,46 +206,85 @@ public static class FoundryHostingExtensions
                     .Build();
     }
 
-    private sealed class AgentFrameworkUserAgentMiddleware(RequestDelegate next)
+    /// <summary>
+    /// Attempts to wrap the agent's underlying <see cref="ResponsesClient"/>
+    /// with a <see cref="UserAgentResponsesClient"/> so every outgoing Responses-API request
+    /// carries the hosted-agent <c>User-Agent</c> segment.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Best-effort and idempotent. The method is a no-op when:
+    /// <list type="bullet">
+    /// <item><description><paramref name="agent"/> exposes no <see cref="IChatClient"/>;</description></item>
+    /// <item><description>the chat client is not backed by MEAI's internal <c>OpenAIResponsesChatClient</c> (e.g., a non-OpenAI provider or a custom impl);</description></item>
+    /// <item><description>the inner <see cref="ResponsesClient"/> is already a <see cref="UserAgentResponsesClient"/>.</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// Works for any <see cref="ResponsesClient"/>-derived inner client — both the Foundry-specific
+    /// <see cref="Azure.AI.Extensions.OpenAI.ProjectResponsesClient"/> and the native OpenAI
+    /// <see cref="ResponsesClient"/> obtained from <see cref="OpenAI.OpenAIClient"/>. The wrapper preserves
+    /// the inner client's pipeline (Transport, RetryPolicy, NetworkTimeout, OrganizationId / ProjectId /
+    /// UserAgentApplicationId, custom policies) because every override delegates to the inner instance.
+    /// </para>
+    /// <para>
+    /// Returns the same <paramref name="agent"/> instance unchanged. Mutation happens via
+    /// reflection on MEAI's private <c>_responseClient</c> field; the agent itself is not wrapped.
+    /// </para>
+    /// </remarks>
+    internal static AIAgent TryApplyUserAgent(AIAgent agent)
     {
-        private static readonly string s_userAgentValue = CreateUserAgentValue();
-
-        public async Task InvokeAsync(HttpContext context)
+        var chatClient = agent.GetService<IChatClient>();
+        if (chatClient is null)
         {
-            var headers = context.Request.Headers;
-            var userAgent = headers.UserAgent.ToString();
-
-            if (string.IsNullOrEmpty(userAgent))
-            {
-                headers.UserAgent = s_userAgentValue;
-            }
-            else if (!userAgent.Contains(s_userAgentValue, StringComparison.OrdinalIgnoreCase))
-            {
-                headers.UserAgent = $"{userAgent} {s_userAgentValue}";
-            }
-
-            await next(context).ConfigureAwait(false);
+            return agent;
         }
 
-        private static string CreateUserAgentValue()
+        var meaiType = s_meaiResponsesChatClientType;
+        if (meaiType is null)
         {
-            const string Name = "agent-framework-dotnet";
-
-            if (typeof(AgentFrameworkUserAgentMiddleware).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion is string version)
-            {
-                int pos = version.IndexOf('+');
-                if (pos >= 0)
-                {
-                    version = version.Substring(0, pos);
-                }
-
-                if (version.Length > 0)
-                {
-                    return $"{Name}/{version}";
-                }
-            }
-
-            return Name;
+            return agent;
         }
+
+        var meaiInstance = chatClient.GetService(meaiType);
+        if (meaiInstance is null)
+        {
+            return agent;
+        }
+
+        var field = s_meaiResponseClientField;
+        if (field is null)
+        {
+            return agent;
+        }
+
+        var current = field.GetValue(meaiInstance) as ResponsesClient;
+        if (current is null or UserAgentResponsesClient)
+        {
+            return agent;
+        }
+
+        field.SetValue(meaiInstance, new UserAgentResponsesClient(current));
+        return agent;
     }
+
+    /// <summary>
+    /// MEAI's internal <c>OpenAIResponsesChatClient</c> type, resolved once via reflection.
+    /// <see langword="null"/> if the type cannot be found (e.g., MEAI version drift).
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode",
+        Justification = "MEAI's OpenAIResponsesChatClient is referenced through MicrosoftExtensionsAIResponsesExtensions and survives trimming.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2073:RequiresUnreferencedCode",
+        Justification = "MEAI's OpenAIResponsesChatClient is referenced through MicrosoftExtensionsAIResponsesExtensions and survives trimming.")]
+    private static readonly Type? s_meaiResponsesChatClientType =
+        typeof(MicrosoftExtensionsAIResponsesExtensions).Assembly.GetType("Microsoft.Extensions.AI.OpenAIResponsesChatClient");
+
+    /// <summary>
+    /// MEAI's internal <c>_responseClient</c> field on <c>OpenAIResponsesChatClient</c>,
+    /// resolved once via reflection. <see langword="null"/> if the field cannot be found.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2080:RequiresDynamicallyAccessedMembers",
+        Justification = "OpenAIResponsesChatClient and its private fields are preserved by the polyfill design; MEAI does the same reflection internally.")]
+    private static readonly FieldInfo? s_meaiResponseClientField =
+        s_meaiResponsesChatClientType?.GetField("_responseClient", BindingFlags.NonPublic | BindingFlags.Instance);
 }

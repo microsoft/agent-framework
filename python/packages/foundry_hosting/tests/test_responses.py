@@ -879,6 +879,30 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].result == "result text"
 
+    def test_custom_tool_call_output_with_mcp_call_id_routes_to_mcp_server_tool_result(self) -> None:
+        """When the host wrote a hosted-MCP result via
+        `aoutput_item_custom_tool_call_output`, the persisted call_id keeps
+        its `mcp_*` prefix. On read, that result must reconstruct as a
+        `mcp_server_tool_result` Content (not `function_result`), so the
+        chat-client serialize layer treats it as a hosted-MCP result and
+        does not produce an orphan `function_call_output`.
+        """
+        from azure.ai.agentserver.responses.models import OutputItemCustomToolCallOutput
+
+        item = OutputItemCustomToolCallOutput({
+            "type": "custom_tool_call_output",
+            "call_id": "mcp_06b686e11f118cf40169f0e5badb3081979842929d5cf04920",
+            "output": "found 10 cats",
+        })
+        msg = _output_item_to_message(item)
+        assert msg.role == "tool"
+        assert len(msg.contents) == 1
+        c = msg.contents[0]
+        assert c.type == "mcp_server_tool_result", (
+            f"expected mcp_server_tool_result for mcp_-prefixed call_id; got {c.type}"
+        )
+        assert c.call_id == "mcp_06b686e11f118cf40169f0e5badb3081979842929d5cf04920"
+
     def test_apply_patch_call(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchUpdateFileOperation, OutputItemApplyPatchToolCall
 
@@ -1328,6 +1352,32 @@ class TestItemToMessage:
         msg = _item_to_message(item)
         assert msg is not None
         assert msg.contents[0].result == "123"
+
+    def test_custom_tool_call_output_with_mcp_call_id_routes_to_mcp_server_tool_result(self) -> None:
+        """Issue #5546: input items carrying a hosted-MCP result (from a
+        prior turn that the framework wrote via
+        `aoutput_item_custom_tool_call_output`) must reconstruct as a
+        `mcp_server_tool_result` Content, not `function_result`. Otherwise
+        the chat-client serialize layer turns it into an orphan
+        `function_call_output` with `mcp_*` call_id and the Responses API
+        rejects the next turn.
+        """
+        from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
+
+        item = ItemCustomToolCallOutput({
+            "type": "custom_tool_call_output",
+            "call_id": "mcp_06b686e11f118cf40169f0e5badb3081979842929d5cf04920",
+            "output": "found 10 cats",
+        })
+        msg = _item_to_message(item)
+        assert msg is not None
+        assert msg.role == "tool"
+        assert len(msg.contents) == 1
+        c = msg.contents[0]
+        assert c.type == "mcp_server_tool_result", (
+            f"expected mcp_server_tool_result for mcp_-prefixed call_id; got {c.type}"
+        )
+        assert c.call_id == "mcp_06b686e11f118cf40169f0e5badb3081979842929d5cf04920"
 
     def test_apply_patch_call(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallItemParam, ApplyPatchUpdateFileOperation
