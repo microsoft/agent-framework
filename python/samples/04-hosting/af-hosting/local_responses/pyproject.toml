@@ -1,0 +1,23 @@
+[project]
+name = "agent-framework-hosting-sample-local-responses"
+version = "0.0.1"
+description = "Minimal Responses-only local hosting sample with a settings-altering run hook."
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-hosting",
+    "agent-framework-hosting-responses",
+    "azure-identity",
+    "aiohttp>=3.13.5",
+    "hypercorn>=0.17",
+]
+
+[dependency-groups]
+dev = ["openai>=1.99"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+agent-framework-hosting = { git = "https://github.com/microsoft/agent-framework.git", branch = "feature/python-hosting", subdirectory = "python/packages/hosting" }
+agent-framework-hosting-responses = { git = "https://github.com/microsoft/agent-framework.git", branch = "feature/python-hosting", subdirectory = "python/packages/hosting-responses" }

@@ -1,0 +1,92 @@
+# local_responses_workflow — REST examples
+#
+# Use with the VS Code "REST Client" extension (humao.rest-client) or
+# JetBrains HTTP Client. Each `###` block is one request.
+#
+# Start the server in another shell first:
+#   uv run python app.py
+
+@host = http://127.0.0.1:8000
+
+###
+# 1. Responses API — structured brief
+POST {{host}}/responses
+Content-Type: application/json
+
+{
+  "model": "agent",
+  "input": "{\"topic\": \"electric SUV\", \"style\": \"playful\", \"audience\": \"young families\"}"
+}
+
+###
+# 2. Responses API — plain topic, defaults applied by the run hook
+POST {{host}}/responses
+Content-Type: application/json
+
+{
+  "model": "agent",
+  "input": "vintage espresso machine"
+}
+
+###
+# 3. Responses API — continue the conversation by previous_response_id
+#    Replace <RESPONSE_ID> with `id` from one of the responses above —
+#    the host uses it as the workflow checkpoint scope key, so the
+#    workflow resumes from its latest checkpoint before applying the
+#    new input.
+POST {{host}}/responses
+Content-Type: application/json
+
+{
+  "model": "agent",
+  "previous_response_id": "<RESPONSE_ID>",
+  "input": "{\"topic\": \"electric SUV\", \"style\": \"retro\", \"audience\": \"boomers\"}"
+}
+
+###
+# 4. Invocations API — structured brief
+POST {{host}}/invocations/invoke
+Content-Type: application/json
+
+{
+  "message": "{\"topic\": \"electric SUV\", \"style\": \"playful\", \"audience\": \"young families\"}",
+  "session_id": "demo-1"
+}
+
+###
+# 5. Invocations API — plain topic
+POST {{host}}/invocations/invoke
+Content-Type: application/json
+
+{
+  "message": "noise-cancelling headphones",
+  "session_id": "demo-2"
+}
+
+###
+# 6. Invocations API — resume the same session_id to reuse the
+#    workflow's per-conversation checkpoint store.
+POST {{host}}/invocations/invoke
+Content-Type: application/json
+
+{
+  "message": "{\"topic\": \"noise-cancelling headphones\", \"style\": \"minimalist\", \"audience\": \"developers\"}",
+  "session_id": "demo-2"
+}
+
+###
+# 7. Invocations API — streaming (SSE; one `data:` line per chunk,
+#    terminated by `data: [DONE]`).
+POST {{host}}/invocations/invoke
+Content-Type: application/json
+Accept: text/event-stream
+
+{
+  "message": "{\"topic\": \"reusable water bottle\", \"style\": \"bold\", \"audience\": \"college students\"}",
+  "session_id": "demo-3",
+  "stream": true
+}
+
+###
+# 8. Readiness probe
+GET {{host}}/readiness
