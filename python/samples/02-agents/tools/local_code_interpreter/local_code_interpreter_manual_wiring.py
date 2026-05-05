@@ -8,10 +8,9 @@ from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.hyperlight import HyperlightExecuteCodeTool
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-from agent_framework_hyperlight import HyperlightExecuteCodeTool
 
 """This sample demonstrates manual static wiring of CodeAct without a provider.
 

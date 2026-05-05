@@ -2,6 +2,7 @@
 
 using System.ComponentModel;
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.AI;
@@ -10,11 +11,23 @@ namespace SampleApp;
 
 /// <summary>
 /// An AI function that downloads HTML pages and converts them to markdown.
+/// Access is controlled by <see cref="WebBrowsingToolOptions"/> — by default, no hosts are accessible.
 /// </summary>
 internal sealed partial class WebBrowsingTool : AIFunction
 {
     private static readonly HttpClient s_httpClient = new();
-    private readonly AIFunction _inner = AIFunctionFactory.Create(DownloadUriAsync);
+    private readonly AIFunction _inner;
+    private readonly WebBrowsingToolOptions _options;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="WebBrowsingTool"/> class.
+    /// </summary>
+    /// <param name="options">Options controlling which URLs are permitted. By default, no hosts are accessible.</param>
+    public WebBrowsingTool(WebBrowsingToolOptions options)
+    {
+        this._options = options ?? throw new ArgumentNullException(nameof(options));
+        this._inner = AIFunctionFactory.Create(this.DownloadUriAsync);
+    }
 
     /// <inheritdoc/>
     public override string Name => this._inner.Name;
@@ -32,7 +45,7 @@ internal sealed partial class WebBrowsingTool : AIFunction
         this._inner.InvokeAsync(arguments, cancellationToken);
 
     [Description("Fetch the html from the given url as markdown")]
-    private static async Task<string> DownloadUriAsync(
+    private async Task<string> DownloadUriAsync(
         [Description("The URL to download")] string uri,
         CancellationToken cancellationToken = default)
     {
@@ -46,9 +59,12 @@ internal sealed partial class WebBrowsingTool : AIFunction
             return $"Error: Only HTTP and HTTPS URLs are supported. Got: '{parsedUri.Scheme}'.";
         }
 
-        // NOTE: In production scenarios, consider also blocking requests to private/internal IP
-        // ranges (e.g., 10.x.x.x, 172.16-31.x.x, 192.168.x.x, 127.0.0.1, 169.254.169.254)
-        // to prevent SSRF attacks via prompt injection in web content.
+        // Check access policy.
+        string? accessError = await this.CheckAccessAsync(parsedUri, cancellationToken);
+        if (accessError is not null)
+        {
+            return accessError;
+        }
 
         try
         {
@@ -59,6 +75,142 @@ internal sealed partial class WebBrowsingTool : AIFunction
         {
             return $"Error downloading {uri}: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Checks whether the given URI is permitted by the configured access policy.
+    /// Returns null if allowed, or an error message string if blocked.
+    /// </summary>
+    private async Task<string?> CheckAccessAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        string host = uri.Host;
+
+        // 1. Check AllowedHosts.
+        if (this._options.AllowedHosts is { Count: > 0 } allowedHosts)
+        {
+            foreach (string pattern in allowedHosts)
+            {
+                if (HostMatchesPattern(host, pattern))
+                {
+                    return null; // Allowed by explicit host list.
+                }
+            }
+        }
+
+        // 2. Short-circuit when the policy is guaranteed to block.
+        if (!this._options.AllowPublicNetworks &&
+            !this._options.AllowPrivateNetworks &&
+            !this._options.AllowAllHosts)
+        {
+            return $"Error: Access to '{host}' is blocked by the current access policy. Configure WebBrowsingToolOptions to allow access.";
+        }
+
+        // 3. Resolve DNS to determine if the host is public or private.
+        IPAddress[] addresses;
+        try
+        {
+            addresses = await Dns.GetHostAddressesAsync(host, cancellationToken);
+        }
+        catch (SocketException)
+        {
+            return $"Error: Could not resolve host '{host}'.";
+        }
+
+        if (addresses.Length == 0)
+        {
+            return $"Error: Could not resolve host '{host}'.";
+        }
+
+        bool isPrivate = Array.Exists(addresses, IsPrivateAddress);
+
+        // 4. If public and AllowPublicNetworks is true → allow.
+        if (!isPrivate && this._options.AllowPublicNetworks)
+        {
+            return null;
+        }
+
+        // 5. If private and AllowPrivateNetworks is true → allow.
+        if (isPrivate && this._options.AllowPrivateNetworks)
+        {
+            return null;
+        }
+
+        // 6. If AllowAllHosts is true → allow.
+        if (this._options.AllowAllHosts)
+        {
+            return null;
+        }
+
+        // 7. Block.
+        string networkType = isPrivate ? "private/internal network" : "public network";
+        return $"Error: Access to '{host}' is blocked. The host resolves to a {networkType} address and the current access policy does not permit this. " +
+               "Configure WebBrowsingToolOptions to allow access.";
+    }
+
+    /// <summary>
+    /// Checks whether a host matches a pattern. Supports exact match and wildcard prefix (e.g., "*.example.com").
+    /// </summary>
+    private static bool HostMatchesPattern(string host, string pattern)
+    {
+        if (string.Equals(host, pattern, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Wildcard prefix: "*.example.com" matches "sub.example.com" and "a.b.example.com".
+        if (pattern.StartsWith("*.", StringComparison.Ordinal))
+        {
+            string suffix = pattern[1..]; // ".example.com"
+            return host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Determines whether an IP address is private, loopback, or link-local.
+    /// </summary>
+    private static bool IsPrivateAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
+        if (IPAddress.IsLoopback(address))
+        {
+            return true;
+        }
+
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            byte[] bytes = address.GetAddressBytes();
+            return bytes[0] switch
+            {
+                10 => true,                                          // 10.0.0.0/8
+                172 => bytes[1] >= 16 && bytes[1] <= 31,             // 172.16.0.0/12
+                192 => bytes[1] == 168,                              // 192.168.0.0/16
+                169 => bytes[1] == 254,                              // 169.254.0.0/16 (link-local + metadata)
+                _ => false
+            };
+        }
+
+        if (address.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            // fe80::/10 (link-local) or fc00::/7 (unique local).
+            byte[] bytes = address.GetAddressBytes();
+            if (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80)
+            {
+                return true; // Link-local
+            }
+
+            if ((bytes[0] & 0xfe) == 0xfc)
+            {
+                return true; // Unique local
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
