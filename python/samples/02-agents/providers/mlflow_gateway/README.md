@@ -40,20 +40,20 @@ All gateway features are configured through the MLflow UI. Your application code
 
 ## Recommended Approach
 
-Since MLflow AI Gateway exposes an OpenAI-compatible endpoint at `/gateway/openai/v1`, you can connect Agent Framework to it using the existing `OpenAIChatClient` with a custom `base_url` — no extra packages required beyond the OpenAI integration.
+MLflow AI Gateway exposes a unified OpenAI-compatible Chat Completions endpoint at `/gateway/mlflow/v1` that works regardless of which provider backs the endpoint (OpenAI, Anthropic, Gemini, etc.). Connect Agent Framework to it using the existing `OpenAIChatCompletionClient` with a custom `base_url` — no extra packages required beyond the OpenAI integration.
 
 ## Examples
 
 | File | Description |
 |------|-------------|
-| [`mlflow_gateway_with_openai_chat_client.py`](mlflow_gateway_with_openai_chat_client.py) | Connect an Agent Framework agent to MLflow AI Gateway via the OpenAI-compatible endpoint. Shows both streaming and non-streaming responses with tool calling. |
+| [`mlflow_gateway_with_openai_chat_completion_client.py`](mlflow_gateway_with_openai_chat_completion_client.py) | Connect an Agent Framework agent to MLflow AI Gateway via the unified Chat Completions endpoint. Shows a streaming response with tool calling. |
 
 ## Configuration
 
 Set the following environment variables before running the example:
 
-- `MLFLOW_GATEWAY_ENDPOINT`: The base URL for the gateway's OpenAI-compatible endpoint (must include the `/gateway/openai/v1/` suffix)
-  - Example: `export MLFLOW_GATEWAY_ENDPOINT="http://localhost:5000/gateway/openai/v1/"`
+- `MLFLOW_GATEWAY_ENDPOINT`: The base URL for the gateway's unified Chat Completions endpoint (must include the `/gateway/mlflow/v1/` suffix)
+  - Example: `export MLFLOW_GATEWAY_ENDPOINT="http://localhost:5000/gateway/mlflow/v1/"`
 
 - `MLFLOW_GATEWAY_MODEL`: The gateway endpoint name you created in the MLflow UI
   - Example: `export MLFLOW_GATEWAY_MODEL="my-chat-endpoint"`
