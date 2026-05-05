@@ -377,7 +377,7 @@ class InlineSkillScript(SkillScript):
         else:
             result = self.function(**(args or {}))
         if inspect.isawaitable(result):
-            result = await result
+            return await result
         return result
 
 
@@ -457,7 +457,7 @@ class FileSkillScript(SkillScript):
             )
         result = self._runner(skill, self, args)
         if inspect.isawaitable(result):
-            result = await result
+            return await result
         return result
 
 
