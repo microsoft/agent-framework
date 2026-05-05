@@ -247,10 +247,7 @@ jobs:
         run: echo "github.event_name:${{ github.event_name }} matrix.integration-tests:${{ matrix.integration-tests }} github.event.action:${{ github.event.action }} github.event.pull_request.merged:${{ github.event.pull_request.merged }}"
 
       - name: Azure CLI Login
-        # TEMP: was `if: github.event_name != 'pull_request' && matrix.integration-tests`. Also
-        # log in on PRs when the Foundry hosted-agent IT will run, so it has Azure auth.
-        # Restore the original line above after PR #5598 has had one green run.
-        if: matrix.integration-tests && (github.event_name != 'pull_request' || needs.paths-filter.outputs.foundryHostingChanges == 'true')
+        if: github.event_name != 'pull_request' && matrix.integration-tests
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -306,9 +303,7 @@ jobs:
       - name: Build and push Foundry Hosted Agents test container
         id: build-foundry-hosted-image
         shell: pwsh
-        # TEMP: was `github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true'`
-        # to validate the wiring on PR #5598. Restore the != 'pull_request' clause once a PR run is green.
-        if: matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
+        if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
         run: |
           $registry = "${{ vars.IT_HOSTED_AGENT_REGISTRY }}"
           if ([string]::IsNullOrWhiteSpace($registry)) {
@@ -319,9 +314,7 @@ jobs:
       - name: Run Foundry Hosted Agents Integration Tests
         shell: pwsh
         working-directory: dotnet
-        # TEMP: same temporary PR-validation override as the build step above. Restore the
-        # != 'pull_request' clause once a PR run is green.
-        if: matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
+        if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
         run: |
           dotnet test --solution ./filtered-integration.slnx `
             -f ${{ matrix.targetFramework }} `
