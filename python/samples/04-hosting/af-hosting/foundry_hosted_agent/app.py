@@ -6,8 +6,8 @@ This sample is intentionally minimal and is **runtime-compatible with the
 Foundry Hosted Agents platform**: a host that exposes the Responses and
 Invocations channels under their default mount roots can be packaged as a
 container image and deployed to Foundry Hosted Agents without any protocol
-shim (see ADR 0026 §11). The same image runs locally, behind any ASGI
-server, or as a Hosted Agent.
+shim. The same image runs locally, behind any ASGI server, or as a Hosted
+Agent.
 
 History
 -------

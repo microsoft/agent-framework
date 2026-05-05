@@ -30,13 +30,3 @@ services:
 infra:
     provider: bicep
     path: ./infra
-hooks:
-    prepackage:
-        windows:
-            shell: pwsh
-            run: bash ./scripts/vendor-packages.sh
-        posix:
-            name: prepackage
-            kind: sh
-            shell: sh
-            run: ./scripts/vendor-packages.sh

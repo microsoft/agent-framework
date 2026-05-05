@@ -1,23 +1,23 @@
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 # Build context for this Dockerfile is THIS folder (see ``azure.yaml`` ->
-# ``services.<svc>.project: .``). The workspace packages this sample edits
-# editable-installs from ``./_vendor/`` — populated either by the azd
-# ``prepackage`` hook (``scripts/vendor-packages.sh``) or manually before
-# ``docker build``.
+# ``services.<svc>.project: .``). The workspace packages this sample
+# depends on are fetched from GitHub by ``uv sync`` (see the ``[tool.uv.sources]``
+# git refs in ``pyproject.toml``). The build needs network access to GitHub
+# during ``uv sync`` — no local vendoring step is required.
 #
 # ``Dockerfile.dockerignore`` (adjacent file, BuildKit) trims the upload to
 # just the files COPYed below.
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
-COPY _vendor/ ./_vendor/
+COPY pyproject.toml ./
 COPY app.py ./
 
-# ``--frozen`` honors the committed uv.lock; ``--no-dev`` skips the dev
-# group (which only contains ``openai`` for ``call_server.py``).
-RUN uv sync --no-dev --frozen
+# ``--no-dev`` skips the dev group (which only contains ``openai`` for
+# ``call_server.py``). Locks fresh against the GitHub-hosted hosting
+# packages declared in ``[tool.uv.sources]``.
+RUN uv sync --no-dev
 
 ENV PORT=8000
 EXPOSE 8000

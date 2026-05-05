@@ -26,5 +26,3 @@ agent.yaml
 agent.manifest.yaml
 azure.yaml
 infra/
-scripts/
-workspace.pyproject.toml

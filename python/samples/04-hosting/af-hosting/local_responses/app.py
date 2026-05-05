@@ -16,9 +16,8 @@ the channel built from the inbound HTTP body. It:
 - forces a ``reasoning`` effort + summary preset so the deployed surface
   is consistent regardless of what the caller sent.
 
-The hook is the spec's documented escape hatch over the uniform
-``ChannelRequest`` envelope — see ADR 0026 §5 and SPEC-002 §"Channel
-run hook".
+The hook is the documented escape hatch over the uniform
+``ChannelRequest`` envelope.
 
 Run
 ---
