@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
@@ -795,10 +796,14 @@ public class InputConverterTests
     [Fact]
     public void ConvertItemsToMessages_McpApprovalResponse_ResolvesAfRequestIdFromStateBag()
     {
-        const string AfRequestId = "af_request_xyz";
+        const string AfRequestId = "ficc_call_xyz";
         var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
         var stateBag = new AgentSessionStateBag();
-        ToolApprovalIdMap.Record(stateBag, wireId, AfRequestId);
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            new FunctionCallContent("call_xyz", "issue_refund", new Dictionary<string, object?> { ["order_id"] = 123 }));
 
         var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: false);
 
@@ -807,6 +812,17 @@ public class InputConverterTests
         var content = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
         Assert.Equal(AfRequestId, content.RequestId);
         Assert.False(content.Approved);
+
+        // Verify the original FunctionCallContent is reconstructed losslessly:
+        // - CallId matches the model-issued id (without FICC's "ficc_" prefix), so the
+        //   resulting function_call_output pairs with Azure's stored function_call.
+        // - Name matches the original tool, so FICC can invoke the right function on resume.
+        // - Arguments are preserved.
+        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_xyz", fcc.CallId);
+        Assert.Equal("issue_refund", fcc.Name);
+        Assert.NotNull(fcc.Arguments);
+        Assert.Equal(123, ((System.Text.Json.JsonElement)fcc.Arguments!["order_id"]!).GetInt32());
     }
 
     [Fact]
@@ -828,10 +844,14 @@ public class InputConverterTests
     [Fact]
     public void ConvertOutputItemsToMessages_McpApprovalResponse_ProducesToolApprovalResponse()
     {
-        const string AfRequestId = "af_request_history";
+        const string AfRequestId = "ficc_call_history";
         var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
         var stateBag = new AgentSessionStateBag();
-        ToolApprovalIdMap.Record(stateBag, wireId, AfRequestId);
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            new FunctionCallContent("call_history", "delete_file", new Dictionary<string, object?> { ["path"] = "/tmp/x" }));
 
         var item = new OutputItemMcpApprovalResponseResource(
             id: "ar_history_id",
@@ -843,6 +863,28 @@ public class InputConverterTests
         var content = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
         Assert.Equal(AfRequestId, content.RequestId);
         Assert.True(content.Approved);
+
+        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_history", fcc.CallId);
+        Assert.Equal("delete_file", fcc.Name);
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_McpApprovalResponse_NoMapping_FallsBackToPlaceholder()
+    {
+        // Without a recorded entry the converter must still produce a usable message — the
+        // legacy placeholder behavior is preserved so out-of-band callers (e.g. tests that
+        // bypass OutputConverter) continue to work.
+        var wireId = "mcpr_" + new string('c', 50);
+        var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: true);
+
+        var messages = InputConverter.ConvertItemsToMessages([item]);
+
+        var content = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal(wireId, content.RequestId);
+        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal(wireId, fcc.CallId);
+        Assert.Equal("mcp_approval", fcc.Name);
     }
 
     [Fact]

@@ -191,7 +191,7 @@ internal static class OutputConverter
                         // wireId↔afRequestId mapping in the session state bag for later lookup
                         // when the matching `mcp_approval_response` arrives on a subsequent turn.
                         var wireId = ToolApprovalIdMap.ComputeWireId(approvalRequest.RequestId);
-                        ToolApprovalIdMap.Record(stateBag, wireId, approvalRequest.RequestId);
+                        ToolApprovalIdMap.Record(stateBag, wireId, approvalRequest.RequestId, approvalFunctionCall);
 
                         var approvalArguments = approvalFunctionCall.Arguments is not null
                             ? JsonSerializer.Serialize(approvalFunctionCall.Arguments)
