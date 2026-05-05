@@ -160,7 +160,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         taskContext.TaskLedger = await this._manager.UpdatePlanAsync(taskContext, context, cancellationToken)
                                                     .ConfigureAwait(false);
 
-        this._fullTaskLedgerMessage ??= new(ChatRole.User, taskContext.ToTaskLedgerFullPrompt());
+        this._fullTaskLedgerMessage = new(ChatRole.User, taskContext.ToTaskLedgerFullPrompt());
         taskContext.ChatHistory.Add(this._fullTaskLedgerMessage);
 
         await context.AddEventAsync(isReplan
@@ -215,7 +215,8 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
             await context.AddEventAsync(new MagenticProgressLedgerUpdatedEvent(taskContext.ProgressLedger), cancellationToken)
                          .ConfigureAwait(false);
         }
-        catch (Exception ex)
+        // Retry on exception to max retry count, unless it is OperationCancelledException - in that case exit the loop right away
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await context.AddEventAsync(new WorkflowWarningEvent($"Magentic Orchestrator: Progress ledger creation failed, triggering reset: {ex}"), cancellationToken)
                          .ConfigureAwait(false);
