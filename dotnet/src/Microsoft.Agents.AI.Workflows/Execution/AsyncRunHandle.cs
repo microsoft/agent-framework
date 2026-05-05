@@ -186,6 +186,8 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
 
     public async ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
     {
+        LockstepRunEventStream? lockstepEventStream = null;
+
         // Clear buffered events from the channel BEFORE restoring to discard stale events from supersteps
         // that occurred after the checkpoint we're restoring to
         // This must happen BEFORE the restore so that events republished during restore aren't cleared
@@ -193,14 +195,17 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         {
             streamingEventStream.ClearBufferedEvents();
         }
-        else if (this._eventStream is LockstepRunEventStream lockstepEventStream)
+        else if (this._eventStream is LockstepRunEventStream lES)
         {
+            lockstepEventStream = lES;
             lockstepEventStream.ClearBufferedEvents();
         }
 
         // Restore the workflow state through the live runtime-restore path.
         // This can re-emit pending requests into the already-active event stream.
         await this._checkpointingHandle.RestoreCheckpointAsync(checkpointInfo, cancellationToken).ConfigureAwait(false);
+
+        lockstepEventStream?.UpdateStatus();
 
         // After restore, signal the run loop to process any restored messages. Initial resume
         // paths handle this separately when they create the event stream after restoring state.

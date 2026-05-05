@@ -46,6 +46,17 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         Activity.Current = previousActivity;
     }
 
+    internal void UpdateStatus()
+    {
+        switch (this.RunStatus)
+        {
+            case RunStatus.Idle:
+            case RunStatus.PendingRequests:
+                this.RunStatus = this._stepRunner.HasUnservicedRequests ? RunStatus.PendingRequests : RunStatus.Idle;
+                break;
+        }
+    }
+
     public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
 #if NET
