@@ -726,7 +726,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-mistral"
-version = "1.0.0b260421"
+version = "1.0.0a260505"
 source = { editable = "packages/mistral" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },

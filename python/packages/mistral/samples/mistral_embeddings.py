@@ -31,8 +31,10 @@ async def basic_embedding_example() -> None:
         print(f"  Text {i + 1}: dimensions={embedding.dimensions}, vector={embedding.vector[:5]}...")
 
     if result.usage:
-        print(f"  Usage: {result.usage['input_token_count']} input tokens, "
-              f"{result.usage['total_token_count']} total tokens")
+        print(
+            f"  Usage: {result.usage['input_token_count']} input tokens, "
+            f"{result.usage['total_token_count']} total tokens"
+        )
 
 
 async def embedding_with_options_example() -> None:
