@@ -303,13 +303,14 @@ jobs:
       - name: Build and push Foundry Hosted Agents test container
         id: build-foundry-hosted-image
         shell: pwsh
+        working-directory: ${{ github.workspace }}
         if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
         run: |
           $registry = "${{ vars.IT_HOSTED_AGENT_REGISTRY }}"
           if ([string]::IsNullOrWhiteSpace($registry)) {
             throw "IT_HOSTED_AGENT_REGISTRY not set in the integration environment."
           }
-          ./scripts/it-build-image.ps1 -Registry $registry | Tee-Object -FilePath $env:GITHUB_ENV -Append
+          & "${{ github.workspace }}/scripts/it-build-image.ps1" -Registry $registry | Tee-Object -FilePath $env:GITHUB_ENV -Append
 
       - name: Run Foundry Hosted Agents Integration Tests
         shell: pwsh
