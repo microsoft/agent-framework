@@ -11,6 +11,8 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Extensions.OpenAI;
+using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
 using OpenAI;
 
@@ -523,6 +525,75 @@ public sealed class ClientHeadersExtensionsTests
         }
         Assert.True(handler.Requests.Count > 0);
         Assert.Equal("alice", handler.Requests[0].Headers["x-client-end-user-id"]);
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // 20. AsAIAgent path also pre-wires (Foundry-built agent via AzureAIProjectChatClientExtensions
+    //     internal FoundryAgent ctor) — addresses PR review comment on FoundryAgent.cs:229.
+    // -------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void AsAIAgent_FoundryAgent_HasPreWiredClientHeadersAgent()
+    {
+        // Arrange: stand up a real AIProjectClient pointed at a fake transport.
+        using var handler = new RecordingHandler();
+#pragma warning disable CA5399
+        using var http = new HttpClient(handler);
+#pragma warning restore CA5399
+        var projectClient = new AIProjectClient(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
+            new AIProjectClientOptions { Transport = new HttpClientPipelineTransport(http) });
+
+        // Act: the AsAIAgent extension that previously bypassed the pre-wire path.
+        var agent = projectClient.AsAIAgent(new AgentReference("agent-name"));
+
+        // Assert: the FoundryAgent's delegating chain now contains a ClientHeadersAgent so
+        // x-client-* headers stamped on ChatClientAgentRunOptions reach the wire.
+        Assert.NotNull(agent.GetService<ClientHeadersAgent>());
+    }
+
+    [Fact]
+    public void FoundryAgent_PublicConstructor_HasPreWiredClientHeadersAgent()
+    {
+        // Arrange / Act
+        var agent = new FoundryAgent(
+            projectEndpoint: new Uri("https://test.openai.azure.com/"),
+            credential: new FakeAuthenticationTokenProvider(),
+            model: "gpt-4o-mini",
+            instructions: "Test instructions");
+
+        // Assert
+        Assert.NotNull(agent.GetService<ClientHeadersAgent>());
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // 21. ClientHeadersPolicy registration via UseClientHeaders is deduped across many invocations
+    //     on the same chat client (mirrors the Foundry.Hosting per-request resolution scenario).
+    // -------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void UseClientHeaders_RepeatedRegistrations_OnSameChatClient_OnlyRegistersOnce()
+    {
+        // Arrange: a chat client whose OpenAIRequestPolicies service we can inspect.
+        using var handler = new RecordingHandler(MinimalResponseJson());
+#pragma warning disable CA5399
+        using var http = new HttpClient(handler);
+#pragma warning restore CA5399
+        var openAIClient = new OpenAIClient(new ApiKeyCredential("fake"),
+            new OpenAIClientOptions { Transport = new HttpClientPipelineTransport(http) });
+        IChatClient chatClient = openAIClient.GetResponsesClient().AsIChatClient();
+
+        // Act: simulate N hosted-resolution-style wirings on top of the same shared chat client.
+        for (int i = 0; i < 25; i++)
+        {
+            _ = new ChatClientAgent(chatClient).AsBuilder().UseClientHeaders().Build();
+        }
+
+        // Assert: exactly one ClientHeadersPolicy entry on the shared OpenAIRequestPolicies.
+        var policies = chatClient.GetService<OpenAIRequestPolicies>();
+        Assert.NotNull(policies);
+        Assert.Equal(1, EntriesCount(policies!));
     }
 
     // -------------------------------------------------------------------------------------------
