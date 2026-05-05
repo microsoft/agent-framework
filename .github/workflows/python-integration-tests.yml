@@ -159,6 +159,8 @@ jobs:
       MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
       MISTRAL_EMBEDDING_MODEL: ${{ vars.MISTRAL_EMBEDDING_MODEL_ID }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
+      OLLAMA_MODEL: qwen2.5:1.5b
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text
     defaults:
       run:
         working-directory: python
@@ -173,6 +175,43 @@ jobs:
         with:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+        working-directory: .
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-qwen2.5-1.5b-nomic-embed-text-v1
+      - name: Start Ollama and pull models
+        run: |
+          # Stop any Ollama instance auto-started by the install script
+          pkill ollama || true
+          sleep 2
+          ollama serve &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          # Pull models with retry for transient 429 rate limits
+          for model in qwen2.5:1.5b nomic-embed-text; do
+            pulled=false
+            for attempt in 1 2 3; do
+              if ollama pull "$model"; then
+                pulled=true
+                break
+              fi
+              echo "Retry $attempt for $model (waiting 15s)..."
+              sleep 15
+            done
+            if [ "$pulled" != "true" ]; then
+              echo "ERROR: Failed to pull $model after 3 attempts"
+              exit 1
+            fi
+          done
+        working-directory: .
       - name: Start local MCP server
         id: local-mcp
         uses: ./.github/actions/setup-local-mcp-server
@@ -274,7 +313,7 @@ jobs:
           -m integration
           -n logical --dist worksteal
           -x
-          --timeout=360 --session-timeout=900 --timeout_method thread
+          --timeout=480 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
           --junitxml=pytest.xml
       - name: Upload test results
@@ -438,9 +477,9 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
-  # Flaky test trend report (aggregates per-job JUnit XML results)
-  python-flaky-test-report:
-    name: Flaky Test Report
+  # Integration test trend report (aggregates per-job JUnit XML results)
+  python-integration-test-report:
+    name: Integration Test Report
     if: >
       always() &&
       (contains(join(needs.*.result, ','), 'success') ||
@@ -474,36 +513,36 @@ jobs:
         with:
           pattern: test-results-*
           path: test-results/
-      - name: Restore flaky report history cache
+      - name: Restore report history cache
         uses: actions/cache/restore@v4
         with:
-          path: python/flaky-report-history.json
-          key: flaky-report-history-integration-${{ github.run_id }}
+          path: python/integration-report-history.json
+          key: integration-report-history-integration-${{ github.run_id }}
           restore-keys: |
-            flaky-report-history-integration-
+            integration-report-history-integration-
       - name: Generate trend report
         run: >
-          uv run python scripts/flaky_report/aggregate.py
+          uv run python scripts/integration_test_report/aggregate.py
           ../test-results/
-          flaky-report-history.json
-          flaky-test-report.md
+          integration-report-history.json
+          integration-test-report.md
       - name: Post to Job Summary
         if: always()
-        run: cat flaky-test-report.md >> $GITHUB_STEP_SUMMARY
-      - name: Save flaky report history cache
+        run: cat integration-test-report.md >> $GITHUB_STEP_SUMMARY
+      - name: Save report history cache
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: python/flaky-report-history.json
-          key: flaky-report-history-integration-${{ github.run_id }}
+          path: python/integration-report-history.json
+          key: integration-report-history-integration-${{ github.run_id }}
       - name: Upload unified trend report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: flaky-test-report
+          name: integration-test-report
           path: |
-            python/flaky-test-report.md
-            python/flaky-report-history.json
+            python/integration-test-report.md
+            python/integration-report-history.json
 
   python-integration-tests-check:
     if: always()
