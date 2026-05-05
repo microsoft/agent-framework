@@ -84,7 +84,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCall_EmitsFunctionCallEventsAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCall_IsSuppressedAtWireAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -99,10 +99,14 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Should have: FuncAdded, ArgsDelta, ArgsDone, FuncDone, Completed
-        Assert.IsType<ResponseOutputItemAddedEvent>(events[0]);
+        // FunctionCallContent is internal to the agent's auto-invoke loop and must
+        // NOT surface to the wire. Otherwise the response store keeps an orphan
+        // function_call (no paired function_call_output), and the next turn that
+        // reuses this response as previous_response_id fails with HTTP 400
+        // "No tool output found for function call ...". (issue #5662)
+        Assert.Empty(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.DoesNotContain(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
-        Assert.True(events.Count >= 4, $"Expected at least 4 events for function call, got {events.Count}");
     }
 
     [Fact]
@@ -302,8 +306,11 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
-        Assert.Equal(2, events.OfType<ResponseOutputItemDoneEvent>().Count());
+        // FCC is suppressed at the wire (see issue #5662). Only the text message
+        // remains as a wire item, but the FCC handler still closes the open
+        // message before being suppressed so the message item terminates cleanly.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
@@ -328,7 +335,7 @@ public class OutputConverterTests
 
     // G-04
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_GeneratesCallIdAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_DoesNotEmitWireItemAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -342,12 +349,14 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        Assert.Contains(events, e => e is ResponseOutputItemAddedEvent);
+        // FCC suppressed at the wire (issue #5662) regardless of CallId state.
+        Assert.DoesNotContain(events, e => e is ResponseOutputItemAddedEvent);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
     // G-05
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_MultipleFunctionCalls_EmitsSeparateBuildersAsync()
+    public async Task ConvertUpdatesToEventsAsync_MultipleFunctionCalls_AreAllSuppressedAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -362,7 +371,9 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        // Both FCCs suppressed at the wire (issue #5662).
+        Assert.Empty(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
     // H-02
@@ -666,7 +677,7 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        Assert.Equal(3, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
     }
 
     // M-02
@@ -729,7 +740,9 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        Assert.Equal(3, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        // Both FCCs suppressed at the wire (issue #5662). Only the single text
+        // message between them surfaces.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
     }
 
     // ===== Workflow content flow tests (W series) =====
@@ -821,9 +834,10 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Should have: 4 workflow actions + 1 function call + 1 text message = 6 output items
-        Assert.Equal(6, events.OfType<ResponseOutputItemAddedEvent>().Count());
-        Assert.Contains(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
+        // Workflow actions: 4. FCC suppressed at wire (issue #5662). Text message: 1.
+        // Total output items: 5
+        Assert.Equal(5, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.DoesNotContain(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
         Assert.Contains(events, e => e is ResponseTextDeltaEvent);
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
@@ -961,10 +975,10 @@ public class OutputConverterTests
         }
 
         // Workflow actions: invoked triage, completed triage, invoked expert, completed expert = 4
-        // Content items: 1 function call, 1 text message = 2
-        // Total output items: 6
-        Assert.Equal(6, events.OfType<ResponseOutputItemAddedEvent>().Count());
-        Assert.Contains(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
+        // Content items: FCC suppressed at wire (issue #5662), 1 text message = 1
+        // Total output items: 5
+        Assert.Equal(5, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.DoesNotContain(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
         // Two text deltas for the two streaming chunks
         Assert.Equal(2, events.OfType<ResponseTextDeltaEvent>().Count());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);

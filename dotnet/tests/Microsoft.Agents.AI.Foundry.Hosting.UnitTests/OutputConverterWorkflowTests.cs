@@ -185,10 +185,10 @@ public class OutputConverterWorkflowTests
         }
 
         // Workflow actions: 4 (2 invoked + 2 completed)
-        // Content: 1 reasoning + 1 function call + 1 text message = 3
-        // Total: 7 output items
-        Assert.Equal(7, events.OfType<ResponseOutputItemAddedEvent>().Count());
-        Assert.Contains(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
+        // Content: 1 reasoning + FCC suppressed at wire (issue #5662) + 1 text message = 2
+        // Total: 6 output items
+        Assert.Equal(6, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.DoesNotContain(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
         Assert.Equal(2, events.OfType<ResponseTextDeltaEvent>().Count());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
