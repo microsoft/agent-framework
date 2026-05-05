@@ -391,6 +391,94 @@ async def test_executor_failed_event(mapper: MessageMapper, test_request: AgentF
     assert "Executor failed" in str(item["error"])
 
 
+async def test_executor_events_carry_created_at_timestamp(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """REGRESSION TEST: Executor mapped events must include a created_at timestamp.
+
+    Without created_at, the frontend synthesizes timestamps using
+    Math.max(baseTimestamp, lastTimestamp + 1) with second precision, forcing
+    a minimum 1-second gap between sequential events regardless of their actual
+    elapsed time.  This makes instant workflows appear to take multiple seconds
+    in the DevUI timeline.
+    """
+    invoke_event = create_executor_invoked_event(executor_id="exec_ts")
+    complete_event = create_executor_completed_event(executor_id="exec_ts")
+    fail_event = create_executor_failed_event(executor_id="exec_ts_fail")
+
+    invoked_results = await mapper.convert_event(invoke_event, test_request)
+    completed_results = await mapper.convert_event(complete_event, test_request)
+
+    # Set up a separate context for the failed path
+    mapper2 = MessageMapper()
+    await mapper2.convert_event(create_executor_invoked_event(executor_id="exec_ts_fail"), test_request)
+    failed_results = await mapper2.convert_event(fail_event, test_request)
+
+    for label, results in [
+        ("executor_invoked", invoked_results),
+        ("executor_completed", completed_results),
+        ("executor_failed", failed_results),
+    ]:
+        assert results, f"mapper.convert_event should return events for {label}"
+        for event in results:
+            assert getattr(event, "created_at", None) is not None, (
+                f"{label} mapped event {type(event).__name__} is missing 'created_at'. "
+                "The frontend relies on this field for accurate workflow timeline timings."
+            )
+            assert event.created_at > 0, (
+                f"{label} mapped event {type(event).__name__} has a non-positive "
+                f"created_at value ({event.created_at!r}); expected a valid Unix timestamp."
+            )
+
+
+def test_custom_output_item_event_models_have_created_at_field() -> None:
+    """MODEL TEST: CustomResponseOutputItemAddedEvent and Done must declare created_at.
+
+    This guards against accidentally removing the field from the model definition.
+    A missing field causes a downstream ValidationError instead of a clear test failure.
+    """
+    from agent_framework_devui.models._openai_custom import (
+        CustomResponseOutputItemAddedEvent,
+        CustomResponseOutputItemDoneEvent,
+    )
+
+    assert "created_at" in CustomResponseOutputItemAddedEvent.model_fields, (
+        "CustomResponseOutputItemAddedEvent is missing 'created_at' in model_fields. "
+        "The frontend uses this field for accurate workflow timeline timings."
+    )
+    assert "created_at" in CustomResponseOutputItemDoneEvent.model_fields, (
+        "CustomResponseOutputItemDoneEvent is missing 'created_at' in model_fields. "
+        "The frontend uses this field for accurate workflow timeline timings."
+    )
+
+
+async def test_executor_completed_maps_to_output_item_done_event(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test executor_completed events are mapped to CustomResponseOutputItemDoneEvent.
+
+    Ensures executor_completed does not fall through to the legacy
+    ResponseWorkflowEventComplete path, which lacks a top-level created_at field.
+    """
+    from agent_framework_devui.models._openai_custom import ResponseWorkflowEventComplete
+
+    invoke_event = create_executor_invoked_event(executor_id="exec_output_item")
+    await mapper.convert_event(invoke_event, test_request)
+
+    complete_event = create_executor_completed_event(executor_id="exec_output_item")
+    results = await mapper.convert_event(complete_event, test_request)
+
+    assert results, "mapper.convert_event should return events for executor_completed"
+
+    workflow_events = [r for r in results if isinstance(r, ResponseWorkflowEventComplete)]
+    assert not workflow_events, (
+        "executor_completed should map to CustomResponseOutputItemDoneEvent, not ResponseWorkflowEventComplete."
+    )
+
+    output_item_done = [r for r in results if r.type == "response.output_item.done"]
+    assert output_item_done, f"Expected at least one response.output_item.done event; got: {[r.type for r in results]}"
+
+
 # =============================================================================
 # Workflow Lifecycle Event Tests
 # =============================================================================

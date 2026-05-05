@@ -10,10 +10,9 @@ from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, FunctionInvocationContext, function_middleware, tool
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.hyperlight import HyperlightCodeActProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-from agent_framework_hyperlight import HyperlightCodeActProvider
 
 """This sample demonstrates the provider-owned Hyperlight CodeAct flow.
 

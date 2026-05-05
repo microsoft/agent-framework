@@ -24,7 +24,7 @@ internal sealed class TodoCommandHandler : ICommandHandler
     public string? GetHelpText() => this._todoProvider is not null ? "/todos (show todo list)" : null;
 
     /// <inheritdoc/>
-    public bool TryHandle(string input, AgentSession session)
+    public async ValueTask<bool> TryHandleAsync(string input, AgentSession session)
     {
         if (!input.Equals("/todos", StringComparison.OrdinalIgnoreCase))
         {
@@ -37,7 +37,7 @@ internal sealed class TodoCommandHandler : ICommandHandler
             return true;
         }
 
-        var todos = this._todoProvider.GetAllTodos(session);
+        var todos = await this._todoProvider.GetAllTodosAsync(session).ConfigureAwait(false);
         if (todos.Count == 0)
         {
             System.Console.WriteLine("\n  No todos yet.\n");

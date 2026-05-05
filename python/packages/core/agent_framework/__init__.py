@@ -87,6 +87,21 @@ from ._harness._memory import (
     MemoryStore,
     MemoryTopicRecord,
 )
+from ._harness._mode import (
+    DEFAULT_MODE_SOURCE_ID,
+    AgentModeProvider,
+    get_agent_mode,
+    set_agent_mode,
+)
+from ._harness._todo import (
+    DEFAULT_TODO_SOURCE_ID,
+    TodoFileStore,
+    TodoInput,
+    TodoItem,
+    TodoProvider,
+    TodoSessionStore,
+    TodoStore,
+)
 from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
 from ._middleware import (
     AgentContext,
@@ -270,6 +285,8 @@ __all__ = [
     "COMPACTION_STATE_KEY",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_MEMORY_SOURCE_ID",
+    "DEFAULT_MODE_SOURCE_ID",
+    "DEFAULT_TODO_SOURCE_ID",
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
     "GROUP_ANNOTATION_KEY",
@@ -294,6 +311,7 @@ __all__ = [
     "AgentMiddleware",
     "AgentMiddlewareLayer",
     "AgentMiddlewareTypes",
+    "AgentModeProvider",
     "AgentResponse",
     "AgentResponseUpdate",
     "AgentRunInputs",
@@ -410,6 +428,12 @@ __all__ = [
     "SwitchCaseEdgeGroupCase",
     "SwitchCaseEdgeGroupDefault",
     "TextSpanRegion",
+    "TodoFileStore",
+    "TodoInput",
+    "TodoItem",
+    "TodoProvider",
+    "TodoSessionStore",
+    "TodoStore",
     "TokenBudgetComposedStrategy",
     "TokenizerProtocol",
     "ToolMode",
@@ -453,6 +477,7 @@ __all__ = [
     "evaluator",
     "executor",
     "function_middleware",
+    "get_agent_mode",
     "get_run_context",
     "handler",
     "included_messages",
@@ -469,6 +494,7 @@ __all__ = [
     "register_state_type",
     "resolve_agent_id",
     "response_handler",
+    "set_agent_mode",
     "step",
     "tool",
     "tool_call_args_match",

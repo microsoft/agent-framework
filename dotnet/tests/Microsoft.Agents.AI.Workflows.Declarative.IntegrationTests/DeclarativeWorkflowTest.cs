@@ -33,7 +33,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
         this.RunWorkflowAsync(GetWorkflowPath(workflowFileName, isSample: true), testcaseFileName, externalConveration);
 
-    [Theory(Skip = "Multi-turn tests hang in CI - needs investigation")]
+    [Theory]
     [InlineData("ConfirmInput.yaml", "ConfirmInput.json", false)]
     [InlineData("RequestExternalInput.yaml", "RequestExternalInput.json", false)]
     public Task ValidateMultiTurnAsync(string workflowFileName, string testcaseFileName, bool isSample) =>
