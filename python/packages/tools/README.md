@@ -82,11 +82,46 @@ shell = LocalShellTool(
 - Override via the `shell=` constructor argument or the
   `AGENT_FRAMEWORK_SHELL` environment variable.
 
+## `ShellEnvironmentProvider` — context provider
+
+A model talking to a PowerShell session will sometimes default to bash
+syntax (`export FOO=bar`, `ls -la`, `> /dev/null`) and vice versa.
+`ShellEnvironmentProvider` is an `AIContextProvider` that probes the live
+shell once per session — family, version, OS, working directory, and a
+configurable list of CLI tools (`git`, `node`, `python`, `docker` by
+default) — and injects a system-prompt block describing the shell idiom
+to use and the available CLIs.
+
+```python
+from agent_framework_tools.shell import (
+    LocalShellTool,
+    ShellEnvironmentProvider,
+    ShellEnvironmentProviderOptions,
+)
+
+shell = LocalShellTool()
+provider = ShellEnvironmentProvider(
+    shell,
+    ShellEnvironmentProviderOptions(probe_tools=("git", "uv", "node")),
+)
+agent = Agent(
+    client=client,
+    tools=[client.get_shell_tool(func=shell.as_function())],
+    context_providers=[provider],
+)
+```
+
+Probe failures from expected error types (timeouts, policy rejections,
+spawn failures) are recorded as `None` fields in the snapshot rather
+than raised; a missing CLI never fails the agent. A failed first probe
+does not poison the cache — the next call retries.
+
 ## `DockerShellTool` — sandboxed tier
 
 When commands originate from untrusted input (e.g. the model is acting on
-prompt-injected document content), prefer `DockerShellTool`. The
-container is the security boundary, so approval gating is optional.
+prompt-injected document content), prefer `DockerShellTool`. With the
+default isolation flags and a trusted container runtime, the container
+is the intended security boundary and approval gating becomes optional.
 
 ```python
 import asyncio

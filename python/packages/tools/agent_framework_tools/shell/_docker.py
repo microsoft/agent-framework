@@ -175,7 +175,7 @@ _DEFAULT_DESCRIPTION = (
 
 
 class DockerShellTool:
-    """Sandboxed shell tool. The container is the security boundary.
+    """Shell tool that runs commands inside a Docker (or compatible) container.
 
     Args:
         image: OCI image to run. Defaults to a small Microsoft-maintained

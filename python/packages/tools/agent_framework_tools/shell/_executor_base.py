@@ -3,11 +3,11 @@
 """Shell executor protocol.
 
 A :class:`ShellExecutor` is the swappable backend for shell-tool execution.
-``LocalShellTool`` runs commands directly on the host (no isolation;
-approval-in-the-loop is the security boundary). ``DockerShellTool`` runs
-them inside a container with resource limits, network isolation, and a
-non-root user — the container itself is the security boundary, which is
-why it can be used without approval gating for untrusted-input scenarios.
+``LocalShellTool`` runs commands directly on the host with no process-level
+isolation; the approval-in-the-loop gate is the intended boundary.
+``DockerShellTool`` runs commands inside a container — when the container
+runtime is trusted and the default isolation flags are kept, the container
+is the intended boundary instead of approval.
 
 The protocol is intentionally minimal so callers can plug in their own
 executor (e.g. a Firecracker microVM, a remote SSH host, a WASI runtime
