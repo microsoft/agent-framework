@@ -417,6 +417,3 @@ FodyWeavers.xsd
 *.msm
 *.msp
 .azure
-
-# Workspace packages vendored from ../../../../packages/ for self-contained docker builds.
-_vendor/

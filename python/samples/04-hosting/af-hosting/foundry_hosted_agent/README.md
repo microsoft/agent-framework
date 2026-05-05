@@ -2,13 +2,11 @@
 
 Smallest end-to-end hosting sample. One Foundry-backed agent, two
 channels, no human-chat surface — and that minimal shape is the whole
-point: per
-[ADR 0026 §11](../../../../../docs/decisions/0026-hosting-channels.md), a
-host configured with at least the **Responses** and **Invocations**
-channels under their default mount roots is **runtime-compatible with
-the Foundry Hosted Agents platform**. The same container image runs
-locally, behind any ASGI server, or as a Hosted Agent — no protocol
-shim, no extra adapter.
+point: a host configured with at least the **Responses** and
+**Invocations** channels under their default mount roots is
+**runtime-compatible with the Foundry Hosted Agents platform**. The
+same container image runs locally, behind any ASGI server, or as a
+Hosted Agent — no protocol shim, no extra adapter.
 
 | Route                          | Channel              | Used by                                     |
 | ------------------------------ | -------------------- | ------------------------------------------- |
@@ -40,11 +38,10 @@ foundry_hosted_agent/
 ├── call_server.py               # client: openai SDK / agent framework / FoundryAgent
 ├── agent.yaml                   # Foundry Hosted Agents minimal definition
 ├── agent.manifest.yaml          # Foundry Hosted Agents full deployment manifest
-├── azure.yaml                   # azd service config (build context = python/)
-├── Dockerfile                   # built from python/ workspace root, mirrors the repo layout
+├── azure.yaml                   # azd service config (build context = this folder)
+├── Dockerfile                   # built from this folder; uv fetches deps from GitHub
 ├── Dockerfile.dockerignore      # BuildKit allowlist that trims the context
-├── workspace.pyproject.toml     # minimal workspace stub copied into the image
-├── pyproject.toml               # in-tree editable workspace deps
+├── pyproject.toml               # depends on the hosting packages via GitHub git refs
 └── README.md                    # this file
 ```
 
@@ -80,25 +77,19 @@ uv run python call_server.py --via foundry "hello there"
 
 ## Docker
 
-The Docker build context is the **`python/` workspace root**, not this
-sample folder, because `pyproject.toml` resolves the in-tree
-`agent-framework-hosting*` packages via editable workspace path sources
-(`../../../../packages/...`). The Dockerfile mirrors the repo layout
-inside the image so those paths and the committed `uv.lock` resolve
-unchanged. A `Dockerfile.dockerignore` (BuildKit) trims the upload to
-just the four packages the image needs (`core`, `hosting`,
-`hosting-invocations`, `hosting-responses`) plus this sample, and
-`workspace.pyproject.toml` is copied as `/repo/python/pyproject.toml` —
-a minimal workspace root that only references the four members actually
-present (the real workspace root declares ~36 members and uv would
-otherwise fail metadata generation for the missing ones).
+The Docker build context is **this sample folder**. `pyproject.toml`
+declares the in-tree `agent-framework-hosting*` packages via
+[`[tool.uv.sources]` git refs](./pyproject.toml) pointing at the
+``feature/python-hosting`` branch of
+[microsoft/agent-framework](https://github.com/microsoft/agent-framework),
+so `uv sync` inside the image fetches them directly. No vendoring step is
+required — the build just needs network access to GitHub. Once the
+hosting packages publish to PyPI you can drop the `[tool.uv.sources]`
+overrides and rely on PyPI resolution.
 
 ```bash
-# From the sample folder — context = python/ workspace root.
-DOCKER_BUILDKIT=1 docker build \
-    -f Dockerfile \
-    -t hosting-sample-hosted-agent \
-    ../../../..
+# From this folder — context = `.` (sample folder).
+DOCKER_BUILDKIT=1 docker build -t hosting-sample-hosted-agent .
 
 docker run -p 8000:8000 \
     -e FOUNDRY_PROJECT_ENDPOINT -e MODEL_DEPLOYMENT_NAME \
@@ -108,15 +99,9 @@ docker run -p 8000:8000 \
 
 ## Hosted Agent deployment
 
-`azure.yaml` keeps `project: .` (azd's project model expects the
-service to live under the azd root) but sets
-`docker.context: ../../../..` so the Docker build sees the `python/`
-workspace root — same widening as the manual `docker build` above, just
-expressed in azd terms. `docker.remoteBuild` is **off**: remote build
-ships only the project folder, which would miss the workspace
-packages. Once the in-tree `agent-framework-hosting*` packages are
-published to PyPI this can flip back to `remoteBuild: true` with the
-default narrow context.
+`azure.yaml` keeps `project: .` and uses `docker.remoteBuild: true` —
+the remote builder receives only this sample folder and runs
+`uv sync` to pull the hosting packages from GitHub.
 
 The two YAMLs follow the same convention as the
 [`foundry-hosted-agents/`](../../foundry-hosted-agents/) reference

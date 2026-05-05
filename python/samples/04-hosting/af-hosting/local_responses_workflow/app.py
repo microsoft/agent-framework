@@ -151,12 +151,11 @@ def _parse_brief(text: str) -> SloganBrief:
 def brief_hook(request: ChannelRequest, **_: object) -> ChannelRequest:
     """Adapt the channel's free-form text into the workflow's typed input.
 
-    Per ADR 0026 §5 / SPEC-002 "Channel run hook", this is the canonical
-    seam for shaping ``ChannelRequest.input`` into the workflow start
-    executor's input type — here :class:`SloganBrief` instead of
-    ``str`` / ``list[Message]``. Shared between the Responses channel
-    (which delivers a list of :class:`Message`) and the Invocations
-    channel (which delivers a plain ``str``).
+    This is the canonical seam for shaping ``ChannelRequest.input`` into
+    the workflow start executor's input type — here :class:`SloganBrief`
+    instead of ``str`` / ``list[Message]``. Shared between the Responses
+    channel (which delivers a list of :class:`Message`) and the
+    Invocations channel (which delivers a plain ``str``).
     """
     brief = _parse_brief(_extract_text(request.input))
     return replace(request, input=brief)

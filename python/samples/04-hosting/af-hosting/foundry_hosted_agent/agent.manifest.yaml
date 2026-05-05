@@ -3,8 +3,8 @@ description: >
   Minimal Agent Framework multi-channel hosting sample (Responses + Invocations)
   packaged for the Foundry Hosted Agents runtime. Demonstrates that an
   ``AgentFrameworkHost`` configured with the Responses and Invocations channels
-  under their default mounts is a drop-in Hosted Agent image (per ADR 0026 §11)
-  — no protocol shim, no Foundry-specific server.
+  under their default mounts is a drop-in Hosted Agent image — no protocol
+  shim, no Foundry-specific server.
 metadata:
   tags:
     - Agent Framework
