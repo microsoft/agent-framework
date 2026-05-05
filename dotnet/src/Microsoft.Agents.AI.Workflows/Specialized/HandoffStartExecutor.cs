@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -23,7 +24,20 @@ internal static class HandoffConstants
 
 internal sealed class HandoffSharedState
 {
-    public MultiPartyConversation Conversation { get; } = new();
+    [JsonConstructor]
+    internal HandoffSharedState(MultiPartyConversation conversation, string? previousAgentId)
+    {
+        this.Conversation = conversation;
+        this.PreviousAgentId = previousAgentId;
+    }
+
+    public HandoffSharedState()
+    {
+        this.Conversation = new([]);
+    }
+
+    [JsonInclude]
+    public MultiPartyConversation Conversation { get; internal set; }
 
     public string? PreviousAgentId { get; set; }
 }
