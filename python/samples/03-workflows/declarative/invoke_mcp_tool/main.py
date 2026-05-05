@@ -33,7 +33,7 @@ Security note:
     before any network call is made.
 
 Run with:
-    python -m samples.03-workflows.declarative.invoke_mcp_tool.main
+    python samples/03-workflows/declarative/invoke_mcp_tool/main.py
 
 Run with approval prompts:
     MCP_REQUIRE_APPROVAL=1 python -m samples.03-workflows.declarative.invoke_mcp_tool.main
