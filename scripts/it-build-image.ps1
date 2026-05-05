@@ -57,11 +57,29 @@ if ([string]::IsNullOrWhiteSpace($registryHost)) {
     throw "Could not derive ACR short name from -Registry '$Registry'."
 }
 
-# Hash the test container source content (not just the path list) so any edit produces a
-# new tag. ACR keeps the existing image and `docker push` is a no op when the digest matches.
-$sourceFiles = @(git -c core.quotepath=false ls-files -- $TestContainerProject)
+# Hash the test container source content AND the source of all referenced framework projects
+# so any edit (in TestContainer OR in dotnet/src/Microsoft.Agents.AI.Foundry*/) produces a new
+# tag. The TestContainer image embeds compiled output of those projects, so a framework code
+# change must invalidate the tag for `docker push` to publish a new layer; a TestContainer-only
+# hash silently reused stale images on framework edits.
+#
+# Keep this list in sync with the `foundryHosting` paths-filter in
+# .github/workflows/dotnet-build-and-test.yml so CI gating and image tagging cover the same set.
+$hashedDirs = @(
+    $TestContainerProject,
+    "dotnet/src/Microsoft.Agents.AI.Foundry.Hosting",
+    "dotnet/src/Microsoft.Agents.AI.Foundry",
+    "dotnet/src/Microsoft.Agents.AI",
+    "dotnet/src/Microsoft.Agents.AI.Abstractions"
+)
+$sourceFiles = @()
+foreach ($dir in $hashedDirs) {
+    if (Test-Path $dir) {
+        $sourceFiles += @(git -c core.quotepath=false ls-files -- $dir)
+    }
+}
 if ($sourceFiles.Count -eq 0) {
-    throw "No tracked files found under '$TestContainerProject'."
+    throw "No tracked files found under any of: $($hashedDirs -join ', ')"
 }
 $fileHashes = git hash-object -- $sourceFiles
 $shaInput = ($fileHashes -join "`n" | git hash-object --stdin).Trim()

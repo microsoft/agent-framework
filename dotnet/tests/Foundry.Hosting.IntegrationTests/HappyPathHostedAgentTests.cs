@@ -15,6 +15,7 @@ namespace Foundry.Hosting.IntegrationTests;
 /// <summary>
 /// Round trip and conversation oriented integration tests against a hosted Responses agent.
 /// </summary>
+[Trait("Category", "FoundryHostedAgents")]
 public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixture) : IClassFixture<HappyPathHostedAgentFixture>
 {
     private readonly HappyPathHostedAgentFixture _fixture = fixture;

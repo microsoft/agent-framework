@@ -6,10 +6,11 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Foundry;
+using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
 
 namespace Foundry.Hosting.IntegrationTests.Fixtures;
@@ -17,14 +18,20 @@ namespace Foundry.Hosting.IntegrationTests.Fixtures;
 /// <summary>
 /// Base fixture for Foundry Hosted Agent integration tests.
 ///
-/// Each derived fixture represents one scenario (happy path, tool calling, toolbox, etc.).
-/// On <see cref="InitializeAsync"/> it provisions a real Foundry hosted agent pointing at
-/// the test container image (built and pushed out of band by <c>scripts/it-build-image.ps1</c>),
-/// polls until it reports <see cref="AgentVersionStatus.Active"/>, then exposes the wrapped
-/// <see cref="AIAgent"/> for tests via <see cref="Agent"/>.
+/// Each derived fixture represents one scenario (happy path, tool calling, toolbox, etc.) and
+/// targets a stable, scenario-keyed agent name (e.g. <c>it-happy-path</c>). The fixture creates
+/// a new <see cref="ProjectsAgentVersion"/> on each <see cref="InitializeAsync"/>, polls until
+/// active, patches the agent's endpoint to route 100% of traffic to that new version, then
+/// exposes the wrapped <see cref="AIAgent"/> for tests via <see cref="Agent"/>.
 ///
-/// On <see cref="DisposeAsync"/> it deletes the agent version. Failures during cleanup are
-/// swallowed so that a deletion error does not mask a test failure.
+/// On <see cref="DisposeAsync"/> only the version created by this fixture is removed; the agent
+/// itself (and therefore its managed identity) is left in place. This is critical because the
+/// agent's managed identity must hold <c>Azure AI User</c> on the project scope to serve
+/// inbound inference traffic, and that role assignment is lost when the agent itself is deleted.
+///
+/// Prerequisite: each scenario agent (and its managed identity) must exist and have
+/// <c>Azure AI User</c> pre-granted on the project scope before the tests run. See
+/// <c>scripts/it-bootstrap-agents.ps1</c>.
 ///
 /// The container image is the same for every scenario; the scenario itself is selected by
 /// the <c>IT_SCENARIO</c> environment variable in <see cref="HostedAgentDefinition.EnvironmentVariables"/>,
@@ -33,6 +40,7 @@ namespace Foundry.Hosting.IntegrationTests.Fixtures;
 public abstract class HostedAgentFixture : IAsyncLifetime
 {
     private const string ScenarioEnvironmentVariable = "IT_SCENARIO";
+    private const string RunIdEnvironmentVariable = "IT_RUN_ID";
     private const string FoundryFeaturesHeader = "Foundry-Features";
     private const string HostedAgentsFeatureValue = "HostedAgents=V1Preview";
     private const string EnableVnextExperienceMetadataKey = "enableVnextExperience";
@@ -60,12 +68,14 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     protected virtual TimeSpan ProvisioningTimeout => TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// The wrapped <see cref="FoundryAgent"/>. Available after <see cref="InitializeAsync"/>.
+    /// The wrapped agent. Available after <see cref="InitializeAsync"/>.
     /// </summary>
-    public FoundryAgent Agent { get; private set; } = null!;
+    public AIAgent Agent { get; private set; } = null!;
 
     /// <summary>
-    /// The unique agent name registered in Foundry (e.g. <c>it-happy-path-a1b2c3d4</c>).
+    /// The stable, scenario keyed agent name registered in Foundry (e.g. <c>it-happy-path</c>).
+    /// The agent itself is provisioned out of band (see <c>scripts/it-bootstrap-agents.ps1</c>);
+    /// each test run only adds and removes a version under it.
     /// </summary>
     public string AgentName { get; private set; } = null!;
 
@@ -132,14 +142,19 @@ public abstract class HostedAgentFixture : IAsyncLifetime
         this._adminClient = new AgentAdministrationClient(endpoint, credential, adminOptions);
         this.ProjectClient = new AIProjectClient(endpoint, credential);
 
-        this.AgentName = GenerateUniqueAgentName(this.ScenarioName);
+        this.AgentName = $"it-{this.ScenarioName}";
 
         var definition = new HostedAgentDefinition(cpu: this.Cpu, memory: this.Memory)
         {
             Image = image,
         };
-        definition.ProtocolVersions.Add(new ProtocolVersionRecord(ProjectsAgentProtocol.Responses, "1.0.0"));
+        definition.Versions.Add(new ProtocolVersionRecord(ProjectsAgentProtocol.Responses, "1.0.0"));
         definition.EnvironmentVariables[ScenarioEnvironmentVariable] = this.ScenarioName;
+        // Foundry deduplicates versions by content hash, so a fixture re-using the same
+        // definition would just receive the bootstrap version and then delete it on dispose.
+        // Adding a per-run env var forces a brand new version that the dispose can safely remove
+        // without touching the bootstrap version (which keeps the agent alive across runs).
+        definition.EnvironmentVariables[RunIdEnvironmentVariable] = Guid.NewGuid().ToString("N");
 
         // Allow derived fixtures to layer additional environment variables before submission.
         this.ConfigureEnvironment(definition.EnvironmentVariables);
@@ -147,32 +162,58 @@ public abstract class HostedAgentFixture : IAsyncLifetime
         var creationOptions = new ProjectsAgentVersionCreationOptions(definition);
         creationOptions.Metadata[EnableVnextExperienceMetadataKey] = "true";
 
+        // Adds a new version under the (stable) agent name. Auto-creates the agent on first run.
+        // The agent is intentionally never deleted because its managed identity must hold the
+        // pre-granted role assignment for inbound inference to succeed (see class docs).
         var version = await this._adminClient.CreateAgentVersionAsync(this.AgentName, creationOptions).ConfigureAwait(false);
         var activeVersion = await WaitForActiveAsync(this._adminClient, version.Value, this.ProvisioningTimeout).ConfigureAwait(false);
         this.AgentVersion = activeVersion.Version;
 
-        var record = await this._adminClient.GetAgentAsync(this.AgentName).ConfigureAwait(false);
-        this.Agent = this.ProjectClient.AsAIAgent(record.Value);
+        // Route 100% of inbound traffic to the version we just created. This PATCH overwrites
+        // any previous version_selector left behind by an earlier test run, which is desirable.
+        var endpointConfig = new AgentEndpointConfig
+        {
+            VersionSelector = new VersionSelector(
+                [new FixedRatioVersionSelectionRule(agentVersion: this.AgentVersion, trafficPercentage: 100)]),
+            Protocols = { AgentEndpointProtocol.Responses },
+        };
+        var patchOptions = new PatchAgentOptions { AgentEndpoint = endpointConfig };
+        await this._adminClient.PatchAgentObjectAsync(agentName: this.AgentName, patchAgentOptions: patchOptions).ConfigureAwait(false);
+
+        // Build a per-agent ProjectOpenAIClient (the cached projectClient.ProjectOpenAIClient is bound
+        // to the project-level URL and cannot serve a hosted agent). AgentName on the options selects
+        // the per-agent URL suffix `/agents/{name}/endpoint/protocols/openai`. The Foundry-Features
+        // header is also required on the invocation pipeline (not just the admin one) for hosted agents.
+        var openAIOptions = new ProjectOpenAIClientOptions { AgentName = this.AgentName };
+        openAIOptions.AddPolicy(new FoundryFeaturesPolicy(HostedAgentsFeatureValue), PipelinePosition.PerCall);
+        var openAIClient = new ProjectOpenAIClient(endpoint, credential, openAIOptions);
+        var responsesClient = openAIClient.GetProjectResponsesClient();
+
+        this.Agent = responsesClient.AsIChatClient().AsAIAgent(name: this.AgentName);
     }
 
     public async ValueTask DisposeAsync()
     {
         GC.SuppressFinalize(this);
 
-        if (this._adminClient is null || this.AgentName is null)
+        if (this._adminClient is null || this.AgentName is null || this.AgentVersion is null)
         {
             return;
         }
 
         try
         {
-            await this._adminClient.DeleteAgentAsync(this.AgentName).ConfigureAwait(false);
+            // Delete only the version we created. The agent itself MUST stay so that its
+            // managed identity (and the pre-granted Azure AI User role on it) survive across
+            // test runs. If we delete the agent, Foundry mints a new MI on the next create
+            // and inference fails with PermissionDenied until the role is regranted.
+            await this._adminClient.DeleteAgentVersionAsync(this.AgentName, this.AgentVersion).ConfigureAwait(false);
         }
         catch
         {
             // Best effort cleanup. Never throw from DisposeAsync because that would mask
-            // the real test failure, and orphaned agents can be reaped by a separate
-            // maintenance script.
+            // the real test failure. Orphan versions accumulate harmlessly; a maintenance
+            // script can prune them when needed.
         }
     }
 
@@ -210,9 +251,6 @@ public abstract class HostedAgentFixture : IAsyncLifetime
 
         return version;
     }
-
-    private static string GenerateUniqueAgentName(string scenario) =>
-        $"it-{scenario}-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
 
     /// <summary>
     /// Pipeline policy that adds the Foundry feature header on every request.

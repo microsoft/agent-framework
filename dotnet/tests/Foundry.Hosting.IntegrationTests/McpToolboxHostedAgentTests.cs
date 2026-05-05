@@ -11,6 +11,7 @@ namespace Foundry.Hosting.IntegrationTests;
 /// Tests for an MCP backed toolbox: the hosted container connects to a public MCP server
 /// (the Microsoft Learn MCP endpoint) at startup and exposes its tools to the model.
 /// </summary>
+[Trait("Category", "FoundryHostedAgents")]
 public sealed class McpToolboxHostedAgentTests(McpToolboxHostedAgentFixture fixture)
     : IClassFixture<McpToolboxHostedAgentFixture>
 {

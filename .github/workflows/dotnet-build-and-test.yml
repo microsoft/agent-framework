@@ -37,6 +37,7 @@ jobs:
     outputs:
       dotnetChanges: ${{ steps.filter.outputs.dotnet }}
       cosmosDbChanges: ${{ steps.filter.outputs.cosmosdb }}
+      foundryHostingChanges: ${{ steps.filter.outputs.foundryHosting }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -47,6 +48,20 @@ jobs:
               - 'dotnet/**'
             cosmosdb:
               - 'dotnet/src/Microsoft.Agents.AI.CosmosNoSql/**'
+            # The Foundry hosted-agent IT is costly (builds a container, pushes to ACR,
+            # provisions live agents). Only run it when the project under test, its
+            # dependency chain, the test container, the test fixture, or their tooling
+            # changed. Keep this list in sync with $hashedDirs in scripts/it-build-image.ps1.
+            foundryHosting:
+              - 'dotnet/src/Microsoft.Agents.AI.Foundry.Hosting/**'
+              - 'dotnet/src/Microsoft.Agents.AI.Foundry/**'
+              - 'dotnet/src/Microsoft.Agents.AI/**'
+              - 'dotnet/src/Microsoft.Agents.AI.Abstractions/**'
+              - 'dotnet/tests/Foundry.Hosting.IntegrationTests/**'
+              - 'dotnet/tests/Foundry.Hosting.IntegrationTests.TestContainer/**'
+              - 'dotnet/Directory.Packages.props'
+              - 'scripts/it-build-image.ps1'
+              - '.github/workflows/dotnet-build-and-test.yml'
       # run only if 'dotnet' files were changed
       - name: dotnet tests
         if: steps.filter.outputs.dotnet == 'true'
@@ -232,7 +247,10 @@ jobs:
         run: echo "github.event_name:${{ github.event_name }} matrix.integration-tests:${{ matrix.integration-tests }} github.event.action:${{ github.event.action }} github.event.pull_request.merged:${{ github.event.pull_request.merged }}"
 
       - name: Azure CLI Login
-        if: github.event_name != 'pull_request' && matrix.integration-tests
+        # TEMP: was `if: github.event_name != 'pull_request' && matrix.integration-tests`. Also
+        # log in on PRs when the Foundry hosted-agent IT will run, so it has Azure auth.
+        # Restore the original line above after PR #5598 has had one green run.
+        if: matrix.integration-tests && (github.event_name != 'pull_request' || needs.paths-filter.outputs.foundryHostingChanges == 'true')
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -259,6 +277,7 @@ jobs:
             --report-xunit-trx `
             --ignore-exit-code 8 `
             --filter-not-trait "Category=IntegrationDisabled" `
+            --filter-not-trait "Category=FoundryHostedAgents" `
             --parallel-algorithm aggressive `
             --max-threads 2.0x
         env:
@@ -277,6 +296,44 @@ jobs:
           AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
           AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
           AZURE_AI_BING_CONNECTION_ID: ${{ vars.AZURE_AI_BING_CONNECTION_ID }}
+
+      # Foundry Hosted Agents tests target a separate Foundry project (different region with
+      # hosted-agents preview enabled, see vars below). Filter is the inverse of the main step.
+      # We rebuild and push the test container image on every IT run so framework code changes
+      # are picked up; the image tag is content-hashed across the test container source AND its
+      # framework project references, so identical content is a no-op push. The whole flow is
+      # gated on paths-filter.outputs.foundryHostingChanges so unrelated edits skip this work.
+      - name: Build and push Foundry Hosted Agents test container
+        id: build-foundry-hosted-image
+        shell: pwsh
+        # TEMP: was `github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true'`
+        # to validate the wiring on PR #5598. Restore the != 'pull_request' clause once a PR run is green.
+        if: matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
+        run: |
+          $registry = "${{ vars.IT_HOSTED_AGENT_REGISTRY }}"
+          if ([string]::IsNullOrWhiteSpace($registry)) {
+            throw "IT_HOSTED_AGENT_REGISTRY not set in the integration environment."
+          }
+          ./scripts/it-build-image.ps1 -Registry $registry | Tee-Object -FilePath $env:GITHUB_ENV -Append
+
+      - name: Run Foundry Hosted Agents Integration Tests
+        shell: pwsh
+        working-directory: dotnet
+        # TEMP: same temporary PR-validation override as the build step above. Restore the
+        # != 'pull_request' clause once a PR run is green.
+        if: matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
+        run: |
+          dotnet test --solution ./filtered-integration.slnx `
+            -f ${{ matrix.targetFramework }} `
+            -c ${{ matrix.configuration }} `
+            --no-build -v Normal `
+            --report-xunit-trx `
+            --ignore-exit-code 8 `
+            --filter-trait "Category=FoundryHostedAgents"
+        env:
+          AZURE_AI_PROJECT_ENDPOINT: ${{ vars.IT_HOSTED_AGENT_PROJECT_ENDPOINT }}
+          AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.IT_HOSTED_AGENT_MODEL_DEPLOYMENT_NAME }}
+          # IT_HOSTED_AGENT_IMAGE was exported into $GITHUB_ENV by the previous step.
 
       # Generate test reports and check coverage
       - name: Generate test reports

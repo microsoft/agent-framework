@@ -11,6 +11,7 @@ namespace Foundry.Hosting.IntegrationTests;
 /// in place of the platform default. Verifies the model still works and that multi turn
 /// behavior reads from the custom store.
 /// </summary>
+[Trait("Category", "FoundryHostedAgents")]
 public sealed class CustomStorageHostedAgentTests(CustomStorageHostedAgentFixture fixture)
     : IClassFixture<CustomStorageHostedAgentFixture>
 {

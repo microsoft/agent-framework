@@ -12,6 +12,7 @@ namespace Foundry.Hosting.IntegrationTests;
 /// flagged as requiring approval, and the model raises a <see cref="ToolApprovalRequestContent"/>
 /// before the tool executes.
 /// </summary>
+[Trait("Category", "FoundryHostedAgents")]
 public sealed class ToolCallingApprovalHostedAgentTests(ToolCallingApprovalHostedAgentFixture fixture)
     : IClassFixture<ToolCallingApprovalHostedAgentFixture>
 {

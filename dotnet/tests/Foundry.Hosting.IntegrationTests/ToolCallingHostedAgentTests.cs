@@ -12,6 +12,7 @@ namespace Foundry.Hosting.IntegrationTests;
 /// declares deterministic AIFunctions (e.g. <c>GetUtcNow</c>, <c>Multiply</c>) and the
 /// model decides whether to call them based on the prompt.
 /// </summary>
+[Trait("Category", "FoundryHostedAgents")]
 public sealed class ToolCallingHostedAgentTests(ToolCallingHostedAgentFixture fixture) : IClassFixture<ToolCallingHostedAgentFixture>
 {
     private readonly ToolCallingHostedAgentFixture _fixture = fixture;

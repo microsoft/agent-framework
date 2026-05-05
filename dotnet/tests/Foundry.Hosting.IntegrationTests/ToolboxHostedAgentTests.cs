@@ -10,6 +10,7 @@ namespace Foundry.Hosting.IntegrationTests;
 /// (server side), and tests can also add tools client side. The model should be able to
 /// invoke tools from both sources.
 /// </summary>
+[Trait("Category", "FoundryHostedAgents")]
 public sealed class ToolboxHostedAgentTests(ToolboxHostedAgentFixture fixture) : IClassFixture<ToolboxHostedAgentFixture>
 {
     private readonly ToolboxHostedAgentFixture _fixture = fixture;
