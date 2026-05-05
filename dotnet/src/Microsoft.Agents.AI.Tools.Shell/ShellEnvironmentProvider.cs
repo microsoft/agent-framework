@@ -137,6 +137,13 @@ public sealed class ShellEnvironmentProvider : AIContextProvider
         var toolVersions = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var tool in this._options.ProbeTools)
         {
+            // ProbeTools is user-supplied. Skip duplicates that differ only by
+            // case (e.g., "git" and "GIT") so we don't probe the same CLI twice
+            // and don't depend on dictionary insertion order for the result.
+            if (toolVersions.ContainsKey(tool))
+            {
+                continue;
+            }
             toolVersions[tool] = await this.ProbeToolVersionAsync(tool, cancellationToken).ConfigureAwait(false);
         }
 

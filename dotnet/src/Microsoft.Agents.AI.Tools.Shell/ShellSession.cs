@@ -853,9 +853,10 @@ internal sealed class ShellSession : IAsyncDisposable
             return (data, false);
         }
 
-        var halfCap = cap / 2;
-        var head = TakePrefixByBytes(data, halfCap);
-        var tail = TakeSuffixByBytes(data, halfCap);
+        var headCap = cap / 2;
+        var tailCap = cap - headCap;
+        var head = TakePrefixByBytes(data, headCap);
+        var tail = TakeSuffixByBytes(data, tailCap);
         var droppedBytes = totalBytes - Encoding.UTF8.GetByteCount(head) - Encoding.UTF8.GetByteCount(tail);
         if (droppedBytes < 0)
         {
@@ -870,28 +871,25 @@ internal sealed class ShellSession : IAsyncDisposable
         {
             return string.Empty;
         }
-        var encoder = Encoding.UTF8.GetEncoder();
-        var chars = data.AsSpan();
-        Span<byte> scratch = stackalloc byte[4];
-        var taken = 0;
+
+        // Iterate by rune so we never split a surrogate pair and never have to
+        // reason about Encoder state. Rune.Utf8SequenceLength is the byte width
+        // of the rune in UTF-8; for unpaired surrogates EnumerateRunes yields
+        // Rune.ReplacementChar (3 bytes), which matches what UTF-8 encoding
+        // would have produced anyway.
         var byteCount = 0;
-        while (taken < chars.Length)
+        var charsTaken = 0;
+        foreach (var rune in data.EnumerateRunes())
         {
-            var charsThisStep =
-                char.IsHighSurrogate(chars[taken])
-                && taken + 1 < chars.Length
-                && char.IsLowSurrogate(chars[taken + 1])
-                    ? 2 : 1;
-            scratch.Clear();
-            encoder.Convert(chars.Slice(taken, charsThisStep), scratch, flush: false, out _, out var bytesUsed, out _);
-            if (byteCount + bytesUsed > maxBytes)
+            var n = rune.Utf8SequenceLength;
+            if (byteCount + n > maxBytes)
             {
                 break;
             }
-            byteCount += bytesUsed;
-            taken += charsThisStep;
+            byteCount += n;
+            charsTaken += rune.Utf16SequenceLength;
         }
-        return data.Substring(0, taken);
+        return data.Substring(0, charsTaken);
     }
 
     private static string TakeSuffixByBytes(string data, int maxBytes)
@@ -900,24 +898,35 @@ internal sealed class ShellSession : IAsyncDisposable
         {
             return string.Empty;
         }
-        var encoder = Encoding.UTF8.GetEncoder();
-        Span<byte> scratch = stackalloc byte[4];
-        var endExclusive = data.Length;
-        var startInclusive = data.Length;
-        var byteCount = 0;
-        while (startInclusive > 0)
+
+        // Same approach as the prefix walker, but we need to skip an unknown
+        // prefix and keep the suffix. Walk the runes forward to learn the total
+        // UTF-8 byte count, then walk again skipping while the remaining tail
+        // would exceed `maxBytes`.
+        var totalBytes = 0;
+        foreach (var rune in data.EnumerateRunes())
         {
-            var charsThisStep = startInclusive >= 2 && char.IsLowSurrogate(data[startInclusive - 1]) && char.IsHighSurrogate(data[startInclusive - 2]) ? 2 : 1;
-            scratch.Clear();
-            encoder.Convert(data.AsSpan(startInclusive - charsThisStep, charsThisStep), scratch, flush: false, out _, out var bytesUsed, out _);
-            if (byteCount + bytesUsed > maxBytes)
+            totalBytes += rune.Utf8SequenceLength;
+        }
+        if (totalBytes <= maxBytes)
+        {
+            return data;
+        }
+
+        var bytesToSkip = totalBytes - maxBytes;
+        var skipped = 0;
+        var startCharIndex = 0;
+        foreach (var rune in data.EnumerateRunes())
+        {
+            var n = rune.Utf8SequenceLength;
+            if (skipped + n > bytesToSkip)
             {
                 break;
             }
-            byteCount += bytesUsed;
-            startInclusive -= charsThisStep;
+            skipped += n;
+            startCharIndex += rune.Utf16SequenceLength;
         }
-        return data.Substring(startInclusive, endExclusive - startInclusive);
+        return data.Substring(startCharIndex);
     }
 
     private static void KillProcessTree(Process process)

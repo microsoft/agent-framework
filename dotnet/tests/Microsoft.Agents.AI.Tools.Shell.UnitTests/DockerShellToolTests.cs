@@ -182,12 +182,12 @@ public sealed class DockerShellToolTests
     }
 
     [Theory]
-    [InlineData("host", "65534:65534", true, true, false)]   // network=host => relaxed
-    [InlineData("none", "0:0", true, true, false)]            // root user => relaxed
-    [InlineData("none", "root", true, true, false)]           // root by name => relaxed
-    [InlineData("none", "65534:65534", false, true, false)]   // writable root => relaxed
+    [InlineData("host", "65534:65534", true, true)]   // network=host => relaxed
+    [InlineData("none", "0:0", true, true)]            // root user => relaxed
+    [InlineData("none", "root", true, true)]           // root by name => relaxed
+    [InlineData("none", "65534:65534", false, true)]   // writable root => relaxed
     public async Task AsAIFunction_RelaxedConfig_DefaultsToApprovalGatedAsync(
-        string network, string user, bool readOnlyRoot, bool mountReadonly, bool _)
+        string network, string user, bool readOnlyRoot, bool mountReadonly)
     {
         await using var t = new DockerShellTool(
             mode: ShellMode.Stateless,

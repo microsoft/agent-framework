@@ -180,6 +180,29 @@ public sealed class ShellEnvironmentProviderTests
     }
 
     [Fact]
+    public async Task RefreshAsync_DuplicateProbeToolsCaseInsensitive_ProbesOnceAsync()
+    {
+        // ProbeTools is user-supplied. With a case-insensitive backing dictionary,
+        // {"git","GIT"} used to probe twice and let the second insertion silently
+        // overwrite the first. Verify we now skip duplicates.
+        var fake = new ScriptedShellExecutor();
+        fake.Responses.Enqueue(new ShellResult("VERSION=1.0\nCWD=/\n", "", 0, TimeSpan.Zero)); // shell+cwd probe
+        fake.Responses.Enqueue(new ShellResult("git 2.46\n", "", 0, TimeSpan.Zero));          // first git probe
+        // No second probe response queued — if dedup is broken, the test will throw on dequeue.
+
+        var provider = new ShellEnvironmentProvider(fake, new()
+        {
+            OverrideFamily = ShellFamily.Posix,
+            ProbeTools = ["git", "GIT", "Git"],
+        });
+
+        var snapshot = await provider.RefreshAsync();
+        Assert.Single(snapshot.ToolVersions);
+        Assert.Equal("git 2.46", snapshot.ToolVersions["git"]);
+        Assert.Equal("git 2.46", snapshot.ToolVersions["GIT"]);
+    }
+
+    [Fact]
     public async Task RefreshAsync_ToolEmitsVersionToStderr_FallsBackToStderrAsync()
     {
         // Some CLIs (e.g. java, older gcc) write `--version` output to stderr.
