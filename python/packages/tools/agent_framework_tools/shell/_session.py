@@ -5,31 +5,26 @@
 A :class:`ShellSession` launches a long-lived shell subprocess and executes
 commands one at a time by writing them to stdin followed by a **sentinel
 probe** that reports the exit status. Reading stdout until the sentinel
-appears gives us a reliable command boundary without relying on job control
-or PTYs — which matters for cross-OS support (bash, sh, pwsh).
+appears gives a reliable command boundary without relying on job control
+or PTYs, which keeps the same code path working on bash, sh, and pwsh.
 
-Design inspiration:
-- Anthropic ``bash_20250124``: persistent session semantics.
-- Claude Code Bash tool: sentinel-based boundary.
-- LangChain ``BashProcess`` (experimental): pexpect persistent mode.
-
-Implementation notes (hard-won):
-
-* ``pwsh -NoProfile -NoLogo -NonInteractive -Command -`` waits for a complete
-  parse before executing. Multi-line ``try`` blocks therefore stall with
-  stdin open. We sidestep that by base64-encoding the user command and
-  invoking it with ``Invoke-Expression`` on a single line.
-* ``Write-Output`` routes through the PowerShell pipeline formatter which
-  may drop trailing newlines when stdout is redirected. The sentinel is
-  emitted via ``[Console]::WriteLine`` + explicit ``[Console]::Out.Flush()``.
-* ``$LASTEXITCODE`` only tracks external-process exits. We derive the rc in
-  PowerShell from ``$?`` and caught exceptions as well.
-* stdout and stderr are consumed by **persistent reader tasks** that run for
-  the lifetime of the session. Each ``run()`` calculates buffer offsets
-  before writing the command and scans forward from there. This avoids the
-  ``read() called while another coroutine is already waiting`` errors that
-  arise from per-call ``wait_for(stream.read())`` loops, and prevents late
-  stderr from being attributed to the next command.
+Notes:
+* ``pwsh -NoProfile -NoLogo -NonInteractive -Command -`` waits for a
+  complete parse before executing, so multi-line ``try`` blocks stall
+  with stdin open. To avoid that, the user command is base64-encoded
+  and invoked with ``Invoke-Expression`` on a single line.
+* ``Write-Output`` routes through the PowerShell pipeline formatter,
+  which may drop trailing newlines when stdout is redirected. The
+  sentinel is emitted via ``[Console]::WriteLine`` followed by an
+  explicit ``[Console]::Out.Flush()``.
+* ``$LASTEXITCODE`` only tracks external-process exits, so the rc is
+  also derived from ``$?`` and caught exceptions.
+* stdout and stderr are consumed by **persistent reader tasks** that
+  run for the lifetime of the session. Each ``run()`` snapshots buffer
+  offsets before writing the command and scans forward from there.
+  This avoids ``read() called while another coroutine is already
+  waiting`` errors from per-call ``wait_for(stream.read())`` loops and
+  prevents late stderr from being attributed to the next command.
 """
 
 from __future__ import annotations
@@ -333,10 +328,11 @@ class ShellSession:
 
     def _build_script(self, command: str, sentinel: str) -> str:
         if self._is_pwsh:
-            # See module docstring for why we base64-encode and use
-            # Invoke-Expression. $ErrorActionPreference is set to 'Stop' at
-            # session start, so the catch block fires on cmdlet errors as
-            # well as parse failures surfaced by Invoke-Expression itself.
+            # Base64-encode the command and run it via Invoke-Expression to
+            # work around pwsh's whole-script parse requirement on stdin.
+            # $ErrorActionPreference is set to 'Stop' at session start so
+            # the catch block fires on cmdlet errors as well as parse
+            # failures surfaced by Invoke-Expression itself.
             encoded = base64.b64encode(command.encode("utf-8")).decode("ascii")
             return (
                 "& {"
@@ -355,10 +351,10 @@ class ShellSession:
                 " }"
                 " }\n"
             )
-        # POSIX shell. Run the user command in a group so we can capture
-        # its exit status, then print the sentinel on a line of its own.
-        # We briefly disable ``errexit`` around our trailer so a prior
-        # ``set -e`` in the user command can't skip the sentinel print.
+        # POSIX shell. Run the user command in a group to capture its exit
+        # status, then print the sentinel on a line of its own. ``errexit``
+        # is disabled around the trailer so a prior ``set -e`` in the user
+        # command cannot skip the sentinel print.
         return (
             "{ "
             f"{command}\n"

@@ -2,21 +2,18 @@
 
 """Cross-OS process-tree termination.
 
-Delegates to :mod:`psutil` (battle-tested across Windows/macOS/Linux for
-process introspection) when available, with a stdlib fallback. Tree-kill
-matters because a timed-out shell command can spawn arbitrary child
-processes (`make`, network tools, watchers, …) and leaving them running
-defeats the purpose of the timeout as a safety mechanism.
+Delegates to :mod:`psutil` for process introspection when available, with
+a stdlib fallback. Tree-kill matters because a timed-out shell command can
+spawn child processes (``make``, network tools, watchers, …); leaving
+them running would defeat the timeout.
 
-Security notes:
-
-* On Windows we resolve ``taskkill.exe`` to its absolute system path so a
-  PATH-poisoned environment cannot redirect us to an attacker-supplied
-  binary.
-* psutil's ``Process.children(recursive=True)`` walks the parent-child
-  relationships via the OS APIs (``CreateToolhelp32Snapshot`` on Windows,
-  ``/proc`` on Linux, ``proc_listpids`` on macOS) — which is why we
-  prefer it over our own platform-conditional code.
+Notes:
+* On Windows, ``taskkill.exe`` is resolved to its absolute system path so
+  a modified ``PATH`` cannot redirect the call to a different binary.
+* psutil's ``Process.children(recursive=True)`` walks parent-child
+  relationships via OS APIs (``CreateToolhelp32Snapshot`` on Windows,
+  ``/proc`` on Linux, ``proc_listpids`` on macOS), which is why it is
+  preferred over a hand-rolled platform-conditional implementation.
 """
 
 from __future__ import annotations

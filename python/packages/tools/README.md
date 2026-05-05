@@ -37,11 +37,8 @@ asyncio.run(main())
 ### Modes
 
 - **Persistent** (default): a single long-lived shell session. `cd`, `export`,
-  and shell functions persist across tool invocations. Matches the semantics
-  of Anthropic's `bash_20250124` tool and Claude Code's Bash tool.
-- **Stateless** (`mode="stateless"`): each command runs in a fresh subprocess,
-  matching AutoGen's `LocalCommandLineCodeExecutor` and OpenAI Agents SDK's
-  `local_shell` protocol.
+  and shell functions persist across tool invocations.
+- **Stateless** (`mode="stateless"`): each command runs in a fresh subprocess.
 
 ### Safety
 

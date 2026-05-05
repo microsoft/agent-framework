@@ -2,14 +2,13 @@
 
 """Sandboxed shell tool backed by a Docker (or compatible) container runtime.
 
-``DockerShellTool`` mirrors the public surface of :class:`LocalShellTool`
-but executes commands inside an isolated container. The container is the
-security boundary — when used with the default isolation flags, even
-``approval_mode='never_require'`` is reasonable for untrusted input,
-because a compromised guest cannot reach the host filesystem, network,
-or processes.
+``DockerShellTool`` exposes the same public surface as
+:class:`LocalShellTool` but executes commands inside a container. The
+container is intended to be the security boundary; effective isolation
+depends on the host runtime configuration, image contents, and the flags
+passed at launch.
 
-Defaults chosen for safety:
+Default flags applied at launch:
 
 - ``--network none``: no host or external network access.
 - ``--user 65534:65534``: runs as ``nobody:nogroup``.
@@ -20,13 +19,10 @@ Defaults chosen for safety:
 - ``--tmpfs /tmp`` so commands that need scratch space have somewhere to
   write that doesn't escape the container.
 
-The implementation reuses :class:`ShellSession` for persistent mode by
-launching ``docker exec -i <container> bash`` as the long-lived shell —
-the sentinel protocol works unchanged because we're still talking to a
-bash REPL over pipes.
-
-This is the recommended executor for any agent that runs commands from
-untrusted input.
+Persistent mode reuses :class:`ShellSession` by launching
+``docker exec -i <container> bash`` as the long-lived shell — the
+sentinel protocol works unchanged because the session is still talking
+to a bash REPL over pipes.
 """
 
 from __future__ import annotations
@@ -204,14 +200,16 @@ class DockerShellTool:
         env: Environment variables to set inside the container. These are
             passed via ``-e`` and apply to every command.
         policy: Optional :class:`ShellPolicy`. Less critical than for
-            ``LocalShellTool`` since the container provides isolation,
-            but useful as a guardrail (and for audit logging).
+            ``LocalShellTool`` since the container is the intended
+            isolation layer, but useful as a guardrail (and for audit
+            logging).
         timeout: Per-command timeout in seconds.
         max_output_bytes: Combined stdout/stderr byte cap before truncation.
-        approval_mode: Controls the FunctionTool approval gate.
-            **Unlike ``LocalShellTool``**, ``"never_require"`` is permitted
-            without ``acknowledge_unsafe`` because the container provides
-            the security boundary.
+        approval_mode: Controls the FunctionTool approval gate. Unlike
+            ``LocalShellTool``, ``"never_require"`` is permitted without
+            ``acknowledge_unsafe`` because the container — when launched
+            with the default isolation flags and a trusted runtime — is
+            the intended boundary rather than approval.
         on_command: Audit hook fired for every allowed command.
         docker_binary: Override (e.g. ``"podman"``).
     """

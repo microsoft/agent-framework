@@ -2,11 +2,8 @@
 
 r"""Policy model for :class:`LocalShellTool`.
 
-``ShellPolicy`` is evaluated *before* approval and *before* execution. It lets
-callers define allow/deny rules and a final custom callback, mirroring the
-layered-defense pattern used by competitor frameworks (LangChain's
-``BashProcess``, AutoGen's ``LocalCommandLineCodeExecutor``, Claude Code's
-bash tool).
+``ShellPolicy`` is evaluated *before* approval and *before* execution. It
+lets callers define allow/deny rules and an optional final custom callback.
 
 .. warning::
    **Not a security boundary.** The denylist regexes stop accidents and

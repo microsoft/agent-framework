@@ -23,12 +23,11 @@ logger = logging.getLogger(__name__)
 
 
 def _quote_posix(value: str) -> str:
-    r"""Return ``value`` wrapped in POSIX single quotes, safe inside ``sh``.
+    r"""Return ``value`` wrapped in POSIX single quotes.
 
-    Single-quoted strings have no interpolation. Embedded single quotes are
-    handled by closing the quote, inserting an escaped quote, and reopening:
-    ``a'b`` becomes ``'a'\''b'``. This blocks shell injection through
-    ``$VAR``, ``$()``, backtick, and quote characters in the value.
+    Single-quoted strings have no interpolation in POSIX shells. Embedded
+    single quotes are handled by closing the quote, inserting an escaped
+    quote, and reopening: ``a'b`` becomes ``'a'\''b'``.
     """
     return "'" + value.replace("'", "'\\''") + "'"
 
@@ -46,12 +45,13 @@ _DEFAULT_DESCRIPTION = (
     "Execute a single shell command on the local machine and return its "
     "stdout, stderr, and exit code. Commands run in a persistent session so "
     "`cd` and environment variables from previous calls are preserved. "
-    "Destructive commands are blocked and approval is required by default."
+    "A configurable denylist filters obviously destructive commands and "
+    "approval is required by default."
 )
 
 
 class LocalShellTool:
-    """A safe, cross-OS local shell tool that plugs into any agent-framework chat client.
+    """Cross-OS local shell tool that plugs into any agent-framework chat client.
 
     Typical use::
 
@@ -270,8 +270,8 @@ class LocalShellTool:
         """Prefix ``cd`` when confinement is enabled and workdir is set."""
         if not self._confine_workdir or self._workdir is None:
             return command
-        # Idempotent prefix: always cd back before running the user command
-        # so wandering with ``cd`` in one command doesn't leak to the next.
+        # Idempotent prefix: cd back before each command so a `cd` in one
+        # call does not leak workdir state to the next.
         if self._interactive_argv and "pwsh" in os.path.basename(self._interactive_argv[0]).lower():
             return f"Set-Location -LiteralPath {_quote_powershell(self._workdir)}\n{command}"
         return f"cd -- {_quote_posix(self._workdir)}\n{command}"
