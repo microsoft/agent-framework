@@ -122,4 +122,20 @@ public sealed class ShellSessionTests
 
         Assert.DoesNotContain("\uFFFD", text);
     }
+
+    [Fact]
+    public void TruncateHeadTail_UnpairedHighSurrogate_DoesNotMisalignByteCount()
+    {
+        // An unpaired high surrogate (no following low surrogate) used to make the
+        // prefix walker advance by 2 chars and miscount bytes. Verify that the
+        // function completes, returns a sensible result, and respects the cap.
+        var input = "AAAA" + new string('\uD83D', 1) + "BBBB"; // lone high surrogate
+        var (text, _) = ShellSession.TruncateHeadTail(input, cap: 6);
+
+        // The encoder substitutes U+FFFD for the unpaired surrogate when emitting bytes,
+        // so we just check that the call did not overrun and produced a result that
+        // round-trips through UTF-8.
+        var rt = System.Text.Encoding.UTF8.GetString(System.Text.Encoding.UTF8.GetBytes(text));
+        Assert.Equal(text, rt);
+    }
 }

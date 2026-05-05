@@ -7,9 +7,9 @@ using System.Text;
 namespace Microsoft.Agents.AI.Tools.Shell;
 
 /// <summary>
-/// Bounded accumulator that keeps the first <c>cap/2</c> UTF-8 bytes of input and
-/// the most recent <c>cap/2</c> UTF-8 bytes (rolling tail). When the input fits in
-/// <c>cap</c> bytes, the result is the original concatenation. Otherwise the middle
+/// Bounded accumulator that keeps the first half of the input and the most recent
+/// half (rolling tail), summing to <c>cap</c> UTF-8 bytes total. When the input fits
+/// in <c>cap</c> bytes, the result is the original concatenation. Otherwise the middle
 /// is dropped and the result includes a "[... truncated N bytes ...]" marker.
 /// </summary>
 /// <remarks>
@@ -29,7 +29,8 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 internal sealed class HeadTailBuffer
 {
     private readonly int _cap;
-    private readonly int _halfCap;
+    private readonly int _headCap;
+    private readonly int _tailCap;
     private readonly List<byte> _head = new();
     // Tail is a queue of complete rune-byte-sequences so we can drop oldest rune
     // atomically when capacity is exceeded.
@@ -40,7 +41,11 @@ internal sealed class HeadTailBuffer
     public HeadTailBuffer(int cap)
     {
         this._cap = cap < 0 ? 0 : cap;
-        this._halfCap = this._cap / 2;
+        // Split the budget so head and tail sum to exactly _cap. With odd caps,
+        // the extra byte goes to the tail. This guarantees that any input whose
+        // UTF-8 size is <= _cap round-trips losslessly (no silent data drop).
+        this._headCap = this._cap / 2;
+        this._tailCap = this._cap - this._headCap;
     }
 
     public void AppendLine(string line)
@@ -58,7 +63,7 @@ internal sealed class HeadTailBuffer
             var n = rune.EncodeToUtf8(scratch);
             this._totalBytes += n;
 
-            if (this._head.Count + n <= this._halfCap)
+            if (this._head.Count + n <= this._headCap)
             {
                 for (var i = 0; i < n; i++) { this._head.Add(scratch[i]); }
                 continue;
@@ -70,7 +75,7 @@ internal sealed class HeadTailBuffer
             this._tailBytes += n;
 
             // Evict whole runes from the front of the tail until we fit.
-            while (this._tailBytes > this._halfCap && this._tail.Count > 0)
+            while (this._tailBytes > this._tailCap && this._tail.Count > 0)
             {
                 var dropped = this._tail.Dequeue();
                 this._tailBytes -= dropped.Length;

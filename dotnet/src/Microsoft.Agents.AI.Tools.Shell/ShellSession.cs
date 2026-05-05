@@ -166,23 +166,10 @@ internal sealed class ShellSession : IAsyncDisposable
 
             if (this._cleanEnvironment)
             {
-                // Strip everything inherited; preserve only PATH / HOME / USER /
-                // USERPROFILE / SystemRoot so the shell itself can locate
-                // itself and basic tools.
-                var preserved = new[] { "PATH", "HOME", "USER", "USERNAME", "USERPROFILE", "SystemRoot", "TEMP", "TMP" };
-                var keep = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-                foreach (var name in preserved)
-                {
-                    if (startInfo.Environment.TryGetValue(name, out var v) && v is not null)
-                    {
-                        keep[name] = v;
-                    }
-                }
-                startInfo.Environment.Clear();
-                foreach (var kv in keep)
-                {
-                    startInfo.Environment[kv.Key] = kv.Value;
-                }
+                // Strip everything inherited except the allowlist in
+                // CleanEnvironmentHelper.PreservedVariables, so the shell can
+                // still locate itself and basic tools.
+                CleanEnvironmentHelper.ApplyPreserved(startInfo.Environment);
             }
 
             if (this._environment is not null)
@@ -890,7 +877,11 @@ internal sealed class ShellSession : IAsyncDisposable
         var byteCount = 0;
         while (taken < chars.Length)
         {
-            var charsThisStep = char.IsHighSurrogate(chars[taken]) && taken + 1 < chars.Length ? 2 : 1;
+            var charsThisStep =
+                char.IsHighSurrogate(chars[taken])
+                && taken + 1 < chars.Length
+                && char.IsLowSurrogate(chars[taken + 1])
+                    ? 2 : 1;
             scratch.Clear();
             encoder.Convert(chars.Slice(taken, charsThisStep), scratch, flush: false, out _, out var bytesUsed, out _);
             if (byteCount + bytesUsed > maxBytes)

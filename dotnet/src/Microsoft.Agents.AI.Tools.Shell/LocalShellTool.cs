@@ -216,20 +216,7 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
 
         if (this._cleanEnvironment)
         {
-            var preserved = new[] { "PATH", "HOME", "USER", "USERNAME", "USERPROFILE", "SystemRoot", "TEMP", "TMP" };
-            var keep = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var name in preserved)
-            {
-                if (startInfo.Environment.TryGetValue(name, out var v) && v is not null)
-                {
-                    keep[name] = v;
-                }
-            }
-            startInfo.Environment.Clear();
-            foreach (var kv in keep)
-            {
-                startInfo.Environment[kv.Key] = kv.Value;
-            }
+            CleanEnvironmentHelper.ApplyPreserved(startInfo.Environment);
         }
 
         if (this._environment is not null)

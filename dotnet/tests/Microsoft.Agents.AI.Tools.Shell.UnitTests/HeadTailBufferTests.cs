@@ -85,4 +85,35 @@ public sealed class HeadTailBufferTests
 
         Assert.DoesNotContain("\uFFFD", text);
     }
+
+    [Fact]
+    public void Append_OddCap_RoundTripsExactlyAtCapWithoutDropping()
+    {
+        // With the previous design (cap/2 for both halves), an odd cap could
+        // drop a byte while still reporting truncated == false. Verify that an
+        // input whose UTF-8 size is exactly `cap` round-trips losslessly.
+        const string Input = "ABCDE"; // 5 bytes
+        var buf = new HeadTailBuffer(cap: 6);
+        buf.AppendLine(Input); // 5 + '\n' = 6 bytes, exactly at cap
+        var (text, truncated) = buf.ToFinalString();
+
+        Assert.False(truncated);
+        Assert.Equal(Input + "\n", text);
+    }
+
+    [Fact]
+    public void Append_OddCap_AtCap_NoSilentDataDrop()
+    {
+        // Reviewer's exact scenario: cap=5. Push exactly 5 bytes of input.
+        // halfCap-based design would silently drop a byte while reporting
+        // truncated == false. With separate head/tail budgets, all 5 bytes
+        // must be retained.
+        var buf = new HeadTailBuffer(cap: 5);
+        // AppendLine adds a trailing newline, so feed 4 chars to land at exactly 5 bytes.
+        buf.AppendLine("ABCD");
+        var (text, truncated) = buf.ToFinalString();
+
+        Assert.False(truncated);
+        Assert.Equal("ABCD\n", text);
+    }
 }
