@@ -12,6 +12,13 @@ from ._docker import (
     DockerShellTool,
     is_docker_available,
 )
+from ._environment import (
+    ShellEnvironmentProvider,
+    ShellEnvironmentProviderOptions,
+    ShellEnvironmentSnapshot,
+    ShellFamily,
+    default_instructions_formatter,
+)
 from ._executor_base import ShellExecutor
 from ._policy import DEFAULT_DENYLIST, ShellDecision, ShellPolicy, ShellRequest
 from ._tool import LocalShellTool
@@ -31,12 +38,17 @@ __all__ = [
     "LocalShellTool",
     "ShellCommandError",
     "ShellDecision",
+    "ShellEnvironmentProvider",
+    "ShellEnvironmentProviderOptions",
+    "ShellEnvironmentSnapshot",
     "ShellExecutionError",
     "ShellExecutor",
+    "ShellFamily",
     "ShellMode",
     "ShellPolicy",
     "ShellRequest",
     "ShellResult",
     "ShellTimeoutError",
+    "default_instructions_formatter",
     "is_docker_available",
 ]
