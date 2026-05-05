@@ -1,0 +1,30 @@
+# BuildKit per-Dockerfile ignore (sibling file: <Dockerfile>.dockerignore).
+# Build context for this image is THIS folder. Trim everything except the
+# files the Dockerfile actually COPYs.
+
+# Local virtualenv & python caches.
+.venv/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# azd / git / IDE.
+.azure/
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Sample-specific files not needed at runtime.
+README.md
+call_server.py
+agent.yaml
+agent.manifest.yaml
+azure.yaml
+infra/
+scripts/
+workspace.pyproject.toml

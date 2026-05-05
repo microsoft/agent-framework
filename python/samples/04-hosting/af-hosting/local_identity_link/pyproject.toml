@@ -1,0 +1,32 @@
+[project]
+name = "agent-framework-hosting-sample-complete"
+version = "0.0.1"
+description = "Complete multi-channel hosting sample (Responses + Invocations + Telegram + Activity Protocol + Entra identity-link)."
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-hosting",
+    "agent-framework-hosting-activity-protocol",
+    "agent-framework-hosting-entra",
+    "agent-framework-hosting-invocations",
+    "agent-framework-hosting-responses",
+    "agent-framework-hosting-telegram",
+    "azure-identity",
+    "hypercorn>=0.17",
+    "httpx>=0.27",
+    "aiohttp>=3.13.5",
+]
+
+[dependency-groups]
+dev = ["openai>=1.99"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+agent-framework-hosting = { path = "../../../../packages/hosting", editable = true }
+agent-framework-hosting-activity-protocol = { path = "../../../../packages/hosting-activity-protocol", editable = true }
+agent-framework-hosting-entra = { path = "../../../../packages/hosting-entra", editable = true }
+agent-framework-hosting-invocations = { path = "../../../../packages/hosting-invocations", editable = true }
+agent-framework-hosting-responses = { path = "../../../../packages/hosting-responses", editable = true }
+agent-framework-hosting-telegram = { path = "../../../../packages/hosting-telegram", editable = true }

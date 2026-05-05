@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
+
+kind: hosted
+name: agent-framework-hosting-sample
+description: |
+    Minimal Agent Framework multi-channel hosting sample (Responses + Invocations) packaged for the Foundry Hosted Agents runtime. Demonstrates that an ``AgentFrameworkHost`` configured with the Responses and Invocations channels under their default mounts is a drop-in Hosted Agent image (per ADR 0026 §11) — no protocol shim, no Foundry-specific server.
+metadata:
+    tags:
+        - Agent Framework
+        - AI Agent Hosting
+        - Azure AI AgentServer
+        - Responses Protocol
+        - Invocations Protocol
+        - Streaming
+        - Multi-Channel
+protocols:
+    - protocol: responses
+      version: 1.0.0
+    - protocol: invocations
+      version: 1.0.0
+resources:
+    cpu: "1"
+    memory: 2Gi
+environment_variables:
+    - name: MODEL_DEPLOYMENT_NAME
+      value: gpt-5.4-nano
