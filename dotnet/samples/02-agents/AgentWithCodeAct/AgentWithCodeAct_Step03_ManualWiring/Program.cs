@@ -35,6 +35,6 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
     .GetChatClient(deploymentName)
-    .AsAIAgent(instructions: instructions, tools: [executeCode.AsAIFunction()]);
+    .AsAIAgent(instructions: instructions, tools: [executeCode]);
 
 Console.WriteLine(await agent.RunAsync("What is 12.3 * 4.5? Use the multiply tool from within `execute_code`."));

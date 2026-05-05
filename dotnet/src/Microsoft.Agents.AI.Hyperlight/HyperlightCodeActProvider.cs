@@ -302,7 +302,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
 
     internal static bool ComputeApprovalRequired(CodeActApprovalMode mode, IReadOnlyList<AIFunction> tools) =>
         mode == CodeActApprovalMode.AlwaysRequire
-            || tools.Any(t => t is ApprovalRequiredAIFunction);
+            || tools.Any(t => t.GetService<ApprovalRequiredAIFunction>() is not null);
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(this._disposed, this);
 

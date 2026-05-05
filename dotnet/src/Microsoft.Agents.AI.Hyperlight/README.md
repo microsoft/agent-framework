@@ -11,7 +11,7 @@ The package exposes two entry points:
   one `HyperlightCodeActProvider` may be attached to a given agent; it
   enforces this through a fixed `StateKeys` value so `ChatClientAgent`'s
   state-key uniqueness validation rejects duplicate registrations.
-* **`HyperlightExecuteCodeFunction`** — a standalone `AIFunction` wrapper for
+* **`HyperlightExecuteCodeFunction`** — a standalone `AIFunction` for
   static/manual wiring when the sandbox configuration is fixed for the
   agent's lifetime.
 

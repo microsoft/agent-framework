@@ -10,10 +10,6 @@
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
-  <PropertyGroup>
-    <!-- Re-enable packing once we are ready to release. -->
-    <IsPackable>false</IsPackable>
-  </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Hyperlight.HyperlightSandbox.Api" />
@@ -27,7 +23,12 @@
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework - Hyperlight CodeAct integration</Title>
     <Description>Provides Hyperlight-backed CodeAct (sandboxed code execution) integration for Microsoft Agent Framework.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Hyperlight.UnitTests" />
