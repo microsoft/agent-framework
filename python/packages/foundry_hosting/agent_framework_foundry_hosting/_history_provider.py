@@ -39,7 +39,10 @@ Environment variables read:
 
 Local fallback: when ``FOUNDRY_HOSTING_ENVIRONMENT`` is unset, the provider
 transparently falls back to :class:`InMemoryResponseProvider` so the same
-agent code runs in dev.
+agent code runs in dev. Pass ``local_storage_root`` to use a persistent
+file-based store instead of in-memory; histories are then laid out as
+``{root}/{user_key or "~none"}/{chat_key or "~none"}/{session_id}.jsonl``
+via :class:`agent_framework.FileHistoryProvider`.
 """
 
 from __future__ import annotations
@@ -48,12 +51,14 @@ import contextlib
 import logging
 import os
 import time
+from base64 import urlsafe_b64encode
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from agent_framework import HistoryProvider, Message
+from agent_framework import FileHistoryProvider, HistoryProvider, Message
 from azure.ai.agentserver.responses import (
     FoundryStorageProvider,
     FoundryStorageSettings,
@@ -175,7 +180,7 @@ def bind_request_context(
     response_id: str,
     previous_response_id: str | None = None,
     **_unused: Any,
-) -> "Iterator[None]":
+) -> Iterator[None]:
     """Bind the per-request response-chain anchors for this provider.
 
     Intended for the host (or any caller orchestrating an
@@ -209,7 +214,7 @@ def get_current_request_context() -> _RequestContext | None:
     return _request_var.get()
 
 
-def _host_isolation() -> "IsolationContext | None":
+def _host_isolation() -> IsolationContext | None:
     """Lift the host-bound isolation contextvar into our local type.
 
     The host installs an ASGI middleware that reads
@@ -247,6 +252,62 @@ def _host_isolation() -> "IsolationContext | None":
 _StorageBackend = "FoundryStorageProvider | InMemoryResponseProvider"
 
 
+# Sentinel directory name used in place of a missing ``user_key`` /
+# ``chat_key`` when laying out file-based local history. The tilde
+# prefix is reserved (``_is_safe_isolation_segment`` rejects keys that
+# start with one) so a real isolation key can never collide with the
+# sentinel after sanitisation.
+_ISOLATION_NONE_MARKER = "~none"
+_ISOLATION_ENCODED_PREFIX = "~iso-"
+
+# Windows reserved file/directory stems. Mirrors
+# ``FileHistoryProvider._WINDOWS_RESERVED_FILE_STEMS`` so the directory
+# layer enforces the same portability constraints the file layer does.
+_WINDOWS_RESERVED_STEMS = frozenset({
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+})
+
+
+def _is_safe_isolation_segment(value: str) -> bool:
+    """Return whether ``value`` is safe to use directly as a directory name.
+
+    Rules mirror :meth:`FileHistoryProvider._is_literal_session_file_stem_safe`,
+    with the additional rule that a leading tilde is reserved for our
+    sentinel/encoded prefixes so real keys can never collide with them.
+    """
+    if (
+        not value
+        or value.startswith((".", "~"))
+        or value.endswith((" ", "."))
+        or value.upper() in _WINDOWS_RESERVED_STEMS
+    ):
+        return False
+    if any(ord(character) < 32 for character in value):
+        return False
+    return all(character.isalnum() or character in "._-" for character in value)
+
+
+def _encode_isolation_segment(value: str | None) -> str:
+    """Encode an isolation key into a filesystem-safe directory name.
+
+    * ``None`` / empty → ``"~none"`` sentinel.
+    * Already-safe values pass through unchanged.
+    * Anything else is base64-url-encoded and prefixed with ``"~iso-"``
+      so it is unambiguous and never collides with a real (safe) key.
+    """
+    if value is None or value == "":
+        return _ISOLATION_NONE_MARKER
+    if _is_safe_isolation_segment(value):
+        return value
+    encoded = urlsafe_b64encode(value.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{_ISOLATION_ENCODED_PREFIX}{encoded}"
+
+
 class FoundryHostedAgentHistoryProvider(HistoryProvider):
     """``HistoryProvider`` backed by Foundry Hosted Agent storage.
 
@@ -256,11 +317,25 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
     selection is driven by the ``FOUNDRY_HOSTING_ENVIRONMENT``
     environment variable.
 
-    ``session_id`` semantics: the value passed to :meth:`get_messages`
-    and :meth:`save_messages` is treated as the Responses
-    ``previous_response_id`` (or ``conversation_id``) whose chain to
-    load. When omitted (and no host-bound chain anchor is set),
-    :meth:`get_messages` returns an empty list (a fresh conversation).
+    For local runs that need to *persist* history across process
+    restarts, pass ``local_storage_root``: the provider then writes
+    each conversation to
+    ``{root}/{user_key or "~none"}/{chat_key or "~none"}/{session_id}.jsonl``
+    via :class:`agent_framework.FileHistoryProvider`. The Foundry
+    response-chain semantics (``previous_response_id`` walking,
+    ``caresp_*`` id stamping, ``ResponseObject`` envelopes) are
+    bypassed in file mode — the on-disk format is plain JSONL of
+    :class:`Message` payloads, identical to ``FileHistoryProvider``
+    standalone usage. ``local_storage_root`` is ignored when running
+    hosted (Foundry storage always wins).
+
+    ``session_id`` semantics: in hosted / in-memory mode the value
+    passed to :meth:`get_messages` and :meth:`save_messages` is treated
+    as the Responses ``previous_response_id`` (or ``conversation_id``)
+    whose chain to load. When omitted (and no host-bound chain anchor
+    is set), :meth:`get_messages` returns an empty list (a fresh
+    conversation). In file mode ``session_id`` is used as the literal
+    filename stem (``FileHistoryProvider`` sanitises unsafe values).
     """
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "foundry_hosted_agent"
@@ -268,7 +343,7 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
     def __init__(
         self,
         *,
-        credential: "AsyncTokenCredential | None" = None,
+        credential: AsyncTokenCredential | None = None,
         endpoint: str | None = None,
         history_limit: int = 100,
         source_id: str = DEFAULT_SOURCE_ID,
@@ -277,6 +352,7 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
         store_context_messages: bool = False,
         store_context_from: set[str] | None = None,
         store_outputs: bool = True,
+        local_storage_root: str | Path | None = None,
     ) -> None:
         """Initialize the provider.
 
@@ -284,13 +360,15 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
             credential: Async token credential used to authenticate against
                 the Foundry storage API. Required when running hosted
                 (``FOUNDRY_HOSTING_ENVIRONMENT`` is set). Ignored in
-                local-mode (the in-memory backend needs no auth).
+                local-mode (the in-memory / file backends need no auth).
             endpoint: Foundry project endpoint URL. Defaults to the value
                 of the ``FOUNDRY_PROJECT_ENDPOINT`` environment variable.
                 Required when running hosted.
             history_limit: Maximum number of history items to fetch per
                 ``get_messages`` call. Mirrors the agent-server runtime's
                 ``ResponseContext._history_limit``. Default ``100``.
+                Ignored in file mode (``FileHistoryProvider`` returns the
+                full session file each call).
             source_id: Unique identifier for this provider instance, as
                 required by ``HistoryProvider``.
             load_messages: Whether to load messages before invocation.
@@ -308,6 +386,13 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
             store_outputs: Whether to mirror response messages into Foundry
                 storage. Default ``True`` for the same reason as
                 ``store_inputs``.
+            local_storage_root: When set, *and* the provider is running
+                outside a Foundry Hosted Agent container, persist history
+                to JSONL files under
+                ``{root}/{user_key or "~none"}/{chat_key or "~none"}/{session_id}.jsonl``
+                instead of using the in-memory backend. Ignored when
+                hosted (with a one-time INFO log). Defaults to ``None``
+                (in-memory local fallback).
         """
         super().__init__(
             source_id=source_id,
@@ -323,6 +408,17 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
         self._endpoint = endpoint or os.environ.get(_ENV_FOUNDRY_PROJECT_ENDPOINT) or None
         self._backend: FoundryStorageProvider | InMemoryResponseProvider | None = None
 
+        self._local_storage_root: Path | None = (
+            Path(local_storage_root).resolve() if local_storage_root is not None else None
+        )
+        # Cache one ``FileHistoryProvider`` per (user_key, chat_key)
+        # tuple. Bounded by the number of distinct isolation scopes the
+        # process sees; cleared on ``aclose``.
+        self._file_providers: dict[tuple[str, str], FileHistoryProvider] = {}
+        self._hosted_local_root_warned = False
+        if self._local_storage_root is not None and self.is_hosted_environment():
+            self._warn_hosted_local_root_ignored()
+
     @staticmethod
     def is_hosted_environment() -> bool:
         """Return ``True`` when running inside a Foundry Hosted Agent container.
@@ -333,7 +429,7 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
         """
         return bool(os.environ.get(_ENV_FOUNDRY_HOSTING_ENVIRONMENT))
 
-    def _resolve_backend(self) -> "FoundryStorageProvider | InMemoryResponseProvider":
+    def _resolve_backend(self) -> FoundryStorageProvider | InMemoryResponseProvider:
         """Return the storage backend, constructing it lazily on first use.
 
         * If ``FOUNDRY_HOSTING_ENVIRONMENT`` is set, build a
@@ -378,15 +474,87 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
         """Release storage resources held by this provider.
 
         Safe to call multiple times. Closes the lazily-constructed
-        backend if one was created. ``InMemoryResponseProvider`` has no
-        ``aclose`` and is closed implicitly on garbage collection.
+        backend if one was created and drops any cached file-history
+        providers. ``InMemoryResponseProvider`` and
+        ``FileHistoryProvider`` have no ``aclose`` and are closed
+        implicitly on garbage collection.
         """
+        self._file_providers.clear()
         if self._backend is None:
             return
         aclose = getattr(self._backend, "aclose", None)
         if aclose is not None:
             await aclose()
         self._backend = None
+
+    def _warn_hosted_local_root_ignored(self) -> None:
+        """Log (once) that ``local_storage_root`` is being ignored under hosted mode."""
+        if self._hosted_local_root_warned:
+            return
+        self._hosted_local_root_warned = True
+        logger.info(
+            "FoundryHostedAgentHistoryProvider ignored local_storage_root=%s because "
+            "FOUNDRY_HOSTING_ENVIRONMENT is set; Foundry storage takes precedence "
+            "when hosted.",
+            self._local_storage_root,
+        )
+
+    def _resolve_local_file_provider(
+        self,
+        isolation: IsolationContext | None,
+    ) -> FileHistoryProvider | None:
+        """Return a ``FileHistoryProvider`` for the current isolation, or ``None``.
+
+        Returns ``None`` when ``local_storage_root`` is unset *or* the
+        provider is running in hosted mode (in which case Foundry
+        storage handles persistence). Otherwise builds — and caches —
+        one provider per (user_key, chat_key) tuple, rooted at the
+        sanitised ``{root}/{user_segment}/{chat_segment}`` directory.
+
+        Raises:
+            ValueError: If the resolved isolation directory escapes
+                ``local_storage_root`` (defence in depth — the
+                sanitisation should already prevent this).
+        """
+        if self._local_storage_root is None:
+            return None
+        if self.is_hosted_environment():
+            self._warn_hosted_local_root_ignored()
+            return None
+
+        user_key = isolation.user_key if isolation is not None else None
+        chat_key = isolation.chat_key if isolation is not None else None
+        cache_key = (user_key or "", chat_key or "")
+        cached = self._file_providers.get(cache_key)
+        if cached is not None:
+            return cached
+
+        user_segment = _encode_isolation_segment(user_key)
+        chat_segment = _encode_isolation_segment(chat_key)
+        target_dir = (self._local_storage_root / user_segment / chat_segment).resolve()
+        if not target_dir.is_relative_to(self._local_storage_root):
+            raise ValueError(
+                "Isolation segments resolved outside of local_storage_root: "
+                f"user_key={user_key!r} chat_key={chat_key!r}"
+            )
+
+        provider = FileHistoryProvider(
+            target_dir,
+            source_id=f"{self.source_id}__file__{user_segment}__{chat_segment}",
+            load_messages=self.load_messages,
+            store_inputs=self.store_inputs,
+            store_context_messages=self.store_context_messages,
+            store_context_from=self.store_context_from,
+            store_outputs=self.store_outputs,
+        )
+        self._file_providers[cache_key] = provider
+        logger.debug(
+            "FoundryHostedAgentHistoryProvider created file backend for isolation (user=%s, chat=%s) at %s",
+            user_key,
+            chat_key,
+            target_dir,
+        )
+        return provider
 
     async def get_messages(
         self,
@@ -421,7 +589,18 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
             (such as chat-isolation-key values) are skipped because the
             storage backend rejects them with HTTP 400 "Malformed
             identifier".
+
+            When ``local_storage_root`` is configured (and the provider
+            is running outside a Foundry Hosted Agent container), this
+            method instead delegates to a per-isolation
+            :class:`FileHistoryProvider` and ``session_id`` is used as
+            the literal file stem.
         """
+        isolation = kwargs.get("isolation") or _host_isolation() or get_current_isolation()
+        file_provider = self._resolve_local_file_provider(isolation)
+        if file_provider is not None:
+            return await file_provider.get_messages(session_id, state=state, **kwargs)
+
         bound = get_current_request_context()
         # Prefer the host-bound previous_response_id over the session_id
         # the framework feeds in: the bound value is the id we ourselves
@@ -441,7 +620,6 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
             # No walkable anchor → fresh conversation, nothing to load.
             return []
 
-        isolation = kwargs.get("isolation") or _host_isolation() or get_current_isolation()
         backend = self._resolve_backend()
 
         try:
@@ -471,7 +649,7 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
     async def save_messages(
         self,
         session_id: str | None,
-        messages: "Sequence[Message]",
+        messages: Sequence[Message],
         *,
         state: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -504,8 +682,22 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
             state: Unused — kept for ``HistoryProvider`` compatibility.
             **kwargs: Extensibility hook; ``isolation`` may be supplied
                 explicitly to override the contextvar.
+
+        Notes:
+            When ``local_storage_root`` is configured (and the provider
+            is running outside a Foundry Hosted Agent container), this
+            method instead delegates to a per-isolation
+            :class:`FileHistoryProvider` and ``session_id`` is used as
+            the literal file stem. The Foundry response-chain stamping
+            described above is bypassed entirely in that mode.
         """
         if not messages:
+            return
+
+        isolation = kwargs.get("isolation") or _host_isolation() or get_current_isolation()
+        file_provider = self._resolve_local_file_provider(isolation)
+        if file_provider is not None:
+            await file_provider.save_messages(session_id, messages, state=state, **kwargs)
             return
 
         bound = get_current_request_context()
@@ -538,7 +730,6 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
         if previous_response_id is None and env_session and env_session.startswith(("caresp_", "resp_")):
             previous_response_id = env_session
 
-        isolation = kwargs.get("isolation") or _host_isolation() or get_current_isolation()
         logger.debug(
             "save_messages: response_id=%r previous_response_id=%r isolation=%s",
             response_id,

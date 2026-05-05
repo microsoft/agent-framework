@@ -439,6 +439,121 @@ class TestAclose:
         await prov.aclose()  # idempotent — second call is a no-op
 
 
+# region Local file storage option
+
+
+class TestLocalFileStorage:
+    """`local_storage_root` swaps the in-memory local fallback for a
+    per-isolation :class:`FileHistoryProvider` so dev runs persist
+    across process restarts."""
+
+    async def test_unset_keeps_in_memory_fallback(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+        monkeypatch.delenv("FOUNDRY_HOSTING_ENVIRONMENT", raising=False)
+        prov = FoundryHostedAgentHistoryProvider()
+        assert prov._resolve_local_file_provider(None) is None  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(
+            prov._resolve_backend(),  # pyright: ignore[reportPrivateUsage]
+            InMemoryResponseProvider,
+        )
+
+    async def test_creates_per_isolation_provider(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+        monkeypatch.delenv("FOUNDRY_HOSTING_ENVIRONMENT", raising=False)
+        prov = FoundryHostedAgentHistoryProvider(local_storage_root=tmp_path)
+        iso = IsolationContext(user_key="alice", chat_key="chat-1")
+
+        fp = prov._resolve_local_file_provider(iso)  # pyright: ignore[reportPrivateUsage]
+        assert fp is not None
+        # Cached on subsequent calls for the same (user, chat).
+        assert prov._resolve_local_file_provider(iso) is fp  # pyright: ignore[reportPrivateUsage]
+        # Different isolation → different provider rooted at a different dir.
+        other = prov._resolve_local_file_provider(  # pyright: ignore[reportPrivateUsage]
+            IsolationContext(user_key="bob", chat_key="chat-1"),
+        )
+        assert other is not None and other is not fp
+        assert fp.storage_path != other.storage_path
+        assert fp.storage_path == (tmp_path / "alice" / "chat-1").resolve()
+
+    async def test_missing_isolation_uses_sentinel_dir(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+        monkeypatch.delenv("FOUNDRY_HOSTING_ENVIRONMENT", raising=False)
+        prov = FoundryHostedAgentHistoryProvider(local_storage_root=tmp_path)
+        fp = prov._resolve_local_file_provider(None)  # pyright: ignore[reportPrivateUsage]
+        assert fp is not None
+        assert fp.storage_path == (tmp_path / "~none" / "~none").resolve()
+
+    async def test_unsafe_isolation_segments_are_encoded(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+        monkeypatch.delenv("FOUNDRY_HOSTING_ENVIRONMENT", raising=False)
+        prov = FoundryHostedAgentHistoryProvider(local_storage_root=tmp_path)
+        iso = IsolationContext(user_key="../escape", chat_key="ok-chat")
+        fp = prov._resolve_local_file_provider(iso)  # pyright: ignore[reportPrivateUsage]
+        assert fp is not None
+        # Encoded segment never contains a ``/`` and never escapes the root.
+        assert fp.storage_path.is_relative_to(tmp_path.resolve())
+        assert "../" not in str(fp.storage_path)
+        # Encoded segments use the reserved ``~iso-`` prefix.
+        parts = fp.storage_path.relative_to(tmp_path.resolve()).parts
+        assert parts[0].startswith("~iso-")
+        assert parts[1] == "ok-chat"
+
+    async def test_hosted_mode_ignores_local_storage_root(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
+        with caplog.at_level("INFO", logger="agent_framework_foundry_hosting._history_provider"):
+            prov = FoundryHostedAgentHistoryProvider(local_storage_root=tmp_path)
+            # File provider is never resolved when hosted.
+            assert prov._resolve_local_file_provider(None) is None  # pyright: ignore[reportPrivateUsage]
+        assert any("ignored local_storage_root" in record.message for record in caplog.records)
+
+    async def test_get_and_save_round_trip_via_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+        monkeypatch.delenv("FOUNDRY_HOSTING_ENVIRONMENT", raising=False)
+        prov = FoundryHostedAgentHistoryProvider(local_storage_root=tmp_path)
+        iso = IsolationContext(user_key="alice", chat_key="chat-1")
+
+        msgs = [
+            Message(role="user", contents=["hello"]),
+            Message(role="assistant", contents=["hi back"]),
+        ]
+        await prov.save_messages("conv-1", msgs, isolation=iso)
+
+        # File exists at the expected nested path with session_id as stem.
+        expected_path = tmp_path / "alice" / "chat-1" / "conv-1.jsonl"
+        assert expected_path.exists()
+        # Two JSONL records (one per message).
+        assert len([line for line in expected_path.read_text().splitlines() if line.strip()]) == 2
+
+        loaded = await prov.get_messages("conv-1", isolation=iso)
+        assert [m.text for m in loaded] == ["hello", "hi back"]
+
+        # Different isolation → different file → independent history.
+        bob_loaded = await prov.get_messages(
+            "conv-1",
+            isolation=IsolationContext(user_key="bob", chat_key="chat-1"),
+        )
+        assert bob_loaded == []
+
+    async def test_session_id_with_special_chars_is_sanitised_by_file_provider(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        # The wrapper passes ``session_id`` through unchanged; the
+        # delegate ``FileHistoryProvider`` is responsible for sanitising
+        # it. This test just confirms the delegation works for a
+        # non-trivial id without raising.
+        monkeypatch.delenv("FOUNDRY_HOSTING_ENVIRONMENT", raising=False)
+        prov = FoundryHostedAgentHistoryProvider(local_storage_root=tmp_path)
+        msgs = [Message(role="user", contents=["hi"])]
+        await prov.save_messages("conv:with:colons", msgs)
+        loaded = await prov.get_messages("conv:with:colons")
+        assert [m.text for m in loaded] == ["hi"]
+
+    async def test_aclose_clears_file_provider_cache(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+        monkeypatch.delenv("FOUNDRY_HOSTING_ENVIRONMENT", raising=False)
+        prov = FoundryHostedAgentHistoryProvider(local_storage_root=tmp_path)
+        prov._resolve_local_file_provider(IsolationContext(user_key="alice"))  # pyright: ignore[reportPrivateUsage]
+        assert prov._file_providers  # pyright: ignore[reportPrivateUsage]
+        await prov.aclose()
+        assert not prov._file_providers  # pyright: ignore[reportPrivateUsage]
+
+
 # region Shared module re-exports
 
 
