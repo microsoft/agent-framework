@@ -98,7 +98,8 @@ public sealed class ShellEnvironmentProvider : AIContextProvider
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         // First-call wins: subsequent concurrent callers await the same Task.
-        // Probe is best-effort — failures surface as null fields, not exceptions.
+        // If the cached task faults or is cancelled, clear it so the next call
+        // re-probes instead of permanently poisoning the provider.
         var task = this._snapshotTask;
         if (task is null)
         {
@@ -106,9 +107,21 @@ public sealed class ShellEnvironmentProvider : AIContextProvider
             task = Interlocked.CompareExchange(ref this._snapshotTask, fresh, null) ?? fresh;
         }
 
-        var snapshot = await task.ConfigureAwait(false);
-        this.CurrentSnapshot = snapshot;
+        ShellEnvironmentSnapshot snapshot;
+        try
+        {
+            snapshot = await task.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Replace the cached failed task with null only if no other thread
+            // has already done so. Concurrent waiters will all observe the
+            // failure once, but the next call starts a fresh probe.
+            _ = Interlocked.CompareExchange(ref this._snapshotTask, null, task);
+            throw;
+        }
 
+        this.CurrentSnapshot = snapshot;
         var formatter = this._options.InstructionsFormatter ?? DefaultInstructionsFormatter;
         return new AIContext { Instructions = formatter(snapshot) };
     }

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -259,6 +260,84 @@ public sealed class ShellEnvironmentProviderTests
         public Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default) =>
             Task.FromResult(this._factory(cancellationToken));
         public ValueTask DisposeAsync() => default;
+    }
+
+    [Fact]
+    public async Task ProvideAIContextAsync_FirstCallFails_NextCallRetriesAndSucceedsAsync()
+    {
+        // Reproduce the "poisoned _snapshotTask" scenario: the first probe throws
+        // (e.g. caller cancels, or an executor blip), and a subsequent call must
+        // be able to recover instead of returning the cached failure forever.
+        var calls = 0;
+        var fake = new ThrowingShellExecutor(_ =>
+        {
+            calls++;
+            if (calls == 1)
+            {
+                throw new InvalidOperationException("boom");
+            }
+            return new ShellResult("VERSION=2.0\nCWD=/tmp\n", "", 0, TimeSpan.Zero);
+        });
+        var provider = new ShellEnvironmentProvider(fake, new()
+        {
+            OverrideFamily = ShellFamily.Posix,
+            ProbeTools = [],
+        });
+
+        // First call surfaces the executor failure.
+        await Assert.ThrowsAnyAsync<Exception>(() => InvokeProvideAsync(provider));
+
+        // Second call must re-probe and succeed.
+        var ctx = await InvokeProvideAsync(provider);
+        Assert.NotNull(ctx.Instructions);
+        Assert.NotNull(provider.CurrentSnapshot);
+        Assert.Equal("2.0", provider.CurrentSnapshot!.ShellVersion);
+    }
+
+    [Fact]
+    public async Task ProvideAIContextAsync_FirstCallCancelled_NextCallSucceedsAsync()
+    {
+        // Round 6 made caller cancellation propagate. Combined with the cached
+        // _snapshotTask, a single Ctrl-C on the first turn used to permanently
+        // break the provider — verify that round 7's reset clears that.
+        var calls = 0;
+        var fake = new ThrowingShellExecutor(token =>
+        {
+            calls++;
+            if (calls == 1)
+            {
+                token.ThrowIfCancellationRequested();
+            }
+            return new ShellResult("VERSION=3.0\nCWD=/x\n", "", 0, TimeSpan.Zero);
+        });
+        var provider = new ShellEnvironmentProvider(fake, new()
+        {
+            OverrideFamily = ShellFamily.Posix,
+            ProbeTools = [],
+        });
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => InvokeProvideAsync(provider, cts.Token));
+
+        var ctx = await InvokeProvideAsync(provider);
+        Assert.NotNull(ctx.Instructions);
+        Assert.Equal("3.0", provider.CurrentSnapshot!.ShellVersion);
+    }
+
+    /// <summary>
+    /// Invokes the protected <c>ProvideAIContextAsync</c> via reflection so tests
+    /// can target the cached-task code path directly. <see cref="ShellEnvironmentProvider"/>
+    /// is sealed, so we cannot derive a public passthrough.
+    /// </summary>
+    private static async Task<AIContext> InvokeProvideAsync(ShellEnvironmentProvider provider, CancellationToken ct = default)
+    {
+        var method = typeof(ShellEnvironmentProvider).GetMethod(
+            "ProvideAIContextAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+            ?? throw new InvalidOperationException("ProvideAIContextAsync not found");
+        var task = (ValueTask<AIContext>)method.Invoke(provider, new object?[] { null, ct })!;
+        return await task.ConfigureAwait(false);
     }
 
     private sealed class FakeShellExecutor : IShellExecutor

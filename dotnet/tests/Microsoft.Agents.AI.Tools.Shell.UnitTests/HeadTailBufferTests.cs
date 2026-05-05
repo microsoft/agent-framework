@@ -34,8 +34,9 @@ public sealed class HeadTailBufferTests
         var (text, truncated) = buf.ToFinalString();
 
         Assert.True(truncated);
-        // Result must respect the cap (allow some overhead for the marker line).
-        Assert.True(text.Length <= 4096 + 128, $"Result was {text.Length} chars, expected <= ~{4096 + 128}");
+        // Result must respect the byte cap (allow some overhead for the marker line).
+        var byteCount = System.Text.Encoding.UTF8.GetByteCount(text);
+        Assert.True(byteCount <= 4096 + 128, $"Result was {byteCount} bytes, expected <= ~{4096 + 128}");
         Assert.Contains("line 000000", text, System.StringComparison.Ordinal);
         Assert.Contains("[... truncated", text, System.StringComparison.Ordinal);
         Assert.Contains("line 099999", text, System.StringComparison.Ordinal);
@@ -56,8 +57,32 @@ public sealed class HeadTailBufferTests
         var (text, truncated) = buf.ToFinalString();
 
         Assert.True(truncated);
-        // The exact upper bound depends on marker formatting, but it must be
-        // far less than the ~1 MiB total of streamed input.
-        Assert.True(text.Length < 4096, $"Result was {text.Length} chars, expected < 4096");
+        // The exact upper bound depends on marker formatting, but it must be far
+        // less than the ~1 MiB total of streamed input.
+        var byteCount = System.Text.Encoding.UTF8.GetByteCount(text);
+        Assert.True(byteCount < 4096, $"Result was {byteCount} bytes, expected < 4096");
+    }
+
+    [Fact]
+    public void Append_MultiByteUtf8_RespectsByteBudgetAndNeverSplitsRunes()
+    {
+        // Each "🔥" is 4 UTF-8 bytes (and 2 UTF-16 code units). A char-based
+        // buffer using Queue<char> would happily split a surrogate pair when
+        // capacity ran out, leaving an unpaired surrogate (U+FFFD on decode).
+        var buf = new HeadTailBuffer(cap: 32);
+        for (var i = 0; i < 200; i++)
+        {
+            buf.AppendLine("🔥🔥🔥🔥🔥");
+        }
+
+        var (text, truncated) = buf.ToFinalString();
+
+        Assert.True(truncated);
+
+        // Result must round-trip through UTF-8 unchanged: no rune was split.
+        var roundTripped = System.Text.Encoding.UTF8.GetString(System.Text.Encoding.UTF8.GetBytes(text));
+        Assert.Equal(text, roundTripped);
+
+        Assert.DoesNotContain("\uFFFD", text);
     }
 }
