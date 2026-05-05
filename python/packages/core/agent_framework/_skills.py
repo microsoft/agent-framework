@@ -189,9 +189,10 @@ class InlineSkillResource(SkillResource):
             return self.content
 
         if self.function is not None:
-            if inspect.iscoroutinefunction(self.function):
-                return await self.function(**kwargs) if self._accepts_kwargs else await self.function()
-            return self.function(**kwargs) if self._accepts_kwargs else self.function()
+            result = self.function(**kwargs) if self._accepts_kwargs else await self.function()
+            if inspect.isawaitable(result):
+                return await result
+            return result
 
         raise ValueError(f"Resource '{self.name}' has no content or function.")
 
