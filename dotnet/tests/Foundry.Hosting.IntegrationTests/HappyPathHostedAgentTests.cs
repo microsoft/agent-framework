@@ -20,7 +20,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
 {
     private readonly HappyPathHostedAgentFixture _fixture = fixture;
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact]
     public async Task RunAsync_ReturnsNonEmptyTextAsync()
     {
         // Arrange
@@ -33,7 +33,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
         Assert.False(string.IsNullOrWhiteSpace(response.Text));
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact]
     public async Task RunStreamingAsync_YieldsAtLeastOneUpdateAsync()
     {
         // Arrange
@@ -54,7 +54,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
         Assert.False(string.IsNullOrWhiteSpace(string.Concat(collected)));
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact]
     public async Task MultiTurn_WithPreviousResponseId_PreservesContextAsync()
     {
         // Arrange
@@ -71,7 +71,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
         Assert.Contains("42", second.Text);
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact(Skip = "Test container does not yet emit usable response_id / conversation_id chains; see Foundry.Hosting.IntegrationTests.TestContainer/Program.cs.")]
     public async Task MultiTurn_WithConversationId_PreservesContextAsync()
     {
         // Arrange
@@ -96,7 +96,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
         }
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact]
     public async Task StoredFalse_Baseline_DoesNotPersistResponseAsync()
     {
         // Arrange
@@ -119,7 +119,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
         await Assert.ThrowsAnyAsync<Exception>(() => responsesClient.GetResponseAsync(responseId));
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact(Skip = "Test container does not yet emit usable response_id / conversation_id chains; see Foundry.Hosting.IntegrationTests.TestContainer/Program.cs.")]
     public async Task StoredFalse_WithPreviousResponseId_ReadsHistoryButDoesNotAppendAsync()
     {
         // Arrange
@@ -144,7 +144,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
         await Assert.ThrowsAnyAsync<Exception>(() => responsesClient.GetResponseAsync(second.ResponseId!));
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact(Skip = "Test container does not yet emit usable response_id / conversation_id chains; see Foundry.Hosting.IntegrationTests.TestContainer/Program.cs.")]
     public async Task StoredFalse_WithConversationId_ReadsHistoryButDoesNotAppendAsync()
     {
         // Arrange
@@ -177,7 +177,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
         }
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact(Skip = "Test container does not yet emit usable response_id / conversation_id chains; see Foundry.Hosting.IntegrationTests.TestContainer/Program.cs.")]
     public async Task StoredTrue_Default_PersistsResponseInChainAsync()
     {
         // Arrange
@@ -193,7 +193,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
         Assert.NotNull(fetched.Value);
     }
 
-    [Fact(Skip = "Pending TestContainer build and end to end smoke (step 5).")]
+    [Fact]
     public async Task Instructions_FromContainerDefinition_AreObeyedAsync()
     {
         // Arrange: the container side instructions for happy-path enforce a single word reply
