@@ -46,8 +46,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Resolve to the repo root regardless of the caller's PWD so all relative paths used below
+# (TestContainerProject, the framework src dirs hashed for the image tag) resolve correctly.
+# This script lives at <repoRoot>/dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/.
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../../../..")).Path
+Push-Location $RepoRoot
+try {
+
 if (-not (Test-Path $TestContainerProject)) {
-    throw "Test container project not found at '$TestContainerProject'."
+    throw "Test container project not found at '$TestContainerProject' (repo root '$RepoRoot')."
 }
 
 # Strip any scheme/trailing slash from the registry, then derive the ACR short name.
@@ -116,3 +123,8 @@ if ($LASTEXITCODE -ne 0) {
 
 # Emit the env var line for shells / CI consumption.
 "IT_HOSTED_AGENT_IMAGE=$image"
+
+}
+finally {
+    Pop-Location
+}

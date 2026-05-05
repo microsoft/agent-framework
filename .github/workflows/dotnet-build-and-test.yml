@@ -60,7 +60,7 @@ jobs:
               - 'dotnet/tests/Foundry.Hosting.IntegrationTests/**'
               - 'dotnet/tests/Foundry.Hosting.IntegrationTests.TestContainer/**'
               - 'dotnet/Directory.Packages.props'
-              - 'scripts/it-build-image.ps1'
+              - 'dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/it-build-image.ps1'
               - '.github/workflows/dotnet-build-and-test.yml'
       # run only if 'dotnet' files were changed
       - name: dotnet tests
@@ -310,7 +310,7 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($registry)) {
             throw "IT_HOSTED_AGENT_REGISTRY not set in the integration environment."
           }
-          & "${{ github.workspace }}/scripts/it-build-image.ps1" -Registry $registry | Tee-Object -FilePath $env:GITHUB_ENV -Append
+          & "${{ github.workspace }}/dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/it-build-image.ps1" -Registry $registry | Tee-Object -FilePath $env:GITHUB_ENV -Append
 
       - name: Run Foundry Hosted Agents Integration Tests
         shell: pwsh
