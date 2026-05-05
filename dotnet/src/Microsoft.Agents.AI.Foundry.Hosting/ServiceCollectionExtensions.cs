@@ -3,6 +3,7 @@
 using System;
 using System.ClientModel.Primitives;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
 using Azure.Identity;
@@ -230,12 +231,21 @@ public static class FoundryHostingExtensions
         var chatClient = agent.GetService<IChatClient>();
         if (chatClient?.GetService<OpenAIRequestPolicies>() is { } policies)
         {
-            // The HostedAgentUserAgentPolicy is idempotent on the wire (it skips when the
-            // supplement is already present in the User-Agent header), so we can register it
-            // unconditionally without dedup. MEAI's lock-free CAS-append on _entries is safe.
-            policies.AddPolicy(HostedAgentUserAgentPolicy.Instance, PipelinePosition.PerCall);
+            // Hosted agents are typically singletons resolved per request, so AddPolicy must be
+            // called at most once per OpenAIRequestPolicies instance to avoid unbounded growth of
+            // the policy list (each entry adds per-request CPU work even though the User-Agent
+            // value stays stable). Track which instances we have already wired with a
+            // ConditionalWeakTable keyed on the OpenAIRequestPolicies reference; the table holds
+            // weak references so it does not extend the lifetime of the chat client.
+            if (s_userAgentRegistrations.TryAdd(policies, s_boxedTrue))
+            {
+                policies.AddPolicy(HostedAgentUserAgentPolicy.Instance, PipelinePosition.PerCall);
+            }
         }
 
         return agent;
     }
+
+    private static readonly object s_boxedTrue = new();
+    private static readonly ConditionalWeakTable<OpenAIRequestPolicies, object> s_userAgentRegistrations = new();
 }

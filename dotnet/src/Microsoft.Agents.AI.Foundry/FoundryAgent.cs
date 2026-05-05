@@ -102,7 +102,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// Internal constructor used by <c>AsAIAgent</c> extension methods that already have an <see cref="AIProjectClient"/> and a configured <see cref="ChatClientAgent"/>.
     /// </summary>
     internal FoundryAgent(AIProjectClient aiProjectClient, ChatClientAgent innerAgent)
-        : base(Throw.IfNull(innerAgent))
+        : base(WireClientHeaders(Throw.IfNull(innerAgent)))
     {
         this._aiProjectClient = Throw.IfNull(aiProjectClient);
     }
@@ -166,7 +166,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
 
     #region Private helpers
 
-    private static ClientHeadersAgent CreateInnerAgent(
+    private static AIAgent CreateInnerAgent(
         AIProjectClient aiProjectClient,
         string model, string instructions,
         string? name, string? description,
@@ -196,7 +196,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
         return CreateResponsesChatClientAgent(aiProjectClient, options, clientFactory, loggerFactory, services);
     }
 
-    private static ClientHeadersAgent CreateResponsesChatClientAgent(
+    private static AIAgent CreateResponsesChatClientAgent(
         AIProjectClient aiProjectClient,
         ChatClientAgentOptions agentOptions,
         Func<IChatClient, IChatClient>? clientFactory,
@@ -215,9 +215,25 @@ public sealed class FoundryAgent : DelegatingAIAgent
             chatClient = clientFactory(chatClient);
         }
 
-        // Register the ClientHeadersPolicy on the chat client's OpenAIRequestPolicies, if available.
-        // Silent no-op when the chat client is not OpenAI-backed.
-        if (chatClient.GetService<OpenAIRequestPolicies>() is { } policies)
+        return WireClientHeaders(new ChatClientAgent(chatClient, agentOptions, loggerFactory, services));
+    }
+
+    /// <summary>
+    /// Registers <see cref="ClientHeadersPolicy"/> on the agent's underlying chat client (if it
+    /// exposes <see cref="OpenAIRequestPolicies"/>) and wraps the agent in a
+    /// <see cref="ClientHeadersAgent"/> so per-call <c>x-client-*</c> headers stamped via
+    /// <see cref="ClientHeadersExtensions.WithClientHeader(ChatOptions, string, string)"/> reach
+    /// the wire. Idempotent: if the chain already contains a <see cref="ClientHeadersAgent"/>,
+    /// the original instance is returned unchanged.
+    /// </summary>
+    private static AIAgent WireClientHeaders(ChatClientAgent innerAgent)
+    {
+        if (innerAgent.GetService<ClientHeadersAgent>() is not null)
+        {
+            return innerAgent;
+        }
+
+        if (innerAgent.ChatClient.GetService<OpenAIRequestPolicies>() is { } policies)
         {
             OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
                 policies,
@@ -225,11 +241,10 @@ public sealed class FoundryAgent : DelegatingAIAgent
                 System.ClientModel.Primitives.PipelinePosition.PerCall);
         }
 
-        var inner = new ChatClientAgent(chatClient, agentOptions, loggerFactory, services);
-        return new ClientHeadersAgent(inner);
+        return new ClientHeadersAgent(innerAgent);
     }
 
-    private static ClientHeadersAgent CreateInnerAgentFromEndpoint(
+    private static AIAgent CreateInnerAgentFromEndpoint(
         AIProjectClient aiProjectClient,
         Uri agentEndpoint,
         IList<AITool>? tools,
@@ -254,16 +269,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
             chatClient = clientFactory(chatClient);
         }
 
-        if (chatClient.GetService<OpenAIRequestPolicies>() is { } policies)
-        {
-            OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
-                policies,
-                ClientHeadersPolicy.Instance,
-                System.ClientModel.Primitives.PipelinePosition.PerCall);
-        }
-
-        var inner = new ChatClientAgent(chatClient, agentOptions, services: services);
-        return new ClientHeadersAgent(inner);
+        return WireClientHeaders(new ChatClientAgent(chatClient, agentOptions, services: services));
     }
 
     private static AIProjectClient CreateProjectClient(Uri endpoint, AuthenticationTokenProvider credential, AIProjectClientOptions? clientOptions = null)
