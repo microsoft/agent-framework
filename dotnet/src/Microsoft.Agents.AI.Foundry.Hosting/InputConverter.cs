@@ -239,35 +239,32 @@ internal static class InputConverter
     /// arguments — which FICC needs to actually invoke the function on the next turn,
     /// and which the backend Conversations API needs to pair the resulting
     /// <c>function_call_output</c> with its previously-stored <c>function_call</c>.
-    /// Falls back to a minimal placeholder when no mapping is available (e.g.
-    /// out-of-band test inputs), preserving the previous best-effort behavior.
     /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when no mapping is recorded for <paramref name="approvalRequestId"/>.
+    /// Without the mapping we cannot reconstruct the original call faithfully, and any
+    /// placeholder we return would still fail downstream (FICC has no tool to invoke;
+    /// Azure's stored <c>function_call</c> can't pair with the synthetic id) — so we
+    /// fail fast here with a clear, actionable message rather than continuing into a
+    /// confusing HTTP 400 deep inside the agent loop.
+    /// </exception>
     private static ChatMessage ConvertMcpApprovalResponse(string approvalRequestId, bool approve, AgentSessionStateBag? stateBag)
     {
-        var entry = ToolApprovalIdMap.ResolveEntry(stateBag, approvalRequestId);
+        var entry = ToolApprovalIdMap.ResolveEntry(stateBag, approvalRequestId)
+            ?? throw new InvalidOperationException(
+                $"No approval mapping recorded for wire id '{approvalRequestId}'. " +
+                "This typically indicates the outbound mcp_approval_request was emitted " +
+                "by a different process, the session state was not persisted between turns, " +
+                "or the response was synthesized without a corresponding request.");
 
-        FunctionCallContent functionCall;
-        string afRequestId;
-        if (entry is not null)
-        {
-            afRequestId = entry.AfRequestId;
-            functionCall = new FunctionCallContent(
-                entry.CallId,
-                entry.Name,
-                ParseFunctionArgumentsObject(entry.Arguments));
-        }
-        else
-        {
-            // No mapping recorded — keep the legacy fallback so converters stay total.
-            // The wire id becomes both the AF request id and the placeholder call id; the
-            // synthetic name signals to downstream code that the original details are unknown.
-            afRequestId = approvalRequestId;
-            functionCall = new FunctionCallContent(approvalRequestId, "mcp_approval");
-        }
+        var functionCall = new FunctionCallContent(
+            entry.CallId,
+            entry.Name,
+            ParseFunctionArgumentsObject(entry.Arguments));
 
         return new ChatMessage(
             ChatRole.User,
-            [new ToolApprovalResponseContent(afRequestId, approve, functionCall)]);
+            [new ToolApprovalResponseContent(entry.AfRequestId, approve, functionCall)]);
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing tool-call arguments from SDK input.")]

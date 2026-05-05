@@ -781,16 +781,13 @@ public class InputConverterTests
     }
 
     [Fact]
-    public void ConvertItemsToMessages_McpApprovalResponse_ProducesToolApprovalResponse_FallsBackToWireIdWhenNoMapping()
+    public void ConvertItemsToMessages_McpApprovalResponse_ThrowsWhenNoMapping()
     {
         var wireId = "mcpr_" + new string('a', 50);
         var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: true);
 
-        var messages = InputConverter.ConvertItemsToMessages([item]);
-
-        var content = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
-        Assert.Equal(wireId, content.RequestId);
-        Assert.True(content.Approved);
+        var ex = Assert.Throws<InvalidOperationException>(() => InputConverter.ConvertItemsToMessages([item]));
+        Assert.Contains(wireId, ex.Message);
     }
 
     [Fact]
@@ -870,21 +867,18 @@ public class InputConverterTests
     }
 
     [Fact]
-    public void ConvertItemsToMessages_McpApprovalResponse_NoMapping_FallsBackToPlaceholder()
+    public void ConvertItemsToMessages_McpApprovalResponse_NoMapping_Throws()
     {
-        // Without a recorded entry the converter must still produce a usable message — the
-        // legacy placeholder behavior is preserved so out-of-band callers (e.g. tests that
-        // bypass OutputConverter) continue to work.
+        // Without a recorded ApprovalEntry the converter cannot reconstruct the original
+        // function call faithfully — any placeholder it produced would still fail downstream
+        // (FICC has no tool to invoke; Azure's stored function_call can't pair with the
+        // synthetic id). Fail fast with a clear error instead of continuing into a confusing
+        // HTTP 400 deep inside the agent loop.
         var wireId = "mcpr_" + new string('c', 50);
         var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: true);
 
-        var messages = InputConverter.ConvertItemsToMessages([item]);
-
-        var content = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
-        Assert.Equal(wireId, content.RequestId);
-        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
-        Assert.Equal(wireId, fcc.CallId);
-        Assert.Equal("mcp_approval", fcc.Name);
+        var ex = Assert.Throws<InvalidOperationException>(() => InputConverter.ConvertItemsToMessages([item]));
+        Assert.Contains(wireId, ex.Message);
     }
 
     [Fact]
