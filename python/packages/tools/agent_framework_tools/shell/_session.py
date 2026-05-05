@@ -45,6 +45,8 @@ from collections.abc import Mapping, Sequence
 
 from ._killtree import kill_process_tree
 from ._resolve import is_powershell
+from ._truncate import truncate_head_tail as _truncate_bytes
+from ._truncate import truncate_text_head_tail as _truncate_text
 from ._types import ShellResult
 
 _READ_CHUNK = 64 * 1024
@@ -272,14 +274,10 @@ class ShellSession:
                 # gets a fresh subprocess.
                 await self.close()
                 duration_ms = int((time.monotonic() - started) * 1000)
-                stdout_text = bytes(
-                    self._stdout_buf[stdout_offset:]
-                ).decode("utf-8", errors="replace")
-                stderr_text = bytes(
-                    self._stderr_buf[stderr_offset:]
-                ).decode("utf-8", errors="replace")
-                stdout_str, so_trunc = _truncate(stdout_text, self._max_output_bytes)
-                stderr_str, se_trunc = _truncate(stderr_text, self._max_output_bytes)
+                stdout_bytes = bytes(self._stdout_buf[stdout_offset:])
+                stderr_bytes = bytes(self._stderr_buf[stderr_offset:])
+                stdout_str, so_trunc = _truncate_bytes(stdout_bytes, self._max_output_bytes)
+                stderr_str, se_trunc = _truncate_bytes(stderr_bytes, self._max_output_bytes)
                 return ShellResult(
                     stdout=stdout_str,
                     stderr=stderr_str,
@@ -293,14 +291,12 @@ class ShellSession:
             await self._interrupt_current_command()
             await self.close()
             duration_ms = int((time.monotonic() - started) * 1000)
-            stdout_text = bytes(
+            stdout_bytes = bytes(
                 self._stdout_buf[stdout_offset : stdout_offset + hard_cap]
-            ).decode("utf-8", errors="replace")
-            stderr_text = bytes(self._stderr_buf[stderr_offset:]).decode(
-                "utf-8", errors="replace"
             )
-            stdout_str, _ = _truncate(stdout_text, self._max_output_bytes)
-            stderr_str, _ = _truncate(stderr_text, self._max_output_bytes)
+            stderr_bytes = bytes(self._stderr_buf[stderr_offset:])
+            stdout_str, _ = _truncate_bytes(stdout_bytes, self._max_output_bytes)
+            stderr_str, _ = _truncate_bytes(stderr_bytes, self._max_output_bytes)
             return ShellResult(
                 stdout=stdout_str,
                 stderr=stderr_str,
@@ -321,8 +317,8 @@ class ShellSession:
         stdout_text = stdout_raw.decode("utf-8", errors="replace").rstrip("\r\n")
         stderr_text = stderr_raw.decode("utf-8", errors="replace")
 
-        stdout_str, stdout_truncated = _truncate(stdout_text, self._max_output_bytes)
-        stderr_str, stderr_truncated = _truncate(stderr_text, self._max_output_bytes)
+        stdout_str, stdout_truncated = _truncate_text(stdout_text, self._max_output_bytes)
+        stderr_str, stderr_truncated = _truncate_text(stderr_text, self._max_output_bytes)
 
         return ShellResult(
             stdout=stdout_str,
@@ -437,14 +433,6 @@ def _parse_rc(after: bytes) -> int:
         return int(digits.decode("ascii"))
     except ValueError:
         return -1
-
-
-def _truncate(data: str, cap: int) -> tuple[str, bool]:
-    if len(data) <= cap:
-        return data, False
-    head = data[: cap // 2]
-    tail = data[-cap // 2 :]
-    return f"{head}\n[... truncated {len(data) - cap} chars ...]\n{tail}", True
 
 
 class _SentinelOverflow(RuntimeError):

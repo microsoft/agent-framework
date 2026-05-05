@@ -21,6 +21,27 @@ from ._types import ShellCommandError, ShellMode, ShellResult
 
 logger = logging.getLogger(__name__)
 
+
+def _quote_posix(value: str) -> str:
+    r"""Return ``value`` wrapped in POSIX single quotes, safe inside ``sh``.
+
+    Single-quoted strings have no interpolation. Embedded single quotes are
+    handled by closing the quote, inserting an escaped quote, and reopening:
+    ``a'b`` becomes ``'a'\''b'``. This blocks shell injection through
+    ``$VAR``, ``$()``, backtick, and quote characters in the value.
+    """
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def _quote_powershell(value: str) -> str:
+    """Return ``value`` wrapped in PowerShell single quotes.
+
+    Single-quoted strings in PowerShell are literal — ``$`` and ``"`` carry
+    no special meaning. Embedded single quotes are doubled (``''``).
+    """
+    return "'" + value.replace("'", "''") + "'"
+
+
 _DEFAULT_DESCRIPTION = (
     "Execute a single shell command on the local machine and return its "
     "stdout, stderr, and exit code. Commands run in a persistent session so "
@@ -251,8 +272,6 @@ class LocalShellTool:
             return command
         # Idempotent prefix: always cd back before running the user command
         # so wandering with ``cd`` in one command doesn't leak to the next.
-        # This matches what Claude Code does for its Bash tool.
-        quoted = self._workdir.replace('"', '\\"')
         if self._interactive_argv and "pwsh" in os.path.basename(self._interactive_argv[0]).lower():
-            return f'Set-Location -LiteralPath "{quoted}"\n{command}'
-        return f'cd -- "{quoted}"\n{command}'
+            return f"Set-Location -LiteralPath {_quote_powershell(self._workdir)}\n{command}"
+        return f"cd -- {_quote_posix(self._workdir)}\n{command}"

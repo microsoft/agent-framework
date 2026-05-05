@@ -46,6 +46,7 @@ from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
 from ._policy import ShellPolicy, ShellRequest
 from ._session import ShellSession
+from ._truncate import truncate_head_tail as _truncate_bytes
 from ._types import ShellCommandError, ShellMode, ShellResult
 
 logger = logging.getLogger(__name__)
@@ -500,11 +501,3 @@ class DockerShellTool:
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
         )
-
-
-def _truncate_bytes(data: bytes, cap: int) -> tuple[str, bool]:
-    if len(data) <= cap:
-        return data.decode("utf-8", errors="replace"), False
-    head = data[: cap // 2].decode("utf-8", errors="replace")
-    tail = data[-cap // 2 :].decode("utf-8", errors="replace")
-    return f"{head}\n[... truncated {len(data) - cap} bytes ...]\n{tail}", True

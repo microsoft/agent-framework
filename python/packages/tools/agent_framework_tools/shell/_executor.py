@@ -19,17 +19,8 @@ from collections.abc import Mapping, Sequence
 
 from ._killtree import kill_process_tree
 from ._resolve import is_powershell
+from ._truncate import truncate_head_tail as _truncate
 from ._types import ShellResult
-
-
-def _truncate(data: bytes, cap: int) -> tuple[str, bool]:
-    if len(data) <= cap:
-        return data.decode("utf-8", errors="replace"), False
-    # Keep the tail — most useful for tool output where the error message
-    # tends to trail stdout.
-    head = data[: cap // 2].decode("utf-8", errors="replace")
-    tail = data[-cap // 2 :].decode("utf-8", errors="replace")
-    return f"{head}\n[... truncated {len(data) - cap} bytes ...]\n{tail}", True
 
 
 def _popen_kwargs_for_group() -> dict[str, object]:
