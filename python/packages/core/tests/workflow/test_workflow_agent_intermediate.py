@@ -156,3 +156,74 @@ async def test_workflow_agent_terminal_text_stays_text_not_reasoning() -> None:
     assert response.text == "the-answer"
     # No text_reasoning content because everything from `only` is terminal.
     assert all(c.type != "text_reasoning" for m in response.messages for c in m.contents)
+
+
+@pytest.mark.asyncio
+async def test_workflow_agent_non_streaming_accepts_intermediate_update() -> None:
+    """An intermediate event carrying AgentResponseUpdate must not raise in non-streaming
+    mode. It surfaces as a Message with text_reasoning content."""
+
+    @executor
+    async def emit(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:
+        await ctx.add_event(
+            WorkflowEvent.intermediate(
+                "emit",
+                AgentResponseUpdate(contents=[Content.from_text(text="partial-thought")], role="assistant"),
+            )
+        )
+        await ctx.yield_output("FINAL")
+
+    workflow = WorkflowBuilder(start_executor=emit, output_executors=[emit]).build()
+    agent = workflow.as_agent("test")
+
+    response = await agent.run("hi")
+    reasoning = " ".join(c.text for m in response.messages for c in m.contents if c.type == "text_reasoning")
+    assert "partial-thought" in reasoning
+    assert response.text == "FINAL"
+
+
+@pytest.mark.asyncio
+async def test_workflow_agent_drops_orchestration_internal_events() -> None:
+    """Orchestration-internal event types (group_chat / handoff_sent / magentic_orchestrator)
+    must not surface through workflow.as_agent(). Their dataclass payloads would otherwise
+    be stringified by the generic fallback path and leak into response history."""
+
+    @executor
+    async def emit(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+        # Construct typed orchestration-internal events directly to assert they get
+        # dropped at the agent boundary regardless of payload.
+        await ctx.add_event(WorkflowEvent("group_chat", data={"orchestrator": "details"}))  # type: ignore[arg-type]
+        await ctx.add_event(WorkflowEvent("handoff_sent", data={"target": "agent_b"}))  # type: ignore[arg-type]
+        await ctx.add_event(WorkflowEvent("magentic_orchestrator", data={"plan": "..."}))  # type: ignore[arg-type]
+        await ctx.yield_output("FINAL")
+
+    workflow = WorkflowBuilder(start_executor=emit, output_executors=[emit]).build()
+    agent = workflow.as_agent("test")
+
+    response = await agent.run("hi")
+    all_text = " ".join(c.text for m in response.messages for c in m.contents if hasattr(c, "text"))
+    assert "orchestrator" not in all_text
+    assert "agent_b" not in all_text
+    assert "plan" not in all_text
+    assert response.text == "FINAL"
+
+
+@pytest.mark.asyncio
+async def test_workflow_agent_drops_orchestration_internal_events_streaming() -> None:
+    """Streaming counterpart — orchestration-internal events stay inside the workflow."""
+
+    @executor
+    async def emit(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+        await ctx.add_event(WorkflowEvent("group_chat", data={"orchestrator": "details"}))  # type: ignore[arg-type]
+        await ctx.yield_output("FINAL")
+
+    workflow = WorkflowBuilder(start_executor=emit, output_executors=[emit]).build()
+    agent = workflow.as_agent("test")
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in agent.run("hi", stream=True):
+        updates.append(update)
+
+    all_text = " ".join(c.text for u in updates for c in u.contents if hasattr(c, "text"))
+    assert "orchestrator" not in all_text
+    assert "FINAL" in all_text

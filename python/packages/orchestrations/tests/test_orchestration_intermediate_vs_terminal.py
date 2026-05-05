@@ -14,8 +14,8 @@ Verifies that under the strict-output model:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable
-from typing import Any, Literal, overload
+from collections.abc import AsyncIterable, Awaitable, Callable
+from typing import Any, ClassVar, Literal, overload
 
 import pytest
 from agent_framework import (
@@ -28,7 +28,18 @@ from agent_framework import (
     Message,
     ResponseStream,
 )
-from agent_framework.orchestrations import ConcurrentBuilder, SequentialBuilder
+from agent_framework.orchestrations import (
+    ConcurrentBuilder,
+    GroupChatBuilder,
+    GroupChatState,
+    HandoffBuilder,
+    MagenticBuilder,
+    MagenticContext,
+    MagenticManagerBase,
+    MagenticProgressLedger,
+    MagenticProgressLedgerItem,
+    SequentialBuilder,
+)
 
 
 class _EchoAgent(BaseAgent):
@@ -257,3 +268,186 @@ async def test_concurrent_default_as_agent_participants_are_text_reasoning() -> 
 
     # The aggregator's default-yielded AgentResponse passes through as text content.
     assert text_contents, "expected at least one terminal text content from the aggregator"
+
+
+# ---------------------------------------------------------------------------
+# GroupChat
+# ---------------------------------------------------------------------------
+
+
+def _two_step_selector() -> Callable[[GroupChatState], str]:
+    """Selector that picks each participant once, then keeps the first to keep tests bounded."""
+    counter = {"n": 0}
+
+    def _select(state: GroupChatState) -> str:
+        participants = list(state.participants.keys())
+        step = counter["n"]
+        counter["n"] = step + 1
+        if step == 0:
+            return participants[0]
+        if step == 1 and len(participants) > 1:
+            return participants[1]
+        return participants[0]
+
+    return _select
+
+
+@pytest.mark.asyncio
+async def test_group_chat_default_only_orchestrator_is_output() -> None:
+    """Default GroupChat: only the orchestrator is designated; participant replies surface
+    as type='intermediate'."""
+    alpha = _EchoAgent(name="alpha")
+    beta = _EchoAgent(name="beta")
+
+    workflow = GroupChatBuilder(
+        participants=[alpha, beta],
+        max_rounds=2,
+        selection_func=_two_step_selector(),
+    ).build()
+
+    output_executors: set[str] = set()
+    intermediate_executors: set[str] = set()
+    async for event in workflow.run("kickoff", stream=True):
+        if event.type == "output" and event.executor_id is not None:
+            output_executors.add(event.executor_id)
+        elif event.type == "intermediate" and event.executor_id is not None:
+            intermediate_executors.add(event.executor_id)
+
+    assert "group_chat_orchestrator" in output_executors
+    assert "alpha" in intermediate_executors
+    assert "beta" in intermediate_executors
+    # Participants must NOT appear among designated outputs in the default contract.
+    assert "alpha" not in output_executors
+    assert "beta" not in output_executors
+
+
+@pytest.mark.asyncio
+async def test_group_chat_intermediate_outputs_true_designates_all() -> None:
+    """GroupChat with intermediate_outputs=True designates orchestrator + every participant —
+    each reply surfaces as type='output'."""
+    alpha = _EchoAgent(name="alpha")
+    beta = _EchoAgent(name="beta")
+
+    workflow = GroupChatBuilder(
+        participants=[alpha, beta],
+        max_rounds=2,
+        selection_func=_two_step_selector(),
+        intermediate_outputs=True,
+    ).build()
+
+    output_executors: set[str] = set()
+    async for event in workflow.run("kickoff", stream=True):
+        if event.type == "output" and event.executor_id is not None:
+            output_executors.add(event.executor_id)
+
+    assert {"group_chat_orchestrator", "alpha", "beta"}.issubset(output_executors)
+
+
+# ---------------------------------------------------------------------------
+# Handoff
+# ---------------------------------------------------------------------------
+
+
+def test_handoff_builder_designates_every_participant_as_output() -> None:
+    """Handoff has no intermediate channel — every participant's reply is a primary
+    output. The builder must designate all participants in the workflow's
+    ``_output_executors`` set so each per-agent yield surfaces as type='output'.
+
+    Structural assertion (vs end-to-end) because Handoff agents require a full
+    chat-client/middleware stack that we don't want to reproduce in this contract test.
+    """
+    from agent_framework import Agent
+    from agent_framework._clients import BaseChatClient
+    from agent_framework._middleware import ChatMiddlewareLayer
+    from agent_framework._tools import FunctionInvocationLayer
+
+    class _StubClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
+        def __init__(self) -> None:
+            ChatMiddlewareLayer.__init__(self)
+            FunctionInvocationLayer.__init__(self)
+            BaseChatClient.__init__(self)
+
+        def _inner_get_response(self, **kwargs: Any) -> Any:  # pragma: no cover - never called
+            raise NotImplementedError
+
+    alpha = Agent(
+        name="alpha",
+        id="alpha",
+        client=_StubClient(),
+        require_per_service_call_history_persistence=True,
+    )
+    beta = Agent(
+        name="beta",
+        id="beta",
+        client=_StubClient(),
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = HandoffBuilder(participants=[alpha, beta]).with_start_agent(alpha).build()
+
+    designated = set(workflow._output_executors or [])  # type: ignore[arg-type]
+    assert "alpha" in designated, f"alpha must be designated; got {designated}"
+    assert "beta" in designated, f"beta must be designated; got {designated}"
+
+
+# ---------------------------------------------------------------------------
+# Magentic
+# ---------------------------------------------------------------------------
+
+
+class _StubMagenticManager(MagenticManagerBase):
+    """Deterministic manager that finishes after one round with a fixed final answer."""
+
+    FINAL_ANSWER: ClassVar[str] = "MAGENTIC_FINAL"
+
+    def __init__(self) -> None:
+        super().__init__(max_stall_count=3)
+        self.name = "magentic_manager"
+        self.next_speaker_name = "alpha"
+
+    async def plan(self, magentic_context: MagenticContext) -> Message:
+        return Message("assistant", ["Plan: do the thing."], author_name=self.name)
+
+    async def replan(self, magentic_context: MagenticContext) -> Message:
+        return Message("assistant", ["Replan."], author_name=self.name)
+
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
+        is_satisfied = len(magentic_context.chat_history) > 1
+        return MagenticProgressLedger(
+            is_request_satisfied=MagenticProgressLedgerItem(reason="t", answer=is_satisfied),
+            is_in_loop=MagenticProgressLedgerItem(reason="t", answer=False),
+            is_progress_being_made=MagenticProgressLedgerItem(reason="t", answer=True),
+            next_speaker=MagenticProgressLedgerItem(reason="t", answer=self.next_speaker_name),
+            instruction_or_question=MagenticProgressLedgerItem(reason="t", answer="Go."),
+        )
+
+    async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
+        return Message("assistant", [self.FINAL_ANSWER], author_name=self.name)
+
+
+def test_magentic_builder_default_only_manager_designated() -> None:
+    """Default Magentic: only the orchestrator (manager) is designated for terminal output;
+    participant replies surface as type='intermediate'.
+
+    Structural assertion on ``workflow._output_executors`` because exercising a Magentic
+    plan/replan loop end-to-end is heavy and orthogonal to this contract.
+    """
+    manager = _StubMagenticManager()
+    alpha = _EchoAgent(name="alpha")
+
+    workflow = MagenticBuilder(participants=[alpha], manager=manager).build()
+
+    designated = set(workflow._output_executors or [])  # type: ignore[arg-type]
+    assert "magentic_orchestrator" in designated, f"manager must be designated; got {designated}"
+    assert "alpha" not in designated, f"participant must not be designated by default; got {designated}"
+
+
+def test_magentic_builder_intermediate_outputs_true_designates_all() -> None:
+    """Magentic with intermediate_outputs=True designates orchestrator + every participant."""
+    manager = _StubMagenticManager()
+    alpha = _EchoAgent(name="alpha")
+
+    workflow = MagenticBuilder(participants=[alpha], manager=manager, intermediate_outputs=True).build()
+
+    designated = set(workflow._output_executors or [])  # type: ignore[arg-type]
+    assert {"magentic_orchestrator", "alpha"}.issubset(designated)

@@ -901,8 +901,11 @@ class MessageMapper:
 
                 return events
 
-            # Handle output events separately to preserve output data
-            if event_type == "output":
+            # Handle yield events (output / intermediate / data) by extracting visible
+            # text from the payload. All three render as a visible message item so the
+            # gap that previously dropped intermediate yields into generic completed-
+            # trace events is closed.
+            if event_type in ("output", "intermediate", "data"):
                 output_data = getattr(event, "data", None)
                 executor_id = getattr(event, "executor_id", "unknown")
 

@@ -130,21 +130,16 @@ WorkflowEventType = Literal[
 ]
 
 
-# Framework-managed event types — workflow lifecycle, diagnostics, and executor bookkeeping
-# — that carry no user-facing payload and are not forwarded through the
-# ``workflow.as_agent()`` boundary. Internal to the ``_workflows`` package.
-_LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset({
-    "started",
-    "status",
-    "failed",
-    "warning",
-    "error",
-    "superstep_started",
-    "superstep_completed",
-    "executor_invoked",
-    "executor_completed",
-    "executor_failed",
-    "executor_bypassed",
+# Event types forwarded across the ``workflow.as_agent()`` boundary. Anything not
+# in this set — lifecycle events, diagnostics, executor bookkeeping, and
+# orchestration-internal events (``group_chat``, ``handoff_sent``,
+# ``magentic_orchestrator``) — stays inside the workflow and is not surfaced to
+# agent callers. Internal to the ``_workflows`` package.
+_AGENT_FORWARDED_EVENT_TYPES: frozenset[str] = frozenset({
+    "output",
+    "intermediate",
+    "data",  # deprecated alias for intermediate; retained for backward compat
+    "request_info",
 })
 
 

@@ -615,6 +615,42 @@ async def test_workflow_intermediate_event_with_agent_response_update_dispatched
     assert text_events[0].delta == "intermediate progress"
 
 
+async def test_workflow_intermediate_event_with_string_payload_renders_visible_text(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """A WorkflowEvent with type='intermediate' wrapping a plain string surfaces as a
+    visible output item — not a generic completed-trace event. Without this, executors
+    that ``await ctx.yield_output("plan: …")`` from non-designated nodes are silently
+    dropped in DevUI."""
+    from agent_framework._workflows._events import WorkflowEvent
+
+    event = WorkflowEvent.intermediate(executor_id="planner", data="plan: starting work")
+    events = await mapper.convert_event(event, test_request)
+
+    assert len(events) == 1
+    assert events[0].type == "response.output_item.added"
+    item = events[0].item
+    assert item.type == "message"
+    assert any("plan: starting work" in str(c) for c in item.content)
+
+
+async def test_workflow_intermediate_event_with_message_payload_renders_visible_text(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """type='intermediate' wrapping a Message surfaces visibly — same path as type='output'."""
+    from agent_framework import Message
+    from agent_framework._workflows._events import WorkflowEvent
+
+    msg = Message(role="assistant", contents=[Content.from_text(text="research note")])
+    event = WorkflowEvent.intermediate(executor_id="researcher", data=msg)
+    events = await mapper.convert_event(event, test_request)
+
+    assert len(events) == 1
+    assert events[0].type == "response.output_item.added"
+    item = events[0].item
+    assert any("research note" in str(c) for c in item.content)
+
+
 # =============================================================================
 # failed event (type='failed') Tests
 # =============================================================================

@@ -32,7 +32,7 @@ from .._types import (
 from ..exceptions import AgentInvalidRequestException, AgentInvalidResponseException
 from ._checkpoint import CheckpointStorage
 from ._events import (
-    _LIFECYCLE_EVENT_TYPES,
+    _AGENT_FORWARDED_EVENT_TYPES,
     WorkflowEvent,
 )
 from ._message_utils import normalize_messages_input
@@ -321,7 +321,7 @@ class WorkflowAgent(BaseAgent):
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
         ):
-            if event.type not in _LIFECYCLE_EVENT_TYPES:
+            if event.type in _AGENT_FORWARDED_EVENT_TYPES:
                 output_events.append(event)
 
         result = self._convert_workflow_events_to_agent_response(response_id, output_events)
@@ -578,12 +578,27 @@ class WorkflowAgent(BaseAgent):
                     )
 
                 if isinstance(data, AgentResponseUpdate):
-                    # AgentResponseUpdate in non-streaming mode would break message ordering
-                    # if interleaved with non-streaming AgentResponses.
-                    raise AgentInvalidRequestException(
-                        "Output event with AgentResponseUpdate data cannot be emitted in non-streaming mode. "
-                        "Please ensure executors emit AgentResponse for non-streaming workflows."
+                    if not is_intermediate:
+                        # Terminal AgentResponseUpdate in non-streaming mode would break
+                        # message ordering if interleaved with non-streaming AgentResponses.
+                        raise AgentInvalidRequestException(
+                            "Output event with AgentResponseUpdate data cannot be emitted in non-streaming mode. "
+                            "Please ensure executors emit AgentResponse for non-streaming workflows."
+                        )
+                    # Intermediate updates surface as reasoning content on a synthesized
+                    # Message; this preserves the partial signal without altering the
+                    # terminal response shape.
+                    messages.append(
+                        Message(
+                            contents=_to_text_reasoning(list(data.contents)),
+                            role=data.role or "assistant",
+                            author_name=data.author_name or output_event.executor_id,
+                            message_id=data.message_id or str(uuid.uuid4()),
+                            raw_representation=data.raw_representation,
+                        )
                     )
+                    raw_representations.append(data.raw_representation)
+                    continue
 
                 if isinstance(data, AgentResponse):
                     inner_msgs = [_mark_msg(m) for m in data.messages] if is_intermediate else list(data.messages)
@@ -673,16 +688,17 @@ class WorkflowAgent(BaseAgent):
         Forwarding rule:
 
         - ``type='output'`` — terminal user-facing emission. Forwarded as-is.
+        - ``type='intermediate'`` (and the deprecated ``type='data'``) — forwarded
+          as intermediate. Text payloads are rewritten to ``text_reasoning`` content;
+          non-text content types (function_call, function_result, data, uri, …)
+          pass through unchanged since their ``Content.type`` already discriminates
+          them.
         - ``type='request_info'`` — request-info translation (unchanged).
-        - Any other typed event (``intermediate``, the deprecated ``data``,
-          orchestration-specific types) — forwarded as intermediate. Text payloads
-          are rewritten to ``text_reasoning`` content; non-text content types
-          (function_call, function_result, data, uri, …) pass through unchanged
-          since their ``Content.type`` already discriminates them.
-        - Lifecycle / diagnostic events (``started``/``status``/``failed``/
-          ``warning``/``error``/``superstep_*``/``executor_*``) are dropped.
+        - Everything else (lifecycle, diagnostics, executor bookkeeping,
+          orchestration-internal events like ``group_chat``/``handoff_sent``/
+          ``magentic_orchestrator``) is dropped.
         """
-        if event.type in _LIFECYCLE_EVENT_TYPES:
+        if event.type not in _AGENT_FORWARDED_EVENT_TYPES:
             return []
 
         if event.type != "request_info":
