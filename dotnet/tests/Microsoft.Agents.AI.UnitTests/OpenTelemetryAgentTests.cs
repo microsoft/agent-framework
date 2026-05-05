@@ -577,7 +577,8 @@ public class OpenTelemetryAgentTests
                     }
                   },
                   {
-                    "type": "web_search"
+                    "type": "web_search",
+                    "name": "web_search"
                   },
                   {
                     "type": "function",
@@ -604,43 +605,21 @@ public class OpenTelemetryAgentTests
             Assert.False(tags.ContainsKey("gen_ai.output.messages"));
             Assert.False(tags.ContainsKey("gen_ai.system_instructions"));
 
-            // gen_ai.tool.definitions is always emitted regardless of EnableSensitiveData (ME.AI 10.4.0+)
+            // gen_ai.tool.definitions is always emitted regardless of EnableSensitiveData (ME.AI 10.4.0+).
+            // ME.AI 10.5.1 omits description/parameters for function tools when sensitive data is disabled.
             Assert.Equal(ReplaceWhitespace("""
                 [
                   {
                     "type": "function",
-                    "name": "GetPersonAge",
-                    "description": "Gets the age of a person by name.",
-                    "parameters": {
-                      "type": "object",
-                      "properties": {
-                        "personName": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "personName"
-                      ]
-                    }
+                    "name": "GetPersonAge"
                   },
                   {
-                    "type": "web_search"
+                    "type": "web_search",
+                    "name": "web_search"
                   },
                   {
                     "type": "function",
-                    "name": "GetCurrentWeather",
-                    "description": "Gets the current weather for a location.",
-                    "parameters": {
-                      "type": "object",
-                      "properties": {
-                        "location": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "location"
-                      ]
-                    }
+                    "name": "GetCurrentWeather"
                   }
                 ]
                 """), ReplaceWhitespace(tags["gen_ai.tool.definitions"]));

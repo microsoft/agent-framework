@@ -128,7 +128,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// </para>
     /// </remarks>
     public ValueTask<AgentSession> CreateSessionAsync(string conversationId, CancellationToken cancellationToken = default)
-        => ((ChatClientAgent)this.InnerAgent).CreateSessionAsync(conversationId, cancellationToken);
+        => this.GetInnerChatClientAgent().CreateSessionAsync(conversationId, cancellationToken);
 
     /// <summary>
     /// Creates a server-side conversation session that appears in the Foundry Project UI.
@@ -143,8 +143,13 @@ public sealed class FoundryAgent : DelegatingAIAgent
 
         var conversation = (await conversationsClient.CreateProjectConversationAsync(options: null, cancellationToken).ConfigureAwait(false)).Value;
 
-        return (ChatClientAgentSession)await ((ChatClientAgent)this.InnerAgent).CreateSessionAsync(conversation.Id, cancellationToken).ConfigureAwait(false);
+        return (ChatClientAgentSession)await this.GetInnerChatClientAgent().CreateSessionAsync(conversation.Id, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>Walks the delegating chain to find the inner <see cref="ChatClientAgent"/>.</summary>
+    private ChatClientAgent GetInnerChatClientAgent() =>
+        this.GetService<ChatClientAgent>()
+        ?? throw new InvalidOperationException("FoundryAgent inner chain does not contain a ChatClientAgent.");
 
     #endregion
 
@@ -161,7 +166,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
 
     #region Private helpers
 
-    private static ChatClientAgent CreateInnerAgent(
+    private static ClientHeadersAgent CreateInnerAgent(
         AIProjectClient aiProjectClient,
         string model, string instructions,
         string? name, string? description,
@@ -191,7 +196,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
         return CreateResponsesChatClientAgent(aiProjectClient, options, clientFactory, loggerFactory, services);
     }
 
-    private static ChatClientAgent CreateResponsesChatClientAgent(
+    private static ClientHeadersAgent CreateResponsesChatClientAgent(
         AIProjectClient aiProjectClient,
         ChatClientAgentOptions agentOptions,
         Func<IChatClient, IChatClient>? clientFactory,
@@ -210,10 +215,21 @@ public sealed class FoundryAgent : DelegatingAIAgent
             chatClient = clientFactory(chatClient);
         }
 
-        return new ChatClientAgent(chatClient, agentOptions, loggerFactory, services);
+        // Register the ClientHeadersPolicy on the chat client's OpenAIRequestPolicies, if available.
+        // Silent no-op when the chat client is not OpenAI-backed.
+        if (chatClient.GetService<OpenAIRequestPolicies>() is { } policies)
+        {
+            OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
+                policies,
+                ClientHeadersPolicy.Instance,
+                System.ClientModel.Primitives.PipelinePosition.PerCall);
+        }
+
+        var inner = new ChatClientAgent(chatClient, agentOptions, loggerFactory, services);
+        return new ClientHeadersAgent(inner);
     }
 
-    private static ChatClientAgent CreateInnerAgentFromEndpoint(
+    private static ClientHeadersAgent CreateInnerAgentFromEndpoint(
         AIProjectClient aiProjectClient,
         Uri agentEndpoint,
         IList<AITool>? tools,
@@ -238,7 +254,16 @@ public sealed class FoundryAgent : DelegatingAIAgent
             chatClient = clientFactory(chatClient);
         }
 
-        return new ChatClientAgent(chatClient, agentOptions, services: services);
+        if (chatClient.GetService<OpenAIRequestPolicies>() is { } policies)
+        {
+            OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
+                policies,
+                ClientHeadersPolicy.Instance,
+                System.ClientModel.Primitives.PipelinePosition.PerCall);
+        }
+
+        var inner = new ChatClientAgent(chatClient, agentOptions, services: services);
+        return new ClientHeadersAgent(inner);
     }
 
     private static AIProjectClient CreateProjectClient(Uri endpoint, AuthenticationTokenProvider credential, AIProjectClientOptions? clientOptions = null)
