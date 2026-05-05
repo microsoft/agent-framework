@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -129,6 +129,7 @@ public sealed class GitHubCopilotAgentTests
             OnUserInputRequest = userInputHandler,
             McpServers = mcpServers,
             DisabledSkills = ["skill1"],
+            Streaming = false,
         };
 
         // Act
@@ -149,7 +150,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
-        Assert.True(result.Streaming);
+        Assert.False(result.Streaming);
     }
 
     [Fact]
@@ -180,6 +181,7 @@ public sealed class GitHubCopilotAgentTests
             OnUserInputRequest = userInputHandler,
             McpServers = mcpServers,
             DisabledSkills = ["skill1"],
+            Streaming = false,
         };
 
         // Act
@@ -200,7 +202,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
-        Assert.True(result.Streaming);
+        Assert.False(result.Streaming);
     }
 
     [Fact]
