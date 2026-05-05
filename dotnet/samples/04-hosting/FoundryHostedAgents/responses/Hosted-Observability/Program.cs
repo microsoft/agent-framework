@@ -31,15 +31,14 @@ TokenCredential credential = new ChainedTokenCredential(
 
 string[] locations = ["New York", "London", "Paris", "Tokyo"];
 string[] conditions = ["sunny", "cloudy", "rainy", "stormy"];
-Random rng = new();
 
 [Description("Get the current location of the user.")]
-string GetCurrentLocation() => locations[rng.Next(locations.Length)];
+string GetCurrentLocation() => locations[Random.Shared.Next(locations.Length)];
 
 [Description("Get the weather for a given location.")]
 string GetWeather(
     [Description("The location to get the weather for.")] string location)
-    => $"The weather in {location} is {conditions[rng.Next(conditions.Length)]} with a high of {rng.Next(10, 31)}°C.";
+    => $"The weather in {location} is {conditions[Random.Shared.Next(conditions.Length)]} with a high of {Random.Shared.Next(10, 31)}°C.";
 
 // ── Create and host the agent ────────────────────────────────────────────────
 //
