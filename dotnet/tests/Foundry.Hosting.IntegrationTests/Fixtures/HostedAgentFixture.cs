@@ -169,17 +169,11 @@ public abstract class HostedAgentFixture : IAsyncLifetime
         var activeVersion = await WaitForActiveAsync(this._adminClient, version.Value, this.ProvisioningTimeout).ConfigureAwait(false);
         this.AgentVersion = activeVersion.Version;
 
-        // Route 100% of inbound traffic to the version we just created. This PATCH overwrites
-        // any previous version_selector left behind by an earlier test run, which is desirable.
-        var endpointConfig = new AgentEndpointConfig
-        {
-            VersionSelector = new VersionSelector(
-                [new FixedRatioVersionSelectionRule(agentVersion: this.AgentVersion, trafficPercentage: 100)]),
-            Protocols = { AgentEndpointProtocol.Responses },
-        };
-        var patchOptions = new PatchAgentOptions { AgentEndpoint = endpointConfig };
-        await this._adminClient.PatchAgentObjectAsync(agentName: this.AgentName, patchAgentOptions: patchOptions).ConfigureAwait(false);
-
+        // The agent endpoint must already be configured to route via @latest. The bootstrap
+        // script (scripts/it-bootstrap-agents.ps1) does that one-time per agent. Each new
+        // version we create automatically becomes the served one because @latest resolves
+        // to the highest version number.
+        //
         // Build a per-agent ProjectOpenAIClient (the cached projectClient.ProjectOpenAIClient is bound
         // to the project-level URL and cannot serve a hosted agent). AgentName on the options selects
         // the per-agent URL suffix `/agents/{name}/endpoint/protocols/openai`. The Foundry-Features

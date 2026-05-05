@@ -98,7 +98,34 @@ foreach ($scenario in $Scenarios) {
     $principalId = $agent.versions.latest.instance_identity.principal_id
     Write-Host "  agent MI: $principalId"
 
-    # 2. Grant Azure AI User on the project scope to the agent MI (idempotent).
+    # 2. PATCH the agent endpoint to route via @latest if not already configured.
+    # Using @latest means each new version added by the IT fixture automatically becomes the
+    # served version, no per-run PATCH needed (which is good because the strongly-typed
+    # PATCH wrapper is alpha-only on Azure.AI.Projects right now).
+    $hasLatestSelector = $agent.agent_endpoint -and `
+        ($agent.agent_endpoint.version_selector.version_selection_rules | Where-Object { $_.agent_version -eq '@latest' })
+    if ($hasLatestSelector) {
+        Write-Host "  endpoint already routes via @latest"
+    } else {
+        Write-Host "  patching endpoint to route via @latest..."
+        $patchBody = @{
+            agent_endpoint = @{
+                version_selector = @{
+                    version_selection_rules = @(@{
+                        type = 'FixedRatio'
+                        agent_version = '@latest'
+                        traffic_percentage = 100
+                    })
+                }
+                protocols = @('responses')
+            }
+        } | ConvertTo-Json -Depth 10
+        Invoke-RestMethod -Method PATCH -Headers $headers `
+            -Uri "$ProjectEndpoint/agents/$agentName`?api-version=v1" `
+            -Body $patchBody | Out-Null
+    }
+
+    # 3. Grant Azure AI User on the project scope to the agent MI (idempotent).
     $existing = az role assignment list --assignee $principalId --scope $projectScope `
         --query "[?roleDefinitionName=='Azure AI User']" 2>$null | ConvertFrom-Json
     if ($existing) {
