@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+    extensions:
+        azure.ai.agents: '>=0.1.0-preview'
+name: ai-foundry-starter-basic
+services:
+    agent-framework-hosting-sample:
+        project: .
+        host: azure.ai.agent
+        language: docker
+        docker:
+            remoteBuild: true
+        config:
+            container:
+                resources:
+                    cpu: "1"
+                    memory: 2Gi
+                scale:
+                    maxReplicas: 1
+            deployments:
+                - model:
+                    format: OpenAI
+                    name: gpt-5.4-nano
+                    version: "2026-03-17"
+                  name: gpt-5.4-nano
+                  sku:
+                    capacity: 250
+                    name: GlobalStandard
+infra:
+    provider: bicep
+    path: ./infra
+hooks:
+    prepackage:
+        windows:
+            shell: pwsh
+            run: bash ./scripts/vendor-packages.sh
+        posix:
+            name: prepackage
+            kind: sh
+            shell: sh
+            run: ./scripts/vendor-packages.sh

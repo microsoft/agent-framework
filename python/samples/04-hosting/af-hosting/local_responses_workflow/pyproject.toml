@@ -1,0 +1,25 @@
+[project]
+name = "agent-framework-hosting-sample-local-responses-workflow"
+version = "0.0.1"
+description = "Local hosting sample exposing a 3-agent workflow over the Responses API with per-conversation checkpoint storage."
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-hosting",
+    "agent-framework-hosting-invocations",
+    "agent-framework-hosting-responses",
+    "azure-identity",
+    "aiohttp>=3.13.5",
+    "hypercorn>=0.17",
+]
+
+[dependency-groups]
+dev = ["openai>=1.99"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+agent-framework-hosting = { path = "../../../../packages/hosting", editable = true }
+agent-framework-hosting-invocations = { path = "../../../../packages/hosting-invocations", editable = true }
+agent-framework-hosting-responses = { path = "../../../../packages/hosting-responses", editable = true }
