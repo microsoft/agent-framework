@@ -328,7 +328,7 @@ public class TodoProviderTests
     #region Public Helper Method Tests
 
     /// <summary>
-    /// Verify that GetAllTodos returns all items after adding via tools.
+    /// Verify that GetAllTodosAsync returns all items after adding via tools.
     /// </summary>
     [Fact]
     public async Task PublicGetAllTodos_ReturnsAllItemsAsync()
@@ -348,7 +348,7 @@ public class TodoProviderTests
         });
 
         // Act
-        var todos = provider.GetAllTodos(session);
+        var todos = await provider.GetAllTodosAsync(session);
 
         // Assert
         Assert.Equal(2, todos.Count);
@@ -357,7 +357,7 @@ public class TodoProviderTests
     }
 
     /// <summary>
-    /// Verify that GetRemainingTodos returns only incomplete items.
+    /// Verify that GetRemainingTodosAsync returns only incomplete items.
     /// </summary>
     [Fact]
     public async Task PublicGetRemainingTodos_ReturnsOnlyIncompleteAsync()
@@ -379,7 +379,7 @@ public class TodoProviderTests
         await completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 1 } });
 
         // Act
-        var remaining = provider.GetRemainingTodos(session);
+        var remaining = await provider.GetRemainingTodosAsync(session);
 
         // Assert
         Assert.Single(remaining);
@@ -387,17 +387,17 @@ public class TodoProviderTests
     }
 
     /// <summary>
-    /// Verify that GetAllTodos returns empty list for a new session.
+    /// Verify that GetAllTodosAsync returns empty list for a new session.
     /// </summary>
     [Fact]
-    public void PublicGetAllTodos_ReturnsEmptyForNewSession()
+    public async Task PublicGetAllTodos_ReturnsEmptyForNewSessionAsync()
     {
         // Arrange
         var provider = new TodoProvider();
         var session = new ChatClientAgentSession();
 
         // Act
-        var todos = provider.GetAllTodos(session);
+        var todos = await provider.GetAllTodosAsync(session);
 
         // Assert
         Assert.Empty(todos);
@@ -486,6 +486,295 @@ public class TodoProviderTests
 
         // Assert
         Assert.Contains("todo list", result.Instructions);
+    }
+
+    #endregion
+
+    #region Message Injection Tests
+
+    /// <summary>
+    /// Verify that ProvideAIContextAsync injects a "none yet" message when the list is empty.
+    /// </summary>
+    [Fact]
+    public async Task ProvideAIContextAsync_InjectsEmptyTodoMessageAsync()
+    {
+        // Arrange
+        var provider = new TodoProvider();
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+
+        // Act
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.NotNull(result.Messages);
+        var messages = result.Messages!.ToList();
+        Assert.Single(messages);
+        Assert.Contains("none yet", messages[0].Text);
+        Assert.Contains("### Current todo list", messages[0].Text);
+    }
+
+    /// <summary>
+    /// Verify that ProvideAIContextAsync injects a message listing existing todos with status.
+    /// </summary>
+    [Fact]
+    public async Task ProvideAIContextAsync_InjectsTodoListMessageAsync()
+    {
+        // Arrange
+        var provider = new TodoProvider();
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+
+        // First invocation — add some todos (one with a description to cover that branch)
+        AIContext result1 = await provider.InvokingAsync(context);
+        AIFunction addTodos = (AIFunction)result1.Tools!.First(t => t is AIFunction f && f.Name == "TodoList_Add");
+        AIFunction completeTodos = (AIFunction)result1.Tools!.First(t => t is AIFunction f && f.Name == "TodoList_Complete");
+        await addTodos.InvokeAsync(new AIFunctionArguments()
+        {
+            ["todos"] = new List<TodoItemInput>
+            {
+                new() { Title = "First" },
+                new() { Title = "Second", Description = "Has details" },
+            },
+        });
+        await completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 1 } });
+
+        // Act — second invocation should see the updated list in messages
+        AIContext result2 = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.NotNull(result2.Messages);
+        var messages = result2.Messages!.ToList();
+        Assert.Single(messages);
+        string text = messages[0].Text!;
+        Assert.Contains("### Current todo list", text);
+        Assert.Contains("[done] First", text);
+        Assert.Contains("[open] Second", text);
+        Assert.Contains(": Has details", text);
+    }
+
+    /// <summary>
+    /// Verify that when SuppressTodoListMessage is true, no message is injected.
+    /// </summary>
+    [Fact]
+    public async Task ProvideAIContextAsync_SuppressTodoListMessage_NoMessageInjectedAsync()
+    {
+        // Arrange
+        var provider = new TodoProvider(new TodoProviderOptions { SuppressTodoListMessage = true });
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+
+        // Act
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.Null(result.Messages);
+    }
+
+    /// <summary>
+    /// Verify that a custom TodoListMessageBuilder is used when provided.
+    /// </summary>
+    [Fact]
+    public async Task ProvideAIContextAsync_CustomTodoListMessageBuilder_UsesCustomFormatterAsync()
+    {
+        // Arrange
+        var provider = new TodoProvider(new TodoProviderOptions
+        {
+            TodoListMessageBuilder = items => $"Custom: {items.Count} items",
+        });
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+
+        // First invocation — add a todo
+        AIContext result1 = await provider.InvokingAsync(context);
+        AIFunction addTodos = (AIFunction)result1.Tools!.First(t => t is AIFunction f && f.Name == "TodoList_Add");
+        await addTodos.InvokeAsync(new AIFunctionArguments()
+        {
+            ["todos"] = new List<TodoItemInput> { new() { Title = "Task A" } },
+        });
+
+        // Act — second invocation should use the custom builder
+        AIContext result2 = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.NotNull(result2.Messages);
+        var messages = result2.Messages!.ToList();
+        Assert.Single(messages);
+        Assert.Equal("Custom: 1 items", messages[0].Text);
+    }
+
+    /// <summary>
+    /// Verify that SuppressTodoListMessage takes precedence over a set TodoListMessageBuilder.
+    /// </summary>
+    [Fact]
+    public async Task ProvideAIContextAsync_SuppressWinsOverBuilder_NoMessageInjectedAsync()
+    {
+        // Arrange
+        var provider = new TodoProvider(new TodoProviderOptions
+        {
+            SuppressTodoListMessage = true,
+            TodoListMessageBuilder = items => "Should not appear",
+        });
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+
+        // Act
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.Null(result.Messages);
+    }
+
+    /// <summary>
+    /// Verify that the list passed to TodoListMessageBuilder is a snapshot and mutating it does not affect state.
+    /// </summary>
+    [Fact]
+    public async Task ProvideAIContextAsync_BuilderReceivesSnapshot_MutationDoesNotAffectStateAsync()
+    {
+        // Arrange
+        IReadOnlyList<TodoItem>? capturedList = null;
+        var provider = new TodoProvider(new TodoProviderOptions
+        {
+            TodoListMessageBuilder = items =>
+            {
+                capturedList = items;
+                return "snapshot test";
+            },
+        });
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+
+        // Add a todo
+        AIContext result1 = await provider.InvokingAsync(context);
+        AIFunction addTodos = (AIFunction)result1.Tools!.First(t => t is AIFunction f && f.Name == "TodoList_Add");
+        await addTodos.InvokeAsync(new AIFunctionArguments()
+        {
+            ["todos"] = new List<TodoItemInput> { new() { Title = "Original" } },
+        });
+
+        // Act — invoke again to trigger builder with 1 item
+        await provider.InvokingAsync(context);
+
+        // Mutate the captured snapshot
+        Assert.NotNull(capturedList);
+        var mutableList = (List<TodoItem>)capturedList!;
+        mutableList.Clear();
+
+        // Assert — provider state is unaffected
+        var allTodos = await provider.GetAllTodosAsync(session);
+        Assert.Single(allTodos);
+        Assert.Equal("Original", allTodos[0].Title);
+    }
+
+    #endregion
+
+    #region Concurrency Tests
+
+    /// <summary>
+    /// Verify that concurrent add operations do not produce duplicate IDs.
+    /// </summary>
+    [Fact]
+    public async Task ConcurrentAdds_ProduceUniqueIdsAsync()
+    {
+        // Arrange
+        var provider = new TodoProvider();
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+        AIContext result = await provider.InvokingAsync(context);
+        AIFunction addTodos = GetTool(result.Tools!, "TodoList_Add");
+        AIFunction getAllTodos = GetTool(result.Tools!, "TodoList_GetAll");
+
+        // Act — launch multiple concurrent adds
+        var tasks = Enumerable.Range(0, 10).Select(i =>
+            addTodos.InvokeAsync(new AIFunctionArguments()
+            {
+                ["todos"] = new List<TodoItemInput> { new() { Title = $"Item {i}" } },
+            }).AsTask());
+        await Task.WhenAll(tasks);
+
+        // Assert — all IDs are unique and sequential
+        object? allResult = await getAllTodos.InvokeAsync(new AIFunctionArguments());
+        var all = GetArrayResult(allResult);
+        Assert.Equal(10, all.Count);
+#pragma warning disable RCS1077 // Optimize LINQ method call — .Order() not available on net472
+        var ids = all.Select(e => e.GetProperty("id").GetInt32()).OrderBy(x => x).ToList();
+#pragma warning restore RCS1077
+        Assert.Equal(Enumerable.Range(1, 10).ToList(), ids);
+    }
+
+    /// <summary>
+    /// Verify that concurrent add and complete operations serialize correctly.
+    /// </summary>
+    [Fact]
+    public async Task ConcurrentAddAndComplete_SerializesCorrectlyAsync()
+    {
+        // Arrange
+        var provider = new TodoProvider();
+        var agent = new Mock<AIAgent>().Object;
+        var session = new ChatClientAgentSession();
+#pragma warning disable MAAI001
+        var context = new AIContextProvider.InvokingContext(agent, session, new AIContext());
+#pragma warning restore MAAI001
+        AIContext result = await provider.InvokingAsync(context);
+        AIFunction addTodos = GetTool(result.Tools!, "TodoList_Add");
+        AIFunction completeTodos = GetTool(result.Tools!, "TodoList_Complete");
+        AIFunction getAllTodos = GetTool(result.Tools!, "TodoList_GetAll");
+
+        // Add initial items
+        await addTodos.InvokeAsync(new AIFunctionArguments()
+        {
+            ["todos"] = new List<TodoItemInput>
+            {
+                new() { Title = "Existing 1" },
+                new() { Title = "Existing 2" },
+                new() { Title = "Existing 3" },
+            },
+        });
+
+        // Act — concurrent adds and completions
+        await Task.WhenAll(
+            addTodos.InvokeAsync(new AIFunctionArguments()
+            {
+                ["todos"] = new List<TodoItemInput> { new() { Title = "New A" }, new() { Title = "New B" } },
+            }).AsTask(),
+            addTodos.InvokeAsync(new AIFunctionArguments()
+            {
+                ["todos"] = new List<TodoItemInput> { new() { Title = "New C" } },
+            }).AsTask(),
+            completeTodos.InvokeAsync(new AIFunctionArguments() { ["ids"] = new List<int> { 1, 2, 3 } }).AsTask());
+
+        // Assert
+        object? allResult = await getAllTodos.InvokeAsync(new AIFunctionArguments());
+        var all = GetArrayResult(allResult);
+        Assert.Equal(6, all.Count);
+#pragma warning disable RCS1077 // Optimize LINQ method call — .Order() not available on net472
+        var ids = all.Select(e => e.GetProperty("id").GetInt32()).OrderBy(x => x).ToList();
+#pragma warning restore RCS1077
+        Assert.Equal(ids.Count, ids.Distinct().Count()); // no duplicates
+        Assert.Equal(Enumerable.Range(1, 6).ToList(), ids);
+        var completedIds = all.Where(e => e.GetProperty("isComplete").GetBoolean()).Select(e => e.GetProperty("id").GetInt32()).ToHashSet();
+        Assert.Subset(new HashSet<int> { 1, 2, 3 }, completedIds);
     }
 
     #endregion

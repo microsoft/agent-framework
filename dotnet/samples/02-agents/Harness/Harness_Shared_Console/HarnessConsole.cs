@@ -69,7 +69,7 @@ public static class HarnessConsole
             bool handled = false;
             foreach (var handler in commandHandlers)
             {
-                if (handler.TryHandle(userInput, session))
+                if (await handler.TryHandleAsync(userInput, session).ConfigureAwait(false))
                 {
                     handled = true;
                     break;
