@@ -471,19 +471,36 @@ class Skill(ABC):
 
     Skill metadata follows the
     `Agent Skills specification <https://agentskills.io/>`_.
+
+    Attributes:
+        name: Skill name (lowercase letters, numbers, hyphens only).
+        description: Human-readable description of the skill.
     """
 
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Skill name (lowercase letters, numbers, hyphens only)."""
-        ...
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+    ) -> None:
+        """Initialize a Skill.
 
-    @property
-    @abstractmethod
-    def description(self) -> str:
-        """Human-readable description of the skill."""
-        ...
+        Validates the skill name and description against specification rules.
+
+        Args:
+            name: Skill name (lowercase letters, numbers, hyphens only;
+                max 64 characters; no leading/trailing/consecutive hyphens).
+            description: Human-readable description of the skill
+                (≤1024 characters).
+
+        Raises:
+            ValueError: If the name or description is invalid.
+        """
+        _validate_skill_name(name)
+        _validate_skill_description(name, description)
+
+        self.name = name
+        self.description = description
 
     @property
     @abstractmethod
@@ -605,25 +622,12 @@ class InlineSkill(Skill):
             resources: Pre-built resources to attach to this skill.
             scripts: Pre-built scripts to attach to this skill.
         """
-        _validate_skill_name(name)
-        _validate_skill_description(name, description)
+        super().__init__(name=name, description=description)
 
-        self._name = name
-        self._description = description
         self.instructions = instructions
         self._resources: list[SkillResource] = list(resources) if resources is not None else []
         self._scripts: list[SkillScript] = list(scripts) if scripts is not None else []
         self._cached_content: str | None = None
-
-    @property
-    def name(self) -> str:
-        """Skill name (lowercase letters, numbers, hyphens only)."""
-        return self._name
-
-    @property
-    def description(self) -> str:
-        """Human-readable description of the skill."""
-        return self._description
 
     @property
     def content(self) -> str:
@@ -636,8 +640,8 @@ class InlineSkill(Skill):
             return self._cached_content
 
         result = (
-            f"<name>{xml_escape(self._name)}</name>\n"
-            f"<description>{xml_escape(self._description)}</description>\n"
+            f"<name>{xml_escape(self.name)}</name>\n"
+            f"<description>{xml_escape(self.description)}</description>\n"
             "\n"
             "<instructions>\n"
             f"{self.instructions}\n"
@@ -835,25 +839,12 @@ class FileSkill(Skill):
             resources: Resources discovered for this skill.
             scripts: Scripts discovered for this skill.
         """
-        _validate_skill_name(name)
-        _validate_skill_description(name, description)
+        super().__init__(name=name, description=description)
 
-        self._name = name
-        self._description = description
         self._content = content
         self.path = path
         self._resources: list[SkillResource] = list(resources) if resources is not None else []
         self._scripts: list[SkillScript] = list(scripts) if scripts is not None else []
-
-    @property
-    def name(self) -> str:
-        """Skill name (lowercase letters, numbers, hyphens only)."""
-        return self._name
-
-    @property
-    def description(self) -> str:
-        """Human-readable description of the skill."""
-        return self._description
 
     @property
     def content(self) -> str:
