@@ -1712,7 +1712,7 @@ class TestReadFileSkillResourceEdgeCases:
         with pytest.raises(ValueError, match="full_path cannot be empty"):
             _FileSkillResource(name="some-file.md", full_path="   ")
 
-    def test_full_path_property(self) -> None:
+    def test_full_path_attribute(self) -> None:
         resource = _FileSkillResource(name="doc.md", full_path=f"{_ABS}/doc.md")
         assert resource.full_path == f"{_ABS}/doc.md"
 

@@ -229,12 +229,7 @@ class _FileSkillResource(SkillResource):
         if not full_path or not full_path.strip():
             raise ValueError("full_path cannot be empty.")
 
-        self._full_path = full_path
-
-    @property
-    def full_path(self) -> str:
-        """Absolute path to the resource file."""
-        return self._full_path
+        self.full_path = full_path
 
     async def read(self, **kwargs: Any) -> Any:
         """Read the resource content from disk.
@@ -248,11 +243,11 @@ class _FileSkillResource(SkillResource):
         Raises:
             ValueError: If the resource file does not exist.
         """
-        if not await anyio.Path(self._full_path).is_file():
-            raise ValueError(f"Resource file '{self.name}' not found at '{self._full_path}'.")
+        if not await anyio.Path(self.full_path).is_file():
+            raise ValueError(f"Resource file '{self.name}' not found at '{self.full_path}'.")
 
-        logger.info("Reading resource '%s' from '%s'", self.name, self._full_path)
-        return await anyio.Path(self._full_path).read_text(encoding="utf-8")
+        logger.info("Reading resource '%s' from '%s'", self.name, self.full_path)
+        return await anyio.Path(self.full_path).read_text(encoding="utf-8")
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
@@ -431,13 +426,8 @@ class FileSkillScript(SkillScript):
         if not os.path.isabs(full_path):
             raise ValueError(f"full_path must be an absolute path, got: '{full_path}'")
 
-        self._full_path = full_path
+        self.full_path = full_path
         self._runner = runner
-
-    @property
-    def full_path(self) -> str:
-        """Absolute path to the script file."""
-        return self._full_path
 
     async def run(self, skill: Skill, args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         """Run the script by delegating to the configured runner.
