@@ -51,7 +51,7 @@ from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeVar, runtime_checkable
 
-import anyio
+import asyncio
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
@@ -243,11 +243,11 @@ class _FileSkillResource(SkillResource):
         Raises:
             ValueError: If the resource file does not exist.
         """
-        if not await anyio.Path(self.full_path).is_file():
+        if not await asyncio.to_thread(Path(self.full_path).is_file):
             raise ValueError(f"Resource file '{self.name}' not found at '{self.full_path}'.")
 
         logger.info("Reading resource '%s' from '%s'", self.name, self.full_path)
-        return await anyio.Path(self.full_path).read_text(encoding="utf-8")
+        return await asyncio.to_thread(Path(self.full_path).read_text, encoding="utf-8")
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
