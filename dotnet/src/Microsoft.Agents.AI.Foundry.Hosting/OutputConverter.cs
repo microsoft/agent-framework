@@ -120,18 +120,10 @@ internal static class OutputConverter
 
                     case FunctionCallContent:
                     {
-                        // Function calls are internal to the agent's tool-calling loop.
-                        // FICC auto-invokes the function and produces a FunctionResultContent
-                        // (which we also drop, see below) — neither side of the pair belongs
-                        // on the wire. Emitting only the call would leave an orphan
-                        // `function_call` in the response store and break resume on the next
-                        // turn (HTTP 400: "No tool output found for function call ...").
-                        // Approval-required calls surface separately via
-                        // ToolApprovalRequestContent → mcp_approval_request below.
-                        //
-                        // We still close any in-flight assistant message here so that
-                        // pre-tool text cannot accidentally concatenate with post-tool text
-                        // under the same message id.
+                        // Function call/result pairs are internal to the agent's tool-calling
+                        // loop and are not emitted to the wire. Approval-required calls surface
+                        // separately via ToolApprovalRequestContent below. Close any in-flight
+                        // assistant message so pre-tool and post-tool text stay separate.
                         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
                         {
                             yield return evt;

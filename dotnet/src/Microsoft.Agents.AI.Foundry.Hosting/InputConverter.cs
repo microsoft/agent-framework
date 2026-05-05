@@ -233,29 +233,19 @@ internal static class InputConverter
 
     /// <summary>
     /// Converts an inbound <c>mcp_approval_response</c> wire item to a
-    /// <see cref="ToolApprovalResponseContent"/>. Looks up the full original
+    /// <see cref="ToolApprovalResponseContent"/>. Looks up the original
     /// <see cref="FunctionCallContent"/> via <see cref="ToolApprovalIdMap"/> so the
-    /// reconstructed approval response carries the original tool name, call id, and
-    /// arguments — which FICC needs to actually invoke the function on the next turn,
-    /// and which the backend Conversations API needs to pair the resulting
-    /// <c>function_call_output</c> with its previously-stored <c>function_call</c>.
+    /// reconstructed response carries the original tool name, call id, and arguments.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// Thrown when no mapping is recorded for <paramref name="approvalRequestId"/>.
-    /// Without the mapping we cannot reconstruct the original call faithfully, and any
-    /// placeholder we return would still fail downstream (FICC has no tool to invoke;
-    /// Azure's stored <c>function_call</c> can't pair with the synthetic id) — so we
-    /// fail fast here with a clear, actionable message rather than continuing into a
-    /// confusing HTTP 400 deep inside the agent loop.
+    /// Without the mapping the original call cannot be reconstructed, so we fail the request.
     /// </exception>
     private static ChatMessage ConvertMcpApprovalResponse(string approvalRequestId, bool approve, AgentSessionStateBag? stateBag)
     {
         var entry = ToolApprovalIdMap.ResolveEntry(stateBag, approvalRequestId)
             ?? throw new InvalidOperationException(
-                $"No approval mapping recorded for wire id '{approvalRequestId}'. " +
-                "This typically indicates the outbound mcp_approval_request was emitted " +
-                "by a different process, the session state was not persisted between turns, " +
-                "or the response was synthesized without a corresponding request.");
+                $"No approval mapping recorded for wire id '{approvalRequestId}'.");
 
         var functionCall = new FunctionCallContent(
             entry.CallId,

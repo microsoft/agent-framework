@@ -15,10 +15,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// strict-format wire ids required by the Responses Server SDK <c>mcp_approval_request</c>
 /// item type, and for preserving the original <see cref="FunctionCallContent"/> across
 /// the request/response round trip. The mapping is persisted in
-/// <see cref="AgentSessionStateBag"/> so an approval request emitted on one HTTP turn can
-/// be matched to the response posted back on the next turn — and the original tool-call
-/// details (name, arguments, call id) can be faithfully reconstructed on the inbound
-/// side, since the wire <c>mcp_approval_response</c> only echoes the approval id.
+/// <see cref="AgentSessionStateBag"/>.
 /// </summary>
 internal static class ToolApprovalIdMap
 {
@@ -28,14 +25,13 @@ internal static class ToolApprovalIdMap
     public const string StateBagKey = "Microsoft.Agents.AI.Foundry.Hosting.ToolApprovalIdMap";
 
     /// <summary>
-    /// Captures everything needed to faithfully reconstruct the original
+    /// Captures the data needed to reconstruct the original
     /// <see cref="FunctionCallContent"/> on the inbound (response) side.
     /// </summary>
     /// <remarks>
-    /// FICC composes <c>RequestId</c> as <c>"ficc_{CallId}"</c>; we therefore store
-    /// <c>CallId</c> independently so the reconstructed function-call id matches what
-    /// the model originally emitted (and what the backend Conversations API persisted),
-    /// enabling the resulting <c>function_call_output</c> to pair correctly.
+    /// FICC composes <c>RequestId</c> as <c>"ficc_{CallId}"</c>; <c>CallId</c> is stored
+    /// independently so the reconstructed function-call id matches the one the model
+    /// emitted and the backend Conversations API persisted.
     /// </remarks>
     internal sealed class ApprovalEntry
     {
@@ -65,9 +61,7 @@ internal static class ToolApprovalIdMap
     }
 
     /// <summary>
-    /// Records the wire-id → approval-entry mapping in the supplied state bag,
-    /// preserving the original <see cref="FunctionCallContent"/> details so the inbound
-    /// <c>mcp_approval_response</c> handler can reconstruct it losslessly.
+    /// Records the wire-id → approval-entry mapping in the supplied state bag.
     /// </summary>
     [RequiresUnreferencedCode("FunctionCallContent.Arguments serialization may require types that cannot be statically analyzed.")]
     [RequiresDynamicCode("FunctionCallContent.Arguments serialization may require runtime code generation.")]
@@ -95,7 +89,7 @@ internal static class ToolApprovalIdMap
 
     /// <summary>
     /// Looks up the AF request id for a given wire id. Returns the wire id verbatim
-    /// when no mapping is present (best-effort fallback that keeps converters total).
+    /// when no mapping is present.
     /// </summary>
     public static string Resolve(AgentSessionStateBag? stateBag, string wireId)
     {
