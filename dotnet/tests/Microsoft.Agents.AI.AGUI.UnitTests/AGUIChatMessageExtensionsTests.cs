@@ -102,18 +102,20 @@ public sealed class AGUIChatMessageExtensionsTests
             new AGUISystemMessage { Id = "msg1", Content = "System message" },
             new AGUIUserMessage { Id = "msg2", Content = "User message" },
             new AGUIAssistantMessage { Id = "msg3", Content = "Assistant message" },
-            new AGUIDeveloperMessage { Id = "msg4", Content = "Developer message" }
+            new AGUIDeveloperMessage { Id = "msg4", Content = "Developer message" },
+            new AGUIToolMessage { Id = "msg5", Content = "Tool message" }
         ];
 
         // Act
         List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
 
         // Assert
-        Assert.Equal(4, chatMessages.Count);
+        Assert.Equal(5, chatMessages.Count);
         Assert.Equal(ChatRole.System, chatMessages[0].Role);
         Assert.Equal(ChatRole.User, chatMessages[1].Role);
         Assert.Equal(ChatRole.Assistant, chatMessages[2].Role);
         Assert.Equal("developer", chatMessages[3].Role.Value);
+        Assert.Equal(ChatRole.Tool, chatMessages[4].Role);
     }
 
     [Fact]
@@ -192,6 +194,7 @@ public sealed class AGUIChatMessageExtensionsTests
     [InlineData(AGUIRoles.User, "user")]
     [InlineData(AGUIRoles.Assistant, "assistant")]
     [InlineData(AGUIRoles.Developer, "developer")]
+    [InlineData(AGUIRoles.Tool, "tool")]
     public void MapChatRole_WithValidRole_ReturnsCorrectChatRole(string aguiRole, string expectedRoleValue)
     {
         // Arrange & Act
@@ -283,6 +286,7 @@ public sealed class AGUIChatMessageExtensionsTests
         // Assert
         ChatMessage message = Assert.Single(chatMessages);
         Assert.Equal(ChatRole.Tool, message.Role);
+        Assert.Equal("msg1", message.MessageId);
         FunctionResultContent result = Assert.IsType<FunctionResultContent>(message.Contents[0]);
         Assert.Equal("call_abc", result.CallId);
         Assert.NotNull(result.Result);
