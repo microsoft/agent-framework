@@ -142,3 +142,36 @@ async def test_as_function_wires_kind_and_approval() -> None:
     assert ft.name == "shell_exec"
     assert ft.kind == "shell"
     assert ft.approval_mode == "always_require"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX persistent reanchor test")
+async def test_persistent_confines_workdir_by_default(tmp_path: os.PathLike[str]) -> None:
+    """With the default ``confine_workdir=True``, a ``cd`` in one call
+    must not leak into the next: each command is reanchored to ``workdir``."""
+    subdir = os.path.join(str(tmp_path), "sub")
+    os.mkdir(subdir)
+    async with LocalShellTool(
+        mode="persistent",
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        workdir=str(tmp_path),
+    ) as tool:
+        await tool.run(f"cd {subdir}")
+        pwd = await tool.run("pwd")
+        assert os.path.realpath(pwd.stdout.strip()) == os.path.realpath(str(tmp_path))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell persistent reanchor test")
+async def test_persistent_confines_workdir_by_default_powershell(tmp_path: os.PathLike[str]) -> None:
+    """PowerShell counterpart of the POSIX confinement check."""
+    subdir = os.path.join(str(tmp_path), "sub")
+    os.mkdir(subdir)
+    async with LocalShellTool(
+        mode="persistent",
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        workdir=str(tmp_path),
+    ) as tool:
+        await tool.run(f"Set-Location -LiteralPath '{subdir}'")
+        pwd = await tool.run("(Get-Location).Path")
+        assert os.path.realpath(pwd.stdout.strip()) == os.path.realpath(str(tmp_path))
