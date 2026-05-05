@@ -13,16 +13,19 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agent_framework import (
+    AggregatingSkillsSource,
+    DeduplicatingSkillsSource,
     FileSkill,
     FileSkillScript,
+    FileSkillsSource,
     InlineSkill,
+    InMemorySkillsSource,
     SessionContext,
     Skill,
     SkillResource,
     SkillScript,
     SkillScriptRunner,
     SkillsProvider,
-    SkillsProviderBuilder,
 )
 from agent_framework._skills import (
     DEFAULT_RESOURCE_EXTENSIONS,
@@ -31,7 +34,6 @@ from agent_framework._skills import (
     InlineSkillScript,
     _create_script_element,
     _FileSkillResource,
-    _FileSkillsSource,
 )
 
 pytestmark = pytest.mark.filterwarnings(r"ignore:\[SKILLS\].*:FutureWarning")
@@ -122,7 +124,7 @@ def _write_skill(
 
 def _read_and_parse_skill_file_for_test(skill_dir: Path) -> FileSkill:
     """Parse a SKILL.md file from the given directory, raising if invalid."""
-    result = _FileSkillsSource._read_and_parse_skill_file(str(skill_dir))
+    result = FileSkillsSource._read_and_parse_skill_file(str(skill_dir))
     assert result is not None, f"Failed to parse skill at {skill_dir}"
     name, description, content = result
     return FileSkill(
@@ -142,8 +144,8 @@ async def _discover_file_skills_for_test(
 ) -> dict[str, FileSkill]:
     """Test helper: discover file skills and return as a dict keyed by name.
 
-    Wraps ``_FileSkillsSource(...).get_skills()`` for easy test migration
-    from the removed ``_FileSkillsSource._discover_file_skills()`` static method.
+    Wraps ``FileSkillsSource(...).get_skills()`` for easy test migration
+    from the removed ``FileSkillsSource._discover_file_skills()`` static method.
     """
     kwargs: dict[str, Any] = {}
     if resource_extensions is not None:
@@ -153,7 +155,7 @@ async def _discover_file_skills_for_test(
     if script_runner is not None:
         kwargs["script_runner"] = script_runner
 
-    source = _FileSkillsSource(skill_paths, **kwargs)
+    source = FileSkillsSource(skill_paths, **kwargs)
     skills = await source.get_skills()
     result: dict[str, FileSkill] = {}
     for s in skills:
@@ -171,16 +173,16 @@ class TestNormalizeResourcePath:
     """Tests for _normalize_resource_path."""
 
     def test_strips_dot_slash_prefix(self) -> None:
-        assert _FileSkillsSource._normalize_resource_path("./refs/doc.md") == "refs/doc.md"
+        assert FileSkillsSource._normalize_resource_path("./refs/doc.md") == "refs/doc.md"
 
     def test_replaces_backslashes(self) -> None:
-        assert _FileSkillsSource._normalize_resource_path("refs\\doc.md") == "refs/doc.md"
+        assert FileSkillsSource._normalize_resource_path("refs\\doc.md") == "refs/doc.md"
 
     def test_strips_dot_slash_and_replaces_backslashes(self) -> None:
-        assert _FileSkillsSource._normalize_resource_path(".\\refs\\doc.md") == "refs/doc.md"
+        assert FileSkillsSource._normalize_resource_path(".\\refs\\doc.md") == "refs/doc.md"
 
     def test_no_change_for_clean_path(self) -> None:
-        assert _FileSkillsSource._normalize_resource_path("refs/doc.md") == "refs/doc.md"
+        assert FileSkillsSource._normalize_resource_path("refs/doc.md") == "refs/doc.md"
 
 
 class TestDiscoverResourceFiles:
@@ -193,14 +195,14 @@ class TestDiscoverResourceFiles:
         refs = skill_dir / "refs"
         refs.mkdir()
         (refs / "FAQ.md").write_text("FAQ content", encoding="utf-8")
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert "refs/FAQ.md" in resources
 
     def test_excludes_skill_md(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("content", encoding="utf-8")
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert len(resources) == 0
 
     def test_discovers_multiple_extensions(self, tmp_path: Path) -> None:
@@ -209,7 +211,7 @@ class TestDiscoverResourceFiles:
         (skill_dir / "data.json").write_text("{}", encoding="utf-8")
         (skill_dir / "config.yaml").write_text("key: val", encoding="utf-8")
         (skill_dir / "notes.txt").write_text("notes", encoding="utf-8")
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert len(resources) == 3
         names = set(resources)
         assert "data.json" in names
@@ -221,7 +223,7 @@ class TestDiscoverResourceFiles:
         skill_dir.mkdir()
         (skill_dir / "image.png").write_bytes(b"\x89PNG")
         (skill_dir / "binary.exe").write_bytes(b"\x00")
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert len(resources) == 0
 
     def test_custom_extensions(self, tmp_path: Path) -> None:
@@ -229,7 +231,7 @@ class TestDiscoverResourceFiles:
         skill_dir.mkdir()
         (skill_dir / "data.json").write_text("{}", encoding="utf-8")
         (skill_dir / "notes.txt").write_text("notes", encoding="utf-8")
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir), extensions=(".json",))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir), extensions=(".json",))
         assert resources == ["data.json"]
 
     def test_discovers_nested_files(self, tmp_path: Path) -> None:
@@ -237,13 +239,13 @@ class TestDiscoverResourceFiles:
         sub = skill_dir / "refs" / "deep"
         sub.mkdir(parents=True)
         (sub / "doc.md").write_text("deep doc", encoding="utf-8")
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert "refs/deep/doc.md" in resources
 
     def test_empty_directory(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert resources == []
 
     def test_default_extensions_match_constant(self) -> None:
@@ -261,7 +263,7 @@ class TestTryParseSkillDocument:
 
     def test_valid_skill(self) -> None:
         content = "---\nname: test-skill\ndescription: A test skill.\n---\n# Body\nInstructions here."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
         name, description = result
         assert name == "test-skill"
@@ -269,62 +271,62 @@ class TestTryParseSkillDocument:
 
     def test_quoted_values(self) -> None:
         content = "---\nname: \"test-skill\"\ndescription: 'A test skill.'\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
         assert result[0] == "test-skill"
         assert result[1] == "A test skill."
 
     def test_utf8_bom(self) -> None:
         content = "\ufeff---\nname: test-skill\ndescription: A test skill.\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
         assert result[0] == "test-skill"
 
     def test_missing_frontmatter(self) -> None:
         content = "# Just a markdown file\nNo frontmatter here."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is None
 
     def test_missing_name(self) -> None:
         content = "---\ndescription: A test skill.\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is None
 
     def test_missing_description(self) -> None:
         content = "---\nname: test-skill\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is None
 
     def test_invalid_name_uppercase(self) -> None:
         content = "---\nname: Test-Skill\ndescription: A test skill.\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is None
 
     def test_invalid_name_starts_with_hyphen(self) -> None:
         content = "---\nname: -test-skill\ndescription: A test skill.\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is None
 
     def test_invalid_name_ends_with_hyphen(self) -> None:
         content = "---\nname: test-skill-\ndescription: A test skill.\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is None
 
     def test_name_too_long(self) -> None:
         long_name = "a" * 65
         content = f"---\nname: {long_name}\ndescription: A test skill.\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is None
 
     def test_description_too_long(self) -> None:
         long_desc = "a" * 1025
         content = f"---\nname: test-skill\ndescription: {long_desc}\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is None
 
     def test_extra_metadata_ignored(self) -> None:
         content = "---\nname: test-skill\ndescription: A test skill.\nauthor: someone\nversion: 1.0\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
         assert result[0] == "test-skill"
 
@@ -335,7 +337,7 @@ class TestTryParseSkillDocument:
 
 
 class TestDiscoverAndLoadSkills:
-    """Tests for file skill discovery via _FileSkillsSource.get_skills()."""
+    """Tests for file skill discovery via FileSkillsSource.get_skills()."""
 
     async def test_discovers_valid_skill(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
@@ -482,7 +484,7 @@ class TestReadSkillResource:
         skill_dir = tmp_path / "skill"
         skill_dir.mkdir()
         (tmp_path / "secret.md").write_text("secret", encoding="utf-8")
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert not any("secret" in r for r in resources)
 
 
@@ -742,7 +744,7 @@ class TestSymlinkDetection:
 
         full_path = str(symlink_path)
         directory_path = str(skill_dir) + os.sep
-        assert _FileSkillsSource._has_symlink_in_path(full_path, directory_path) is True
+        assert FileSkillsSource._has_symlink_in_path(full_path, directory_path) is True
 
     def test_detects_symlinked_directory(self, tmp_path: Path) -> None:
         """A symlink to a directory outside should be detected for paths through it."""
@@ -758,7 +760,7 @@ class TestSymlinkDetection:
 
         full_path = str(skill_dir / "linked-dir" / "data.txt")
         directory_path = str(skill_dir) + os.sep
-        assert _FileSkillsSource._has_symlink_in_path(full_path, directory_path) is True
+        assert FileSkillsSource._has_symlink_in_path(full_path, directory_path) is True
 
     def test_returns_false_for_regular_files(self, tmp_path: Path) -> None:
         """Regular (non-symlinked) files should not be flagged."""
@@ -770,7 +772,7 @@ class TestSymlinkDetection:
 
         full_path = str(regular_file)
         directory_path = str(skill_dir) + os.sep
-        assert _FileSkillsSource._has_symlink_in_path(full_path, directory_path) is False
+        assert FileSkillsSource._has_symlink_in_path(full_path, directory_path) is False
 
     async def test_discover_skips_symlinked_resource(self, tmp_path: Path) -> None:
         """get_skills() should skip a symlinked resource but keep the skill."""
@@ -809,7 +811,7 @@ class TestSymlinkDetection:
         refs_dir.mkdir()
         (refs_dir / "leak.md").symlink_to(outside_file)
 
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert "refs/leak.md" not in resources
 
     def test_discover_skips_symlinked_script(self, tmp_path: Path) -> None:
@@ -828,7 +830,7 @@ class TestSymlinkDetection:
         (scripts_dir / "safe.py").write_text("print('safe')", encoding="utf-8")
         (scripts_dir / "leak.py").symlink_to(outside_script)
 
-        discovered = _FileSkillsSource._discover_script_files(str(skill_dir))
+        discovered = FileSkillsSource._discover_script_files(str(skill_dir))
         discovered_names = [p for p in discovered]
         assert "scripts/safe.py" in discovered_names
         assert "scripts/leak.py" not in discovered_names
@@ -894,6 +896,7 @@ class TestSkillResource:
         assert resource.name == "func"
         assert resource.content is None
         assert resource.function is my_func
+
     def test_with_description(self) -> None:
         resource = InlineSkillResource(name="ref", description="A reference doc.", content="data")
         assert resource.description == "A reference doc."
@@ -1267,7 +1270,14 @@ class TestSkillsProviderCodeSkill:
     async def test_combined_file_and_code_skill(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "file-skill")
         prog_skill = InlineSkill(name="prog-skill", description="Code-defined.", instructions="Body")
-        provider = SkillsProviderBuilder().add_file_skills(str(tmp_path)).add_skills([prog_skill]).build()
+        provider = SkillsProvider(
+            DeduplicatingSkillsSource(
+                AggregatingSkillsSource([
+                    FileSkillsSource(str(tmp_path)),
+                    InMemorySkillsSource([prog_skill]),
+                ])
+            )
+        )
         await _init_provider(provider)
         assert "file-skill" in _ctx(provider)[0]
         assert "prog-skill" in _ctx(provider)[0]
@@ -1275,7 +1285,14 @@ class TestSkillsProviderCodeSkill:
     async def test_duplicate_name_file_wins(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill", body="File version")
         prog_skill = InlineSkill(name="my-skill", description="Code-defined.", instructions="Prog version")
-        provider = SkillsProviderBuilder().add_file_skills(str(tmp_path)).add_skills([prog_skill]).build()
+        provider = SkillsProvider(
+            DeduplicatingSkillsSource(
+                AggregatingSkillsSource([
+                    FileSkillsSource(str(tmp_path)),
+                    InMemorySkillsSource([prog_skill]),
+                ])
+            )
+        )
         await _init_provider(provider)
         # File-based is loaded first, so it wins
         assert "File version" in _ctx(provider)[0]["my-skill"].content
@@ -1283,7 +1300,14 @@ class TestSkillsProviderCodeSkill:
     async def test_combined_prompt_includes_both(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "file-skill")
         prog_skill = InlineSkill(name="prog-skill", description="A code-defined skill.", instructions="Body")
-        provider = SkillsProviderBuilder().add_file_skills(str(tmp_path)).add_skills([prog_skill]).build()
+        provider = SkillsProvider(
+            DeduplicatingSkillsSource(
+                AggregatingSkillsSource([
+                    FileSkillsSource(str(tmp_path)),
+                    InMemorySkillsSource([prog_skill]),
+                ])
+            )
+        )
         context = SessionContext(input_messages=[])
 
         await provider.before_run(agent=AsyncMock(), session=AsyncMock(), context=context, state={})
@@ -1405,7 +1429,7 @@ class TestDiscoverResourceFilesEdgeCases:
         skill_dir.mkdir()
         (skill_dir / "skill.md").write_text("lowercase name", encoding="utf-8")
         (skill_dir / "other.md").write_text("keep me", encoding="utf-8")
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         names = [r.lower() for r in resources]
         assert "skill.md" not in names
         assert "other.md" in resources
@@ -1415,14 +1439,14 @@ class TestDiscoverResourceFilesEdgeCases:
         skill_dir = tmp_path / "my-skill"
         subdir = skill_dir / "data.json"
         subdir.mkdir(parents=True)
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert resources == []
 
     def test_extension_matching_is_case_insensitive(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "NOTES.TXT").write_text("caps", encoding="utf-8")
-        resources = _FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert len(resources) == 1
 
 
@@ -1436,20 +1460,20 @@ class TestIsPathWithinDirectory:
 
     def test_path_inside_directory(self, tmp_path: Path) -> None:
         child = str(tmp_path / "sub" / "file.txt")
-        assert _FileSkillsSource._is_path_within_directory(child, str(tmp_path)) is True
+        assert FileSkillsSource._is_path_within_directory(child, str(tmp_path)) is True
 
     def test_path_outside_directory(self, tmp_path: Path) -> None:
         outside = str(tmp_path.parent / "other" / "file.txt")
-        assert _FileSkillsSource._is_path_within_directory(outside, str(tmp_path)) is False
+        assert FileSkillsSource._is_path_within_directory(outside, str(tmp_path)) is False
 
     def test_path_is_directory_itself(self, tmp_path: Path) -> None:
-        assert _FileSkillsSource._is_path_within_directory(str(tmp_path), str(tmp_path)) is True
+        assert FileSkillsSource._is_path_within_directory(str(tmp_path), str(tmp_path)) is True
 
     def test_similar_prefix_not_matched(self, tmp_path: Path) -> None:
         """'skill-a-evil' is not inside 'skill-a'."""
         dir_a = str(tmp_path / "skill-a")
         evil = str(tmp_path / "skill-a-evil" / "file.txt")
-        assert _FileSkillsSource._is_path_within_directory(evil, dir_a) is False
+        assert FileSkillsSource._is_path_within_directory(evil, dir_a) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1463,11 +1487,11 @@ class TestHasSymlinkInPathEdgeCases:
     def test_raises_when_path_not_relative(self, tmp_path: Path) -> None:
         unrelated = str(tmp_path.parent / "other" / "file.txt")
         with pytest.raises(ValueError, match="does not start with directory"):
-            _FileSkillsSource._has_symlink_in_path(unrelated, str(tmp_path))
+            FileSkillsSource._has_symlink_in_path(unrelated, str(tmp_path))
 
     def test_returns_false_for_empty_relative(self, tmp_path: Path) -> None:
         """When path equals directory, relative is empty so no symlinks."""
-        assert _FileSkillsSource._has_symlink_in_path(str(tmp_path), str(tmp_path)) is False
+        assert FileSkillsSource._has_symlink_in_path(str(tmp_path), str(tmp_path)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1479,78 +1503,78 @@ class TestValidateSkillMetadata:
     """Tests for _validate_skill_metadata."""
 
     def test_valid_metadata(self) -> None:
-        assert _FileSkillsSource._validate_skill_metadata("my-skill", "A description.", "source") is None
+        assert FileSkillsSource._validate_skill_metadata("my-skill", "A description.", "source") is None
 
     def test_none_name(self) -> None:
-        result = _FileSkillsSource._validate_skill_metadata(None, "desc", "source")
+        result = FileSkillsSource._validate_skill_metadata(None, "desc", "source")
         assert result is not None
         assert "missing a name" in result
 
     def test_empty_name(self) -> None:
-        result = _FileSkillsSource._validate_skill_metadata("", "desc", "source")
+        result = FileSkillsSource._validate_skill_metadata("", "desc", "source")
         assert result is not None
         assert "missing a name" in result
 
     def test_whitespace_only_name(self) -> None:
-        result = _FileSkillsSource._validate_skill_metadata("   ", "desc", "source")
+        result = FileSkillsSource._validate_skill_metadata("   ", "desc", "source")
         assert result is not None
         assert "missing a name" in result
 
     def test_name_at_max_length(self) -> None:
         name = "a" * 64
-        assert _FileSkillsSource._validate_skill_metadata(name, "desc", "source") is None
+        assert FileSkillsSource._validate_skill_metadata(name, "desc", "source") is None
 
     def test_name_exceeds_max_length(self) -> None:
         name = "a" * 65
-        result = _FileSkillsSource._validate_skill_metadata(name, "desc", "source")
+        result = FileSkillsSource._validate_skill_metadata(name, "desc", "source")
         assert result is not None
         assert "invalid name" in result
 
     def test_name_with_uppercase(self) -> None:
-        result = _FileSkillsSource._validate_skill_metadata("BadName", "desc", "source")
+        result = FileSkillsSource._validate_skill_metadata("BadName", "desc", "source")
         assert result is not None
         assert "invalid name" in result
 
     def test_name_starts_with_hyphen(self) -> None:
-        result = _FileSkillsSource._validate_skill_metadata("-bad", "desc", "source")
+        result = FileSkillsSource._validate_skill_metadata("-bad", "desc", "source")
         assert result is not None
         assert "invalid name" in result
 
     def test_name_ends_with_hyphen(self) -> None:
-        result = _FileSkillsSource._validate_skill_metadata("bad-", "desc", "source")
+        result = FileSkillsSource._validate_skill_metadata("bad-", "desc", "source")
         assert result is not None
         assert "invalid name" in result
 
     def test_name_with_consecutive_hyphens(self) -> None:
-        result = _FileSkillsSource._validate_skill_metadata("consecutive--hyphens", "desc", "source")
+        result = FileSkillsSource._validate_skill_metadata("consecutive--hyphens", "desc", "source")
         assert result is not None
         assert "invalid name" in result
 
     def test_single_char_name(self) -> None:
-        assert _FileSkillsSource._validate_skill_metadata("a", "desc", "source") is None
+        assert FileSkillsSource._validate_skill_metadata("a", "desc", "source") is None
 
     def test_none_description(self) -> None:
-        result = _FileSkillsSource._validate_skill_metadata("my-skill", None, "source")
+        result = FileSkillsSource._validate_skill_metadata("my-skill", None, "source")
         assert result is not None
         assert "missing a description" in result
 
     def test_empty_description(self) -> None:
-        result = _FileSkillsSource._validate_skill_metadata("my-skill", "", "source")
+        result = FileSkillsSource._validate_skill_metadata("my-skill", "", "source")
         assert result is not None
         assert "missing a description" in result
 
     def test_whitespace_only_description(self) -> None:
-        result = _FileSkillsSource._validate_skill_metadata("my-skill", "   ", "source")
+        result = FileSkillsSource._validate_skill_metadata("my-skill", "   ", "source")
         assert result is not None
         assert "missing a description" in result
 
     def test_description_at_max_length(self) -> None:
         desc = "a" * 1024
-        assert _FileSkillsSource._validate_skill_metadata("my-skill", desc, "source") is None
+        assert FileSkillsSource._validate_skill_metadata("my-skill", desc, "source") is None
 
     def test_description_exceeds_max_length(self) -> None:
         desc = "a" * 1025
-        result = _FileSkillsSource._validate_skill_metadata("my-skill", desc, "source")
+        result = FileSkillsSource._validate_skill_metadata("my-skill", desc, "source")
         assert result is not None
         assert "invalid description" in result
 
@@ -1565,37 +1589,37 @@ class TestDiscoverSkillDirectories:
 
     def test_finds_skill_at_root(self, tmp_path: Path) -> None:
         (tmp_path / "SKILL.md").write_text("---\nname: s\ndescription: d\n---\n", encoding="utf-8")
-        dirs = _FileSkillsSource._discover_skill_directories([str(tmp_path)])
+        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
         assert len(dirs) == 1
 
     def test_finds_nested_skill(self, tmp_path: Path) -> None:
         sub = tmp_path / "sub"
         sub.mkdir()
         (sub / "SKILL.md").write_text("---\nname: s\ndescription: d\n---\n", encoding="utf-8")
-        dirs = _FileSkillsSource._discover_skill_directories([str(tmp_path)])
+        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
         assert len(dirs) == 1
         assert str(sub.absolute()) in dirs[0]
 
     def test_skips_empty_path_string(self) -> None:
-        dirs = _FileSkillsSource._discover_skill_directories(["", "   "])
+        dirs = FileSkillsSource._discover_skill_directories(["", "   "])
         assert dirs == []
 
     def test_skips_nonexistent_path(self) -> None:
-        dirs = _FileSkillsSource._discover_skill_directories(["/nonexistent/does/not/exist"])
+        dirs = FileSkillsSource._discover_skill_directories(["/nonexistent/does/not/exist"])
         assert dirs == []
 
     def test_depth_limit_excludes_deep_skill(self, tmp_path: Path) -> None:
         deep = tmp_path / "l1" / "l2" / "l3"
         deep.mkdir(parents=True)
         (deep / "SKILL.md").write_text("---\nname: s\ndescription: d\n---\n", encoding="utf-8")
-        dirs = _FileSkillsSource._discover_skill_directories([str(tmp_path)])
+        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
         assert len(dirs) == 0
 
     def test_depth_limit_includes_at_boundary(self, tmp_path: Path) -> None:
         at_boundary = tmp_path / "l1" / "l2"
         at_boundary.mkdir(parents=True)
         (at_boundary / "SKILL.md").write_text("---\nname: s\ndescription: d\n---\n", encoding="utf-8")
-        dirs = _FileSkillsSource._discover_skill_directories([str(tmp_path)])
+        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
         assert len(dirs) == 1
 
 
@@ -1611,7 +1635,7 @@ class TestReadAndParseSkillFile:
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("---\nname: my-skill\ndescription: A skill.\n---\nBody.", encoding="utf-8")
-        result = _FileSkillsSource._read_and_parse_skill_file(str(skill_dir))
+        result = FileSkillsSource._read_and_parse_skill_file(str(skill_dir))
         assert result is not None
         name, desc, content = result
         assert name == "my-skill"
@@ -1621,14 +1645,14 @@ class TestReadAndParseSkillFile:
     def test_missing_skill_md_returns_none(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "no-skill"
         skill_dir.mkdir()
-        result = _FileSkillsSource._read_and_parse_skill_file(str(skill_dir))
+        result = FileSkillsSource._read_and_parse_skill_file(str(skill_dir))
         assert result is None
 
     def test_invalid_frontmatter_returns_none(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "bad-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("No frontmatter at all.", encoding="utf-8")
-        result = _FileSkillsSource._read_and_parse_skill_file(str(skill_dir))
+        result = FileSkillsSource._read_and_parse_skill_file(str(skill_dir))
         assert result is None
 
     def test_name_directory_mismatch_returns_none(self, tmp_path: Path) -> None:
@@ -1637,7 +1661,7 @@ class TestReadAndParseSkillFile:
         (skill_dir / "SKILL.md").write_text(
             "---\nname: actual-skill-name\ndescription: A skill.\n---\nBody.", encoding="utf-8"
         )
-        result = _FileSkillsSource._read_and_parse_skill_file(str(skill_dir))
+        result = FileSkillsSource._read_and_parse_skill_file(str(skill_dir))
         assert result is None
 
 
@@ -1702,18 +1726,18 @@ class TestReadFileSkillResourceEdgeCases:
 
 
 class TestGetValidatedResourcePath:
-    """Tests for _FileSkillsSource._get_validated_resource_path security validation."""
+    """Tests for FileSkillsSource._get_validated_resource_path security validation."""
 
     def test_returns_valid_path(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "skill"
         skill_dir.mkdir()
         (skill_dir / "doc.md").write_text("hello")
-        result = _FileSkillsSource._get_validated_resource_path(str(skill_dir), "doc.md")
+        result = FileSkillsSource._get_validated_resource_path(str(skill_dir), "doc.md")
         assert Path(result).is_file()
 
     def test_rejects_relative_skill_dir(self) -> None:
         with pytest.raises(ValueError, match="skill_dir must be an absolute path"):
-            _FileSkillsSource._get_validated_resource_path("relative/path", "doc.md")
+            FileSkillsSource._get_validated_resource_path("relative/path", "doc.md")
 
     def test_rejects_path_outside_skill_dir(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "skill"
@@ -1721,13 +1745,13 @@ class TestGetValidatedResourcePath:
         outside_file = tmp_path / "secret.md"
         outside_file.write_text("secret")
         with pytest.raises(ValueError, match="outside the skill directory"):
-            _FileSkillsSource._get_validated_resource_path(str(skill_dir), "../secret.md")
+            FileSkillsSource._get_validated_resource_path(str(skill_dir), "../secret.md")
 
     def test_rejects_nonexistent_file(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "skill"
         skill_dir.mkdir()
         with pytest.raises(ValueError, match="not found"):
-            _FileSkillsSource._get_validated_resource_path(str(skill_dir), "missing.md")
+            FileSkillsSource._get_validated_resource_path(str(skill_dir), "missing.md")
 
     @pytest.mark.skipif(os.name == "nt", reason="symlinks require elevated privileges on Windows")
     def test_rejects_symlink_in_path(self, tmp_path: Path) -> None:
@@ -1739,7 +1763,7 @@ class TestGetValidatedResourcePath:
         link = skill_dir / "linked"
         link.symlink_to(real_subdir)
         with pytest.raises(ValueError, match="symlink"):
-            _FileSkillsSource._get_validated_resource_path(str(skill_dir), "linked/data.md")
+            FileSkillsSource._get_validated_resource_path(str(skill_dir), "linked/data.md")
 
 
 # ---------------------------------------------------------------------------
@@ -1751,16 +1775,16 @@ class TestNormalizeResourcePathEdgeCases:
     """Additional edge-case tests for _normalize_resource_path."""
 
     def test_bare_filename(self) -> None:
-        assert _FileSkillsSource._normalize_resource_path("file.md") == "file.md"
+        assert FileSkillsSource._normalize_resource_path("file.md") == "file.md"
 
     def test_deeply_nested_path(self) -> None:
-        assert _FileSkillsSource._normalize_resource_path("a/b/c/d.md") == "a/b/c/d.md"
+        assert FileSkillsSource._normalize_resource_path("a/b/c/d.md") == "a/b/c/d.md"
 
     def test_mixed_separators(self) -> None:
-        assert _FileSkillsSource._normalize_resource_path("a\\b/c\\d.md") == "a/b/c/d.md"
+        assert FileSkillsSource._normalize_resource_path("a\\b/c\\d.md") == "a/b/c/d.md"
 
     def test_dot_prefix_only(self) -> None:
-        assert _FileSkillsSource._normalize_resource_path("./file.md") == "file.md"
+        assert FileSkillsSource._normalize_resource_path("./file.md") == "file.md"
 
 
 # ---------------------------------------------------------------------------
@@ -1796,25 +1820,25 @@ class TestExtractFrontmatterEdgeCases:
 
     def test_whitespace_only_name(self) -> None:
         content = "---\nname: '   '\ndescription: A skill.\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is None
 
     def test_whitespace_only_description(self) -> None:
         content = "---\nname: test-skill\ndescription: '   '\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is None
 
     def test_name_exactly_max_length(self) -> None:
         name = "a" * 64
         content = f"---\nname: {name}\ndescription: A skill.\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
         assert result[0] == name
 
     def test_description_exactly_max_length(self) -> None:
         desc = "a" * 1024
         content = f"---\nname: test-skill\ndescription: {desc}\n---\nBody."
-        result = _FileSkillsSource._extract_frontmatter(content, "test.md")
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
         assert result[1] == desc
 
@@ -2664,11 +2688,13 @@ class TestSkillsProviderFactories:
         code_skill = InlineSkill(name="code-skill", description="test", instructions="body")
         code_skill.scripts.append(InlineSkillScript(name="s1", function=lambda: None))
 
-        provider = (
-            SkillsProviderBuilder()
-            .add_file_skills(str(tmp_path), script_runner=_noop_script_runner)
-            .add_skills([code_skill])
-            .build()
+        provider = SkillsProvider(
+            DeduplicatingSkillsSource(
+                AggregatingSkillsSource([
+                    FileSkillsSource(str(tmp_path), script_runner=_noop_script_runner),
+                    InMemorySkillsSource([code_skill]),
+                ])
+            )
         )
         await _init_provider(provider)
         assert "file-skill" in _ctx(provider)[0]
@@ -3432,10 +3458,10 @@ class TestLoadSkillsMerging:
     async def test_file_skill_takes_precedence_over_code_skill(self, tmp_path: Path) -> None:
         """When file-based and code-defined skills share a name, file-based wins."""
         from agent_framework._skills import (
-            _AggregatingSkillsSource,
-            _DeduplicatingSkillsSource,
-            _FileSkillsSource,
-            _InMemorySkillsSource,
+            AggregatingSkillsSource,
+            DeduplicatingSkillsSource,
+            FileSkillsSource,
+            InMemorySkillsSource,
         )
 
         skill_dir = tmp_path / "my-skill"
@@ -3447,10 +3473,10 @@ class TestLoadSkillsMerging:
 
         code_skill = InlineSkill(name="my-skill", description="Code skill.", instructions="Code body.")
 
-        source = _DeduplicatingSkillsSource(
-            _AggregatingSkillsSource([
-                _FileSkillsSource(str(tmp_path)),
-                _InMemorySkillsSource([code_skill]),
+        source = DeduplicatingSkillsSource(
+            AggregatingSkillsSource([
+                FileSkillsSource(str(tmp_path)),
+                InMemorySkillsSource([code_skill]),
             ])
         )
         result = await source.get_skills()
@@ -3468,7 +3494,7 @@ class TestSkillsSource:
     """Tests for the abstract SkillsSource and concrete implementations."""
 
     async def test_file_skills_source_discovers_skills(self, tmp_path: Path) -> None:
-        """_FileSkillsSource discovers skills from SKILL.md files."""
+        """FileSkillsSource discovers skills from SKILL.md files."""
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -3476,14 +3502,14 @@ class TestSkillsSource:
             encoding="utf-8",
         )
 
-        source = _FileSkillsSource(str(tmp_path))
+        source = FileSkillsSource(str(tmp_path))
         skills = await source.get_skills()
         assert len(skills) == 1
         assert skills[0].name == "my-skill"
         assert skills[0].path is not None
 
     async def test_file_skills_source_with_extensions(self, tmp_path: Path) -> None:
-        """_FileSkillsSource resource_extensions controls extension filtering."""
+        """FileSkillsSource resource_extensions controls extension filtering."""
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -3494,7 +3520,7 @@ class TestSkillsSource:
         (skill_dir / "data.csv").write_text("a,b", encoding="utf-8")
 
         # Only allow .json resources
-        source = _FileSkillsSource(str(tmp_path), resource_extensions=(".json",))
+        source = FileSkillsSource(str(tmp_path), resource_extensions=(".json",))
         skills = await source.get_skills()
         assert len(skills) == 1
         resource_names = [r.name for r in skills[0].resources]
@@ -3502,13 +3528,13 @@ class TestSkillsSource:
         assert "data.csv" not in resource_names
 
     async def test_in_memory_skills_source_returns_all_skills(self) -> None:
-        """_InMemorySkillsSource returns all provided skills."""
-        from agent_framework._skills import _InMemorySkillsSource
+        """InMemorySkillsSource returns all provided skills."""
+        from agent_framework import InMemorySkillsSource
 
         s1 = InlineSkill(name="skill-a", description="A", instructions="body")
         s2 = InlineSkill(name="skill-b", description="B", instructions="body")
 
-        source = _InMemorySkillsSource([s1, s2])
+        source = InMemorySkillsSource([s1, s2])
         skills = await source.get_skills()
         assert len(skills) == 2
         assert skills[0].name == "skill-a"
@@ -3516,28 +3542,28 @@ class TestSkillsSource:
 
     async def test_aggregating_source_combines_sources(self) -> None:
         """Aggregating source concatenates results from multiple sources."""
-        from agent_framework._skills import _AggregatingSkillsSource, _InMemorySkillsSource
+        from agent_framework import AggregatingSkillsSource, InMemorySkillsSource
 
         s1 = InlineSkill(name="skill-a", description="A", instructions="body")
         s2 = InlineSkill(name="skill-b", description="B", instructions="body")
 
-        source = _AggregatingSkillsSource([
-            _InMemorySkillsSource([s1]),
-            _InMemorySkillsSource([s2]),
+        source = AggregatingSkillsSource([
+            InMemorySkillsSource([s1]),
+            InMemorySkillsSource([s2]),
         ])
         skills = await source.get_skills()
         names = [s.name for s in skills]
         assert names == ["skill-a", "skill-b"]
 
     async def test_filtering_source_filters_by_predicate(self) -> None:
-        """_FilteringSkillsSource only returns skills matching the predicate."""
-        from agent_framework._skills import _FilteringSkillsSource, _InMemorySkillsSource
+        """FilteringSkillsSource only returns skills matching the predicate."""
+        from agent_framework import FilteringSkillsSource, InMemorySkillsSource
 
         s1 = InlineSkill(name="keep-me", description="keep", instructions="body")
         s2 = InlineSkill(name="drop-me", description="drop", instructions="body")
 
-        source = _FilteringSkillsSource(
-            _InMemorySkillsSource([s1, s2]),
+        source = FilteringSkillsSource(
+            InMemorySkillsSource([s1, s2]),
             predicate=lambda s: s.name.startswith("keep"),
         )
         skills = await source.get_skills()
@@ -3545,14 +3571,14 @@ class TestSkillsSource:
         assert skills[0].name == "keep-me"
 
     async def test_deduplicating_source_removes_duplicates(self) -> None:
-        """_DeduplicatingSkillsSource keeps first skill with each name."""
-        from agent_framework._skills import _DeduplicatingSkillsSource, _InMemorySkillsSource
+        """DeduplicatingSkillsSource keeps first skill with each name."""
+        from agent_framework import DeduplicatingSkillsSource, InMemorySkillsSource
 
         s1 = InlineSkill(name="my-skill", description="first", instructions="body1")
         s2 = InlineSkill(name="my-skill", description="second", instructions="body2")
         s3 = InlineSkill(name="other", description="other", instructions="body3")
 
-        source = _DeduplicatingSkillsSource(_InMemorySkillsSource([s1, s2, s3]))
+        source = DeduplicatingSkillsSource(InMemorySkillsSource([s1, s2, s3]))
         skills = await source.get_skills()
         assert len(skills) == 2
         names = {s.name for s in skills}
@@ -3562,13 +3588,13 @@ class TestSkillsSource:
         assert my_skill.description == "first"
 
     async def test_delegating_source_delegates(self) -> None:
-        """_DelegatingSkillsSource delegates to inner source by default."""
-        from agent_framework._skills import _DelegatingSkillsSource, _InMemorySkillsSource
+        """DelegatingSkillsSource delegates to inner source by default."""
+        from agent_framework import DelegatingSkillsSource, InMemorySkillsSource
 
         skill = InlineSkill(name="test-skill", description="test", instructions="body")
-        inner = _InMemorySkillsSource([skill])
+        inner = InMemorySkillsSource([skill])
 
-        class PassthroughSource(_DelegatingSkillsSource):
+        class PassthroughSource(DelegatingSkillsSource):
             pass
 
         source = PassthroughSource(inner)
@@ -3586,17 +3612,17 @@ class TestSkillsSource:
             encoding="utf-8",
         )
 
-        source = _FileSkillsSource(str(tmp_path))
+        source = FileSkillsSource(str(tmp_path))
         provider = SkillsProvider(source)
         await _init_provider(provider)
         assert "my-skill" in _ctx(provider)[0]
 
     async def test_provider_source_overrides_legacy_params(self, tmp_path: Path) -> None:
         """When source= is provided, skill_paths and skills are ignored."""
-        from agent_framework._skills import _InMemorySkillsSource
+        from agent_framework import InMemorySkillsSource
 
         code_skill = InlineSkill(name="code-skill", description="test", instructions="body")
-        source = _InMemorySkillsSource([code_skill])
+        source = InMemorySkillsSource([code_skill])
 
         # Pass skill_paths that would normally discover file skills — should be ignored
         provider = SkillsProvider(source)
@@ -3606,12 +3632,12 @@ class TestSkillsSource:
 
     async def test_composed_source_pipeline(self, tmp_path: Path) -> None:
         """Full source composition: file + code → aggregate → dedup → filter."""
-        from agent_framework._skills import (
-            _AggregatingSkillsSource,
-            _DeduplicatingSkillsSource,
-            _FileSkillsSource,
-            _FilteringSkillsSource,
-            _InMemorySkillsSource,
+        from agent_framework import (
+            AggregatingSkillsSource,
+            DeduplicatingSkillsSource,
+            FileSkillsSource,
+            FilteringSkillsSource,
+            InMemorySkillsSource,
         )
 
         skill_dir = tmp_path / "file-skill"
@@ -3624,11 +3650,11 @@ class TestSkillsSource:
         code_skill = InlineSkill(name="code-skill", description="Code.", instructions="Body.")
         internal = InlineSkill(name="internal", description="Internal.", instructions="Body.")
 
-        source = _FilteringSkillsSource(
-            _DeduplicatingSkillsSource(
-                _AggregatingSkillsSource([
-                    _FileSkillsSource(str(tmp_path)),
-                    _InMemorySkillsSource([code_skill, internal]),
+        source = FilteringSkillsSource(
+            DeduplicatingSkillsSource(
+                AggregatingSkillsSource([
+                    FileSkillsSource(str(tmp_path)),
+                    InMemorySkillsSource([code_skill, internal]),
                 ])
             ),
             predicate=lambda s: s.name != "internal",
@@ -3641,17 +3667,15 @@ class TestSkillsSource:
 
 
 # ---------------------------------------------------------------------------
-# Tests: SkillsProviderBuilder
+# Tests: Source composition (replaces SkillsProviderBuilder)
 # ---------------------------------------------------------------------------
 
 
-class TestSkillsProviderBuilder:
-    """Tests for the fluent SkillsProviderBuilder."""
+class TestSourceComposition:
+    """Tests for composing sources directly instead of using a builder."""
 
-    async def test_build_with_file_skills(self, tmp_path: Path) -> None:
-        """Builder with file skills creates a working provider."""
-        from agent_framework import SkillsProviderBuilder
-
+    async def test_file_skills_source_with_provider(self, tmp_path: Path) -> None:
+        """FileSkillsSource with dedup creates a working provider."""
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -3659,95 +3683,70 @@ class TestSkillsProviderBuilder:
             encoding="utf-8",
         )
 
-        provider = SkillsProviderBuilder().add_file_skills(str(tmp_path)).build()
+        provider = SkillsProvider(DeduplicatingSkillsSource(FileSkillsSource(str(tmp_path))))
         await _init_provider(provider)
         assert "my-skill" in _ctx(provider)[0]
 
-    async def test_build_with_code_skills(self) -> None:
-        """Builder with code skills creates a working provider."""
-        from agent_framework import SkillsProviderBuilder
-
+    async def test_code_skills_with_provider(self) -> None:
+        """InMemorySkillsSource with code skills creates a working provider."""
         skill = InlineSkill(name="code-skill", description="test", instructions="body")
-        provider = SkillsProviderBuilder().add_skill(skill).build()
+        provider = SkillsProvider(DeduplicatingSkillsSource(InMemorySkillsSource([skill])))
         await _init_provider(provider)
         assert "code-skill" in _ctx(provider)[0]
 
-    async def test_build_with_multiple_skills(self) -> None:
-        """Builder with add_skills registers multiple skills."""
-        from agent_framework import SkillsProviderBuilder
-
+    async def test_multiple_code_skills(self) -> None:
+        """InMemorySkillsSource with multiple skills registers them all."""
         s1 = InlineSkill(name="skill-a", description="A", instructions="body")
         s2 = InlineSkill(name="skill-b", description="B", instructions="body")
-        provider = SkillsProviderBuilder().add_skills([s1, s2]).build()
+        provider = SkillsProvider(DeduplicatingSkillsSource(InMemorySkillsSource([s1, s2])))
         await _init_provider(provider)
         assert "skill-a" in _ctx(provider)[0]
         assert "skill-b" in _ctx(provider)[0]
 
-    async def test_build_with_custom_source(self) -> None:
-        """Builder with a custom source creates a working provider."""
-        from agent_framework import SkillsProviderBuilder
-        from agent_framework._skills import _InMemorySkillsSource
-
+    async def test_custom_source_with_provider(self) -> None:
+        """Custom source passed to SkillsProvider works."""
         skill = InlineSkill(name="custom", description="test", instructions="body")
-        source = _InMemorySkillsSource([skill])
-        provider = SkillsProviderBuilder().add_source(source).build()
+        source = InMemorySkillsSource([skill])
+        provider = SkillsProvider(DeduplicatingSkillsSource(source))
         await _init_provider(provider)
         assert "custom" in _ctx(provider)[0]
 
-    async def test_build_with_filter(self, tmp_path: Path) -> None:
-        """Builder with a filter predicate excludes matching skills."""
-        from agent_framework import SkillsProviderBuilder
+    async def test_filtering_source_excludes_skills(self) -> None:
+        """FilteringSkillsSource excludes matching skills."""
+        from agent_framework import FilteringSkillsSource
 
         s1 = InlineSkill(name="keep-me", description="keep", instructions="body")
         s2 = InlineSkill(name="drop-me", description="drop", instructions="body")
 
-        provider = (
-            SkillsProviderBuilder()
-            .add_skills([s1, s2])
-            .with_filter(lambda s: s.name.startswith("keep"))
-            .build()
+        source = DeduplicatingSkillsSource(
+            FilteringSkillsSource(
+                InMemorySkillsSource([s1, s2]),
+                predicate=lambda s: s.name.startswith("keep"),
+            )
         )
+        provider = SkillsProvider(source)
         await _init_provider(provider)
         assert "keep-me" in _ctx(provider)[0]
         assert "drop-me" not in _ctx(provider)[0]
 
-    async def test_build_deduplicates(self) -> None:
-        """Builder automatically deduplicates skills by name."""
-        from agent_framework import SkillsProviderBuilder
-        from agent_framework._skills import _InMemorySkillsSource
-
+    async def test_dedup_across_sources(self) -> None:
+        """DeduplicatingSkillsSource deduplicates across aggregated sources."""
         s1 = InlineSkill(name="dup", description="first", instructions="body1")
         s2 = InlineSkill(name="dup", description="second", instructions="body2")
 
-        provider = (
-            SkillsProviderBuilder()
-            .add_source(_InMemorySkillsSource([s1]))
-            .add_source(_InMemorySkillsSource([s2]))
-            .build()
+        source = DeduplicatingSkillsSource(
+            AggregatingSkillsSource([
+                InMemorySkillsSource([s1]),
+                InMemorySkillsSource([s2]),
+            ])
         )
+        provider = SkillsProvider(source)
         await _init_provider(provider)
         assert len(_ctx(provider)[0]) == 1
         assert _ctx(provider)[0]["dup"].description == "first"
 
-    def test_fluent_chaining_returns_same_builder(self) -> None:
-        """All builder methods return the same builder instance."""
-        from agent_framework import SkillsProviderBuilder
-
-        builder = SkillsProviderBuilder()
-        skill = InlineSkill(name="test", description="test", instructions="body")
-
-        assert builder.add_skill(skill) is builder
-        assert builder.add_skills([]) is builder
-        assert builder.add_file_skills("./fake") is builder
-        assert builder.with_prompt_template("{skills}") is builder
-        assert builder.with_script_approval(True) is builder
-        assert builder.with_file_script_runner(_noop_script_runner) is builder
-        assert builder.with_filter(lambda s: True) is builder
-
-    async def test_build_with_script_runner(self, tmp_path: Path) -> None:
-        """Builder-level script runner is used by file sources."""
-        from agent_framework import SkillsProviderBuilder
-
+    async def test_file_source_with_script_runner(self, tmp_path: Path) -> None:
+        """FileSkillsSource with script_runner enables script execution."""
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -3756,45 +3755,35 @@ class TestSkillsProviderBuilder:
         )
         (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
 
-        provider = (
-            SkillsProviderBuilder()
-            .add_file_skills(str(tmp_path))
-            .with_file_script_runner(_noop_script_runner)
-            .build()
+        source = DeduplicatingSkillsSource(
+            FileSkillsSource(str(tmp_path), script_runner=_noop_script_runner)
         )
+        provider = SkillsProvider(source)
         await _init_provider(provider)
         assert "my-skill" in _ctx(provider)[0]
         assert any(hasattr(t, "name") and t.name == "run_skill_script" for t in _ctx(provider)[2])
 
-    async def test_build_with_script_approval(self) -> None:
-        """Builder with script approval sets the approval mode."""
-        from agent_framework import SkillsProviderBuilder
-
+    async def test_script_approval_on_provider(self) -> None:
+        """SkillsProvider with require_script_approval sets the approval mode."""
         skill = InlineSkill(name="my-skill", description="test", instructions="body")
         skill.scripts.append(InlineSkillScript(name="s1", function=lambda: None))
 
-        provider = (
-            SkillsProviderBuilder()
-            .add_skill(skill)
-            .with_script_approval()
-            .build()
+        provider = SkillsProvider(
+            DeduplicatingSkillsSource(InMemorySkillsSource([skill])),
+            require_script_approval=True,
         )
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
         assert run_tool.approval_mode == "always_require"
 
-    async def test_build_empty(self) -> None:
-        """Builder with no sources creates an empty provider."""
-        from agent_framework import SkillsProviderBuilder
-
-        provider = SkillsProviderBuilder().build()
+    async def test_empty_source(self) -> None:
+        """Empty InMemorySkillsSource creates an empty provider."""
+        provider = SkillsProvider(InMemorySkillsSource([]))
         await _init_provider(provider)
         assert len(_ctx(provider)[0]) == 0
 
-    async def test_per_source_runner_overrides_builder_runner(self, tmp_path: Path) -> None:
-        """Per-source script runner takes precedence when no builder-level runner is on the provider."""
-        from agent_framework import SkillsProviderBuilder
-
+    async def test_per_source_runner(self, tmp_path: Path) -> None:
+        """Per-source script runner is used when set on FileSkillsSource."""
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -3809,12 +3798,10 @@ class TestSkillsProviderBuilder:
             call_log.append("source")
             return "source"
 
-        # Only set the runner on the source, not on the builder
-        provider = (
-            SkillsProviderBuilder()
-            .add_file_skills(str(tmp_path), script_runner=source_runner)
-            .build()
+        source = DeduplicatingSkillsSource(
+            FileSkillsSource(str(tmp_path), script_runner=source_runner)
         )
+        provider = SkillsProvider(source)
         await _init_provider(provider)
 
         # The source-level runner should be discovered and used
@@ -3899,19 +3886,19 @@ class TestSkillsProviderFactoryMethods:
 
     def test_init_with_source_creates_provider(self) -> None:
         """Constructor with SkillsSource returns a SkillsProvider instance."""
-        from agent_framework._skills import _InMemorySkillsSource
+        from agent_framework import InMemorySkillsSource
 
         skill = InlineSkill(name="test-skill", description="Test", instructions="Body")
-        source = _InMemorySkillsSource([skill])
+        source = InMemorySkillsSource([skill])
         provider = SkillsProvider(source)
         assert isinstance(provider, SkillsProvider)
 
     async def test_init_with_source_uses_provided_source(self) -> None:
         """Constructor with SkillsSource uses the exact source given."""
-        from agent_framework._skills import _InMemorySkillsSource
+        from agent_framework import InMemorySkillsSource
 
         skill = InlineSkill(name="test-skill", description="Test", instructions="Body")
-        source = _InMemorySkillsSource([skill])
+        source = InMemorySkillsSource([skill])
         provider = SkillsProvider(source)
         await _init_provider(provider)
         assert "test-skill" in _ctx(provider)[0]
@@ -3951,17 +3938,17 @@ class TestDisableCaching:
 
     async def test_disable_caching_via_constructor(self) -> None:
         """disable_caching works via the primary constructor."""
-        from agent_framework._skills import _InMemorySkillsSource
+        from agent_framework import InMemorySkillsSource
 
         skill = InlineSkill(name="test-skill", description="Test", instructions="Body")
-        source = _InMemorySkillsSource([skill])
+        source = InMemorySkillsSource([skill])
         provider = SkillsProvider(source, disable_caching=True)
         assert provider._disable_caching is True
 
-    async def test_caching_enabled_by_default_in_builder(self) -> None:
-        """Builder defaults to caching enabled."""
+    async def test_caching_enabled_by_default(self) -> None:
+        """SkillsProvider defaults to caching enabled."""
         skill = InlineSkill(name="test-skill", description="Test", instructions="Body")
-        provider = SkillsProviderBuilder().add_skill(skill).build()
+        provider = SkillsProvider([skill])
         assert provider._disable_caching is False
 
     async def test_disable_caching_before_run_rebuilds(self) -> None:

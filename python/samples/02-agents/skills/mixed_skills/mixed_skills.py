@@ -15,8 +15,12 @@ from typing import Any
 
 from agent_framework import (
     Agent,
+    AggregatingSkillsSource,
+    DeduplicatingSkillsSource,
+    FileSkillsSource,
     InlineSkill,
-    SkillsProviderBuilder,
+    InMemorySkillsSource,
+    SkillsProvider,
 )
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
@@ -125,12 +129,16 @@ async def main() -> None:
     # Create the SkillsProvider with both code and file skills.
     # The script_runner handles file-based scripts; code-defined scripts
     # (@skill.script) run in-process automatically.
-    skills_dir = Path(__file__).parent / "skills"
-    skills_provider = (
-        SkillsProviderBuilder()
-        .add_file_skills(str(skills_dir), script_runner=subprocess_script_runner)
-        .add_skill(volume_converter_skill)
-        .build()
+    skills_provider = SkillsProvider(
+        DeduplicatingSkillsSource(
+            AggregatingSkillsSource([
+                FileSkillsSource(
+                    str(Path(__file__).parent / "skills"),
+                    script_runner=subprocess_script_runner,
+                ),
+                InMemorySkillsSource([volume_converter_skill]),
+            ])
+        )
     )
 
     # Run the agent

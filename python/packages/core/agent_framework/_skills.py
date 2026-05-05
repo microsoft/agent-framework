@@ -12,8 +12,8 @@ Defines the core data model classes for the agent skills system:
   (in-process callable), and :class:`FileSkillScript` (file-path-backed).
 - **Sources:** :class:`SkillsSource` (abstract base for custom skill origins).
 - **Runner:** :class:`SkillScriptRunner` (protocol for executing file-based scripts).
-- **Provider:** :class:`SkillsProvider` and :class:`SkillsProviderBuilder` which
-  implement the progressive-disclosure pattern from the
+- **Provider:** :class:`SkillsProvider` which implements the
+  progressive-disclosure pattern from the
   `Agent Skills specification <https://agentskills.io/>`_:
 
 1. **Advertise** — skill names and descriptions are injected into the system prompt.
@@ -30,7 +30,8 @@ Skills can come from different sources:
 - **Custom sources** — any :class:`SkillsSource` implementation that provides
   skills from arbitrary origins (REST APIs, databases, etc.).
 
-Multiple sources can be composed via the :class:`SkillsProviderBuilder`.
+Multiple sources can be composed using :class:`AggregatingSkillsSource`,
+:class:`FilteringSkillsSource`, and :class:`DeduplicatingSkillsSource`.
 
 **Security:** file-based skill metadata is XML-escaped before prompt injection, and
 file-based resource reads are guarded against path traversal and symlink escape.
@@ -574,8 +575,7 @@ class InlineSkill(Skill):
     """A skill defined entirely in code with resources and scripts.
 
     All resources and scripts should be configured before the skill is
-    registered with a :class:`SkillsProvider` or
-    :class:`SkillsProviderBuilder`.
+    registered with a :class:`SkillsProvider`.
 
     Attributes:
         name: Skill name (lowercase letters, numbers, hyphens only).
@@ -1003,7 +1003,9 @@ class SkillsProvider(ContextProvider):
 
     Accepts a :class:`SkillsSource`, a single :class:`Skill`, or a
     sequence of :class:`Skill` instances. For file-based skills, use
-    :meth:`from_paths` or the :class:`SkillsProviderBuilder`.
+    :meth:`from_paths`. For advanced multi-source scenarios, compose
+    sources directly (e.g. :class:`AggregatingSkillsSource`,
+    :class:`FilteringSkillsSource`, :class:`DeduplicatingSkillsSource`).
 
     Follows the progressive-disclosure pattern from the
     `Agent Skills specification <https://agentskills.io/>`_:
@@ -1019,7 +1021,7 @@ class SkillsProvider(ContextProvider):
     symlink escape.  Only use skills from trusted sources.
 
     Examples:
-        File-based factory (recommended):
+        File-based factory (recommended for single-source file skills):
 
         .. code-block:: python
 
@@ -1036,16 +1038,20 @@ class SkillsProvider(ContextProvider):
             )
             provider = SkillsProvider([my_skill])
 
-        Builder pattern:
+        Composing multiple sources with filtering and deduplication:
 
         .. code-block:: python
 
-            provider = (
-                SkillsProviderBuilder()
-                .add_file_skills("./skills", script_runner=my_runner)
-                .add_skill(my_code_skill)
-                .build()
+            source = DeduplicatingSkillsSource(
+                FilteringSkillsSource(
+                    AggregatingSkillsSource([
+                        FileSkillsSource("./skills", script_runner=my_runner),
+                        InMemorySkillsSource([my_code_skill]),
+                    ]),
+                    predicate=lambda s: s.name != "internal",
+                )
             )
+            provider = SkillsProvider(source)
 
     Attributes:
         DEFAULT_SOURCE_ID: Default value for the ``source_id`` used by this provider.
@@ -1068,8 +1074,8 @@ class SkillsProvider(ContextProvider):
         sequence of :class:`Skill` instances.  When skills are passed
         directly, they are automatically deduplicated.
 
-        For file-based skills, use :meth:`from_paths` or the
-        :class:`SkillsProviderBuilder`.
+        For file-based skills, use :meth:`from_paths` or compose sources
+        directly using :class:`FileSkillsSource` and other source classes.
 
         Args:
             source: A :class:`SkillsSource`, a single :class:`Skill`,
@@ -1111,11 +1117,11 @@ class SkillsProvider(ContextProvider):
             )
 
         if isinstance(source, Skill):
-            source = _DeduplicatingSkillsSource(_InMemorySkillsSource([source]))
+            source = DeduplicatingSkillsSource(InMemorySkillsSource([source]))
         elif isinstance(source, SkillsSource):
             pass
         else:
-            source = _DeduplicatingSkillsSource(_InMemorySkillsSource(list(source)))
+            source = DeduplicatingSkillsSource(InMemorySkillsSource(list(source)))
 
         self._source = source
         self._instruction_template = instruction_template
@@ -1178,8 +1184,8 @@ class SkillsProvider(ContextProvider):
         Returns:
             A configured :class:`SkillsProvider`.
         """
-        source = _DeduplicatingSkillsSource(
-            _FileSkillsSource(
+        source = DeduplicatingSkillsSource(
+            FileSkillsSource(
                 skill_paths,
                 script_runner=script_runner,
                 resource_extensions=resource_extensions,
@@ -1614,8 +1620,6 @@ class SkillsProvider(ContextProvider):
 
 # endregion
 
-# endregion
-
 
 def _create_script_element(script: SkillScript) -> str:
     """Create an XML ``<script …>`` element from a :class:`SkillScript`.
@@ -1640,8 +1644,6 @@ def _create_script_element(script: SkillScript) -> str:
         return f"  <script {attrs}>\n    <parameters_schema>{params_json}</parameters_schema>\n  </script>"
     return f"  <script {attrs}/>"
 
-
-# endregion
 
 # region Skill Sources
 
@@ -1668,7 +1670,7 @@ class SkillsSource(ABC):
         ...
 
 
-class _FileSkillsSource(SkillsSource):
+class FileSkillsSource(SkillsSource):
     """Skill source that discovers skills from filesystem ``SKILL.md`` files.
 
     Recursively scans the configured *skill_paths* directories for
@@ -1684,14 +1686,14 @@ class _FileSkillsSource(SkillsSource):
 
         .. code-block:: python
 
-            source = _FileSkillsSource(skill_paths="./skills")
+            source = FileSkillsSource(skill_paths="./skills")
             skills = await source.get_skills()
 
         With a script runner and custom extensions:
 
         .. code-block:: python
 
-            source = _FileSkillsSource(
+            source = FileSkillsSource(
                 skill_paths=["./skills", "./more-skills"],
                 script_runner=my_runner,
                 script_extensions=(".py", ".sh"),
@@ -1706,7 +1708,7 @@ class _FileSkillsSource(SkillsSource):
         resource_extensions: tuple[str, ...] | None = None,
         script_extensions: tuple[str, ...] | None = None,
     ) -> None:
-        """Initialize a _FileSkillsSource.
+        """Initialize a FileSkillsSource.
 
         Args:
             skill_paths: One or more directory paths to search for file-based
@@ -1746,11 +1748,11 @@ class _FileSkillsSource(SkillsSource):
         """
         skills: dict[str, FileSkill] = {}
 
-        discovered = _FileSkillsSource._discover_skill_directories(self._skill_paths)
+        discovered = FileSkillsSource._discover_skill_directories(self._skill_paths)
         logger.info("Discovered %d potential skills", len(discovered))
 
         for skill_path in discovered:
-            parsed = _FileSkillsSource._read_and_parse_skill_file(skill_path)
+            parsed = FileSkillsSource._read_and_parse_skill_file(skill_path)
             if parsed is None:
                 continue
 
@@ -1772,12 +1774,12 @@ class _FileSkillsSource(SkillsSource):
             )
 
             # Discover and attach file-based resources
-            for rn in _FileSkillsSource._discover_resource_files(skill_path, self._resource_extensions):
-                resource_full_path = _FileSkillsSource._get_validated_resource_path(skill_path, rn)
+            for rn in FileSkillsSource._discover_resource_files(skill_path, self._resource_extensions):
+                resource_full_path = FileSkillsSource._get_validated_resource_path(skill_path, rn)
                 file_skill.resources.append(_FileSkillResource(name=rn, full_path=resource_full_path))
 
             # Discover and attach file-based scripts as SkillScript instances
-            for sn in _FileSkillsSource._discover_script_files(skill_path, self._script_extensions):
+            for sn in FileSkillsSource._discover_script_files(skill_path, self._script_extensions):
                 script_full_path = os.path.normpath(os.path.join(skill_path, sn))  # noqa: ASYNC240
                 file_skill.scripts.append(
                     FileSkillScript(name=sn, full_path=script_full_path, runner=self._script_runner)
@@ -1894,7 +1896,7 @@ class _FileSkillsSource(SkillsSource):
 
             resource_full_path = str(Path(os.path.normpath(resource_file)).absolute())
 
-            if not _FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
+            if not FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
                 logger.warning(
                     "Skipping resource '%s': resolves outside skill directory '%s'",
                     resource_file,
@@ -1902,7 +1904,7 @@ class _FileSkillsSource(SkillsSource):
                 )
                 continue
 
-            if _FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
+            if FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
                 logger.warning(
                     "Skipping resource '%s': symlink detected in path under skill directory '%s'",
                     resource_file,
@@ -1911,7 +1913,7 @@ class _FileSkillsSource(SkillsSource):
                 continue
 
             rel_path = resource_file.relative_to(skill_dir)
-            resources.append(_FileSkillsSource._normalize_resource_path(str(rel_path)))
+            resources.append(FileSkillsSource._normalize_resource_path(str(rel_path)))
 
         return resources
 
@@ -1948,7 +1950,7 @@ class _FileSkillsSource(SkillsSource):
 
             script_full_path = str(Path(os.path.normpath(script_file)).absolute())
 
-            if not _FileSkillsSource._is_path_within_directory(script_full_path, root_directory_path):
+            if not FileSkillsSource._is_path_within_directory(script_full_path, root_directory_path):
                 logger.warning(
                     "Skipping script '%s': resolves outside skill directory '%s'",
                     script_file,
@@ -1956,7 +1958,7 @@ class _FileSkillsSource(SkillsSource):
                 )
                 continue
 
-            if _FileSkillsSource._has_symlink_in_path(script_full_path, root_directory_path):
+            if FileSkillsSource._has_symlink_in_path(script_full_path, root_directory_path):
                 logger.warning(
                     "Skipping script '%s': symlink detected in path under skill directory '%s'",
                     script_file,
@@ -1965,7 +1967,7 @@ class _FileSkillsSource(SkillsSource):
                 continue
 
             rel_path = script_file.relative_to(skill_dir)
-            scripts.append(_FileSkillsSource._normalize_resource_path(str(rel_path)))
+            scripts.append(FileSkillsSource._normalize_resource_path(str(rel_path)))
 
         return scripts
 
@@ -1992,18 +1994,18 @@ class _FileSkillsSource(SkillsSource):
         if not os.path.isabs(skill_dir):
             raise ValueError(f"skill_dir must be an absolute path, got: '{skill_dir}'")
 
-        resource_name = _FileSkillsSource._normalize_resource_path(resource_name)
+        resource_name = FileSkillsSource._normalize_resource_path(resource_name)
 
         resource_full_path = os.path.normpath(Path(skill_dir) / resource_name)
         root_directory_path = os.path.normpath(skill_dir)
 
-        if not _FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
+        if not FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
             raise ValueError(f"Resource file '{resource_name}' references a path outside the skill directory.")
 
         if not Path(resource_full_path).is_file():
             raise ValueError(f"Resource file '{resource_name}' not found in skill directory '{skill_dir}'.")
 
-        if _FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
+        if FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
             raise ValueError(
                 f"Resource file '{resource_name}' "
                 "has a symlink in its path; symlinks are not allowed."
@@ -2088,7 +2090,7 @@ class _FileSkillsSource(SkillsSource):
             elif key.lower() == "description":
                 description = value
 
-        error = _FileSkillsSource._validate_skill_metadata(name, description, skill_file_path)
+        error = FileSkillsSource._validate_skill_metadata(name, description, skill_file_path)
         if error:
             logger.error(error)
             return None
@@ -2118,7 +2120,7 @@ class _FileSkillsSource(SkillsSource):
             logger.error("Failed to read SKILL.md at '%s'", skill_file)
             return None
 
-        result = _FileSkillsSource._extract_frontmatter(content, str(skill_file))
+        result = FileSkillsSource._extract_frontmatter(content, str(skill_file))
         if result is None:
             return None
 
@@ -2175,7 +2177,7 @@ class _FileSkillsSource(SkillsSource):
         return discovered
 
 
-class _InMemorySkillsSource(SkillsSource):
+class InMemorySkillsSource(SkillsSource):
     """Skill source that holds pre-built :class:`Skill` instances in memory.
 
     Accepts any :class:`Skill` instances (e.g. :class:`InlineSkill`,
@@ -2190,12 +2192,12 @@ class _InMemorySkillsSource(SkillsSource):
                 description="Example skill",
                 instructions="Instructions here...",
             )
-            source = _InMemorySkillsSource([skill])
+            source = InMemorySkillsSource([skill])
             skills = await source.get_skills()
     """
 
     def __init__(self, skills: Sequence[Skill]) -> None:
-        """Initialize an _InMemorySkillsSource.
+        """Initialize an InMemorySkillsSource.
 
         Args:
             skills: :class:`Skill` instances to serve from this source.
@@ -2211,7 +2213,7 @@ class _InMemorySkillsSource(SkillsSource):
         return self._skills
 
 
-class _DelegatingSkillsSource(SkillsSource, ABC):
+class DelegatingSkillsSource(SkillsSource, ABC):
     """Abstract decorator base that wraps an inner skill source.
 
     Subclass this to implement cross-cutting concerns (filtering, caching,
@@ -2223,7 +2225,7 @@ class _DelegatingSkillsSource(SkillsSource, ABC):
     """
 
     def __init__(self, inner_source: SkillsSource) -> None:
-        """Initialize a _DelegatingSkillsSource.
+        """Initialize a DelegatingSkillsSource.
 
         Args:
             inner_source: The source to wrap and delegate to.
@@ -2246,7 +2248,7 @@ class _DelegatingSkillsSource(SkillsSource, ABC):
         return await self._inner_source.get_skills()
 
 
-class _DeduplicatingSkillsSource(_DelegatingSkillsSource):
+class DeduplicatingSkillsSource(DelegatingSkillsSource):
     """Decorator that deduplicates skills by name (case-insensitive).
 
     When multiple skills share the same name (ignoring case), only the
@@ -2259,12 +2261,12 @@ class _DeduplicatingSkillsSource(_DelegatingSkillsSource):
     Examples:
         .. code-block:: python
 
-            deduped = _DeduplicatingSkillsSource(inner_source)
+            deduped = DeduplicatingSkillsSource(inner_source)
             skills = await deduped.get_skills()
     """
 
     def __init__(self, inner_source: SkillsSource) -> None:
-        """Initialize a _DeduplicatingSkillsSource.
+        """Initialize a DeduplicatingSkillsSource.
 
         Args:
             inner_source: The source whose results will be deduplicated.
@@ -2296,7 +2298,7 @@ class _DeduplicatingSkillsSource(_DelegatingSkillsSource):
         return result
 
 
-class _FilteringSkillsSource(_DelegatingSkillsSource):
+class FilteringSkillsSource(DelegatingSkillsSource):
     """Decorator that filters skills from an inner source by predicate.
 
     Only skills for which *predicate* returns ``True`` are included in the
@@ -2306,7 +2308,7 @@ class _FilteringSkillsSource(_DelegatingSkillsSource):
     Examples:
         .. code-block:: python
 
-            filtered = _FilteringSkillsSource(
+            filtered = FilteringSkillsSource(
                 inner_source=my_source,
                 predicate=lambda s: s.name != "internal",
             )
@@ -2318,7 +2320,7 @@ class _FilteringSkillsSource(_DelegatingSkillsSource):
         inner_source: SkillsSource,
         predicate: Callable[[Skill], bool],
     ) -> None:
-        """Initialize a _FilteringSkillsSource.
+        """Initialize a FilteringSkillsSource.
 
         Args:
             inner_source: The source to filter.
@@ -2338,7 +2340,7 @@ class _FilteringSkillsSource(_DelegatingSkillsSource):
         return [s for s in skills if self._predicate(s)]
 
 
-class _AggregatingSkillsSource(SkillsSource):
+class AggregatingSkillsSource(SkillsSource):
     """Skill source that composes multiple sources into one."""
 
     def __init__(self, sources: Sequence[SkillsSource]) -> None:
@@ -2350,254 +2352,6 @@ class _AggregatingSkillsSource(SkillsSource):
             skills = await source.get_skills()
             result.extend(skills)
         return result
-
-
-# endregion
-
-# region SkillsProviderBuilder
-
-
-@experimental(feature_id=ExperimentalFeature.SKILLS)
-class SkillsProviderBuilder:
-    """Fluent builder for composing a :class:`SkillsProvider`.
-
-    Provides a step-by-step API for registering skill sources, configuring
-    script runners, filtering, and building the final provider.  Sources
-    are automatically aggregated and deduplicated.
-
-    Examples:
-        File-based skills:
-
-        .. code-block:: python
-
-            provider = (
-                SkillsProviderBuilder()
-                .add_file_skills("./skills", script_runner=my_runner)
-                .build()
-            )
-
-        Mixed skills with filtering:
-
-        .. code-block:: python
-
-            provider = (
-                SkillsProviderBuilder()
-                .add_file_skills("./skills")
-                .add_skill(my_code_skill)
-                .with_file_script_runner(my_runner)
-                .with_filter(lambda s: s.name != "internal")
-                .build()
-            )
-
-        Custom sources:
-
-        .. code-block:: python
-
-            provider = (
-                SkillsProviderBuilder()
-                .add_source(my_custom_source)
-                .add_file_skills("./skills")
-                .with_script_approval()
-                .build()
-            )
-    """
-
-    def __init__(self) -> None:
-        """Initialize a SkillsProviderBuilder."""
-        self._source_factories: list[Callable[[], SkillsSource]] = []
-        self._skills: list[Skill] = []
-        self._script_runner: SkillScriptRunner | None = None
-        self._instruction_template: str | None = None
-        self._require_script_approval: bool = False
-        self._disable_caching: bool = False
-        self._filter_predicate: Callable[[Skill], bool] | None = None
-
-    def add_file_skills(
-        self,
-        skill_paths: str | Path | Sequence[str | Path],
-        *,
-        script_runner: SkillScriptRunner | None = None,
-        resource_extensions: tuple[str, ...] | None = None,
-        script_extensions: tuple[str, ...] | None = None,
-    ) -> SkillsProviderBuilder:
-        """Register file-based skills from one or more directories.
-
-        Args:
-            skill_paths: Directory paths to scan for ``SKILL.md`` files.
-
-        Keyword Args:
-            script_runner: Per-source script runner.  Overrides the
-                builder-level runner set via :meth:`with_file_script_runner`
-                for this source only.
-            resource_extensions: File extensions recognized as discoverable
-                resources.  Defaults to
-                ``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``.
-            script_extensions: File extensions recognized as discoverable
-                scripts.  Defaults to ``(".py",)``.
-
-        Returns:
-            This builder instance for chaining.
-        """
-        def _factory(
-            sp: str | Path | Sequence[str | Path] = skill_paths,
-            sr: SkillScriptRunner | None = script_runner,
-            re: tuple[str, ...] | None = resource_extensions,
-            se: tuple[str, ...] | None = script_extensions,
-        ) -> SkillsSource:
-            runner = sr or self._script_runner
-            return _FileSkillsSource(sp, script_runner=runner, resource_extensions=re, script_extensions=se)
-
-        self._source_factories.append(_factory)
-        return self
-
-    def add_skill(self, skill: Skill) -> SkillsProviderBuilder:
-        """Register a single code-defined skill.
-
-        Args:
-            skill: The :class:`Skill` to add.
-
-        Returns:
-            This builder instance for chaining.
-        """
-        self._skills.append(skill)
-        return self
-
-    def add_skills(self, skills: Sequence[Skill]) -> SkillsProviderBuilder:
-        """Register multiple code-defined skills.
-
-        Args:
-            skills: The :class:`Skill` instances to add.
-
-        Returns:
-            This builder instance for chaining.
-        """
-        self._skills.extend(skills)
-        return self
-
-    def add_source(self, source: SkillsSource) -> SkillsProviderBuilder:
-        """Register a custom :class:`SkillsSource`.
-
-        Args:
-            source: The source to add.
-
-        Returns:
-            This builder instance for chaining.
-        """
-        self._source_factories.append(lambda s=source: s)  # type: ignore[misc]
-        return self
-
-    def with_file_script_runner(self, runner: SkillScriptRunner) -> SkillsProviderBuilder:
-        """Set the builder-level script runner for file-based skills.
-
-        This runner is used by file sources that do not specify their own
-        runner.  Per-source runners (passed to :meth:`add_file_skills`)
-        take precedence over this builder-level setting.
-
-        Args:
-            runner: The script runner callable.
-
-        Returns:
-            This builder instance for chaining.
-        """
-        self._script_runner = runner
-        return self
-
-    def with_prompt_template(self, template: str) -> SkillsProviderBuilder:
-        """Set a custom system-prompt template for skill advertising.
-
-        The template must contain a ``{skills}`` placeholder and may also
-        include a ``{runner_instructions}`` placeholder. If any configured
-        skill exposes resources, the template must also include a
-        ``{resource_instructions}`` placeholder.
-
-        Args:
-            template: The prompt template string.
-
-        Returns:
-            This builder instance for chaining.
-        """
-        self._instruction_template = template
-        return self
-
-    def with_script_approval(self, enabled: bool = True) -> SkillsProviderBuilder:
-        """Enable or disable script execution approval.
-
-        When enabled, the ``run_skill_script`` tool requires explicit user
-        approval before each invocation.
-
-        Args:
-            enabled: ``True`` to require approval, ``False`` to disable.
-
-        Returns:
-            This builder instance for chaining.
-        """
-        self._require_script_approval = enabled
-        return self
-
-    def with_disable_caching(self, disabled: bool = True) -> SkillsProviderBuilder:
-        """Enable or disable caching of skills, instructions, and tools.
-
-        When disabled, the provider rebuilds tools and instructions from the
-        source on every invocation instead of caching after the first build.
-
-        Args:
-            disabled: ``True`` to disable caching, ``False`` to enable.
-
-        Returns:
-            This builder instance for chaining.
-        """
-        self._disable_caching = disabled
-        return self
-
-    def with_filter(self, predicate: Callable[[Skill], bool]) -> SkillsProviderBuilder:
-        """Set a filter predicate applied to all skills.
-
-        Only skills for which *predicate* returns ``True`` are included
-        in the built provider.
-
-        Args:
-            predicate: A callable that receives a :class:`Skill` and returns
-                ``True`` to keep it.
-
-        Returns:
-            This builder instance for chaining.
-        """
-        self._filter_predicate = predicate
-        return self
-
-    def build(self) -> SkillsProvider:
-        """Build and return a configured :class:`SkillsProvider`.
-
-        Composes all registered sources, applies filtering and deduplication,
-        and creates the provider.
-
-        Returns:
-            A fully configured :class:`SkillsProvider`.
-        """
-        # Resolve source factories
-        sources: list[SkillsSource] = [factory() for factory in self._source_factories]
-
-        # Add in-memory source for code-defined skills
-        if self._skills:
-            sources.append(_InMemorySkillsSource(self._skills))
-
-        if not sources:
-            sources.append(_InMemorySkillsSource([]))
-
-        # Compose: aggregate → filter → dedup
-        source: SkillsSource = sources[0] if len(sources) == 1 else _AggregatingSkillsSource(sources)
-
-        if self._filter_predicate is not None:
-            source = _FilteringSkillsSource(source, self._filter_predicate)
-
-        source = _DeduplicatingSkillsSource(source)
-
-        return SkillsProvider(
-            source,
-            instruction_template=self._instruction_template,
-            require_script_approval=self._require_script_approval,
-            disable_caching=self._disable_caching,
-        )
 
 
 # endregion
