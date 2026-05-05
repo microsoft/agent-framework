@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
@@ -27,7 +26,7 @@ public sealed class CopilotClientExtensionsTests
         const string TestDescription = "This is a test agent description";
 
         // Act
-        var agent = copilotClient.AsAIAgent(ownsClient: false, id: TestId, name: TestName, description: TestDescription, tools: null, instructions: null, onPermissionRequest: s_testPermissionHandler);
+        var agent = copilotClient.AsAIAgent(s_testPermissionHandler, id: TestId, name: TestName, description: TestDescription);
 
         // Assert
         Assert.NotNull(agent);
@@ -44,7 +43,7 @@ public sealed class CopilotClientExtensionsTests
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
 
         // Act
-        var agent = copilotClient.AsAIAgent(sessionConfig: null);
+        var agent = copilotClient.AsAIAgent(new SessionConfig { OnPermissionRequest = s_testPermissionHandler });
 
         // Assert
         Assert.NotNull(agent);
@@ -58,7 +57,7 @@ public sealed class CopilotClientExtensionsTests
         CopilotClient? copilotClient = null;
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => copilotClient!.AsAIAgent(sessionConfig: null));
+        Assert.Throws<ArgumentNullException>(() => copilotClient!.AsAIAgent(new SessionConfig { OnPermissionRequest = s_testPermissionHandler }));
     }
 
     [Fact]
@@ -68,7 +67,7 @@ public sealed class CopilotClientExtensionsTests
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
 
         // Act
-        var agent = copilotClient.AsAIAgent(ownsClient: true, id: null, name: null, description: null, tools: null, instructions: null, onPermissionRequest: s_testPermissionHandler);
+        var agent = copilotClient.AsAIAgent(s_testPermissionHandler, ownsClient: true);
 
         // Assert
         Assert.NotNull(agent);
@@ -83,7 +82,7 @@ public sealed class CopilotClientExtensionsTests
         List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
-        var agent = copilotClient.AsAIAgent(ownsClient: false, id: null, name: null, description: null, tools: tools, instructions: null, onPermissionRequest: s_testPermissionHandler);
+        var agent = copilotClient.AsAIAgent(s_testPermissionHandler, tools: tools);
 
         // Assert
         Assert.NotNull(agent);
@@ -103,22 +102,5 @@ public sealed class CopilotClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.IsType<GitHubCopilotAgent>(agent);
-    }
-
-    [Fact]
-    public void OldAsAIAgent_WithoutPermissionHandler_IsMarkedObsoleteWithError()
-    {
-        // The old extension overload (tools/instructions without onPermissionRequest) should be
-        // marked with [Obsolete(error: true)].
-        var methods = typeof(CopilotClientExtensions).GetMethods()
-            .Where(m => m.Name == "AsAIAgent" && m.GetParameters().Any(p => p.Name == "tools") && !m.GetParameters().Any(p => p.Name == "onPermissionRequest"))
-            .ToArray();
-
-        Assert.Single(methods);
-        var obsoleteAttr = methods[0].GetCustomAttributes(typeof(ObsoleteAttribute), false);
-        Assert.Single(obsoleteAttr);
-        var attr = (ObsoleteAttribute)obsoleteAttr[0];
-        Assert.True(attr.IsError);
-        Assert.Contains("OnPermissionRequest", attr.Message);
     }
 }

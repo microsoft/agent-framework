@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.GitHub.Copilot;
@@ -28,7 +27,7 @@ public static class CopilotClientExtensions
     /// Retrieves an instance of <see cref="AIAgent"/> for a GitHub Copilot client.
     /// </summary>
     /// <param name="client">The <see cref="CopilotClient"/> to use for the agent.</param>
-    /// <param name="sessionConfig">Optional session configuration for the agent.</param>
+    /// <param name="sessionConfig">Session configuration for the agent. Must include <see cref="SessionConfig.OnPermissionRequest"/> as required by GitHub Copilot SDK 0.3.0+.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
@@ -36,7 +35,7 @@ public static class CopilotClientExtensions
     /// <returns>An <see cref="AIAgent"/> instance backed by the GitHub Copilot client.</returns>
     public static AIAgent AsAIAgent(
         this CopilotClient client,
-        SessionConfig? sessionConfig = null,
+        SessionConfig sessionConfig,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
@@ -51,6 +50,7 @@ public static class CopilotClientExtensions
     /// Retrieves an instance of <see cref="AIAgent"/> for a GitHub Copilot client.
     /// </summary>
     /// <param name="client">The <see cref="CopilotClient"/> to use for the agent.</param>
+    /// <param name="onPermissionRequest">Handler called before each tool execution to approve or deny it. Required by GitHub Copilot SDK 0.3.0+.</param>
     /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The name of the agent.</param>
@@ -58,9 +58,9 @@ public static class CopilotClientExtensions
     /// <param name="tools">The tools to make available to the agent.</param>
     /// <param name="instructions">Optional instructions to append as a system message.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the GitHub Copilot client.</returns>
-    [Obsolete("This overload does not accept an OnPermissionRequest handler, which is required by GitHub.Copilot.SDK 0.3.0+. Use the overload that includes the onPermissionRequest parameter, or pass a SessionConfig with OnPermissionRequest set.", error: true)]
     public static AIAgent AsAIAgent(
         this CopilotClient client,
+        PermissionRequestHandler onPermissionRequest,
         bool ownsClient = false,
         string? id = null,
         string? name = null,
@@ -70,33 +70,6 @@ public static class CopilotClientExtensions
     {
         Throw.IfNull(client);
 
-        return new GitHubCopilotAgent(client, ownsClient, id, name, description, tools, instructions);
-    }
-
-    /// <summary>
-    /// Retrieves an instance of <see cref="AIAgent"/> for a GitHub Copilot client.
-    /// </summary>
-    /// <param name="client">The <see cref="CopilotClient"/> to use for the agent.</param>
-    /// <param name="ownsClient">Whether the agent owns the client and should dispose it. Default is false.</param>
-    /// <param name="id">The unique identifier for the agent.</param>
-    /// <param name="name">The name of the agent.</param>
-    /// <param name="description">The description of the agent.</param>
-    /// <param name="tools">The tools to make available to the agent.</param>
-    /// <param name="instructions">Optional instructions to append as a system message.</param>
-    /// <param name="onPermissionRequest">Handler called before each tool execution to approve or deny it. GitHub Copilot SDK 0.3.0+ requires a permission handler on every session; if not provided here or via <see cref="SessionConfig.OnPermissionRequest"/>, session creation will fail at runtime.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the GitHub Copilot client.</returns>
-    public static AIAgent AsAIAgent(
-        this CopilotClient client,
-        bool ownsClient,
-        string? id,
-        string? name,
-        string? description,
-        IList<AITool>? tools,
-        string? instructions,
-        PermissionRequestHandler? onPermissionRequest)
-    {
-        Throw.IfNull(client);
-
-        return new GitHubCopilotAgent(client, ownsClient, id, name, description, tools, instructions, onPermissionRequest);
+        return new GitHubCopilotAgent(client, onPermissionRequest, ownsClient, id, name, description, tools, instructions);
     }
 }
