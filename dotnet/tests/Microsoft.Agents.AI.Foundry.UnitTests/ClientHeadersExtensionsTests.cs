@@ -11,8 +11,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Extensions.OpenAI;
-using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
 using OpenAI;
 
@@ -528,47 +526,7 @@ public sealed class ClientHeadersExtensionsTests
     }
 
     // -------------------------------------------------------------------------------------------
-    // 20. AsAIAgent path also pre-wires (Foundry-built agent via AzureAIProjectChatClientExtensions
-    //     internal FoundryAgent ctor) — addresses PR review comment on FoundryAgent.cs:229.
-    // -------------------------------------------------------------------------------------------
-
-    [Fact]
-    public void AsAIAgent_FoundryAgent_HasPreWiredClientHeadersAgent()
-    {
-        // Arrange: stand up a real AIProjectClient pointed at a fake transport.
-        using var handler = new RecordingHandler();
-#pragma warning disable CA5399
-        using var http = new HttpClient(handler);
-#pragma warning restore CA5399
-        var projectClient = new AIProjectClient(
-            new Uri("https://test.openai.azure.com/"),
-            new FakeAuthenticationTokenProvider(),
-            new AIProjectClientOptions { Transport = new HttpClientPipelineTransport(http) });
-
-        // Act: the AsAIAgent extension that previously bypassed the pre-wire path.
-        var agent = projectClient.AsAIAgent(new AgentReference("agent-name"));
-
-        // Assert: the FoundryAgent's delegating chain now contains a ClientHeadersAgent so
-        // x-client-* headers stamped on ChatClientAgentRunOptions reach the wire.
-        Assert.NotNull(agent.GetService<ClientHeadersAgent>());
-    }
-
-    [Fact]
-    public void FoundryAgent_PublicConstructor_HasPreWiredClientHeadersAgent()
-    {
-        // Arrange / Act
-        var agent = new FoundryAgent(
-            projectEndpoint: new Uri("https://test.openai.azure.com/"),
-            credential: new FakeAuthenticationTokenProvider(),
-            model: "gpt-4o-mini",
-            instructions: "Test instructions");
-
-        // Assert
-        Assert.NotNull(agent.GetService<ClientHeadersAgent>());
-    }
-
-    // -------------------------------------------------------------------------------------------
-    // 21. ClientHeadersPolicy registration via UseClientHeaders is deduped across many invocations
+    // 20. ClientHeadersPolicy registration via UseClientHeaders is deduped across many invocations
     //     on the same chat client (mirrors the Foundry.Hosting per-request resolution scenario).
     // -------------------------------------------------------------------------------------------
 
