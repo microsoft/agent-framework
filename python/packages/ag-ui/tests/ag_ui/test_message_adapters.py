@@ -1055,6 +1055,23 @@ def test_sanitize_json_confirm_changes_response():
     assert len(result) >= 1
 
 
+def test_sanitize_pending_tool_at_end_of_history():
+    """Messages ending with an assistant tool call and no following message inject a synthetic result."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="pieChart", arguments="{}")],
+    )
+
+    result = _sanitize_tool_history([assistant_msg])
+
+    tool_results = [m for m in result if m.role == "tool"]
+    assert len(tool_results) == 1
+    assert tool_results[0].contents[0].call_id == "c1"
+    assert "skipped" in str(tool_results[0].contents[0].result).lower()
+
+
 # ── Deduplication edge cases ──
 
 
