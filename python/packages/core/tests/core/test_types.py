@@ -40,8 +40,10 @@ from agent_framework._types import (
     _get_data_bytes_as_str,
     _parse_content_list,
     _parse_structured_response_value,
+    _process_update,
     _validate_uri,
     add_usage_details,
+    map_chat_to_agent_update,
     validate_tool_mode,
 )
 from agent_framework.exceptions import AdditionItemMismatch, ContentError
@@ -662,6 +664,21 @@ def test_function_approval_serialization_roundtrip():
     # The Content union will need to be handled differently when we fully migrate
 
 
+def test_function_approval_request_function_call_none_guard():
+    """Test that accessing function_call attributes is safe when function_call is None."""
+    # Construct a Content with type "function_approval_request" but no function_call.
+    # This verifies the None-guard pattern used in samples to prevent AttributeError.
+    content = Content("function_approval_request", id="req-none")
+    assert content.function_call is None
+
+    # A proper approval request always has function_call set
+    fc = Content.from_function_call(call_id="call-1", name="do_something", arguments={"a": 1})
+    req = Content.from_function_approval_request(id="req-1", function_call=fc)
+    assert req.function_call is not None
+    assert req.function_call.name == "do_something"
+    assert req.function_call.arguments == {"a": 1}
+
+
 def test_function_approval_accepts_mcp_call():
     """Ensure FunctionApprovalRequestContent supports MCP server tool calls."""
     mcp_call = Content.from_mcp_server_tool_call(
@@ -1070,16 +1087,20 @@ def test_chat_tool_mode():
     required_any: ToolMode = {"mode": "required"}
     required_mode: ToolMode = {"mode": "required", "required_function_name": "example_function"}
     none_mode: ToolMode = {"mode": "none"}
+    allowed_mode: ToolMode = {"mode": "auto", "allowed_tools": ["get_weather", "search_docs"]}
 
     # Check the type and content
     assert auto_mode["mode"] == "auto"
     assert "required_function_name" not in auto_mode
+    assert "allowed_tools" not in auto_mode
     assert required_any["mode"] == "required"
     assert "required_function_name" not in required_any
     assert required_mode["mode"] == "required"
     assert required_mode["required_function_name"] == "example_function"
     assert none_mode["mode"] == "none"
     assert "required_function_name" not in none_mode
+    assert allowed_mode["mode"] == "auto"
+    assert allowed_mode["allowed_tools"] == ["get_weather", "search_docs"]
 
     # equality of dicts
     assert {"mode": "required", "required_function_name": "example_function"} == {
@@ -1136,6 +1157,45 @@ def test_chat_options_tool_choice_validation():
         validate_tool_mode({"mode": "invalid_mode"})
     with raises(ContentError):
         validate_tool_mode({"mode": "auto", "required_function_name": "should_not_be_here"})
+
+    # Valid allowed_tools
+    assert validate_tool_mode({"mode": "auto", "allowed_tools": ["get_weather"]}) == {
+        "mode": "auto",
+        "allowed_tools": ["get_weather"],
+    }
+    assert validate_tool_mode({"mode": "auto", "allowed_tools": ["get_weather", "search_docs"]}) == {
+        "mode": "auto",
+        "allowed_tools": ["get_weather", "search_docs"],
+    }
+
+    # allowed_tools valid with required mode
+    assert validate_tool_mode({"mode": "required", "allowed_tools": ["get_weather"]}) == {
+        "mode": "required",
+        "allowed_tools": ["get_weather"],
+    }
+
+    # allowed_tools invalid with none mode
+    with raises(ContentError):
+        validate_tool_mode({"mode": "none", "allowed_tools": ["get_weather"]})
+
+    # allowed_tools must be a non-string sequence of strings
+    with raises(ContentError):
+        validate_tool_mode({"mode": "auto", "allowed_tools": "get_weather"})
+    with raises(ContentError):
+        validate_tool_mode({"mode": "auto", "allowed_tools": 123})
+    with raises(ContentError):
+        validate_tool_mode({"mode": "auto", "allowed_tools": ["get_weather", 123]})
+
+    # Empty list is valid (caller explicitly allows no tools)
+    assert validate_tool_mode({"mode": "auto", "allowed_tools": []}) == {
+        "mode": "auto",
+        "allowed_tools": [],
+    }
+
+    # Tuple is normalized to list
+    result = validate_tool_mode({"mode": "auto", "allowed_tools": ("get_weather",)})
+    assert result is not None
+    assert result["allowed_tools"] == ["get_weather"]
 
 
 def test_chat_options_merge(tool_tool, ai_tool) -> None:
@@ -4176,6 +4236,104 @@ def test_prepend_instructions_custom_role():
     result = prepend_instructions_to_messages(messages, "Be concise.", role="developer")
     assert len(result) == 2
     assert result[0].role == "developer"
+
+
+# endregion
+
+
+# region finish_reason
+
+
+def test_agent_response_init_with_finish_reason() -> None:
+    """Test that AgentResponse correctly initializes and stores finish_reason."""
+    response = AgentResponse(
+        messages=[Message("assistant", [Content.from_text("test")])],
+        finish_reason="stop",
+    )
+    assert response.finish_reason == "stop"
+
+
+def test_agent_response_update_init_with_finish_reason() -> None:
+    """Test that AgentResponseUpdate correctly initializes and stores finish_reason."""
+    update = AgentResponseUpdate(
+        contents=[Content.from_text("test")],
+        role="assistant",
+        finish_reason="stop",
+    )
+    assert update.finish_reason == "stop"
+
+
+def test_map_chat_to_agent_update_forwards_finish_reason() -> None:
+    """Test that mapping a ChatResponseUpdate with finish_reason forwards it."""
+    chat_update = ChatResponseUpdate(
+        contents=[Content.from_text("test")],
+        finish_reason="length",
+    )
+    agent_update = map_chat_to_agent_update(chat_update, agent_name="test_agent")
+
+    assert agent_update.finish_reason == "length"
+    assert agent_update.author_name == "test_agent"
+
+
+def test_process_update_propagates_finish_reason_to_agent_response() -> None:
+    """Test that _process_update correctly updates an AgentResponse from an AgentResponseUpdate."""
+    response = AgentResponse(messages=[Message("assistant", [Content.from_text("test")])])
+    update = AgentResponseUpdate(
+        contents=[Content.from_text("more text")],
+        role="assistant",
+        finish_reason="stop",
+    )
+
+    # Process the update
+    _process_update(response, update)
+
+    assert response.finish_reason == "stop"
+
+
+def test_process_update_does_not_overwrite_with_none() -> None:
+    """Test that _process_update does not overwrite an existing finish_reason with None."""
+    response = AgentResponse(
+        messages=[Message("assistant", [Content.from_text("test")])],
+        finish_reason="length",
+    )
+    update = AgentResponseUpdate(
+        contents=[Content.from_text("more text")],
+        role="assistant",
+        finish_reason=None,
+    )
+
+    # Process the update
+    _process_update(response, update)
+
+    assert response.finish_reason == "length"
+
+
+def test_agent_response_serialization_includes_finish_reason() -> None:
+    """Test that AgentResponse serializes correctly, including finish_reason."""
+    response = AgentResponse(
+        messages=[Message("assistant", [Content.from_text("test")])],
+        response_id="test_123",
+        finish_reason="stop",
+    )
+
+    # Serialize using the framework's API and verify finish_reason is included.
+    data = response.to_dict()
+    assert "finish_reason" in data
+    assert data["finish_reason"] == "stop"
+
+
+def test_agent_response_update_serialization_includes_finish_reason() -> None:
+    """Test that AgentResponseUpdate serializes correctly, including finish_reason."""
+    update = AgentResponseUpdate(
+        contents=[Content.from_text("test")],
+        role="assistant",
+        response_id="test_456",
+        finish_reason="tool_calls",
+    )
+
+    data = update.to_dict()
+    assert "finish_reason" in data
+    assert data["finish_reason"] == "tool_calls"
 
 
 # endregion

@@ -13,7 +13,6 @@ from typing import Any, ClassVar, Generic, Literal, TypedDict
 from uuid import uuid4
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
@@ -31,6 +30,7 @@ from agent_framework import (
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._telemetry import get_user_agent
 from agent_framework.exceptions import ChatClientInvalidResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
@@ -299,7 +299,7 @@ class BedrockChatClient(
             self._bedrock_client = session.client(
                 "bedrock-runtime",
                 region_name=region,
-                config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
+                config=BotoConfig(user_agent_extra=get_user_agent()),
             )
 
         super().__init__(
@@ -405,16 +405,22 @@ class BedrockChatClient(
 
         tool_config = self._prepare_tools(options.get("tools"))
         if tool_mode := validate_tool_mode(options.get("tool_choice")):
+            if "allowed_tools" in tool_mode:
+                logger.warning("allowed_tools is not supported by Bedrock; the setting will be ignored")
             match tool_mode.get("mode"):
                 case "none":
                     # Bedrock doesn't support toolChoice "none".
                     # Omit toolConfig entirely so the model won't attempt tool calls.
                     tool_config = None
                 case "auto":
-                    tool_config = tool_config or {}
-                    tool_config["toolChoice"] = {"auto": {}}
+                    if tool_config and "tools" in tool_config:
+                        tool_config["toolChoice"] = {"auto": {}}
                 case "required":
-                    tool_config = tool_config or {}
+                    if not (tool_config and "tools" in tool_config):
+                        raise ValueError(
+                            "tool_choice='required' requires at least one tool to be configured, "
+                            "but no tools were provided."
+                        )
                     if required_name := tool_mode.get("required_function_name"):
                         tool_config["toolChoice"] = {"tool": {"name": required_name}}
                     else:

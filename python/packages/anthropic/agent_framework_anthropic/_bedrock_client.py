@@ -6,13 +6,13 @@ from collections.abc import Sequence
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropicBedrock
 
@@ -94,7 +94,7 @@ class RawAnthropicBedrockClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
                 aws_profile=settings.get("aws_profile"),
                 aws_session_token=session_token_secret.get_secret_value() if session_token_secret is not None else None,
                 base_url=settings.get("anthropic_bedrock_base_url"),
-                default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+                default_headers={"User-Agent": get_user_agent()},
             )
 
         super().__init__(

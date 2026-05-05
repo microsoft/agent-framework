@@ -247,7 +247,7 @@ internal sealed class WorkflowSession : AgentSession
                         hasMatchedResponseForStartExecutor |= string.Equals(responseExecutorId, this._workflow.StartExecutorId, StringComparison.Ordinal);
                     }
 
-                    AIContent normalizedResponseContent = NormalizeResponseContentForDelivery(content, pendingRequest);
+                    object normalizedResponseContent = NormalizeResponseContentForDelivery(content, pendingRequest);
                     externalResponses.Add((pendingRequest.CreateResponse(normalizedResponseContent), pendingRequest.RequestId));
                     (matchedContentIds ??= new(StringComparer.Ordinal)).Add(contentId);
                 }
@@ -288,29 +288,119 @@ internal sealed class WorkflowSession : AgentSession
     }
 
     /// <summary>
+    /// Resolves the concrete request payload type from <see cref="RequestPortInfo.RequestType"/>
+    /// and returns it as an <see cref="IExternalRequestEnvelope"/> if the type implements that
+    /// abstraction. Resolving via the concrete <see cref="TypeId"/> (rather than asking the
+    /// PortableValue to deserialize directly to <see cref="IExternalRequestEnvelope"/>) is
+    /// required because checkpointed payloads round-trip as JSON which cannot be deserialized
+    /// to an interface; the concrete type populates the deserialization cache so subsequent
+    /// interface assignment succeeds.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to the parameter of method", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
+    private static bool TryGetRequestEnvelope(ExternalRequest request, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
+    {
+        envelope = null;
+
+        TypeId requestType = request.PortInfo.RequestType;
+        Type? concreteType = Type.GetType($"{requestType.TypeName}, {requestType.AssemblyName}", throwOnError: false);
+        if (concreteType is null || !typeof(IExternalRequestEnvelope).IsAssignableFrom(concreteType))
+        {
+            return false;
+        }
+
+        if (!request.TryGetDataAs(concreteType, out object? data) || data is not IExternalRequestEnvelope env)
+        {
+            return false;
+        }
+
+        envelope = env;
+        return true;
+    }
+
+    /// <summary>
     /// Creates the workflow-facing request content surfaced in response updates.
     /// </summary>
-    private static AIContent CreateRequestContentForDelivery(ExternalRequest request) => request switch
+    private static AIContent CreateRequestContentForDelivery(ExternalRequest request)
     {
-        ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? functionCallContent)
-            => CloneFunctionCallContent(functionCallContent, externalRequest.RequestId),
-        ExternalRequest externalRequest when externalRequest.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
-            => CloneToolApprovalRequestContent(toolApprovalRequestContent, externalRequest.RequestId),
-        ExternalRequest externalRequest
-            => externalRequest.ToFunctionCall(),
-    };
+        // If the request payload is a higher-layer envelope (e.g., a declarative
+        // ExternalInputRequest), surface its inner FCC/TARC to the host on the wire.
+        if (TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
+        {
+            AIContent? inner = envelope.GetInnerRequestContent();
+            if (inner is ToolApprovalRequestContent toolApprovalRequest)
+            {
+                return CloneToolApprovalRequestContent(toolApprovalRequest, request.RequestId);
+            }
+            if (inner is FunctionCallContent functionCall)
+            {
+                return CloneFunctionCallContent(functionCall, request.RequestId);
+            }
+        }
+
+        return request switch
+        {
+            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? functionCallContent)
+                => CloneFunctionCallContent(functionCallContent, externalRequest.RequestId),
+            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
+                => CloneToolApprovalRequestContent(toolApprovalRequestContent, externalRequest.RequestId),
+            ExternalRequest externalRequest
+                => externalRequest.ToFunctionCall(),
+        };
+    }
 
     /// <summary>
     /// Rewrites workflow-facing response content back to the original agent-owned content ID.
     /// </summary>
-    private static AIContent NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request) => content switch
+    private static object NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request)
     {
-        FunctionResultContent functionResultContent when request.TryGetDataAs(out FunctionCallContent? functionCallContent)
-            => CloneFunctionResultContent(functionResultContent, functionCallContent.CallId),
-        ToolApprovalResponseContent toolApprovalResponseContent when request.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
-            => CloneToolApprovalResponseContent(toolApprovalResponseContent, toolApprovalRequestContent.RequestId),
-        _ => content,
-    };
+        // If the request payload is a higher-layer envelope, recover the original
+        // CallId/RequestId from the inner content and ask the envelope to wrap the
+        // response back into its paired response type for delivery to the request port.
+        if (TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
+        {
+            AIContent? inner = envelope.GetInnerRequestContent();
+            AIContent payload = (content, inner) switch
+            {
+                (FunctionResultContent functionResult, FunctionCallContent functionCall)
+                    => CloneFunctionResultContent(functionResult, functionCall.CallId),
+                (FunctionResultContent functionResult, ToolApprovalRequestContent toolApprovalRequest)
+                    => CloneFunctionResultContent(functionResult, toolApprovalRequest.ToolCall.CallId),
+                (ToolApprovalResponseContent toolApprovalResponse, ToolApprovalRequestContent toolApprovalRequest)
+                    => CloneToolApprovalResponseContent(toolApprovalResponse, toolApprovalRequest.RequestId),
+                _ => content,
+            };
+
+            ChatMessage message = new(ChatRole.Tool, [payload]);
+            return envelope.CreateResponse([message]);
+        }
+
+        switch (content)
+        {
+            // If we got a FRC, and were expecting a FRC (because the request started out as a FCC, rather than getting converted to
+            // on at the WorkflowSession boundary), clone it and send it in.
+            case FunctionResultContent functionResultContent when request.TryGetDataAs(out FunctionCallContent? functionCallContent):
+                return CloneFunctionResultContent(functionResultContent, functionCallContent.CallId);
+            case FunctionResultContent functionResultContent when !request.PortInfo.ResponseType.IsMatchPolymorphic(typeof(FunctionResultContent)):
+            {
+                object? result = functionResultContent.Result;
+                if (result != null)
+                {
+                    if (request.PortInfo.ResponseType.IsMatchPolymorphic(result.GetType()) || result is PortableValue)
+                    {
+                        return result;
+                    }
+
+                    throw new InvalidOperationException($"Unexpected result type in FunctionResultContent {result.GetType()}; expecting {request.PortInfo.ResponseType}");
+                }
+
+                throw new NotSupportedException($"Null result is not supported when using RequestPort with non-AIContent-typed requests. {functionResultContent}");
+            }
+            case ToolApprovalResponseContent toolApprovalResponseContent when request.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent):
+                return CloneToolApprovalResponseContent(toolApprovalResponseContent, toolApprovalRequestContent.RequestId);
+            default:
+                return content;
+        }
+    }
 
     /// <summary>
     /// Gets the workflow-facing request ID from response content types.
@@ -406,9 +496,40 @@ internal sealed class WorkflowSession : AgentSession
 
                     break;
 
+                case ExecutorFailedEvent executorFailed:
+                    // Mirror WorkflowErrorEvent: never expose internal workflow graph
+                    // identifiers (executor ID) to the client. Surface the exception
+                    // message only when the host opts in via _includeExceptionDetails.
+                    Exception? executorException = executorFailed.Data;
+                    while (executorException is { InnerException: not null }
+                        && (executorException is TargetInvocationException
+                            || executorException.GetType().Name == "DeclarativeActionException"))
+                    {
+                        executorException = executorException.InnerException;
+                    }
+
+                    string executorMessage = this._includeExceptionDetails && executorException != null
+                        ? executorException.Message
+                        : "An error occurred while executing the workflow.";
+
+                    yield return this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
+                    break;
+
                 case SuperStepCompletedEvent stepCompleted:
                     this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
                     goto default;
+
+                case AgentResponseEvent agentResponse:
+                    if (!this._includeWorkflowOutputsInResponse)
+                    {
+                        goto default;
+                    }
+
+                    foreach (ChatMessage message in agentResponse.Response.Messages)
+                    {
+                        yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                    }
+                    break;
 
                 case WorkflowOutputEvent output:
                     IEnumerable<ChatMessage>? updateMessages = output.Data switch

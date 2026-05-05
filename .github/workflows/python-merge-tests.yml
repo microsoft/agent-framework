@@ -38,6 +38,7 @@ jobs:
       miscChanged: ${{ steps.filter.outputs.misc }}
       functionsChanged: ${{ steps.filter.outputs.functions }}
       foundryChanged: ${{ steps.filter.outputs.foundry }}
+      foundryHostingChanged: ${{ steps.filter.outputs.foundry_hosting }}
       cosmosChanged: ${{ steps.filter.outputs.cosmos }}
     steps:
       - uses: actions/checkout@v6
@@ -65,6 +66,7 @@ jobs:
               - 'python/samples/**/providers/azure/**'
             misc:
               - 'python/packages/anthropic/**'
+              - 'python/packages/hyperlight/**'
               - 'python/packages/ollama/**'
               - 'python/packages/core/agent_framework/_mcp.py'
               - 'python/packages/core/tests/core/test_mcp.py'
@@ -79,6 +81,8 @@ jobs:
               - 'python/packages/foundry/**'
               - 'python/samples/**/providers/foundry/**'
               - 'python/samples/02-agents/embeddings/foundry_embeddings.py'
+            foundry_hosting:
+              - 'python/packages/foundry_hosting/**'
             cosmos:
               - 'python/packages/azure-cosmos/**'
       # run only if 'python' files were changed
@@ -180,6 +184,13 @@ jobs:
           display-options: fEX
           fail-on-empty: false
           title: OpenAI integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-openai
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
   # Azure OpenAI integration tests
   python-tests-azure-openai:
@@ -243,6 +254,13 @@ jobs:
           display-options: fEX
           fail-on-empty: false
           title: Azure OpenAI integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-azure-openai
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
   # Misc integration tests (Anthropic, Ollama, MCP)
   python-tests-misc-integration:
@@ -260,6 +278,8 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
+      OLLAMA_MODEL: qwen2.5:1.5b
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text
     defaults:
       run:
         working-directory: python
@@ -271,6 +291,43 @@ jobs:
         with:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+        working-directory: .
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-qwen2.5-1.5b-nomic-embed-text-v1
+      - name: Start Ollama and pull models
+        run: |
+          # Stop any Ollama instance auto-started by the install script
+          pkill ollama || true
+          sleep 2
+          ollama serve &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          # Pull models with retry for transient 429 rate limits
+          for model in qwen2.5:1.5b nomic-embed-text; do
+            pulled=false
+            for attempt in 1 2 3; do
+              if ollama pull "$model"; then
+                pulled=true
+                break
+              fi
+              echo "Retry $attempt for $model (waiting 15s)..."
+              sleep 15
+            done
+            if [ "$pulled" != "true" ]; then
+              echo "ERROR: Failed to pull $model after 3 attempts"
+              exit 1
+            fi
+          done
+        working-directory: .
       - name: Start local MCP server
         id: local-mcp
         uses: ./.github/actions/setup-local-mcp-server
@@ -278,16 +335,17 @@ jobs:
           fallback_url: ${{ env.LOCAL_MCP_URL }}
       - name: Prefer local MCP URL when available
         run: echo "LOCAL_MCP_URL=${{ steps.local-mcp.outputs.effective_url }}" >> "$GITHUB_ENV"
-      - name: Test with pytest (Anthropic, Ollama, MCP integration)
+      - name: Test with pytest (Anthropic, Hyperlight, Ollama, MCP integration)
         run: >
           uv run pytest --import-mode=importlib
           packages/anthropic/tests
+          packages/hyperlight/tests
           packages/ollama/tests
           packages/core/tests/core/test_mcp.py
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
-          --retries 2 --retry-delay 5
+          --retries 2 --retry-delay 30
           --junitxml=pytest.xml
         working-directory: ./python
       - name: Stop local MCP server
@@ -319,6 +377,13 @@ jobs:
           display-options: fEX
           fail-on-empty: false
           title: Misc integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-misc
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
   # Azure Functions + Durable Task integration tests
   python-tests-functions:
@@ -377,7 +442,7 @@ jobs:
           -m integration
           -n logical --dist worksteal
           -x
-          --timeout=360 --session-timeout=900 --timeout_method thread
+          --timeout=480 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
           --junitxml=pytest.xml
         working-directory: ./python
@@ -390,6 +455,13 @@ jobs:
           display-options: fEX
           fail-on-empty: false
           title: Functions integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-functions
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
   python-tests-foundry:
     name: Python Integration Tests - Foundry
@@ -407,6 +479,10 @@ jobs:
       FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_AGENT_NAME }}
       FOUNDRY_AGENT_VERSION: ${{ vars.FOUNDRY_AGENT_VERSION }}
+      FOUNDRY_MODELS_ENDPOINT: ${{ vars.FOUNDRY_MODELS_ENDPOINT || '' }}
+      FOUNDRY_MODELS_API_KEY: ${{ secrets.FOUNDRY_MODELS_API_KEY || '' }}
+      FOUNDRY_EMBEDDING_MODEL: ${{ vars.FOUNDRY_EMBEDDING_MODEL || '' }}
+      FOUNDRY_IMAGE_EMBEDDING_MODEL: ${{ vars.FOUNDRY_IMAGE_EMBEDDING_MODEL || '' }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
     defaults:
       run:
@@ -446,6 +522,74 @@ jobs:
           display-options: fEX
           fail-on-empty: false
           title: Test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-foundry
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
+  # Foundry Hosting integration tests
+  python-tests-foundry-hosting:
+    name: Python Tests - Foundry Hosting Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.foundryHostingChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Azure CLI Login
+        if: github.event_name != 'pull_request'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Test with pytest (Foundry Hosting integration)
+        timeout-minutes: 15
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/foundry_hosting/tests
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+          --junitxml=pytest.xml
+        working-directory: ./python
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/pytest.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: Foundry Hosting integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-foundry-hosting
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
 
   # TODO: Add python-tests-lab
 
@@ -495,7 +639,7 @@ jobs:
           echo "Cosmos DB emulator did not become ready in time." >&2
           exit 1
       - name: Test with pytest (Cosmos integration)
-        run: uv run --directory packages/azure-cosmos poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5 --junitxml=pytest.xml
+        run: uv run --directory packages/azure-cosmos poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5 --junitxml=${{ github.workspace }}/python/pytest.xml
         working-directory: ./python
       - name: Surface failing tests
         if: always()
@@ -506,6 +650,77 @@ jobs:
           display-options: fEX
           fail-on-empty: false
           title: Cosmos integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-cosmos
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
+  # Integration test trend report (aggregates per-job JUnit XML results)
+  python-integration-test-report:
+    name: Integration Test Report
+    if: >
+      always() &&
+      (contains(join(needs.*.result, ','), 'success') ||
+       contains(join(needs.*.result, ','), 'failure'))
+    needs:
+      [
+        python-tests-openai,
+        python-tests-azure-openai,
+        python-tests-misc-integration,
+        python-tests-functions,
+        python-tests-foundry,
+        python-tests-foundry-hosting,
+        python-tests-cosmos,
+      ]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Download all test results from current run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          path: test-results/
+      - name: Restore report history cache
+        uses: actions/cache/restore@v4
+        with:
+          path: python/integration-report-history.json
+          key: integration-report-history-merge-${{ github.run_id }}
+          restore-keys: |
+            integration-report-history-merge-
+      - name: Generate trend report
+        run: >
+          uv run python scripts/integration_test_report/aggregate.py
+          ../test-results/
+          integration-report-history.json
+          integration-test-report.md
+      - name: Post to Job Summary
+        if: always()
+        run: cat integration-test-report.md >> $GITHUB_STEP_SUMMARY
+      - name: Save report history cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: python/integration-report-history.json
+          key: integration-report-history-merge-${{ github.run_id }}
+      - name: Upload unified trend report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-test-report
+          path: |
+            python/integration-test-report.md
+            python/integration-report-history.json
 
   python-integration-tests-check:
     if: always()
@@ -518,6 +733,7 @@ jobs:
         python-tests-misc-integration,
         python-tests-functions,
         python-tests-foundry,
+        python-tests-foundry-hosting,
         python-tests-cosmos,
       ]
     steps:

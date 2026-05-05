@@ -15,7 +15,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     private static readonly string[] s_customExtensions = [".custom"];
     private static readonly string[] s_validExtensions = [".md", ".json", ".custom"];
     private static readonly string[] s_mixedValidInvalidExtensions = [".md", "json"];
-    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
+    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, sp, ct) => Task.FromResult<object?>(null);
 
     private readonly string _testRoot;
 
@@ -67,6 +67,69 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Single(skills);
         Assert.Equal("quoted-skill", skills[0].Frontmatter.Name);
         Assert.Equal("A quoted description", skills[0].Frontmatter.Description);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_BlockScalarDescription_ParsesMultilineValueAsync()
+    {
+        // Arrange
+        string skillDir = Path.Combine(this._testRoot, "block-scalar-skill");
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: block-scalar-skill\ndescription: |\n  This is a multiline\n  description for the skill.\n---\nBody text.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync();
+
+        // Assert
+        Assert.Single(skills);
+        Assert.Equal("This is a multiline\ndescription for the skill.", skills[0].Frontmatter.Description);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_FoldedScalarDescription_ParsesMultilineValueAsync()
+    {
+        // Arrange
+        string skillDir = Path.Combine(this._testRoot, "folded-scalar-skill");
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: folded-scalar-skill\ndescription: >\n  This is a multiline\n  description for the skill.\n---\nBody text.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync();
+
+        // Assert
+        Assert.Single(skills);
+        Assert.Equal("This is a multiline description for the skill.", skills[0].Frontmatter.Description);
+    }
+
+    [Theory]
+    [InlineData("|-", "This is a multiline\ndescription for the skill.")]
+    [InlineData("|+", "This is a multiline\ndescription for the skill.\n")]
+    [InlineData(">-", "This is a multiline description for the skill.")]
+    [InlineData(">+", "This is a multiline description for the skill.\n")]
+    public async Task GetSkillsAsync_ScalarDescriptionWithChompingIndicator_ParsesValueAsync(string indicator, string expectedDescription)
+    {
+        // Arrange
+        string chomping = indicator[1] == '+' ? "keep" : "strip";
+        string skillName = "chomping-scalar-skill-" + (indicator[0] == '|' ? "literal-" : "folded-") + chomping;
+        string skillDir = Path.Combine(this._testRoot, skillName);
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            $"---\nname: {skillName}\ndescription: {indicator}\n  This is a multiline\n  description for the skill.\n---\nBody text.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync();
+
+        // Assert
+        Assert.Single(skills);
+        Assert.Equal(expectedDescription, skills[0].Frontmatter.Description);
     }
 
     [Fact]

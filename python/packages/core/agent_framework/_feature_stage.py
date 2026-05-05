@@ -47,7 +47,12 @@ class ExperimentalFeature(str, Enum):
     """
 
     EVALS = "EVALS"
+    FILE_HISTORY = "FILE_HISTORY"
+    FIDES = "FIDES"
+    FUNCTIONAL_WORKFLOWS = "FUNCTIONAL_WORKFLOWS"
+    HARNESS = "HARNESS"
     SKILLS = "SKILLS"
+    TOOLBOXES = "TOOLBOXES"
 
 
 class ReleaseCandidateFeature(str, Enum):

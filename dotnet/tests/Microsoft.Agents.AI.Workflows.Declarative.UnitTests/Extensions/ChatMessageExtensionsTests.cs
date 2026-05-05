@@ -769,4 +769,165 @@ public sealed class ChatMessageExtensionsTests
                 break;
         }
     }
+
+    [Fact]
+    public void MergeForLastMessageReturnsInputWhenInputMessageIsNull()
+    {
+        // Arrange
+        ChatMessage input = new(ChatRole.User, "hello") { MessageId = "local" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(null);
+
+        // Assert
+        Assert.Same(input, result);
+    }
+
+    [Fact]
+    public void MergeForLastMessageReturnsSameInstanceAsRoundTripped()
+    {
+        // Arrange: returning the round-tripped instance keeps the merge forward-compatible
+        // with future ChatMessage properties (e.g., new metadata fields) without explicit copies.
+        ChatMessage input = new(ChatRole.User, "original");
+        ChatMessage roundTripped = new(ChatRole.User, "stripped") { MessageId = "server" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Same(roundTripped, result);
+    }
+
+    [Fact]
+    public void MergeForLastMessagePrefersOriginalTextOverRoundTrippedText()
+    {
+        // Arrange
+        ChatMessage input = new(ChatRole.User, "original text");
+        ChatMessage roundTripped = new(ChatRole.User, "stripped") { MessageId = "server-id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Equal("server-id", result.MessageId);
+        Assert.Equal("original text", result.Text);
+        TextContent text = Assert.IsType<TextContent>(Assert.Single(result.Contents));
+        Assert.Equal("original text", text.Text);
+    }
+
+    [Fact]
+    public void MergeForLastMessageReplacesTextInPlaceAndKeepsServerMedia()
+    {
+        // Arrange
+        HostedFileContent serverRef = new("file-abc");
+        ChatMessage input = new(ChatRole.User, [new TextContent("look at this:"), new DataContent("data:image/jpeg;base64,QUJD", "image/jpeg")]);
+        ChatMessage roundTripped = new(ChatRole.User, [new TextContent("stripped"), serverRef]) { MessageId = "server-id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert: server's text slot is replaced with original text; server's media reference is preserved.
+        Assert.Equal("server-id", result.MessageId);
+        Assert.Collection(result.Contents,
+            c => Assert.Equal("look at this:", Assert.IsType<TextContent>(c).Text),
+            c => Assert.Same(serverRef, c));
+    }
+
+    [Fact]
+    public void MergeForLastMessageAppendsOriginalTextWhenRoundTripHasNoTextSlot()
+    {
+        // Arrange: round-tripped message has only media (no text slot to replace).
+        HostedFileContent serverRef = new("file-1");
+        ChatMessage input = new(ChatRole.User, [new TextContent("middle"), new DataContent("data:image/jpeg;base64,QUE=", "image/jpeg")]);
+        ChatMessage roundTripped = new(ChatRole.User, [serverRef]) { MessageId = "id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert: media kept; original text appended at end.
+        Assert.Collection(result.Contents,
+            c => Assert.Same(serverRef, c),
+            c => Assert.Equal("middle", Assert.IsType<TextContent>(c).Text));
+    }
+
+    [Fact]
+    public void MergeForLastMessageReplacesMultipleTextSlotsInOrder()
+    {
+        // Arrange: input has two text items; round-tripped has two text slots interleaved with media.
+        HostedFileContent firstRef = new("file-1");
+        HostedFileContent secondRef = new("file-2");
+        ChatMessage input = new(ChatRole.User, [new TextContent("first"), new TextContent("second")]);
+        ChatMessage roundTripped = new(ChatRole.User, [firstRef, new TextContent("a"), secondRef, new TextContent("b")]) { MessageId = "id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Collection(result.Contents,
+            c => Assert.Same(firstRef, c),
+            c => Assert.Equal("first", Assert.IsType<TextContent>(c).Text),
+            c => Assert.Same(secondRef, c),
+            c => Assert.Equal("second", Assert.IsType<TextContent>(c).Text));
+    }
+
+    [Fact]
+    public void MergeForLastMessageFallsBackToInputTextWhenInputHasNoTextContent()
+    {
+        // Arrange: ChatMessage(role, "string") populates Text but no explicit TextContent
+        // when Contents is initially empty in some construction paths. Verify we still
+        // recover the original Text via input.Text.
+        ChatMessage input = new(ChatRole.User, "fallback text");
+        ChatMessage roundTripped = new(ChatRole.User, [new TextContent("stripped")]) { MessageId = "id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Equal("fallback text", Assert.IsType<TextContent>(Assert.Single(result.Contents)).Text);
+    }
+
+    [Fact]
+    public void MergeForLastMessagePreservesServerAuthoredProperties()
+    {
+        // Arrange: server (round-trip) is authoritative for metadata. Returning the
+        // round-tripped instance means any future ChatMessage property is automatically
+        // preserved without code changes here.
+        ChatMessage input = new(ChatRole.User, "hi")
+        {
+            AuthorName = "client-side",
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["client"] = "value" },
+        };
+        ChatMessage roundTripped = new(ChatRole.User, [new TextContent("stripped")])
+        {
+            MessageId = "server",
+            AuthorName = "server-side",
+            AdditionalProperties = new AdditionalPropertiesDictionary { ["server"] = "value" },
+        };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Equal("server", result.MessageId);
+        Assert.Equal("server-side", result.AuthorName);
+        Assert.NotNull(result.AdditionalProperties);
+        Assert.True(result.AdditionalProperties.ContainsKey("server"));
+        Assert.False(result.AdditionalProperties.ContainsKey("client"));
+    }
+
+    [Fact]
+    public void MergeForLastMessageHandlesEmptyInputContents()
+    {
+        // Arrange
+        ChatMessage input = new(ChatRole.User, new List<AIContent>());
+        HostedFileContent serverRef = new("file-only");
+        ChatMessage roundTripped = new(ChatRole.User, [serverRef]) { MessageId = "id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert: nothing to splice; round-tripped returned unchanged.
+        Assert.Same(roundTripped, result);
+        Assert.Equal("file-only", Assert.IsType<HostedFileContent>(Assert.Single(result.Contents)).FileId);
+    }
 }

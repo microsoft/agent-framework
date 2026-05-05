@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
+    AgentResponse,
+    AgentResponseUpdate,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -18,11 +20,16 @@ from agent_framework import (
     ResponseStream,
     WorkflowEvent,
     WorkflowRunState,
+    function_middleware,
     resolve_agent_id,
     tool,
 )
 from agent_framework._clients import BaseChatClient
-from agent_framework._middleware import ChatMiddlewareLayer, FunctionInvocationContext, MiddlewareTermination
+from agent_framework._middleware import (
+    ChatMiddlewareLayer,
+    FunctionInvocationContext,
+    MiddlewareTermination,
+)
 from agent_framework._tools import FunctionInvocationLayer, FunctionTool
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder, HandoffSentEvent
 from pytest import param
@@ -745,6 +752,42 @@ async def test_handoff_clone_preserves_per_service_call_history_persistence() ->
     assert all(message.role != "tool" for message in stored_messages)
 
 
+async def test_handoff_clone_preserves_all_middleware_types() -> None:
+    """Handoff clones should preserve function and agent middleware from the original agent."""
+
+    @function_middleware
+    async def tracking_middleware(context: FunctionInvocationContext, call_next):
+        await call_next()
+
+    agent_a = Agent(
+        id="agent_a",
+        name="agent_a",
+        client=MockChatClient(name="agent_a", handoff_to="agent_b"),
+        middleware=[tracking_middleware],
+        require_per_service_call_history_persistence=True,
+    )
+    agent_b = Agent(
+        id="agent_b",
+        name="agent_b",
+        client=MockChatClient(name="agent_b"),
+        default_options={"tool_choice": "none"},
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(participants=[agent_a, agent_b], termination_condition=lambda _: False)
+        .with_start_agent(agent_a)
+        .add_handoff(agent_a, [agent_b])
+        .add_handoff(agent_b, [agent_a])
+        .build()
+    )
+
+    executor = workflow.executors[resolve_agent_id(agent_a)]
+    assert isinstance(executor, HandoffAgentExecutor)
+    cloned_middleware = executor._agent.middleware or []
+    assert tracking_middleware in cloned_middleware, "User function middleware should be preserved on cloned agent"
+
+
 def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
     """Tool-control messages must be excluded from persisted handoff history."""
     function_call = Content.from_function_call(
@@ -815,10 +858,15 @@ async def test_autonomous_mode_yields_output_without_user_request():
     outputs = [ev for ev in events if ev.type == "output"]
     assert outputs, "Autonomous mode should yield a workflow output"
 
-    final_conversation = outputs[-1].data
-    assert isinstance(final_conversation, list)
-    conversation_list = cast(list[Message], final_conversation)
-    assert any(msg.role == "assistant" and (msg.text or "").startswith("specialist reply") for msg in conversation_list)
+    # Per-agent activity surfaces as `output` events from each HandoffAgentExecutor as they
+    # speak. Handoff has no orchestrator that produces a separate "answer" — the conversation
+    # IS the result. In streaming mode payloads are AgentResponseUpdate; combined text should
+    # contain the specialist's reply.
+    payloads = [ev.data for ev in outputs if isinstance(ev.data, (AgentResponse, AgentResponseUpdate))]
+    combined = " ".join(
+        getattr(p, "text", None) or " ".join(m.text for m in getattr(p, "messages", [])) for p in payloads
+    )
+    assert "specialist reply" in combined
 
 
 async def test_autonomous_mode_resumes_user_input_on_turn_limit():
@@ -882,14 +930,10 @@ async def test_handoff_async_termination_condition() -> None:
             stream=True, responses={requests[-1].request_id: [Message(role="user", contents=["Second user message"])]}
         )
     )
-    outputs = [ev for ev in events if ev.type == "output"]
-    assert len(outputs) == 1
-
-    final_conversation = outputs[0].data
-    assert isinstance(final_conversation, list)
-    final_conv_list = cast(list[Message], final_conversation)
-    user_messages = [msg for msg in final_conv_list if msg.role == "user"]
-    assert len(user_messages) == 2
+    # Resume run terminates without further agent activity once the second user message
+    # satisfies the termination condition. The workflow returns to idle cleanly.
+    idle_states = [ev for ev in events if ev.type == "status" and ev.state == WorkflowRunState.IDLE]
+    assert idle_states, "Workflow should become idle after termination"
     assert termination_call_count > 0
 
 
@@ -949,8 +993,9 @@ async def test_handoff_terminates_without_request_info_when_latest_response_meet
 
     outputs = [event for event in events if event.type == "output"]
     assert outputs
-    conversation_outputs = [event for event in outputs if isinstance(event.data, list)]
-    assert len(conversation_outputs) == 1
+    # Per-agent activity surfaces as output events (AgentResponseUpdate in streaming mode).
+    agent_payloads = [event for event in outputs if isinstance(event.data, (AgentResponse, AgentResponseUpdate))]
+    assert len(agent_payloads) >= 1
 
 
 async def test_tool_choice_preserved_from_agent_config():

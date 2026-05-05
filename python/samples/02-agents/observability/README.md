@@ -24,7 +24,9 @@ Next to what happens in the code when you run, we also make setting up observabi
 
 ### MCP trace propagation
 
-Whenever there is an active OpenTelemetry span context, Agent Framework automatically propagates trace context to MCP servers via the `params._meta` field of `tools/call` requests. It uses the globally-configured OpenTelemetry propagator(s) (W3C Trace Context by default, producing `traceparent` and `tracestate`), so custom propagators (B3, Jaeger, etc.) are also supported. This enables distributed tracing across agent-to-MCP-server boundaries for all transports (stdio, HTTP, WebSocket), compliant with the [MCP `_meta` specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta).
+Whenever there is an active OpenTelemetry span context, Agent Framework automatically propagates trace context to MCP servers via the `params._meta` field of `tools/call` requests. It uses the globally-configured OpenTelemetry propagator(s) (W3C Trace Context by default, producing `traceparent` and `tracestate`), so custom propagators (B3, Jaeger, etc.) are also supported. This enables distributed tracing across agent-to-MCP-server boundaries, compliant with the [MCP `_meta` specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta).
+
+**Scope:** automatic `_meta` injection applies only to MCP sessions that the agent process itself opens — `MCPStreamableHTTPTool`, `MCPStdioTool`, and `MCPWebsocketTool` (or any other client-opened `MCPTool` subclass). It does **not** apply to hosted/provider-managed MCP tool configurations such as `FoundryChatClient.get_mcp_tool(...)`, `OpenAIChatClient.get_mcp_tool(...)`, `AnthropicClient.get_mcp_tool(...)`, `GeminiChatClient.get_mcp_tool(...)`, or toolbox-fetched tools (for example, `toolbox = await client.get_toolbox(...)`, then passing `toolbox.tools` into `Agent(tools=...)`), because in those cases the `tools/call` message is issued by the provider service runtime rather than by the agent process. As a result, the framework has no opportunity to inject trace context into those requests, and propagating `traceparent`/`tracestate` across that hosted-service boundary is the responsibility of the service runtime, not Agent Framework. If end-to-end distributed tracing to the downstream MCP server is required, use a client-opened MCP transport instead of a hosted connector.
 
 ### Five patterns for configuring observability
 
@@ -347,28 +349,29 @@ setup_observability(
 ```
 
 **After (Current):**
+
 ```python
-# For Microsoft Foundry projects
 from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
-
-client = FoundryChatClient(
-    project_endpoint="https://your-project.services.ai.azure.com",
-    model="gpt-4o",
-    credential=AzureCliCredential(),
-)
-await client.configure_azure_monitor(enable_live_metrics=True)
-
-# For non-Azure AI projects
-from azure.monitor.opentelemetry import configure_azure_monitor
 from agent_framework.observability import create_resource, enable_instrumentation
+from azure.identity import AzureCliCredential
+from azure.monitor.opentelemetry import configure_azure_monitor
 
-configure_azure_monitor(
-    connection_string="InstrumentationKey=...",
-    resource=create_resource(),
-    enable_live_metrics=True,
-)
-enable_instrumentation()
+async def main():
+    # For Microsoft Foundry projects
+    client = FoundryChatClient(
+        project_endpoint="https://your-project.services.ai.azure.com",
+        model="gpt-4o",
+        credential=AzureCliCredential(),
+    )
+    await client.configure_azure_monitor(enable_live_metrics=True)
+
+    # For non-Azure AI projects
+    configure_azure_monitor(
+        connection_string="InstrumentationKey=...",
+        resource=create_resource(),
+        enable_live_metrics=True,
+    )
+    enable_instrumentation()
 ```
 
 ### Console Output

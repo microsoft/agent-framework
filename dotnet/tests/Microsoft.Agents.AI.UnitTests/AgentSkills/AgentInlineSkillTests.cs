@@ -433,10 +433,11 @@ public sealed class AgentInlineSkillTests
             TotalCount = request.MaxResults,
         });
         var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "test", MaxResults = 3 }, jso);
-        var args = new AIFunctionArguments { ["request"] = inputJson };
+        using var argsDoc = JsonDocument.Parse($$"""{ "request": {{inputJson.GetRawText()}} }""");
+        var args = argsDoc.RootElement;
 
         // Act
-        var result = await skill.Scripts![0].RunAsync(skill, args, CancellationToken.None);
+        var result = await skill.Scripts![0].RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert — the custom input was deserialized via skill-level JSO and response was produced
         Assert.NotNull(result);
@@ -456,10 +457,11 @@ public sealed class AgentInlineSkillTests
             TotalCount = request.MaxResults,
         }, serializerOptions: scriptJso);
         var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "override", MaxResults = 7 }, scriptJso);
-        var args = new AIFunctionArguments { ["request"] = inputJson };
+        using var argsDoc = JsonDocument.Parse($$"""{ "request": {{inputJson.GetRawText()}} }""");
+        var args = argsDoc.RootElement;
 
         // Act
-        var result = await skill.Scripts![0].RunAsync(skill, args, CancellationToken.None);
+        var result = await skill.Scripts![0].RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert — per-script JSO takes effect and custom types are properly marshaled
         Assert.NotNull(result);

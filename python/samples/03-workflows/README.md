@@ -30,6 +30,20 @@ Once comfortable with these, explore the rest of the samples below.
 
 ## Samples Overview (by directory)
 
+### functional
+
+Write workflows as plain Python async functions — no graph concepts, no executor classes, no edges. Use native control flow (`if`/`else`, loops, `asyncio.gather`) for branching and parallelism.
+
+| Sample | File | Concepts |
+|---|---|---|
+| Basic Pipeline | [functional/basic_pipeline.py](./functional/basic_pipeline.py) | Sequential steps as plain async functions |
+| Basic Streaming Pipeline | [functional/basic_streaming_pipeline.py](./functional/basic_streaming_pipeline.py) | Stream workflow events in real time with `run(stream=True)` |
+| Parallel Pipeline | [functional/parallel_pipeline.py](./functional/parallel_pipeline.py) | Fan-out/fan-in with `asyncio.gather` |
+| Steps and Checkpointing | [functional/steps_and_checkpointing.py](./functional/steps_and_checkpointing.py) | `@step` decorator for per-step checkpointing and observability |
+| Human-in-the-Loop Review | [functional/hitl_review.py](./functional/hitl_review.py) | HITL with `ctx.request_info()` and replay |
+| Agent Integration | [functional/agent_integration.py](./functional/agent_integration.py) | Calling agents inside workflow steps |
+| Naive Group Chat | [functional/naive_group_chat.py](./functional/naive_group_chat.py) | Simple round-robin group chat as a plain loop |
+
 ### agents
 
 | Sample                                 | File                                                                                                           | Concepts                                                                                             |
@@ -41,7 +55,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py)             | Wrap a workflow so it can behave like an agent (reflection pattern)                                  |
 | Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)               | Extend workflow-as-agent with human-in-the-loop capability                                           |
 | Workflow as Agent with Session         | [agents/workflow_as_agent_with_session.py](./agents/workflow_as_agent_with_session.py)                           | Use AgentSession to maintain conversation history across workflow-as-agent invocations                |
-| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
+| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @tool tools |
 
 ### checkpoint
 

@@ -7,6 +7,7 @@ The foundation package containing all core abstractions, types, and built-in Ope
 ```
 agent_framework/
 ├── __init__.py          # Public API exports
+├── security.py          # Public security primitives, middleware, and tools
 ├── _agents.py           # Agent implementations
 ├── _clients.py          # Chat client base classes and protocols
 ├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
@@ -63,6 +64,8 @@ agent_framework/
 - **`SessionContext`** - Context object for session-scoped data during agent runs
 - **`ContextProvider`** - Base class for context providers (RAG, memory systems)
 - **`HistoryProvider`** - Base class for conversation history storage
+- **`InMemoryHistoryProvider`** - Built-in session-state history provider for local runs
+- **`FileHistoryProvider`** - JSON Lines file-backed history provider storing one file per session with one message record per line
 
 ### Skills (`_skills.py`)
 

@@ -1,0 +1,19 @@
+# Dockerfile for contributors building from the agent-framework repository source.
+#
+# This project uses ProjectReference to the local Microsoft.Agents.AI.Foundry source,
+# which means a standard multi-stage Docker build cannot resolve dependencies outside
+# this folder. Instead, pre-publish the app targeting the container runtime and copy
+# the output into the container:
+#
+#   dotnet publish -c Debug -f net10.0 -r linux-musl-x64 --self-contained false -o out
+#   docker build -f Dockerfile.contributor -t hosted-foundry-agent .
+#   docker run --rm -p 8088:8088 -e AGENT_NAME=<your-agent> -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN --env-file .env hosted-foundry-agent
+#
+# For end-users consuming the NuGet package (not ProjectReference), use the standard
+# Dockerfile which performs a full dotnet restore + publish inside the container.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS final
+WORKDIR /app
+COPY out/ .
+EXPOSE 8088
+ENV ASPNETCORE_URLS=http://+:8088
+ENTRYPOINT ["dotnet", "HostedFoundryAgent.dll"]

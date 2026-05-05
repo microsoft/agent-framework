@@ -9,17 +9,6 @@ namespace Microsoft.Agents.AI.Workflows;
 
 internal static class AIAgentsAbstractionsExtensions
 {
-    public static ChatMessage ToChatMessage(this AgentResponseUpdate update) =>
-        new()
-        {
-            AuthorName = update.AuthorName,
-            Contents = update.Contents,
-            Role = update.Role ?? ChatRole.User,
-            CreatedAt = update.CreatedAt,
-            MessageId = update.MessageId,
-            RawRepresentation = update.RawRepresentation ?? update,
-        };
-
     public static ChatMessage ChatAssistantToUserIfNotFromNamed(this ChatMessage message, string agentName)
         => message.ChatAssistantToUserIfNotFromNamed(agentName, out _, false);
 
@@ -48,7 +37,7 @@ internal static class AIAgentsAbstractionsExtensions
     /// any that have a different <see cref="ChatMessage.AuthorName"/> from <paramref name="targetAgentName"/> to
     /// <see cref="ChatRole.User"/>.
     /// </summary>
-    public static List<ChatMessage>? ChangeAssistantToUserForOtherParticipants(this List<ChatMessage> messages, string targetAgentName)
+    public static List<ChatMessage>? ChangeAssistantToUserForOtherParticipants(this IEnumerable<ChatMessage> messages, string targetAgentName)
     {
         List<ChatMessage>? roleChanged = null;
         foreach (var m in messages)

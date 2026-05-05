@@ -59,6 +59,62 @@ class AgentExecutorResponse:
     agent_response: AgentResponse
     full_conversation: list[Message]
 
+    def with_text(self, text: str) -> "AgentExecutorResponse":
+        """Create a new AgentExecutorResponse with replaced text, preserving the conversation history.
+
+        Use this in custom executors that transform agent output text (e.g. upper-casing, summarising)
+        when you need downstream AgentExecutors to still have access to the full prior conversation.
+
+        Without this helper, sending a plain ``str`` from a custom executor breaks the context chain:
+        the downstream ``AgentExecutor.from_str`` handler only adds that one string to its cache and
+        loses all prior messages.  By using ``with_text`` the response type stays
+        ``AgentExecutorResponse``, so ``AgentExecutor.from_response`` is invoked instead and the full
+        conversation is preserved.
+
+        Args:
+            text: The replacement assistant message text.
+
+        Returns:
+            A new ``AgentExecutorResponse`` whose ``agent_response`` contains a single assistant
+            message with ``text``, and whose ``full_conversation`` is the prior conversation
+            (everything before the original agent turn) followed by the new assistant message.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import AgentExecutorResponse, WorkflowContext, executor
+
+
+                @executor(
+                    id="upper_case_executor",
+                    input=AgentExecutorResponse,
+                    output=AgentExecutorResponse,
+                    workflow_output=str,
+                )
+                async def upper_case(
+                    response: AgentExecutorResponse,
+                    ctx: WorkflowContext[AgentExecutorResponse, str],
+                ) -> None:
+                    upper_text = response.agent_response.text.upper()
+                    await ctx.send_message(response.with_text(upper_text))
+                    await ctx.yield_output(upper_text)
+        """
+        new_message = Message("assistant", [text])
+        new_agent_response = AgentResponse(messages=[new_message])
+
+        # Strip off the original agent turn and replace with the new text.
+        n_agent_messages = len(self.agent_response.messages)
+        prior_messages = (
+            self.full_conversation[:-n_agent_messages] if n_agent_messages else list(self.full_conversation)
+        )
+        new_full_conversation = [*prior_messages, new_message]
+
+        return AgentExecutorResponse(
+            executor_id=self.executor_id,
+            agent_response=new_agent_response,
+            full_conversation=new_full_conversation,
+        )
+
 
 class AgentExecutor(Executor):
     """built-in executor that wraps an agent for handling messages.
@@ -100,8 +156,9 @@ class AgentExecutor(Executor):
                    the agent run.
                 - "custom": use the provided context_filter function to determine which messages to include
                    as context for the agent run.
-            context_filter: An optional function for filtering conversation context when context_mode is set
-                to "custom".
+            context_filter: A function that takes the full conversation (list of Messages) as input and returns
+                a filtered list of Messages to be used as context for the agent run. This is required
+                if context_mode is set to "custom".
         """
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
         exec_id = id or resolve_agent_id(agent)
@@ -183,7 +240,25 @@ class AgentExecutor(Executor):
         """Accept a raw user prompt string and run the agent.
 
         The new string input will be added to the cache which is used as the conversation context for the agent run.
+
+        Warning:
+            If the upstream executor received an ``AgentExecutorResponse`` but emits a plain
+            ``str``, this handler will be invoked instead of ``from_response``. This resets
+            the conversation context because only the new string is added to the cache and
+            all prior messages from the upstream agent are lost.
+
+            To preserve the full conversation when transforming agent output in a custom
+            executor, use ``AgentExecutorResponse.with_text(...)`` so that the message type
+            stays ``AgentExecutorResponse`` and ``from_response`` is called instead.
         """
+        if not self._cache and ctx.source_executor_ids != ["Workflow"]:
+            logger.warning(
+                "AgentExecutor '%s': from_str handler invoked with an empty cache. "
+                "If you are chaining from an AgentExecutor, the upstream custom executor may be "
+                "emitting a plain str instead of using AgentExecutorResponse.with_text(...), "
+                "which causes the full conversation context to be lost.",
+                self.id,
+            )
         self._cache.extend(normalize_messages_input(text))
         await self._run_agent_and_emit(ctx)
 

@@ -119,15 +119,11 @@ class WorkflowAgent(BaseAgent):
         if not any(is_type_compatible(list[Message], input_type) for input_type in start_executor.input_types):
             raise ValueError("Workflow's start executor cannot handle list[Message]")
 
-        resolved_context_providers = list(context_providers) if context_providers is not None else []
-        if not resolved_context_providers:
-            resolved_context_providers.append(InMemoryHistoryProvider())
-
         super().__init__(
             id=id,
             name=name,
             description=description,
-            context_providers=resolved_context_providers,
+            context_providers=context_providers,
             **kwargs,
         )
         self._workflow: Workflow = workflow
@@ -261,6 +257,15 @@ class WorkflowAgent(BaseAgent):
             An AgentResponse representing the workflow execution results.
         """
         input_messages = normalize_messages_input(messages)
+
+        if (
+            not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
+            and session is not None
+        ):
+            self.context_providers.append(InMemoryHistoryProvider())
+
         provider_session = session
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
@@ -332,6 +337,15 @@ class WorkflowAgent(BaseAgent):
             AgentResponseUpdate objects representing the workflow execution progress.
         """
         input_messages = normalize_messages_input(messages)
+
+        if (
+            not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
+            and session is not None
+        ):
+            self.context_providers.append(InMemoryHistoryProvider())
+
         provider_session = session
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
@@ -423,6 +437,13 @@ class WorkflowAgent(BaseAgent):
                     yield event
 
         elif checkpoint_id is not None:
+            # Restore the prior workflow state from the checkpoint. Shared
+            # state (e.g. accumulated conversation history maintained by the
+            # workflow's executors) survives across turns because Workflow.run
+            # no longer wipes state per call. Callers who want to deliver a
+            # new user message after restore should make a second
+            # `workflow.run(message=...)` call - they are NOT mutually
+            # exclusive on the same instance, but each must be its own call.
             if streaming:
                 async for event in self.workflow.run(
                     stream=True,
@@ -514,6 +535,7 @@ class WorkflowAgent(BaseAgent):
                 raw_representations.append(output_event)
             else:
                 data = output_event.data
+
                 if isinstance(data, AgentResponseUpdate):
                     # We cannot support AgentResponseUpdate in non-streaming mode. This is because the message
                     # sequence cannot be guaranteed when there are streaming updates in between non-streaming
@@ -614,16 +636,23 @@ class WorkflowAgent(BaseAgent):
             A list of AgentResponseUpdate objects. Empty list if the event is not relevant.
         """
         if event.type == "output":
-            # Convert workflow output to agent response updates.
-            # Handle different data types appropriately.
             data = event.data
             executor_id = event.executor_id
 
             if isinstance(data, AgentResponseUpdate):
-                # Pass through AgentResponseUpdate directly (streaming from AgentExecutor)
-                if not data.author_name:
-                    data.author_name = executor_id
-                return [data]
+                # Construct a fresh AgentResponseUpdate so we don't mutate a payload
+                # that AgentExecutor still holds a reference to in its `updates` list.
+                return [
+                    AgentResponseUpdate(
+                        contents=list(data.contents),
+                        role=data.role,
+                        author_name=data.author_name or executor_id,
+                        response_id=data.response_id,
+                        message_id=data.message_id,
+                        created_at=data.created_at,
+                        raw_representation=data.raw_representation,
+                    )
+                ]
             if isinstance(data, AgentResponse):
                 # Convert each message in AgentResponse to an AgentResponseUpdate
                 updates: list[AgentResponseUpdate] = []

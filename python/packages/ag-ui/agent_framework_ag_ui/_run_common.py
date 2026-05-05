@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -31,6 +32,7 @@ from ag_ui.core import (
 from agent_framework import Content
 
 from ._orchestration._predictive_state import PredictiveStateHandler
+from ._state import TOOL_RESULT_STATE_KEY
 from ._utils import generate_event_id, make_json_safe
 
 logger = logging.getLogger(__name__)
@@ -233,16 +235,66 @@ def _emit_tool_call(
     return events
 
 
+def _extract_tool_result_state(content: Content) -> dict[str, Any] | None:
+    """Extract a deterministic AG-UI state update from a tool-result ``Content``.
+
+    Tools using :func:`agent_framework_ag_ui.state_update` carry the state
+    payload in ``additional_properties[TOOL_RESULT_STATE_KEY]`` on the inner
+    text item produced by ``parse_result``. We also check the outer
+    function_result content's ``additional_properties`` for robustness.
+
+    If multiple items carry state, they are merged in order so later items
+    override earlier ones (plain ``dict.update`` semantics).
+
+    Returns:
+        The merged state dict to apply, or ``None`` if no state update is
+        present.
+    """
+    merged: dict[str, Any] | None = None
+
+    outer_ap = getattr(content, "additional_properties", None) or {}
+    outer_state = outer_ap.get(TOOL_RESULT_STATE_KEY)
+    if isinstance(outer_state, dict):
+        merged = dict(outer_state)
+
+    for item in content.items or ():
+        item_ap = getattr(item, "additional_properties", None) or {}
+        item_state = item_ap.get(TOOL_RESULT_STATE_KEY)
+        if isinstance(item_state, dict):
+            if merged is None:
+                merged = dict(item_state)
+            else:
+                merged.update(item_state)
+
+    return merged
+
+
 def _emit_tool_result_common(
     call_id: str,
     raw_result: Any,
     flow: FlowState,
     predictive_handler: PredictiveStateHandler | None = None,
+    *,
+    state_update: Mapping[str, Any] | None = None,
 ) -> list[BaseEvent]:
     """Shared helper for emitting ToolCallEnd + ToolCallResult events and performing FlowState cleanup.
 
     Both ``_emit_tool_result`` (standard function results) and ``_emit_mcp_tool_result``
     (MCP server tool results) delegate to this function.
+
+    Args:
+        call_id: Tool call identifier.
+        raw_result: The stringified tool result content sent back to the LLM.
+        flow: Current ``FlowState``.
+        predictive_handler: Optional predictive state handler driven by
+            ``predict_state_config``.
+        state_update: Optional deterministic state snapshot produced by a tool
+            returning :func:`agent_framework_ag_ui.state_update`. When present,
+            it is merged into ``flow.current_state`` and a ``StateSnapshotEvent``
+            is emitted after the ``ToolCallResult`` event. When both
+            ``predictive_handler`` and ``state_update`` are active, predictive
+            updates are applied first, then the deterministic merge, and a
+            single coalesced ``StateSnapshotEvent`` is emitted.
     """
     events: list[BaseEvent] = []
 
@@ -271,8 +323,18 @@ def _emit_tool_result_common(
 
     if predictive_handler:
         predictive_handler.apply_pending_updates()
-        if flow.current_state:
-            events.append(StateSnapshotEvent(snapshot=flow.current_state))
+
+    if state_update:
+        flow.current_state.update(state_update)
+        logger.debug(
+            "Emitted deterministic tool-result StateSnapshotEvent for call_id=%s (keys=%s)",
+            call_id,
+            list(state_update.keys()),
+        )
+
+    # Emit a single coalesced snapshot when either mechanism updated state.
+    if (predictive_handler or state_update) and flow.current_state:
+        events.append(StateSnapshotEvent(snapshot=flow.current_state))
 
     flow.tool_call_id = None
     flow.tool_call_name = None
@@ -295,7 +357,14 @@ def _emit_tool_result(
     if not content.call_id:
         return []
     raw_result = content.result if content.result is not None else ""
-    return _emit_tool_result_common(content.call_id, raw_result, flow, predictive_handler)
+    state_update = _extract_tool_result_state(content)
+    return _emit_tool_result_common(
+        content.call_id,
+        raw_result,
+        flow,
+        predictive_handler,
+        state_update=state_update,
+    )
 
 
 def _emit_approval_request(
@@ -460,7 +529,14 @@ def _emit_mcp_tool_result(
         logger.warning("MCP tool result content missing call_id, skipping")
         return []
     raw_output = content.output if content.output is not None else ""
-    return _emit_tool_result_common(content.call_id, raw_output, flow, predictive_handler)
+    state_update = _extract_tool_result_state(content)
+    return _emit_tool_result_common(
+        content.call_id,
+        raw_output,
+        flow,
+        predictive_handler,
+        state_update=state_update,
+    )
 
 
 def _close_reasoning_block(flow: FlowState) -> list[BaseEvent]:
@@ -520,7 +596,7 @@ def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> lis
             events.extend(_close_reasoning_block(flow))
             # Open new reasoning block.
             events.append(ReasoningStartEvent(message_id=message_id))
-            events.append(ReasoningMessageStartEvent(message_id=message_id, role="assistant"))
+            events.append(ReasoningMessageStartEvent(message_id=message_id, role="reasoning"))
             flow.reasoning_message_id = message_id
 
         if text:
@@ -537,7 +613,7 @@ def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> lis
     else:
         # No flow -- backward-compatible full sequence per call.
         events.append(ReasoningStartEvent(message_id=message_id))
-        events.append(ReasoningMessageStartEvent(message_id=message_id, role="assistant"))
+        events.append(ReasoningMessageStartEvent(message_id=message_id, role="reasoning"))
 
         if text:
             events.append(ReasoningMessageContentEvent(message_id=message_id, delta=text))
