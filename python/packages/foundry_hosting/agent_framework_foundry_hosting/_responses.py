@@ -7,7 +7,10 @@ import base64
 import json
 import logging
 import os
+import tempfile
+import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from contextlib import suppress
 from typing import Protocol, cast
 
 from agent_framework import (
@@ -139,38 +142,61 @@ class InMemoryFunctionApprovalStorage:
 
 
 class FileBasedFunctionApprovalStorage:
-    """A simple file-based storage for function approval requests."""
+    """A simple file-based storage for function approval requests.
+
+    Concurrent writes from multiple threads in the same process are
+    serialized by a ``threading.Lock``, and the on-disk JSON file is
+    updated atomically (write to a temp file, then ``os.replace``) so a
+    crash mid-write cannot leave a partially written file behind.
+    """
 
     def __init__(self, storage_path: str) -> None:
         self._storage_path = storage_path
+        self._lock = threading.Lock()
 
     def _create_storage_file_if_not_exists_sync(self) -> None:
-        """Lazy-create the storage file (and its parent directory) if it does not already exist."""
-        if not os.path.exists(self._storage_path):
-            os.makedirs(os.path.dirname(self._storage_path), exist_ok=True)
-            with open(self._storage_path, "w") as f:
-                json.dump({}, f)
+        """Lazy-create the storage file (and its parent directory) if it does not already exist.
+
+        Uses exclusive-create mode (``"x"``) so a concurrent creator cannot
+        be truncated by an ``open(..., "w")`` after a stale existence check.
+        """
+        os.makedirs(os.path.dirname(self._storage_path) or ".", exist_ok=True)
+        with suppress(FileExistsError), open(self._storage_path, "x") as f:
+            json.dump({}, f)
+
+    def _atomic_write(self, data: dict[str, Any]) -> None:
+        """Atomically replace the storage file with the serialized ``data``."""
+        directory = os.path.dirname(self._storage_path) or "."
+        # Serialize first so any error doesn't leave a partial file behind.
+        serialized = json.dumps(data)
+        fd, tmp_path = tempfile.mkstemp(prefix=".approvals-", suffix=".tmp", dir=directory)
+        try:
+            with os.fdopen(fd, "w") as tmp:
+                tmp.write(serialized)
+            os.replace(tmp_path, self._storage_path)
+        except BaseException:
+            with suppress(OSError):
+                os.unlink(tmp_path)
+            raise
 
     def _save_sync(self, approval_request_id: str, request: Content) -> None:
-        self._create_storage_file_if_not_exists_sync()
-        with open(self._storage_path, "r+") as f:
-            data = json.load(f)
+        with self._lock:
+            self._create_storage_file_if_not_exists_sync()
+            with open(self._storage_path) as f:
+                data = json.load(f)
             if approval_request_id in data:
                 raise ValueError(f"Approval request with ID '{approval_request_id}' already exists.")
             data[approval_request_id] = request.to_dict()
-            # Serialize to a string first so any error doesn't leave the file in a partially written state.
-            serialized = json.dumps(data)
-            f.seek(0)
-            f.write(serialized)
-            f.truncate()
+            self._atomic_write(data)
 
     def _load_sync(self, approval_request_id: str) -> Content:
-        self._create_storage_file_if_not_exists_sync()
-        with open(self._storage_path) as f:
-            data = json.load(f)
-            if approval_request_id not in data:
-                raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
-            return Content.from_dict(data[approval_request_id])
+        with self._lock:
+            self._create_storage_file_if_not_exists_sync()
+            with open(self._storage_path) as f:
+                data = json.load(f)
+        if approval_request_id not in data:
+            raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
+        return Content.from_dict(data[approval_request_id])
 
     async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
         await asyncio.to_thread(self._save_sync, approval_request_id, request)
@@ -243,7 +269,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         self._agent = agent
         self._approval_storage = (
-            FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH.lstrip("/"))
+            FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)
             if self.config.is_hosted
             else InMemoryFunctionApprovalStorage()
         )
