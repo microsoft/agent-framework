@@ -104,12 +104,16 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
     {
         try
         {
-            this._agent = await this.CreateChatClientAgentAsync();
+            _ = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey);
+            _ = TestConfiguration.GetRequiredValue(TestSettings.AnthropicChatModelName);
+            _ = TestConfiguration.GetRequiredValue(TestSettings.AnthropicReasoningModelName);
         }
         catch (InvalidOperationException ex)
         {
             Assert.Skip("Anthropic configuration could not be loaded. Error:" + ex.Message);
         }
+
+        this._agent = await this.CreateChatClientAgentAsync();
     }
 
     public ValueTask DisposeAsync()
