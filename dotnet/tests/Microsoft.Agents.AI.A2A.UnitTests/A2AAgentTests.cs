@@ -465,7 +465,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_WithTaskInSessionAndMessage_AddTaskAsReferencesToMessageAsync()
+    public async Task RunAsync_WithTaskInSessionAndMessage_SetsTaskIdOnMessageAsync()
     {
         // Arrange
         this._handler.ResponseToReturn = new SendMessageResponse
@@ -478,8 +478,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
-        session.TaskId = "task-123";
+        var session = await this._agent.CreateSessionAsync("context-123", "task-123");
 
         var inputMessage = new ChatMessage(ChatRole.User, "Please make the background transparent");
 
@@ -488,9 +487,9 @@ public sealed class A2AAgentTests : IDisposable
 
         // Assert
         var message = this._handler.CapturedSendMessageRequest?.Message;
-        Assert.Null(message?.TaskId);
-        Assert.NotNull(message?.ReferenceTaskIds);
-        Assert.Contains("task-123", message.ReferenceTaskIds);
+        Assert.Equal("context-123", message?.ContextId);
+        Assert.Equal("task-123", message?.TaskId);
+        Assert.Null(message?.ReferenceTaskIds);
     }
 
     [Fact]
@@ -813,7 +812,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithTaskInSessionAndMessage_AddTaskAsReferencesToMessageAsync()
+    public async Task RunStreamingAsync_WithTaskInSessionAndMessage_SetsTaskIdOnMessageAsync()
     {
         // Arrange
         this._handler.StreamingResponseToReturn = new StreamResponse
@@ -826,8 +825,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
-        session.TaskId = "task-123";
+        var session = await this._agent.CreateSessionAsync("context-123", "task-123");
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync("Please make the background transparent", session))
@@ -837,9 +835,9 @@ public sealed class A2AAgentTests : IDisposable
 
         // Assert
         var message = this._handler.CapturedSendMessageRequest?.Message;
-        Assert.Null(message?.TaskId);
-        Assert.NotNull(message?.ReferenceTaskIds);
-        Assert.Contains("task-123", message.ReferenceTaskIds);
+        Assert.Equal("context-123", message?.ContextId);
+        Assert.Equal("task-123", message?.TaskId);
+        Assert.Null(message?.ReferenceTaskIds);
     }
 
     [Fact]

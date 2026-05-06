@@ -345,9 +345,8 @@ public sealed class A2AAgent : AIAgent
         // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#group-related-interactions
         a2aMessage.ContextId = typedSession.ContextId;
 
-        // Link the message as a follow-up to an existing task, if any.
-        // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#task-refinements
-        a2aMessage.ReferenceTaskIds = typedSession.TaskId is null ? null : [typedSession.TaskId];
+        // Continue the current task, if any.
+        a2aMessage.TaskId = typedSession.TaskId;
 
         return a2aMessage;
     }
