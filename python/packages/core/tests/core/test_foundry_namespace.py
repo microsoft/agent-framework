@@ -22,4 +22,3 @@ def test_azure_namespace_no_longer_exposes_foundry_symbols() -> None:
 
     with pytest.raises(AttributeError, match="Module `azure` has no attribute FoundryChatClient\\."):
         _ = azure.FoundryChatClient
-

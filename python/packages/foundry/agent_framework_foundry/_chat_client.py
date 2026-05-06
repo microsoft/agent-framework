@@ -232,7 +232,6 @@ class RawFoundryChatClient(  # type: ignore[misc]
         self,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
     ) -> list[Any]:
-        """Prepare tools for Foundry Responses API calls."""
         response_tools = super()._prepare_tools_for_openai(tools)
         return [_sanitize_foundry_response_tool(tool_item) for tool_item in response_tools]
 
