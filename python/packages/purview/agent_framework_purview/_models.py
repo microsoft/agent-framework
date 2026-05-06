@@ -89,6 +89,7 @@ def deserialize_flag(
         try:
             return enum_cls(value)
         except Exception:
+            logger.warning("Failed to convert int %s to %s", value, enum_cls.__name__)
             return None
 
     flag_value = enum_cls(0)
