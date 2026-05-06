@@ -16,7 +16,6 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
-from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
@@ -36,7 +35,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 
 from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 
-from ._tools import _sanitize_foundry_response_tool, fetch_toolbox  # pyright: ignore[reportPrivateUsage]
+from ._tools import _sanitize_foundry_response_tool  # pyright: ignore[reportPrivateUsage]
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -53,7 +52,6 @@ else:
 
 if TYPE_CHECKING:
     from agent_framework import ChatAndFunctionMiddlewareTypes, ToolTypes
-    from azure.ai.projects.models import ToolboxVersionObject
 
 logger: logging.Logger = logging.getLogger("agent_framework.foundry")
 
@@ -509,37 +507,6 @@ class RawFoundryChatClient(  # type: ignore[misc]
         return mcp
 
     # endregion
-
-    # region Toolbox methods (instance methods — these hit the network)
-
-    @experimental(feature_id=ExperimentalFeature.TOOLBOXES)
-    async def get_toolbox(
-        self,
-        name: str,
-        *,
-        version: str | None = None,
-    ) -> ToolboxVersionObject:
-        """Fetch a Foundry toolbox by name.
-
-        If ``version`` is omitted, resolves the toolbox's current default version
-        (two requests). If ``version`` is specified, fetches that version directly
-        (single request).
-
-        Args:
-            name: The name of the toolbox.
-
-        Keyword Args:
-            version: Optional immutable version identifier to pin to.
-
-        Returns:
-            A ``ToolboxVersionObject``. Pass its ``tools`` attribute to
-            ``Agent(tools=toolbox.tools)``.
-
-        Raises:
-            azure.core.exceptions.ResourceNotFoundError: If the toolbox or
-                the requested version does not exist.
-        """
-        return await fetch_toolbox(self.project_client, name, version)
 
 
 class FoundryChatClient(  # type: ignore[misc]

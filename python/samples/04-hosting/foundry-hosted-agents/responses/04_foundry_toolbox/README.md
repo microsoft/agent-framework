@@ -14,7 +14,7 @@ You can also create a Foundry Toolbox in the Foundry portal. Read more about it 
 
 ### Model Integration
 
-The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It loads a named Foundry Toolbox via `client.get_toolbox(name)` — the toolbox is a server-side bundle of tool configurations (e.g., `code_interpreter`, `web_search`) defined in the Foundry portal or by `azd provision`. Omitting `version` resolves the toolbox's current default version at runtime.
+The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-compatible Responses client. It connects to the toolbox's MCP endpoint via `MCPStreamableHTTPTool`, which discovers and invokes the toolbox's tools over MCP at runtime. The endpoint URL is provided through the `FOUNDRY_TOOLBOX_ENDPOINT` environment variable.
 
 See [main.py](main.py) for the full implementation.
 
@@ -26,16 +26,16 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
 
-An extra environment variable `TOOLBOX_NAME` must be set to the name of the Foundry Toolbox that the agent should load at runtime. This allows the agent host to dynamically retrieve the correct toolbox from Foundry when it starts. Run the following:
+An extra environment variable `FOUNDRY_TOOLBOX_ENDPOINT` must be set to the MCP endpoint URL of the Foundry toolbox. Run the following:
 
 ```bash
-export TOOLBOX_NAME="<your-toolbox-name>"
+export FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=v1"
 ```
 
 Or in PowerShell:
 
 ```powershell
-$env:TOOLBOX_NAME="<your-toolbox-name>"
+$env:FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=v1"
 ```
 
 ## Interacting with the agent

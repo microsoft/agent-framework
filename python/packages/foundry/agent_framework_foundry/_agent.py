@@ -420,8 +420,8 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
     ) -> list[Any]:
         """Prepare tools for Foundry agent Responses API calls.
 
-        Mirrors ``RawFoundryChatClient`` sanitization so toolbox-fetched MCP
-        tools with extra read-model fields continue to work through the agent
+        Mirrors ``RawFoundryChatClient`` sanitization so hosted MCP tools
+        with extra read-model fields continue to work through the agent
         surface.
         """
         response_tools = super()._prepare_tools_for_openai(tools)
