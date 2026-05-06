@@ -48,6 +48,10 @@ internal static class OutputConverter
         string? previousMessageId = null;
         bool hasTerminalEvent = false;
         var executorItemIds = new Dictionary<string, string>();
+        // Function call emission is deferred until the matching FunctionResultContent arrives.
+        // Without a matching result, the function_call would be an orphan in Azure's stored
+        // conversation and break resume via previous_response_id (issue #5662).
+        var pendingFunctionCalls = new Dictionary<string, (string Name, string Arguments)>(StringComparer.Ordinal);
 
         await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
@@ -118,12 +122,8 @@ internal static class OutputConverter
                         break;
                     }
 
-                    case FunctionCallContent:
+                    case FunctionCallContent functionCall:
                     {
-                        // Function call/result pairs are internal to the agent's tool-calling
-                        // loop and are not emitted to the wire. Approval-required calls surface
-                        // separately via ToolApprovalRequestContent below. Close any in-flight
-                        // assistant message so pre-tool and post-tool text stay separate.
                         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
                         {
                             yield return evt;
@@ -133,6 +133,19 @@ internal static class OutputConverter
                         currentMessageBuilder = null;
                         accumulatedText = null;
                         previousMessageId = null;
+
+                        if (functionCall.CallId is not { Length: > 0 })
+                        {
+                            break;
+                        }
+
+                        var arguments = functionCall.Arguments is not null
+                            ? JsonSerializer.Serialize(functionCall.Arguments)
+                            : "{}";
+
+                        // Buffer name+arguments; only build/emit when the matching
+                        // FunctionResultContent arrives (issue #5662).
+                        pendingFunctionCalls[functionCall.CallId] = (functionCall.Name, arguments);
                         break;
                     }
 
@@ -244,10 +257,52 @@ internal static class OutputConverter
                         // These would need to be serialized as base64 or URL references.
                         break;
 
-                    case FunctionResultContent:
-                        // Function results are internal to the agent's tool-calling loop
-                        // and are not emitted as output items in the response stream.
+                    case FunctionResultContent functionResult:
+                    {
+                        // Pair this result with a previously-buffered function_call. If none
+                        // exists, drop the result — it likely belongs to an approval flow
+                        // (paired on the wire by mcp_approval_request) and would otherwise
+                        // leave an orphan function_call_output (issue #5662).
+                        if (!pendingFunctionCalls.TryGetValue(functionResult.CallId, out var pending))
+                        {
+                            break;
+                        }
+
+                        pendingFunctionCalls.Remove(functionResult.CallId);
+
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        {
+                            yield return evt;
+                        }
+
+                        currentTextBuilder = null;
+                        currentMessageBuilder = null;
+                        accumulatedText = null;
+                        previousMessageId = null;
+
+                        var fcBuilder = stream.AddOutputItemFunctionCall(pending.Name, functionResult.CallId);
+                        yield return fcBuilder.EmitAdded();
+                        yield return fcBuilder.EmitArgumentsDelta(pending.Arguments);
+                        yield return fcBuilder.EmitArgumentsDone(pending.Arguments);
+                        yield return fcBuilder.EmitDone();
+
+                        var outputJson = functionResult.Result switch
+                        {
+                            null => "null",
+                            string s => JsonSerializer.Serialize(s),
+                            _ => JsonSerializer.Serialize(functionResult.Result),
+                        };
+
+                        var itemId = GenerateItemId("fc");
+                        var outputItem = new OutputItemFunctionToolCallOutput(
+                            functionResult.CallId,
+                            BinaryData.FromString(outputJson));
+
+                        var outputBuilder = stream.AddOutputItem<OutputItemFunctionToolCallOutput>(itemId);
+                        yield return outputBuilder.EmitAdded(outputItem);
+                        yield return outputBuilder.EmitDone(outputItem);
                         break;
+                    }
 
                     default:
                         break;
