@@ -199,6 +199,7 @@ def _coerce_content(value: Any) -> Content | None:
     try:
         return Content.from_dict(content_payload)
     except Exception:
+        logger.debug("Failed to coerce candidate content from dict", exc_info=True)
         return None
 
 
@@ -218,6 +219,7 @@ def _coerce_message_content(content_payload: Any) -> Content | None:
         try:
             return Content.from_dict(content_dict)
         except Exception:
+            logger.debug("Failed to coerce message content from dict", exc_info=True)
             return None
     return None
 
