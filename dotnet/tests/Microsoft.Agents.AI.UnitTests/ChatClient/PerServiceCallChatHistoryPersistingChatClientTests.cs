@@ -1311,4 +1311,319 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
         // Assert — session should NOT have the sentinel
         Assert.NotEqual(PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId, session!.ConversationId);
     }
+
+    /// <summary>
+    /// Verifies that <see cref="IChatMessageInjector"/> is resolvable via GetService when the decorator is active.
+    /// </summary>
+    [Fact]
+    public void GetService_ReturnsIChatMessageInjector_WhenDecoratorActive()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            RequirePerServiceCallChatHistoryPersistence = true,
+        });
+
+        // Act
+        var injector = agent.ChatClient.GetService<IChatMessageInjector>();
+
+        // Assert
+        Assert.NotNull(injector);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="IChatMessageInjector"/> is null when the decorator is not active.
+    /// </summary>
+    [Fact]
+    public void GetService_ReturnsNull_WhenDecoratorNotActive()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        ChatClientAgent agent = new(mockService.Object, options: new());
+
+        // Act
+        var injector = agent.ChatClient.GetService<IChatMessageInjector>();
+
+        // Assert
+        Assert.Null(injector);
+    }
+
+    /// <summary>
+    /// Verifies that messages enqueued before RunAsync are included in the service call messages.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_IncludesInjectedMessages_WhenEnqueuedBeforeCallAsync()
+    {
+        // Arrange
+        List<ChatMessage> capturedMessages = [];
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken _) =>
+                capturedMessages.AddRange(msgs))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<IEnumerable<ChatMessage>>(ctx.RequestMessages.ToList()));
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            RequirePerServiceCallChatHistoryPersistence = true,
+        });
+
+        // Enqueue a message before calling RunAsync
+        var injector = agent.ChatClient.GetService<IChatMessageInjector>();
+        Assert.NotNull(injector);
+        injector.EnqueueMessages([new ChatMessage(ChatRole.User, "injected message")]);
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "original")], session);
+
+        // Assert — the service should have received both the original and injected messages
+        Assert.Contains(capturedMessages, m => m.Text == "original");
+        Assert.Contains(capturedMessages, m => m.Text == "injected message");
+    }
+
+    /// <summary>
+    /// Verifies that the queue is drained after a call (messages are not re-delivered on subsequent calls).
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DrainsQueue_MessagesNotRedeliveredAsync()
+    {
+        // Arrange
+        int callCount = 0;
+        List<List<ChatMessage>> capturedPerCall = [];
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken _) =>
+            {
+                callCount++;
+                capturedPerCall.Add(msgs.ToList());
+            })
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            RequirePerServiceCallChatHistoryPersistence = true,
+        });
+
+        var injector = agent.ChatClient.GetService<IChatMessageInjector>()!;
+        injector.EnqueueMessages([new ChatMessage(ChatRole.User, "injected once")]);
+
+        // Act — first run should include the injected message
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "first call")], session);
+
+        // Second run with a new session should NOT include the previously injected message
+        var session2 = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "second call")], session2);
+
+        // Assert
+        Assert.Equal(2, callCount);
+        Assert.Contains(capturedPerCall[0], m => m.Text == "injected once");
+        Assert.DoesNotContain(capturedPerCall[1], m => m.Text == "injected once");
+    }
+
+    /// <summary>
+    /// Verifies that the internal loop fires when no actionable FunctionCallContent is returned
+    /// but there are pending injected messages in the queue.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_LoopsInternally_WhenNoActionableFCCButPendingMessagesAsync()
+    {
+        // Arrange
+        int serviceCallCount = 0;
+        Mock<IChatClient> mockService = new();
+        IChatMessageInjector? injectorRef = null;
+
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken _) =>
+            {
+                serviceCallCount++;
+                if (serviceCallCount == 1)
+                {
+                    // First call — simulate that something enqueues a message (e.g., a provider or background task)
+                    injectorRef!.EnqueueMessages([new ChatMessage(ChatRole.User, "injected during first call")]);
+                }
+
+                // Return a plain text response (no FunctionCallContent) to trigger the internal loop
+                return Task.FromResult(new ChatResponse([new(ChatRole.Assistant, $"response {serviceCallCount}")]));
+            });
+
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<IEnumerable<ChatMessage>>(ctx.RequestMessages.ToList()));
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            RequirePerServiceCallChatHistoryPersistence = true,
+        });
+
+        injectorRef = agent.ChatClient.GetService<IChatMessageInjector>()!;
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "original")], session);
+
+        // Assert — should have made 2 service calls (internal loop triggered by the injected message)
+        Assert.Equal(2, serviceCallCount);
+    }
+
+    /// <summary>
+    /// Verifies that the internal loop does NOT fire when the response contains actionable
+    /// FunctionCallContent, even if there are pending injected messages.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DoesNotLoopInternally_WhenActionableFCCPresentAsync()
+    {
+        // Arrange
+        int serviceCallCount = 0;
+        Mock<IChatClient> mockService = new();
+        IChatMessageInjector? injectorRef = null;
+
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken _) =>
+            {
+                serviceCallCount++;
+                if (serviceCallCount == 1)
+                {
+                    // Enqueue a message during the first call
+                    injectorRef!.EnqueueMessages([new ChatMessage(ChatRole.User, "injected")]);
+                    // Return a response with an actionable FunctionCallContent
+                    return Task.FromResult(new ChatResponse([new(ChatRole.Assistant,
+                        [new FunctionCallContent("call1", "myTool", new Dictionary<string, object?>())])]));
+                }
+
+                // Subsequent calls return plain text (the FCC loop will call back after tool execution)
+                return Task.FromResult(new ChatResponse([new(ChatRole.Assistant, "final")]));
+            });
+
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<IEnumerable<ChatMessage>>(ctx.RequestMessages.ToList()));
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        var tool = AIFunctionFactory.Create(() => "tool result", "myTool", "A test tool");
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Tools = [tool] },
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            RequirePerServiceCallChatHistoryPersistence = true,
+        }, services: new ServiceCollection().BuildServiceProvider());
+
+        injectorRef = agent.ChatClient.GetService<IChatMessageInjector>()!;
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "original")], session);
+
+        // Assert — should have made more than 1 service call (FCC loop iterated after tool execution),
+        // but the first call should NOT have triggered an internal loop (it returned actionable FCC).
+        // The second call from FCC loop should pick up the injected message.
+        Assert.True(serviceCallCount >= 2);
+    }
+
+    /// <summary>
+    /// Verifies that the internal loop does NOT fire when the response contains FunctionCallContent
+    /// marked as InformationalOnly (these are NOT actionable).
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_LoopsInternally_WhenOnlyInformationalOnlyFCCAndPendingMessagesAsync()
+    {
+        // Arrange
+        int serviceCallCount = 0;
+        Mock<IChatClient> mockService = new();
+        IChatMessageInjector? injectorRef = null;
+
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken _) =>
+            {
+                serviceCallCount++;
+                if (serviceCallCount == 1)
+                {
+                    // Enqueue a message during the first call
+                    injectorRef!.EnqueueMessages([new ChatMessage(ChatRole.User, "injected")]);
+                    // Return a response with InformationalOnly FCC (not actionable)
+                    return Task.FromResult(new ChatResponse([new(ChatRole.Assistant,
+                        [new FunctionCallContent("call1", "myTool", new Dictionary<string, object?>()) { InformationalOnly = true }])]));
+                }
+
+                return Task.FromResult(new ChatResponse([new(ChatRole.Assistant, "final")]));
+            });
+
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<IEnumerable<ChatMessage>>(ctx.RequestMessages.ToList()));
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            RequirePerServiceCallChatHistoryPersistence = true,
+        });
+
+        injectorRef = agent.ChatClient.GetService<IChatMessageInjector>()!;
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "original")], session);
+
+        // Assert — InformationalOnly FCC is NOT actionable, so internal loop should trigger
+        Assert.Equal(2, serviceCallCount);
+    }
 }
