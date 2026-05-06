@@ -11,6 +11,7 @@ This directory groups provider-specific samples for Agent Framework.
 | [`custom/`](custom/) | Framework extensibility samples for building custom `BaseAgent` and `BaseChatClient` implementations, including layer-composition guidance. |
 | [`foundry/`](foundry/) | Microsoft Foundry and Foundry Local samples using `FoundryChatClient`, `FoundryAgent`, `RawFoundryAgentChatClient`, and `FoundryLocalClient` for hosted agents, Responses API, local inference, tools, MCP, and sessions. |
 | [`github_copilot/`](github_copilot/) | `GitHubCopilotAgent` samples showing basic usage, session handling, permission-scoped shell/file/url access, and MCP integration. |
+| [`mlflow_gateway/`](mlflow_gateway/) | MLflow AI Gateway samples using `OpenAIChatCompletionClient` configured to route through the gateway's unified Chat Completions endpoint for multi-provider access. |
 | [`ollama/`](ollama/) | Local Ollama samples using `OllamaChatClient` (recommended) plus OpenAI-compatible Ollama setup, including reasoning and multimodal examples. |
 | [`openai/`](openai/) | OpenAI provider samples for Chat and Chat Completion clients, including tools, structured output, sessions, MCP, web search, and multimodal tasks. |
 
