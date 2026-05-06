@@ -174,6 +174,12 @@ class GitHubCopilotOptions(TypedDict, total=False):
     log_level: str
     """CLI log level. Defaults to GITHUB_COPILOT_LOG_LEVEL environment variable."""
 
+    copilot_home: str
+    """Directory where the CLI stores session state, configuration, and other
+    persistent data. Defaults to ~/.copilot when not set. Only applicable when
+    the SDK spawns the CLI process (ignored when connecting to an external server
+    via a pre-configured client)."""
+
     on_permission_request: PermissionHandlerType
     """Permission request handler.
     Called when Copilot requests permission to perform an action (shell, read, write, etc.).
