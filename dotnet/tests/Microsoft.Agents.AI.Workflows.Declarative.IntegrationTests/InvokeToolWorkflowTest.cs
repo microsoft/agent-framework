@@ -273,10 +273,13 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
     private const string ArmScope = "https://management.azure.com/.default";
 
     /// <summary>
-    /// The URL prefix used to gate which requests receive the authenticated
-    /// <see cref="HttpClient"/>. Other URLs fall through to the handler default.
+    /// The expected ARM endpoint. Only requests whose absolute URL exactly matches
+    /// this scheme and host receive the authenticated <see cref="HttpClient"/>; all
+    /// other URLs (including subdomain look-alikes such as
+    /// <c>https://management.azure.com.evil.com</c>) fall through to the handler
+    /// default and never see the bearer token.
     /// </summary>
-    private const string ArmUrlPrefix = "https://management.azure.com";
+    private static readonly Uri s_armEndpoint = new("https://management.azure.com/");
 
     /// <summary>
     /// Runs an HttpRequestAction workflow test with the specified configuration.
@@ -309,7 +312,9 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
         await using DefaultHttpRequestHandler httpRequestHandler =
             new(httpClientProvider: (request, _) =>
             {
-                if (request.Url.StartsWith(ArmUrlPrefix, StringComparison.OrdinalIgnoreCase))
+                if (Uri.TryCreate(request.Url, UriKind.Absolute, out Uri? requestUri) &&
+                    string.Equals(requestUri.Scheme, s_armEndpoint.Scheme, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(requestUri.Host, s_armEndpoint.Host, StringComparison.OrdinalIgnoreCase))
                 {
 #pragma warning disable CA2025 // authenticatedClient outlives the handler (LIFO using disposal) and the workflow awaits all dispatches.
                     return Task.FromResult<HttpClient?>(authenticatedClient);
@@ -339,7 +344,9 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
 
         Assert.NotNull(messageEvent);
         Assert.NotNull(messageEvent.Message);
-        _ = Guid.TryParse(messageEvent.Message, out Guid retrievedTenantId);
+        Assert.True(
+            Guid.TryParse(messageEvent.Message, out Guid retrievedTenantId),
+            $"Expected the SendMessage payload to be a tenant GUID, but got: '{messageEvent.Message}'");
         Assert.NotEqual(Guid.Empty, retrievedTenantId);
     }
 
