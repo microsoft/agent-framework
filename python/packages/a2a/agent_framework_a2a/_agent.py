@@ -590,10 +590,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         Args:
             message: The framework Message to convert.
-            context_id: Optional fallback context identifier (e.g. derived from
-                ``AgentSession.service_session_id``). When the *message* already
-                carries a ``context_id`` in its ``additional_properties`` that
-                value takes precedence; otherwise this fallback is used.
+            context_id: Optional context identifier derived from
+                ``AgentSession.service_session_id``. When provided, this takes
+                precedence as the authoritative session-level identifier. Falls
+                back to ``message.additional_properties["context_id"]`` when
+                not provided.
         """
         parts: list[A2APart] = []
         if not message.contents:
@@ -673,7 +674,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             role=A2ARole("user"),
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
-            context_id=message.additional_properties.get("context_id") or context_id,
+            context_id=context_id if context_id is not None else message.additional_properties.get("context_id"),
             metadata=metadata,
         )
 
