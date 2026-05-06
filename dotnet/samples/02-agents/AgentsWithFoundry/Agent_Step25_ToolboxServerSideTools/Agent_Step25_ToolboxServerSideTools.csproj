@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -11,7 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj" />
-    <PackageReference Include="Azure.AI.Projects" VersionOverride="2.1.0-beta.1" />
+    <PackageReference Include="Azure.AI.Projects" />
   </ItemGroup>
 
 </Project>
