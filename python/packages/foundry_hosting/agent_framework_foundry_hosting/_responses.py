@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
 import logging
 import os
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator
 from typing import cast
 
 from agent_framework import (
@@ -16,7 +14,6 @@ from agent_framework import (
     ContextProvider,
     FileCheckpointStorage,
     HistoryProvider,
-    Message,
     RawAgent,
     SupportsAgentRun,
     WorkflowAgent,
@@ -26,76 +23,9 @@ from azure.ai.agentserver.responses import (
     ResponseEventStream,
     ResponseProviderProtocol,
     ResponsesServerOptions,
+    models,
 )
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
-from azure.ai.agentserver.responses.models import (
-    ApplyPatchToolCallItemParam,
-    ApplyPatchToolCallOutputItemParam,
-    ComputerCallOutputItemParam,
-    ComputerScreenshotContent,
-    CreateResponse,
-    FunctionCallOutputItemParam,
-    FunctionShellAction,
-    FunctionShellCallItemParam,
-    FunctionShellCallOutputContent,
-    FunctionShellCallOutputExitOutcome,
-    FunctionShellCallOutputItemParam,
-    Item,
-    ItemCodeInterpreterToolCall,
-    ItemComputerToolCall,
-    ItemCustomToolCall,
-    ItemCustomToolCallOutput,
-    ItemFileSearchToolCall,
-    ItemFunctionToolCall,
-    ItemImageGenToolCall,
-    ItemLocalShellToolCall,
-    ItemLocalShellToolCallOutput,
-    ItemMcpApprovalRequest,
-    ItemMcpToolCall,
-    ItemMessage,
-    ItemOutputMessage,
-    ItemReasoningItem,
-    ItemWebSearchToolCall,
-    LocalEnvironmentResource,
-    MCPApprovalResponse,
-    MessageContent,
-    MessageContentInputFileContent,
-    MessageContentInputImageContent,
-    MessageContentInputTextContent,
-    MessageContentOutputTextContent,
-    MessageContentReasoningTextContent,
-    MessageContentRefusalContent,
-    OAuthConsentRequestOutputItem,
-    OutputItem,
-    OutputItemApplyPatchToolCall,
-    OutputItemApplyPatchToolCallOutput,
-    OutputItemCodeInterpreterToolCall,
-    OutputItemComputerToolCall,
-    OutputItemComputerToolCallOutputResource,
-    OutputItemCustomToolCall,
-    OutputItemCustomToolCallOutput,
-    OutputItemFileSearchToolCall,
-    OutputItemFunctionShellCall,
-    OutputItemFunctionShellCallOutput,
-    OutputItemFunctionToolCall,
-    OutputItemImageGenToolCall,
-    OutputItemLocalShellToolCall,
-    OutputItemLocalShellToolCallOutput,
-    OutputItemMcpApprovalRequest,
-    OutputItemMcpApprovalResponseResource,
-    OutputItemMcpToolCall,
-    OutputItemMessage,
-    OutputItemOutputMessage,
-    OutputItemReasoningItem,
-    OutputItemWebSearchToolCall,
-    OutputMessageContent,
-    OutputMessageContentOutputTextContent,
-    OutputMessageContentRefusalContent,
-    ResponseStreamEvent,
-    StructuredOutputsOutputItem,
-    SummaryTextContent,
-    TextContent,
-)
 from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemFunctionCallBuilder,
     OutputItemMcpCallBuilder,
@@ -105,6 +35,39 @@ from azure.ai.agentserver.responses.streaming._builders import (
     TextContentBuilder,
 )
 from typing_extensions import Any
+
+from ._shared import (
+    _arguments_to_str,  # pyright: ignore[reportPrivateUsage]
+    _convert_message_content,  # pyright: ignore[reportPrivateUsage]
+    _convert_output_message_content,  # pyright: ignore[reportPrivateUsage]
+    _item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _items_to_messages,  # pyright: ignore[reportPrivateUsage]
+    _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _output_items_to_messages,  # pyright: ignore[reportPrivateUsage]
+)
+
+# Re-export the conversion helpers under their historical names so existing
+# tests (which import them from this module) keep working — the canonical
+# definitions now live in :mod:`._shared`.
+__all__ = (
+    "_arguments_to_str",
+    "_convert_message_content",
+    "_convert_output_message_content",
+    "_item_to_message",
+    "_items_to_messages",
+    "_output_item_to_message",
+    "_output_items_to_messages",
+)
+
+# Local aliases for the agent-server SDK types this module touches at the
+# Python type-annotation layer. Using ``models.X`` everywhere would work but
+# would noisily clutter type-only positions where the alias adds no value.
+CreateResponse = models.CreateResponse
+ResponseStreamEvent = models.ResponseStreamEvent
+FunctionShellAction = models.FunctionShellAction
+FunctionShellCallOutputContent = models.FunctionShellCallOutputContent
+FunctionShellCallOutputExitOutcome = models.FunctionShellCallOutputExitOutcome
+LocalEnvironmentResource = models.LocalEnvironmentResource
 
 logger = logging.getLogger(__name__)
 
@@ -272,86 +235,50 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if not isinstance(self._agent, WorkflowAgent):
             raise RuntimeError("Agent is not a workflow agent.")
 
-        # Determine the latest checkpoint (if any) so we can resume the
-        # workflow's prior state for this turn. The directory is keyed by
-        # the inbound context id (conversation_id when set, otherwise
-        # previous_response_id). Multi-turn declarative workflows need the
-        # workflow's internal state (e.g. Conversation.messages,
-        # intermediate Local.* variables) to survive across user turns;
-        # the only place that state lives is the workflow checkpoint, so
-        # on every turn we restore the latest checkpoint and feed the new
-        # input back into the start executor as a continuation rather than
-        # a fresh run.
-        latest_checkpoint_id: str | None = None
-        restore_storage: FileCheckpointStorage | None = None
+        # Restore from the latest checkpoint if available, otherwise start with an empty history
         if context_id is not None:
-            restore_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
-            latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
+            checkpoint_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
+            latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
             if latest_checkpoint is not None:
-                latest_checkpoint_id = latest_checkpoint.checkpoint_id
-
-        # Storage that will receive checkpoints written during this turn.
-        # When the caller chains with previous_response_id, the next turn
-        # will reference the current response_id as its previous_response_id,
-        # so new checkpoints must land under the current response_id (or the
-        # conversation_id when set). When conversation_id is set, this
-        # matches restore_storage; when only previous_response_id was
-        # supplied, restore_storage points at the *prior* response's
-        # directory and write_storage points at the *current* response's.
-        write_context_id = context.conversation_id or context.response_id
-        write_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, write_context_id))
-
-        # Multi-turn pattern: when we have a prior checkpoint, restore it
-        # first (drive the workflow back to idle with prior state intact),
-        # then make a separate call that delivers the new user input. This
-        # depends on Workflow.run preserving shared state across calls. The
-        # restore-only call may yield events from any pending in-flight
-        # work in the checkpoint; we consume those internally here so they
-        # don't surface to the response stream as duplicates.
-        #
-        # If the restored checkpoint had pending request_info events, the
-        # restore-only call replays them through
-        # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
-        # and populates ``self._agent.pending_requests``. That is the correct
-        # state: those requests are genuinely outstanding, and the next
-        # ``run(input_messages, ...)`` call may contain ``function_call_output``
-        # items (carried as FunctionResult/FunctionApprovalResponse content)
-        # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-        if latest_checkpoint_id is not None:
-            if is_streaming_request:
-                async for _ in self._agent.run(
-                    stream=True,
-                    checkpoint_id=latest_checkpoint_id,
-                    checkpoint_storage=restore_storage,
-                ):
-                    pass
-            else:
-                await self._agent.run(
-                    stream=False,
-                    checkpoint_id=latest_checkpoint_id,
-                    checkpoint_storage=restore_storage,
-                )
+                if not is_streaming_request:
+                    _ = await self._agent.run(
+                        stream=False,
+                        checkpoint_id=latest_checkpoint.checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
+                    )
+                else:
+                    # Consume the streaming or the invocation will result in a no-op
+                    async for _ in self._agent.run(
+                        stream=True,
+                        checkpoint_id=latest_checkpoint.checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
+                    ):
+                        pass
 
         # Now run the agent with the latest input
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
+
+        # Create a new checkpoint storage for this response based on the following rules:
+        # - If no previous response ID or conversation ID is provided,
+        #   create a new checkpoint storage for this response
+        # - If a previous response ID is provided, create a new checkpoint storage for this response
+        # - If a conversation ID is provided, reuse the existing checkpoint storage for the conversation
+        context_id = context.conversation_id or context.response_id
+        checkpoint_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
 
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
         if not is_streaming_request:
-            # Run the agent in non-streaming mode with the new user input.
-            response = await self._agent.run(
-                input_messages,
-                stream=False,
-                checkpoint_storage=write_storage,
-            )
+            # Run the agent in non-streaming mode
+            response = await self._agent.run(input_messages, stream=False, checkpoint_storage=checkpoint_storage)
 
             for message in response.messages:
                 for content in message.contents:
                     async for item in _to_outputs(response_event_stream, content):
                         yield item
 
-            await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
+            await self._delete_not_latest_checkpoints(checkpoint_storage, self._agent.workflow.name)
             yield response_event_stream.emit_completed()
             return
 
@@ -359,12 +286,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # lazily created on matching content, closed when a different type arrives.
         tracker = _OutputItemTracker(response_event_stream)
 
-        # Run the workflow agent in streaming mode with the new user input.
-        async for update in self._agent.run(
-            input_messages,
-            stream=True,
-            checkpoint_storage=write_storage,
-        ):
+        # Run the workflow agent in streaming mode
+        async for update in self._agent.run(input_messages, stream=True, checkpoint_storage=checkpoint_storage):
             for content in update.contents:
                 for event in tracker.handle(content):
                     yield event
@@ -377,7 +300,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         for event in tracker.close():
             yield event
 
-        await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
+        await self._delete_not_latest_checkpoints(checkpoint_storage, self._agent.workflow.name)
         yield response_event_stream.emit_completed()
 
     @staticmethod
@@ -576,665 +499,6 @@ def _to_chat_options(request: CreateResponse) -> tuple[ChatOptions, bool]:
 
 
 # endregion
-
-
-# region Input Message Conversion
-
-
-def _items_to_messages(input_items: Sequence[Item]) -> list[Message]:
-    """Converts a sequence of input items to a list of Messages, one per item.
-
-    Args:
-        input_items: The input items to convert.
-
-    Returns:
-        A list of Messages, one per supported input item.
-    """
-    messages: list[Message] = []
-    for item in input_items:
-        messages.append(_item_to_message(item))
-    return messages
-
-
-def _item_to_message(item: Item) -> Message:
-    """Converts an Item to a Message.
-
-    Args:
-        item: The Item to convert.
-
-    Returns:
-        The converted Message.
-
-    Raises:
-        ValueError: If the Item type is not supported.
-    """
-    if item.type == "message":
-        msg = cast(ItemMessage, item)
-        if isinstance(msg.content, str):
-            return Message(role=msg.role, contents=[Content.from_text(msg.content)])
-        return Message(role=msg.role, contents=[_convert_message_content(part) for part in msg.content])
-
-    if item.type == "output_message":
-        output_msg = cast(ItemOutputMessage, item)
-        return Message(
-            role=output_msg.role, contents=[_convert_output_message_content(part) for part in output_msg.content]
-        )
-
-    if item.type == "function_call":
-        fc = cast(ItemFunctionToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
-        )
-
-    if item.type == "function_call_output":
-        fco = cast(FunctionCallOutputItemParam, item)
-        output = fco.output if isinstance(fco.output, str) else str(fco.output)
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(fco.call_id, result=output)],
-        )
-
-    if item.type == "reasoning":
-        reasoning = cast(ItemReasoningItem, item)
-        reason_contents: list[Content] = []
-        if reasoning.summary:
-            for summary in reasoning.summary:
-                reason_contents.append(Content.from_text(summary.text))
-        return Message(role="assistant", contents=reason_contents)
-
-    if item.type == "mcp_call":
-        mcp = cast(ItemMcpToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_mcp_server_tool_call(
-                    mcp.id,
-                    mcp.name,
-                    server_name=mcp.server_label,
-                    arguments=mcp.arguments,
-                )
-            ],
-        )
-
-    if item.type == "mcp_approval_request":
-        mcp_req = cast(ItemMcpApprovalRequest, item)
-        mcp_call_content = Content.from_mcp_server_tool_call(
-            mcp_req.id,
-            mcp_req.name,
-            server_name=mcp_req.server_label,
-            arguments=mcp_req.arguments,
-        )
-        return Message(
-            role="assistant",
-            contents=[Content.from_function_approval_request(mcp_req.id, mcp_call_content)],
-        )
-
-    if item.type == "mcp_approval_response":
-        mcp_resp = cast(MCPApprovalResponse, item)
-        placeholder_content = Content.from_function_call(mcp_resp.approval_request_id, "mcp_approval")
-        return Message(
-            role="user",
-            contents=[
-                Content.from_function_approval_response(
-                    mcp_resp.approve, mcp_resp.approval_request_id, placeholder_content
-                )
-            ],
-        )
-
-    if item.type == "code_interpreter_call":
-        ci = cast(ItemCodeInterpreterToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_code_interpreter_tool_call(call_id=ci.id)],
-        )
-
-    if item.type == "image_generation_call":
-        ig = cast(ItemImageGenToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_image_generation_tool_call(image_id=ig.id)],
-        )
-
-    if item.type == "shell_call":
-        sc = cast(FunctionShellCallItemParam, item)
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_shell_tool_call(
-                    call_id=sc.call_id,
-                    commands=sc.action.commands,
-                    status=str(sc.status),
-                )
-            ],
-        )
-
-    if item.type == "shell_call_output":
-        sco = cast(FunctionShellCallOutputItemParam, item)
-        outputs = [
-            Content.from_shell_command_output(
-                stdout=out.stdout or "",
-                stderr=out.stderr or "",
-                exit_code=getattr(out.outcome, "exit_code", None) if hasattr(out, "outcome") else None,
-            )
-            for out in (sco.output or [])
-        ]
-        return Message(
-            role="tool",
-            contents=[
-                Content.from_shell_tool_result(
-                    call_id=sco.call_id,
-                    outputs=outputs,
-                    max_output_length=sco.max_output_length,
-                )
-            ],
-        )
-
-    if item.type == "local_shell_call":
-        lsc = cast(ItemLocalShellToolCall, item)
-        commands = lsc.action.command if hasattr(lsc.action, "command") and lsc.action.command else []
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_shell_tool_call(
-                    call_id=lsc.call_id,
-                    commands=commands,
-                    status=str(lsc.status),
-                )
-            ],
-        )
-
-    if item.type == "local_shell_call_output":
-        lsco = cast(ItemLocalShellToolCallOutput, item)
-        return Message(
-            role="tool",
-            contents=[
-                Content.from_shell_tool_result(
-                    call_id=lsco.id,
-                    outputs=[Content.from_shell_command_output(stdout=lsco.output)],
-                )
-            ],
-        )
-
-    if item.type == "file_search_call":
-        fs = cast(ItemFileSearchToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    fs.id,
-                    "file_search",
-                    arguments=json.dumps({"queries": fs.queries}),
-                )
-            ],
-        )
-
-    if item.type == "web_search_call":
-        ws = cast(ItemWebSearchToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search")],
-        )
-
-    if item.type == "computer_call":
-        cc = cast(ItemComputerToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    cc.call_id,
-                    "computer_use",
-                    arguments=str(cc.action),
-                )
-            ],
-        )
-
-    if item.type == "computer_call_output":
-        cco = cast(ComputerCallOutputItemParam, item)
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(cco.call_id, result=str(cco.output))],
-        )
-
-    if item.type == "custom_tool_call":
-        ct = cast(ItemCustomToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
-        )
-
-    if item.type == "custom_tool_call_output":
-        cto = cast(ItemCustomToolCallOutput, item)
-        output = cto.output if isinstance(cto.output, str) else str(cto.output)
-        # Hosted-MCP results land here because the host writes them via
-        # `aoutput_item_custom_tool_call_output` (see `_to_outputs` for
-        # `mcp_server_tool_result`). The persisted `call_id` keeps its
-        # `mcp_*` prefix; on read, route those back to a hosted-MCP result
-        # Content so the chat-client serialize layer can coalesce them
-        # onto a single `mcp_call` input item with `output` populated.
-        # Issue #5546.
-        if cto.call_id and cto.call_id.startswith("mcp_"):
-            return Message(
-                role="tool",
-                contents=[Content.from_mcp_server_tool_result(call_id=cto.call_id, output=output)],
-            )
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(cto.call_id, result=output)],
-        )
-
-    if item.type == "apply_patch_call":
-        ap = cast(ApplyPatchToolCallItemParam, item)
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    ap.call_id,
-                    "apply_patch",
-                    arguments=str(ap.operation),
-                )
-            ],
-        )
-
-    if item.type == "apply_patch_call_output":
-        apo = cast(ApplyPatchToolCallOutputItemParam, item)
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(apo.call_id, result=apo.output or "")],
-        )
-
-    raise ValueError(f"Unsupported Item type: {item.type}")
-
-
-def _output_items_to_messages(history: Sequence[OutputItem]) -> list[Message]:
-    """Converts a sequence of OutputItem objects to a list of Message objects.
-
-    Args:
-        history (Sequence[OutputItem]): The sequence of OutputItem objects to convert.
-
-    Returns:
-        list[Message]: The list of Message objects.
-    """
-    messages: list[Message] = []
-    for item in history:
-        messages.append(_output_item_to_message(item))
-    return messages
-
-
-def _output_item_to_message(item: OutputItem) -> Message:
-    """Converts an OutputItem to a Message.
-
-    Args:
-        item (OutputItem): The OutputItem to convert.
-
-    Returns:
-        Message: The converted Message.
-
-    Raises:
-        ValueError: If the OutputItem type is not supported.
-    """
-    if item.type == "output_message":
-        output_msg = cast(OutputItemOutputMessage, item)
-        return Message(
-            role=output_msg.role, contents=[_convert_output_message_content(part) for part in output_msg.content]
-        )
-
-    if item.type == "message":
-        msg = cast(OutputItemMessage, item)
-        return Message(role=msg.role, contents=[_convert_message_content(part) for part in msg.content])
-
-    if item.type == "function_call":
-        fc = cast(OutputItemFunctionToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_function_call(fc.call_id, fc.name, arguments=fc.arguments)],
-        )
-
-    if item.type == "function_call_output":
-        fco = cast(FunctionCallOutputItemParam, item)
-        output = fco.output if isinstance(fco.output, str) else str(fco.output)
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(fco.call_id, result=output)],
-        )
-
-    if item.type == "reasoning":
-        reasoning = cast(OutputItemReasoningItem, item)
-        contents: list[Content] = []
-        if reasoning.summary:
-            for summary in reasoning.summary:
-                contents.append(Content.from_text(summary.text))
-        return Message(role="assistant", contents=contents)
-
-    if item.type == "mcp_call":
-        mcp = cast(OutputItemMcpToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_mcp_server_tool_call(
-                    mcp.id,
-                    mcp.name,
-                    server_name=mcp.server_label,
-                    arguments=mcp.arguments,
-                )
-            ],
-        )
-
-    if item.type == "mcp_approval_request":
-        mcp_req = cast(OutputItemMcpApprovalRequest, item)
-        mcp_call_content = Content.from_mcp_server_tool_call(
-            mcp_req.id,
-            mcp_req.name,
-            server_name=mcp_req.server_label,
-            arguments=mcp_req.arguments,
-        )
-        return Message(
-            role="assistant",
-            contents=[Content.from_function_approval_request(mcp_req.id, mcp_call_content)],
-        )
-
-    if item.type == "mcp_approval_response":
-        mcp_resp = cast(OutputItemMcpApprovalResponseResource, item)
-        # Build a placeholder function_call Content since the original call details are not available
-        placeholder_content = Content.from_function_call(mcp_resp.approval_request_id, "mcp_approval")
-        return Message(
-            role="user",
-            contents=[Content.from_function_approval_response(mcp_resp.approve, mcp_resp.id, placeholder_content)],
-        )
-
-    if item.type == "code_interpreter_call":
-        ci = cast(OutputItemCodeInterpreterToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_code_interpreter_tool_call(call_id=ci.id)],
-        )
-
-    if item.type == "image_generation_call":
-        ig = cast(OutputItemImageGenToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_image_generation_tool_call(image_id=ig.id)],
-        )
-
-    if item.type == "shell_call":
-        sc = cast(OutputItemFunctionShellCall, item)
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_shell_tool_call(
-                    call_id=sc.call_id,
-                    commands=sc.action.commands,
-                    status=str(sc.status),
-                )
-            ],
-        )
-
-    if item.type == "shell_call_output":
-        sco = cast(OutputItemFunctionShellCallOutput, item)
-        outputs = [
-            Content.from_shell_command_output(
-                stdout=out.stdout or "",
-                stderr=out.stderr or "",
-                exit_code=getattr(out.outcome, "exit_code", None) if hasattr(out, "outcome") else None,
-            )
-            for out in (sco.output or [])
-        ]
-        return Message(
-            role="tool",
-            contents=[
-                Content.from_shell_tool_result(
-                    call_id=sco.call_id,
-                    outputs=outputs,
-                    max_output_length=sco.max_output_length,
-                )
-            ],
-        )
-
-    if item.type == "local_shell_call":
-        lsc = cast(OutputItemLocalShellToolCall, item)
-        commands = lsc.action.command if hasattr(lsc.action, "command") and lsc.action.command else []
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_shell_tool_call(
-                    call_id=lsc.call_id,
-                    commands=commands,
-                    status=str(lsc.status),
-                )
-            ],
-        )
-
-    if item.type == "local_shell_call_output":
-        lsco = cast(OutputItemLocalShellToolCallOutput, item)
-        return Message(
-            role="tool",
-            contents=[
-                Content.from_shell_tool_result(
-                    call_id=lsco.id,
-                    outputs=[Content.from_shell_command_output(stdout=lsco.output)],
-                )
-            ],
-        )
-
-    if item.type == "file_search_call":
-        fs = cast(OutputItemFileSearchToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    fs.id,
-                    "file_search",
-                    arguments=json.dumps({"queries": fs.queries}),
-                )
-            ],
-        )
-
-    if item.type == "web_search_call":
-        ws = cast(OutputItemWebSearchToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search")],
-        )
-
-    if item.type == "computer_call":
-        cc = cast(OutputItemComputerToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    cc.call_id,
-                    "computer_use",
-                    arguments=str(cc.action),
-                )
-            ],
-        )
-
-    if item.type == "computer_call_output":
-        cco = cast(OutputItemComputerToolCallOutputResource, item)
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(cco.call_id, result=str(cco.output))],
-        )
-
-    if item.type == "custom_tool_call":
-        ct = cast(OutputItemCustomToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_function_call(ct.call_id, ct.name, arguments=ct.input)],
-        )
-
-    if item.type == "custom_tool_call_output":
-        cto = cast(OutputItemCustomToolCallOutput, item)
-        output = cto.output if isinstance(cto.output, str) else str(cto.output)
-        # Hosted-MCP results land here because the host writes them via
-        # `aoutput_item_custom_tool_call_output`. Route `mcp_*` call_ids
-        # back to a hosted-MCP result Content so the chat-client serialize
-        # layer can coalesce onto the matching `mcp_call` input item.
-        # Issue #5546.
-        if cto.call_id and cto.call_id.startswith("mcp_"):
-            return Message(
-                role="tool",
-                contents=[Content.from_mcp_server_tool_result(call_id=cto.call_id, output=output)],
-            )
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(cto.call_id, result=output)],
-        )
-
-    if item.type == "apply_patch_call":
-        ap = cast(OutputItemApplyPatchToolCall, item)
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    ap.call_id,
-                    "apply_patch",
-                    arguments=str(ap.operation),
-                )
-            ],
-        )
-
-    if item.type == "apply_patch_call_output":
-        apo = cast(OutputItemApplyPatchToolCallOutput, item)
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(apo.call_id, result=apo.output or "")],
-        )
-
-    if item.type == "oauth_consent_request":
-        oauth = cast(OAuthConsentRequestOutputItem, item)
-        return Message(
-            role="assistant",
-            contents=[Content.from_oauth_consent_request(oauth.consent_link)],
-        )
-
-    if item.type == "structured_outputs":
-        so = cast(StructuredOutputsOutputItem, item)
-        text = json.dumps(so.output) if not isinstance(so.output, str) else so.output
-        return Message(role="assistant", contents=[Content.from_text(text)])
-
-    raise ValueError(f"Unsupported OutputItem type: {item.type}")
-
-
-def _convert_output_message_content(content: OutputMessageContent) -> Content:
-    """Converts an OutputMessageContent to a Content object.
-
-    Args:
-        content (OutputMessageContent): The OutputMessageContent to convert.
-
-    Returns:
-        Content: The converted Content object.
-
-    Raises:
-        ValueError: If the OutputMessageContent type is not supported.
-    """
-    if content.type == "output_text":
-        text_content = cast(OutputMessageContentOutputTextContent, content)
-        return Content.from_text(text_content.text)
-    if content.type == "refusal":
-        refusal_content = cast(OutputMessageContentRefusalContent, content)
-        return Content.from_text(refusal_content.refusal)
-
-    raise ValueError(f"Unsupported OutputMessageContent type: {content.type}")
-
-
-def _convert_file_data(data_uri: str, filename: str | None = None) -> Content:
-    """Convert a file_data data URI to a Content object.
-
-    For text/* MIME types, decodes the base64 content and returns it as text.
-    For other types, returns a URI-based Content with the filename preserved.
-    """
-    # Parse data URI: data:<media_type>;base64,<data>
-    if data_uri.startswith("data:") and ";base64," in data_uri:
-        header, encoded = data_uri.split(";base64,", 1)
-        media_type = header[len("data:") :]
-        if media_type.startswith("text/"):
-            try:
-                decoded_text = base64.b64decode(encoded).decode("utf-8")
-            except (ValueError, UnicodeDecodeError):
-                logger.warning(
-                    "Failed to decode text/* file_data as UTF-8, falling through to URI passthrough.",
-                    exc_info=True,
-                )
-            else:
-                prefix = f"[File: {filename}]\n" if filename else ""
-                return Content.from_text(f"{prefix}{decoded_text}")
-    additional_properties = {"filename": filename} if filename else None
-    return Content.from_uri(data_uri, additional_properties=additional_properties)
-
-
-def _convert_message_content(content: MessageContent) -> Content:
-    """Converts a MessageContent to a Content object.
-
-    Args:
-        content (MessageContent): The MessageContent to convert.
-
-    Returns:
-        Content: The converted Content object.
-
-    Raises:
-        ValueError: If the MessageContent type is not supported.
-    """
-    if content.type == "input_text":
-        input_text = cast(MessageContentInputTextContent, content)
-        return Content.from_text(input_text.text)
-    if content.type == "output_text":
-        output_text = cast(MessageContentOutputTextContent, content)
-        return Content.from_text(output_text.text)
-    if content.type == "text":
-        text = cast(TextContent, content)
-        return Content.from_text(text.text)
-    if content.type == "summary_text":
-        summary = cast(SummaryTextContent, content)
-        return Content.from_text(summary.text)
-    if content.type == "refusal":
-        refusal = cast(MessageContentRefusalContent, content)
-        return Content.from_text(refusal.refusal)
-    if content.type == "reasoning_text":
-        reasoning = cast(MessageContentReasoningTextContent, content)
-        return Content.from_text_reasoning(text=reasoning.text)
-    if content.type == "input_image":
-        image = cast(MessageContentInputImageContent, content)
-        if image.image_url:
-            if image.image_url.startswith("data:"):
-                return Content.from_uri(image.image_url)
-            return Content.from_uri(image.image_url, media_type="image/*")
-        if image.file_id:
-            return Content.from_hosted_file(image.file_id)
-    if content.type == "input_file":
-        file = cast(MessageContentInputFileContent, content)
-        if file.file_url:
-            return Content.from_uri(file.file_url)
-        if file.file_id:
-            return Content.from_hosted_file(file.file_id, name=file.filename)
-        if file.file_data:
-            return _convert_file_data(file.file_data, file.filename)
-    if content.type == "computer_screenshot":
-        screenshot = cast(ComputerScreenshotContent, content)
-        return Content.from_uri(screenshot.image_url)
-
-    raise ValueError(f"Unsupported MessageContent type: {content.type}")
-
-
-# endregion
-
-# region Output Item Conversion
-
-
-def _arguments_to_str(arguments: str | Mapping[str, Any] | None) -> str:
-    """Convert arguments to a JSON string.
-
-    Args:
-        arguments: The arguments to convert, can be a string, mapping, or None.
-
-    Returns:
-        The arguments as a JSON string.
-    """
-    if arguments is None:
-        return ""
-    if isinstance(arguments, str):
-        return arguments
-    return json.dumps(arguments)
 
 
 async def _to_outputs(stream: ResponseEventStream, content: Content) -> AsyncIterator[ResponseStreamEvent]:
