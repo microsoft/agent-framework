@@ -71,12 +71,12 @@
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.0.0" />
     <!-- Microsoft.Extensions.* -->
-    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.5.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.5.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.5.1" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.5.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.Evaluation" Version="10.4.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.4.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Safety" Version="10.3.0-preview.1.26109.11" />
-    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.1" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Compliance.Abstractions" Version="10.5.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.1" />
@@ -109,6 +109,8 @@
     <PackageVersion Include="A2A.AspNetCore" Version="1.0.0-preview2" />
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="1.1.0" />
+    <!-- Hyperlight -->
+    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.4.0" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="Microsoft.ML.Tokenizers" Version="2.0.0" />

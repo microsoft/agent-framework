@@ -27,17 +27,17 @@ internal sealed class ModeCommandHandler : ICommandHandler
     public string? GetHelpText() => this._modeProvider is not null ? "/mode [plan|execute] (show or switch mode)" : null;
 
     /// <inheritdoc/>
-    public bool TryHandle(string input, AgentSession session)
+    public ValueTask<bool> TryHandleAsync(string input, AgentSession session)
     {
         if (!input.StartsWith("/mode ", StringComparison.OrdinalIgnoreCase) && !input.Equals("/mode", StringComparison.OrdinalIgnoreCase))
         {
-            return false;
+            return ValueTask.FromResult(false);
         }
 
         if (this._modeProvider is null)
         {
             System.Console.WriteLine("AgentModeProvider is not available.");
-            return true;
+            return ValueTask.FromResult(true);
         }
 
         string[] parts = input.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -45,7 +45,7 @@ internal sealed class ModeCommandHandler : ICommandHandler
         {
             string current = this._modeProvider.GetMode(session);
             System.Console.WriteLine($"\n  Current mode: {current}\n");
-            return true;
+            return ValueTask.FromResult(true);
         }
 
         string newMode = parts[1];
@@ -64,6 +64,6 @@ internal sealed class ModeCommandHandler : ICommandHandler
             System.Console.ResetColor();
         }
 
-        return true;
+        return ValueTask.FromResult(true);
     }
 }

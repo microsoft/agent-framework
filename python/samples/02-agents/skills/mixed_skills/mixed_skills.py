@@ -15,7 +15,11 @@ from typing import Any
 
 from agent_framework import (
     Agent,
-    Skill,
+    AggregatingSkillsSource,
+    DeduplicatingSkillsSource,
+    FileSkillsSource,
+    InlineSkill,
+    InMemorySkillsSource,
     SkillsProvider,
 )
 from agent_framework.foundry import FoundryChatClient
@@ -63,10 +67,10 @@ load_dotenv()
 # 1. Define a code skill with @skill.script and @skill.resource decorators
 # ---------------------------------------------------------------------------
 
-volume_converter_skill = Skill(
+volume_converter_skill = InlineSkill(
     name="volume-converter",
     description="Convert between gallons and liters using a conversion factor",
-    content=dedent("""\
+    instructions=dedent("""\
         Use this skill when the user asks to convert between gallons and liters.
 
         1. Review the conversion-table resource to find the correct factor.
@@ -125,11 +129,16 @@ async def main() -> None:
     # Create the SkillsProvider with both code and file skills.
     # The script_runner handles file-based scripts; code-defined scripts
     # (@skill.script) run in-process automatically.
-    skills_dir = Path(__file__).parent / "skills"
     skills_provider = SkillsProvider(
-        skill_paths=str(skills_dir),
-        skills=[volume_converter_skill],
-        script_runner=subprocess_script_runner,
+        DeduplicatingSkillsSource(
+            AggregatingSkillsSource([
+                FileSkillsSource(
+                    str(Path(__file__).parent / "skills"),
+                    script_runner=subprocess_script_runner,
+                ),
+                InMemorySkillsSource([volume_converter_skill]),
+            ])
+        )
     )
 
     # Run the agent

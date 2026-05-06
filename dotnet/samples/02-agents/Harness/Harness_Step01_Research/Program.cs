@@ -165,7 +165,8 @@ AIAgent agent =
                 Tools =
                 [
                     ResponseTool.CreateWebSearchTool().AsAITool(),          // Add the foundry hosted web search tool that runs in the service.
-                    new WebBrowsingTool(),                                  // Add a local web browsing tool that converts html to markdown.
+                    new WebBrowsingTool(                                    // Add a local web browsing tool that converts html to markdown.
+                        new WebBrowsingToolOptions { AllowPublicNetworks = true }),
                 ],
                 MaxOutputTokens = MaxOutputTokens,                          // Set a high token limit for long research tasks with many tool calls and long outputs.
                 Reasoning = new() { Effort = ReasoningEffort.Medium },
