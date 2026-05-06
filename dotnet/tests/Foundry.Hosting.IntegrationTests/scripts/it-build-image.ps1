@@ -77,7 +77,8 @@ $hashedDirs = @(
     "dotnet/src/Microsoft.Agents.AI.Foundry.Hosting",
     "dotnet/src/Microsoft.Agents.AI.Foundry",
     "dotnet/src/Microsoft.Agents.AI",
-    "dotnet/src/Microsoft.Agents.AI.Abstractions"
+    "dotnet/src/Microsoft.Agents.AI.Abstractions",
+    "dotnet/src/Microsoft.Agents.AI.Workflows"
 )
 $sourceFiles = @()
 foreach ($dir in $hashedDirs) {

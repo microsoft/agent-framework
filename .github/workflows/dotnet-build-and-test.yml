@@ -57,6 +57,7 @@ jobs:
               - 'dotnet/src/Microsoft.Agents.AI.Foundry/**'
               - 'dotnet/src/Microsoft.Agents.AI/**'
               - 'dotnet/src/Microsoft.Agents.AI.Abstractions/**'
+              - 'dotnet/src/Microsoft.Agents.AI.Workflows/**'
               - 'dotnet/tests/Foundry.Hosting.IntegrationTests/**'
               - 'dotnet/tests/Foundry.Hosting.IntegrationTests.TestContainer/**'
               - 'dotnet/Directory.Packages.props'
@@ -294,41 +295,6 @@ jobs:
           AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
           AZURE_AI_BING_CONNECTION_ID: ${{ vars.AZURE_AI_BING_CONNECTION_ID }}
 
-      # Foundry Hosted Agents tests target a separate Foundry project (different region with
-      # hosted-agents preview enabled, see vars below). Filter is the inverse of the main step.
-      # We rebuild and push the test container image on every IT run so framework code changes
-      # are picked up; the image tag is content-hashed across the test container source AND its
-      # framework project references, so identical content is a no-op push. The whole flow is
-      # gated on paths-filter.outputs.foundryHostingChanges so unrelated edits skip this work.
-      - name: Build and push Foundry Hosted Agents test container
-        id: build-foundry-hosted-image
-        shell: pwsh
-        working-directory: ${{ github.workspace }}
-        if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
-        run: |
-          $registry = "${{ vars.IT_HOSTED_AGENT_REGISTRY }}"
-          if ([string]::IsNullOrWhiteSpace($registry)) {
-            throw "IT_HOSTED_AGENT_REGISTRY not set in the integration environment."
-          }
-          & "${{ github.workspace }}/dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/it-build-image.ps1" -Registry $registry | Tee-Object -FilePath $env:GITHUB_ENV -Append
-
-      - name: Run Foundry Hosted Agents Integration Tests
-        shell: pwsh
-        working-directory: dotnet
-        if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest' && needs.paths-filter.outputs.foundryHostingChanges == 'true' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
-        run: |
-          dotnet test --solution ./filtered-integration.slnx `
-            -f ${{ matrix.targetFramework }} `
-            -c ${{ matrix.configuration }} `
-            --no-build -v Normal `
-            --report-xunit-trx `
-            --ignore-exit-code 8 `
-            --filter-trait "Category=FoundryHostedAgents"
-        env:
-          AZURE_AI_PROJECT_ENDPOINT: ${{ vars.IT_HOSTED_AGENT_PROJECT_ENDPOINT }}
-          AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.IT_HOSTED_AGENT_MODEL_DEPLOYMENT_NAME }}
-          # IT_HOSTED_AGENT_IMAGE was exported into $GITHUB_ENV by the previous step.
-
       # Generate test reports and check coverage
       - name: Generate test reports
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
@@ -350,11 +316,101 @@ jobs:
         shell: pwsh
         run: ./dotnet/eng/scripts/dotnet-check-coverage.ps1 -JsonReportPath "TestResults/Reports/Summary.json" -CoverageThreshold $env:COVERAGE_THRESHOLD
 
+  # The Foundry hosted-agent IT is costly (it builds a container, pushes to ACR, and provisions
+  # live agents on a separate Foundry project). Running it in its own job keeps the overall
+  # workflow time roughly flat: it executes in parallel to dotnet-build and dotnet-test and is
+  # gated on paths-filter.outputs.foundryHostingChanges so unrelated edits skip the work.
+  dotnet-foundry-hosted-it:
+    needs: paths-filter
+    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      targetFramework: net10.0
+      configuration: Release
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .
+            .github
+            dotnet
+            python
+
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v5.2.0
+        with:
+          global-json-file: ${{ github.workspace }}/dotnet/global.json
+
+      - name: Generate test solution (no samples)
+        shell: pwsh
+        run: |
+          ./dotnet/eng/scripts/New-FilteredSolution.ps1 `
+            -Solution dotnet/agent-framework-dotnet.slnx `
+            -TargetFramework $env:targetFramework `
+            -Configuration $env:configuration `
+            -ExcludeSamples `
+            -OutputPath dotnet/filtered.slnx `
+            -Verbose
+
+      - name: Generate Foundry hosted IT filtered solution
+        shell: pwsh
+        run: |
+          ./dotnet/eng/scripts/New-FilteredSolution.ps1 `
+            -Solution dotnet/filtered.slnx `
+            -TargetFramework $env:targetFramework `
+            -Configuration $env:configuration `
+            -TestProjectNameFilter "Foundry.Hosting.IntegrationTests*" `
+            -OutputPath dotnet/filtered-foundry-hosted.slnx `
+            -Verbose
+
+      - name: Build Foundry hosted IT (and its deps)
+        shell: bash
+        run: dotnet build dotnet/filtered-foundry-hosted.slnx -c "$configuration" -f "$targetFramework" --warnaserror
+
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # We rebuild and push the test container image on every IT run so framework code changes
+      # are picked up; the image tag is content-hashed across the test container source AND its
+      # framework project references, so identical content is a no-op push.
+      - name: Build and push Foundry Hosted Agents test container
+        id: build-foundry-hosted-image
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $registry = "${{ vars.IT_HOSTED_AGENT_REGISTRY }}"
+          if ([string]::IsNullOrWhiteSpace($registry)) {
+            throw "IT_HOSTED_AGENT_REGISTRY not set in the integration environment."
+          }
+          & "${{ github.workspace }}/dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/it-build-image.ps1" -Registry $registry | Tee-Object -FilePath $env:GITHUB_ENV -Append
+
+      - name: Run Foundry Hosted Agents Integration Tests
+        shell: pwsh
+        working-directory: dotnet
+        run: |
+          dotnet test --solution ./filtered-foundry-hosted.slnx `
+            -f $env:targetFramework `
+            -c $env:configuration `
+            --no-build -v Normal `
+            --report-xunit-trx `
+            --ignore-exit-code 8 `
+            --filter-trait "Category=FoundryHostedAgents"
+        env:
+          AZURE_AI_PROJECT_ENDPOINT: ${{ vars.IT_HOSTED_AGENT_PROJECT_ENDPOINT }}
+          AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.IT_HOSTED_AGENT_MODEL_DEPLOYMENT_NAME }}
+          # IT_HOSTED_AGENT_IMAGE was exported into $GITHUB_ENV by the previous step.
+
   # This final job is required to satisfy the merge queue. It must only run (or succeed) if no tests failed
   dotnet-build-and-test-check:
     if: always()
     runs-on: ubuntu-latest
-    needs: [dotnet-build, dotnet-test]
+    needs: [dotnet-build, dotnet-test, dotnet-foundry-hosted-it]
     steps:
       - name: Get Date
         shell: bash
