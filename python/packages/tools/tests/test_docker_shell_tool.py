@@ -166,9 +166,11 @@ def test_as_function_carries_shell_kind():
 
     fn = DockerShellTool().as_function()
     # Approval mode flows through; tool is tagged as a shell tool.
-    assert getattr(fn, "additional_properties", {}).get("kind") == SHELL_TOOL_KIND_VALUE or \
-        getattr(fn, "kind", None) == SHELL_TOOL_KIND_VALUE or \
-        SHELL_TOOL_KIND_VALUE in str(getattr(fn, "_kind", ""))
+    assert (
+        getattr(fn, "additional_properties", {}).get("kind") == SHELL_TOOL_KIND_VALUE
+        or getattr(fn, "kind", None) == SHELL_TOOL_KIND_VALUE
+        or SHELL_TOOL_KIND_VALUE in str(getattr(fn, "_kind", ""))
+    )
 
 
 # --------------------------------------------------------------------- integration
@@ -176,7 +178,7 @@ def test_as_function_carries_shell_kind():
 
 @pytest.mark.skipif(not is_docker_available(), reason="docker daemon unavailable")
 async def test_docker_persistent_session_preserves_state():
-    async with DockerShellTool(image="alpine:3", network="none") as shell:
+    async with DockerShellTool(image="alpine:3", shell="sh", network="none") as shell:
         r1 = await shell.run("export AF_X=hello")
         assert r1.exit_code == 0
         r2 = await shell.run("echo $AF_X")
@@ -186,7 +188,7 @@ async def test_docker_persistent_session_preserves_state():
 
 @pytest.mark.skipif(not is_docker_available(), reason="docker daemon unavailable")
 async def test_docker_stateless_each_command_isolated():
-    shell = DockerShellTool(mode="stateless", image="alpine:3", network="none")
+    shell = DockerShellTool(mode="stateless", image="alpine:3", shell="sh", network="none")
     r1 = await shell.run("export AF_X=hello")
     assert r1 is not None  # noqa: S101
     r2 = await shell.run('echo "${AF_X:-unset}"')
@@ -195,7 +197,7 @@ async def test_docker_stateless_each_command_isolated():
 
 @pytest.mark.skipif(not is_docker_available(), reason="docker daemon unavailable")
 async def test_docker_no_network_by_default():
-    async with DockerShellTool(image="alpine:3") as shell:
+    async with DockerShellTool(image="alpine:3", shell="sh") as shell:
         # busybox wget against a host that should be unreachable with --network none
         r = await shell.run("wget -q -T 2 -O- http://example.com || echo NOACCESS")
         assert "NOACCESS" in r.stdout

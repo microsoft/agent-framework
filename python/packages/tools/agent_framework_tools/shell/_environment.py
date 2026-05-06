@@ -22,8 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar
 
-from agent_framework import ContextProvider, SupportsAgentRun
-from agent_framework._sessions import AgentSession, SessionContext
+from agent_framework import AgentSession, ContextProvider, SessionContext, SupportsAgentRun
 
 from ._executor_base import ShellExecutor
 from ._types import ShellCommandError, ShellExecutionError, ShellResult, ShellTimeoutError

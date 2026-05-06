@@ -15,7 +15,7 @@ from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
 from ._executor import run_stateless
 from ._policy import ShellPolicy, ShellRequest
-from ._resolve import resolve_shell
+from ._resolve import is_powershell, resolve_shell
 from ._session import ShellSession
 from ._types import ShellCommandError, ShellMode, ShellResult
 
@@ -272,6 +272,6 @@ class LocalShellTool:
             return command
         # Idempotent prefix: cd back before each command so a `cd` in one
         # call does not leak workdir state to the next.
-        if self._interactive_argv and "pwsh" in os.path.basename(self._interactive_argv[0]).lower():
+        if self._interactive_argv and is_powershell(self._interactive_argv):
             return f"Set-Location -LiteralPath {_quote_powershell(self._workdir)}\n{command}"
         return f"cd -- {_quote_posix(self._workdir)}\n{command}"

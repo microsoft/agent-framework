@@ -145,18 +145,19 @@ def build_exec_argv(
     binary: str,
     container_name: str,
     interactive: bool,
+    shell: str = "bash",
 ) -> list[str]:
-    """Build the ``docker exec -i <container> bash`` argv.
+    """Build the ``docker exec -i <container> <shell>`` argv.
 
     For persistent mode this is the long-lived shell that
     :class:`ShellSession` reads/writes via stdin/stdout pipes.
     """
-    argv = [binary, "exec", "-i", container_name, "bash"]
+    argv = [binary, "exec", "-i", container_name, shell]
     if not interactive:
-        # Stateless: ``docker exec`` is run per-command; bash -c <cmd> is
+        # Stateless: ``docker exec`` is run per-command; <shell> -c <cmd> is
         # appended later by run_stateless.
         argv.extend(["-c"])  # caller appends the command
-    else:
+    elif shell == "bash":
         argv.extend(["--noprofile", "--norc"])
     return argv
 
@@ -212,6 +213,10 @@ class DockerShellTool:
             the intended boundary rather than approval.
         on_command: Audit hook fired for every allowed command.
         docker_binary: Override (e.g. ``"podman"``).
+        shell: Shell binary to invoke inside the container. Defaults to
+            ``"bash"``; pass ``"sh"`` for minimal images such as Alpine
+            that don't ship bash. Anything else must be present on
+            ``$PATH`` inside the image.
     """
 
     def __init__(
@@ -236,6 +241,7 @@ class DockerShellTool:
         approval_mode: Literal["always_require", "never_require"] = "always_require",
         on_command: Callable[[str], None] | None = None,
         docker_binary: str = "docker",
+        shell: str = "bash",
     ) -> None:
         if mode not in ("persistent", "stateless"):
             raise ValueError(f"mode must be 'persistent' or 'stateless', got {mode!r}")
@@ -260,6 +266,7 @@ class DockerShellTool:
         self._approval_mode = approval_mode
         self._on_command = on_command
         self._binary = docker_binary
+        self._shell = shell
 
         self._session: ShellSession | None = None
         self._container_started = False
@@ -274,29 +281,35 @@ class DockerShellTool:
 
     async def start(self) -> None:
         """Pull/start the container and (if persistent) the inner shell session."""
+        # Stateless mode never uses the long-lived container — every call goes
+        # through ``docker run --rm`` — so start()/close() are no-ops.
+        if self._mode == "stateless":
+            return
         async with self._get_lifecycle_lock():
             if self._container_started:
-                if self._mode == "persistent" and self._session is not None:
+                if self._session is not None:
                     await self._session.start()
                 return
             await self._start_container()
             self._container_started = True
-            if self._mode == "persistent":
-                argv = build_exec_argv(
-                    binary=self._binary,
-                    container_name=self._container_name,
-                    interactive=True,
-                )
-                self._session = ShellSession(
-                    argv,
-                    workdir=None,  # workdir is set on the container itself
-                    env=None,
-                    max_output_bytes=self._max_output_bytes,
-                )
-                await self._session.start()
+            argv = build_exec_argv(
+                binary=self._binary,
+                container_name=self._container_name,
+                interactive=True,
+                shell=self._shell,
+            )
+            self._session = ShellSession(
+                argv,
+                workdir=None,  # workdir is set on the container itself
+                env=None,
+                max_output_bytes=self._max_output_bytes,
+            )
+            await self._session.start()
 
     async def close(self) -> None:
         """Stop the inner shell session and tear down the container."""
+        if self._mode == "stateless":
+            return
         async with self._get_lifecycle_lock():
             if self._session is not None:
                 try:
@@ -373,7 +386,7 @@ class DockerShellTool:
         for k, v in self._env.items():
             argv.extend(["-e", f"{k}={v}"])
         argv.extend(self._extra_run_args)
-        argv.extend([self._image, "bash", "-c", command])
+        argv.extend([self._image, self._shell, "-c", command])
 
         started = time.monotonic()
         proc = await asyncio.create_subprocess_exec(

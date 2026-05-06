@@ -315,6 +315,14 @@ class ShellSession:
         stdout_str, stdout_truncated = _truncate_text(stdout_text, self._max_output_bytes)
         stderr_str, stderr_truncated = _truncate_text(stderr_text, self._max_output_bytes)
 
+        # Trim the persistent buffers: everything we needed has been copied
+        # into stdout_raw/stderr_raw above, so discarding now keeps the
+        # session's memory bounded across many commands. The reader tasks
+        # only ever ``extend()`` these buffers (no offset bookkeeping
+        # outside this method), so resetting them here is safe.
+        del self._stdout_buf[:]
+        del self._stderr_buf[:]
+
         return ShellResult(
             stdout=stdout_str,
             stderr=stderr_str,
