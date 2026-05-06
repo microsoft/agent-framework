@@ -2,16 +2,18 @@
 
 """Aggregate per-provider JUnit XML test results and generate a trend report.
 
-Parses ``pytest.xml`` (JUnit XML) files produced by each CI job, merges them
-into a single run, combines with historical data, and generates a markdown
-trend table — the same pattern used by ``scripts/sample_validation/aggregate.py``.
+Parses JUnit XML files produced by CI jobs — both ``pytest.xml`` (Python) and
+xunit v3 ``*.junit`` (dotnet) — merges them into a single run, combines
+with historical data, and generates a markdown trend table.
 
 Usage (from CI):
     python aggregate.py <reports-dir> <history-file> <output-file>
 
-The reports directory is expected to contain subdirectories named
-``test-results-<provider>/`` each containing a ``pytest.xml`` file
-(created by ``actions/download-artifact``).
+The reports directory is expected to contain artifact subdirectories.  Two
+layouts are supported:
+
+- **Python (pytest):**  ``test-results-<provider>/pytest.xml``
+- **Dotnet (xunit):**   ``dotnet-test-results-<tfm>-<os>/*.junit``
 """
 
 from __future__ import annotations
@@ -46,9 +48,21 @@ def _format_run_label(timestamp: str) -> str:
 def _derive_provider(directory_name: str) -> str:
     """Derive a provider label from a report directory name.
 
-    ``test-results-openai`` → ``OpenAI``
-    ``test-results-azure-openai`` → ``Azure OpenAI``
+    Handles both Python and dotnet naming conventions:
+    - ``test-results-openai`` → ``OpenAI``
+    - ``test-results-azure-openai`` → ``Azure OpenAI``
+    - ``dotnet-test-results-net10.0-ubuntu-latest`` → ``net10.0 (ubuntu)``
     """
+    # Dotnet convention: dotnet-test-results-<framework>-<os>
+    if directory_name.startswith("dotnet-test-results-"):
+        raw = directory_name.replace("dotnet-test-results-", "")
+        # e.g. "net10.0-ubuntu-latest" → framework="net10.0", os="ubuntu-latest"
+        parts = raw.split("-", 1)
+        framework = parts[0]
+        os_label = parts[1].split("-")[0] if len(parts) > 1 else ""
+        return f"{framework} ({os_label})" if os_label else framework
+
+    # Python convention: test-results-<provider>
     raw = directory_name.replace("test-results-", "")
     known = {
         "openai": "OpenAI",
@@ -102,11 +116,21 @@ def _parse_junit_xml(xml_path: Path) -> list[dict[str, str]]:
         # it appends the class name, e.g.:
         #   "packages.foundry.tests.foundry.test_foundry_embedding_client.TestFoundryEmbeddingIntegration"
         # We want the file-level module: "test_foundry_embedding_client"
+        #
+        # xunit (dotnet) writes classname as the full C# type, e.g.:
+        #   "OpenAIChatCompletion.IntegrationTests.ChatCompletionTests"
+        # We want the project prefix: "OpenAIChatCompletion"
         if classname:
             parts = classname.rsplit(".", 2)
             # If the last segment starts with uppercase it's a class name — take the one before it
             if len(parts) >= 2 and parts[-1][0:1].isupper():
-                module = parts[-2]
+                # For dotnet: if the penultimate part is "IntegrationTests" or "UnitTests",
+                # use the part before that (the project name) instead
+                if parts[-2] in ("IntegrationTests", "UnitTests") and len(parts) >= 3:
+                    # parts[0] may contain dots — take the last segment of it
+                    module = parts[0].rsplit(".", 1)[-1]
+                else:
+                    module = parts[-2]
             else:
                 module = parts[-1]
         else:
@@ -148,28 +172,61 @@ def _parse_junit_xml(xml_path: Path) -> list[dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
+def _discover_xml_files(reports_dir: Path) -> list[tuple[str, Path]]:
+    """Discover JUnit XML test result files in artifact subdirectories.
+
+    Handles two directory layouts:
+    - **Python (pytest):** ``test-results-<provider>/pytest.xml``
+    - **Dotnet (xunit):** ``dotnet-test-results-<tfm>-<os>/*.junit``
+
+    Returns:
+        List of ``(directory_name, xml_path)`` tuples.
+    """
+    xml_files: list[tuple[str, Path]] = []
+    if not reports_dir.is_dir():
+        return xml_files
+
+    for subdir in sorted(reports_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+
+        # Python layout: single pytest.xml per artifact
+        pytest_xml = subdir / "pytest.xml"
+        if pytest_xml.exists():
+            xml_files.append((subdir.name, pytest_xml))
+            continue
+
+        # Dotnet layout: multiple *.junit files per artifact
+        junit_files = sorted(subdir.rglob("*.junit"))
+        for jf in junit_files:
+            xml_files.append((subdir.name, jf))
+
+        # Fallback: any .xml file that looks like JUnit (not .trx, not cobertura)
+        if not junit_files:
+            for xf in sorted(subdir.rglob("*.xml")):
+                if xf.suffix == ".xml" and not xf.name.endswith(".cobertura.xml"):
+                    xml_files.append((subdir.name, xf))
+
+    return xml_files
+
+
 def load_current_run(reports_dir: Path) -> dict[str, Any]:
     """Load per-provider JUnit XML reports from the current CI run and merge.
 
+    Supports both pytest (Python) and xunit v3 (dotnet) JUnit XML formats.
+
     Args:
-        reports_dir: Directory containing ``test-results-<provider>/`` subdirs.
+        reports_dir: Directory containing artifact subdirectories with XML reports.
 
     Returns:
         Merged run dict with ``timestamp``, ``summary``, ``results``.
     """
     combined_results: dict[str, dict[str, str]] = {}  # nodeid → {status, provider}
 
-    # actions/download-artifact creates: reports_dir/test-results-openai/pytest.xml
-    xml_files: list[tuple[str, Path]] = []
-    if reports_dir.is_dir():
-        for subdir in sorted(reports_dir.iterdir()):
-            if subdir.is_dir():
-                xml_file = subdir / "pytest.xml"
-                if xml_file.exists():
-                    xml_files.append((subdir.name, xml_file))
+    xml_files = _discover_xml_files(reports_dir)
 
     if not xml_files:
-        print(f"Warning: No pytest.xml files found in {reports_dir}")
+        print(f"Warning: No JUnit XML files found in {reports_dir}")
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "summary": {
@@ -181,19 +238,42 @@ def load_current_run(reports_dir: Path) -> dict[str, Any]:
             "results": {},
         }
 
+    # Dotnet tests always run under multiple frameworks, so we always
+    # qualify their keys with the provider to ensure deterministic,
+    # stable keys across runs regardless of file parse order.
+    is_dotnet = any(d.startswith("dotnet-test-results-") for d, _ in xml_files)
+
     for dir_name, xml_file in xml_files:
         print(f"  Loading: {xml_file}")
         provider = _derive_provider(dir_name)
         tests = _parse_junit_xml(xml_file)
         for test in tests:
-            combined_results[test["nodeid"]] = {
+            raw_id = test["nodeid"]
+            key = f"{provider}::{raw_id}" if is_dotnet else raw_id
+
+            combined_results[key] = {
                 "status": test["status"],
                 "provider": provider,
                 "module": test.get("module", ""),
             }
 
-    # Build summary counts using mutually exclusive status buckets.
-    # Errors are folded into the failed count for display purposes.
+    # Build per-provider summary counts so the report can show one row per
+    # framework (dotnet) or per provider (Python).
+    provider_counts: dict[str, dict[str, int]] = {}
+    for r in combined_results.values():
+        prov = r.get("provider", "Unknown")
+        if prov not in provider_counts:
+            provider_counts[prov] = {"total": 0, "passed": 0, "failed": 0, "skipped": 0}
+        provider_counts[prov]["total"] += 1
+        st = r["status"]
+        if st == "passed":
+            provider_counts[prov]["passed"] += 1
+        elif st in ("failed", "error"):
+            provider_counts[prov]["failed"] += 1
+        elif st == "skipped":
+            provider_counts[prov]["skipped"] += 1
+
+    # Overall summary (sum across all providers).
     statuses = [r["status"] for r in combined_results.values()]
     summary = {
         "total": len(statuses),
@@ -205,6 +285,7 @@ def load_current_run(reports_dir: Path) -> dict[str, Any]:
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "summary": summary,
+        "provider_summaries": provider_counts,
         "results": combined_results,
     }
 
@@ -253,7 +334,29 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
         "",
     ]
 
-    # --- Overall status table (most recent first) ---
+    # Detect whether this is a dotnet report (provider-qualified keys).
+    is_dotnet = False
+    for run in runs:
+        provider_sums = run.get("provider_summaries", {})
+        if any(p.startswith("net") for p in provider_sums):
+            is_dotnet = True
+            break
+
+    if is_dotnet:
+        _generate_dotnet_report(lines, runs)
+    else:
+        _generate_python_report(lines, runs)
+
+    lines.append("")
+    lines.append("**Legend:** ✅ Passed · ❌ Failed · ⏭️ Skipped · ⚠️ Expected Failure (xfail) · N/A Not available")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def _generate_python_report(lines: list[str], runs: list[dict[str, Any]]) -> None:
+    """Generate the original single-table Python report format."""
+    # --- Overall status table ---
     lines.append("## Overall Status (Last 5 Runs)")
     lines.append("")
     lines.append("| Run | Total | ✅ Passed | ❌ Failed | ⏭️ Skipped |")
@@ -276,27 +379,91 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
 
     lines.append("")
 
-    # --- Per-test results table ---
-    lines.append("## Per-Test Results")
-    lines.append("")
+    # --- Single per-test results table ---
+    _generate_per_test_table(lines, runs, "## Per-Test Results")
 
-    # Collect all test nodeids, providers, and modules across all runs
-    all_tests: dict[str, str] = {}  # nodeid → provider (from most recent run)
-    all_modules: dict[str, str] = {}  # nodeid → module (from most recent run)
+
+def _generate_dotnet_report(lines: list[str], runs: list[dict[str, Any]]) -> None:
+    """Generate per-framework tables for dotnet (net10.0, net472, etc.)."""
+    # Collect all providers seen across all runs, sorted for stable ordering
+    all_providers: set[str] = set()
+    for run in runs:
+        all_providers.update(run.get("provider_summaries", {}).keys())
+    providers = sorted(all_providers)
+
+    for provider in providers:
+        lines.append(f"## {provider}")
+        lines.append("")
+
+        # --- Per-provider summary table ---
+        lines.append("| Run | Total | ✅ Passed | ❌ Failed | ⏭️ Skipped |")
+        lines.append("|-----|-------|-----------|-----------|------------|")
+
+        for run in reversed(runs):
+            ps = run.get("provider_summaries", {}).get(provider, {})
+            total = ps.get("total", 0)
+            label = _format_run_label(run["timestamp"])
+            if total == 0:
+                lines.append(f"| {label} | N/A | N/A | N/A | N/A |")
+            else:
+                lines.append(
+                    f"| {label} "
+                    f"| {total} "
+                    f"| {ps.get('passed', 0)}/{total} "
+                    f"| {ps.get('failed', 0)}/{total} "
+                    f"| {ps.get('skipped', 0)}/{total} |"
+                )
+
+        for _ in range(MAX_HISTORY - len(runs)):
+            lines.append("| N/A | N/A | N/A | N/A | N/A |")
+
+        lines.append("")
+
+        # --- Per-test table filtered to this provider ---
+        _generate_per_test_table(
+            lines, runs,
+            heading=None,
+            provider_filter=provider,
+        )
+
+
+def _generate_per_test_table(
+    lines: list[str],
+    runs: list[dict[str, Any]],
+    heading: str | None = None,
+    provider_filter: str | None = None,
+) -> None:
+    """Emit a per-test trend table, optionally filtered to a single provider."""
+    if heading:
+        lines.append(heading)
+        lines.append("")
+
+    # Collect all test nodeids (and metadata) across all runs
+    all_tests: dict[str, str] = {}  # nodeid → provider
+    all_modules: dict[str, str] = {}  # nodeid → module
     for run in runs:
         for nodeid, info in run.get("results", {}).items():
-            provider = info.get("provider", "Unknown") if isinstance(info, dict) else "Unknown"
-            module = info.get("module", "") if isinstance(info, dict) else ""
-            all_tests[nodeid] = provider
+            if not isinstance(info, dict):
+                continue
+            prov = info.get("provider", "Unknown")
+            if provider_filter and prov != provider_filter:
+                continue
+            module = info.get("module", "")
+            all_tests[nodeid] = prov
             all_modules[nodeid] = module
 
     if not all_tests:
         lines.append("*No test results available.*")
-        return "\n".join(lines)
+        lines.append("")
+        return
 
-    # Build header (most recent run first)
-    header = "| Test | File | Provider |"
-    separator = "|------|------|----------|"
+    # Build header
+    if provider_filter:
+        header = "| Test | File |"
+        separator = "|------|------|"
+    else:
+        header = "| Test | File | Provider |"
+        separator = "|------|------|----------|"
     for run in reversed(runs):
         label = _format_run_label(run["timestamp"])
         header += f" {label} |"
@@ -308,12 +475,15 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     lines.append(header)
     lines.append(separator)
 
-    # Sort by provider then test name
-    for nodeid in sorted(all_tests, key=lambda n: (all_tests[n], n)):
-        provider = all_tests[nodeid]
+    # Sort by module then test name
+    for nodeid in sorted(all_tests, key=lambda n: (all_modules.get(n, ""), n)):
         module = all_modules.get(nodeid, "")
         short = _short_name(nodeid)
-        row = f"| `{short}` | `{module}` | {provider} |"
+        if provider_filter:
+            row = f"| `{short}` | `{module}` |"
+        else:
+            provider = all_tests[nodeid]
+            row = f"| `{short}` | `{module}` | {provider} |"
 
         for run in reversed(runs):
             result = run.get("results", {}).get(nodeid)
@@ -330,10 +500,6 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
         lines.append(row)
 
     lines.append("")
-    lines.append("**Legend:** ✅ Passed · ❌ Failed · ⏭️ Skipped · ⚠️ Expected Failure (xfail) · N/A Not available")
-    lines.append("")
-
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
