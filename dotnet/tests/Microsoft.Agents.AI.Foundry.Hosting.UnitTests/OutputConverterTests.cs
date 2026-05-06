@@ -84,7 +84,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithoutResult_IsBufferedAndDroppedAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithoutResult_EmitsFunctionCallWireItemAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -99,11 +99,11 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Issue #5662: an FCC without a paired FRC would orphan a function_call in
-        // the response store and break resume via previous_response_id. The FCC is
-        // buffered and only flushed when its FunctionResultContent arrives.
-        Assert.Empty(events.OfType<ResponseOutputItemAddedEvent>());
-        Assert.DoesNotContain(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
+        // A lone FunctionCallContent (no paired FunctionResultContent) is the
+        // OpenAI Responses encoding of a HITL request: the caller is expected to
+        // resume with a function_call_output for this call_id.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
@@ -304,10 +304,10 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // FCC closes any in-flight assistant message. The FCC itself is buffered
-        // (no matching FRC arrives), so only the text message surfaces (issue #5662).
-        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
-        Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
+        // FCC closes any in-flight assistant message, then emits its own function_call
+        // wire item. Result: 2 output items (text message + function_call).
+        Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.Equal(2, events.OfType<ResponseOutputItemDoneEvent>().Count());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
@@ -353,7 +353,7 @@ public class OutputConverterTests
 
     // G-05
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_MultipleFunctionCallsWithoutResults_AreAllBufferedAndDroppedAsync()
+    public async Task ConvertUpdatesToEventsAsync_MultipleFunctionCallsWithoutResults_EachEmitsWireItemAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -368,8 +368,9 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // No matching FRCs arrive, so both FCCs are dropped (issue #5662).
-        Assert.Empty(events.OfType<ResponseOutputItemAddedEvent>());
+        // Each lone FCC surfaces as its own function_call wire item (HITL request shape).
+        Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.Equal(2, events.OfType<ResponseFunctionCallArgumentsDoneEvent>().Count());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
@@ -545,7 +546,7 @@ public class OutputConverterTests
 
     // K-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionResultWithoutMatchingCall_IsSkippedAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultWithoutMatchingCall_EmitsFunctionCallOutputAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "result data")] };
@@ -556,11 +557,11 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // FRC whose CallId we never wire-emitted (e.g. the result of an approval-flow
-        // tool invocation, paired on the wire by mcp_approval_request not function_call)
-        // is dropped to avoid creating an orphan function_call_output (issue #5662).
-        Assert.Single(events);
-        Assert.IsType<ResponseCompletedEvent>(events[0]);
+        // A FunctionResultContent always emits a function_call_output wire item; pairing
+        // with a function_call (if any) is established by call_id at the wire layer.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
     // K-04
@@ -703,8 +704,8 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Two text messages surface; the FCC is buffered (no FRC) so dropped (issue #5662).
-        Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        // text(msg_1) → function_call(call_1) → text(msg_2): three output items.
+        Assert.Equal(3, events.OfType<ResponseOutputItemAddedEvent>().Count());
     }
 
     // M-02
@@ -767,9 +768,8 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Both FCCs buffered & dropped (no FRCs) leaving only the single text message
-        // between them (issue #5662).
-        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        // Three output items: function_call(call_1), text(msg_1), function_call(call_2).
+        Assert.Equal(3, events.OfType<ResponseOutputItemAddedEvent>().Count());
     }
 
     // ===== Workflow content flow tests (W series) =====
@@ -861,10 +861,10 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Workflow actions: 4. FCC buffered (no FRC) and dropped (issue #5662).
-        // Text message: 1. Total output items: 5.
-        Assert.Equal(5, events.OfType<ResponseOutputItemAddedEvent>().Count());
-        Assert.DoesNotContain(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
+        // Workflow actions: 4. Lone FCC: 1 (function_call wire item).
+        // Text message: 1. Total output items: 6.
+        Assert.Equal(6, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
         Assert.Contains(events, e => e is ResponseTextDeltaEvent);
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
@@ -1001,10 +1001,10 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Workflow actions: 4. FCC buffered (no FRC) and dropped (issue #5662).
-        // Content items: 1 text message = 1. Total output items: 5.
-        Assert.Equal(5, events.OfType<ResponseOutputItemAddedEvent>().Count());
-        Assert.DoesNotContain(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
+        // Workflow actions: 4. Lone FCC: 1 (function_call wire item).
+        // Text message: 1. Total output items: 6.
+        Assert.Equal(6, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
         // Two text deltas for the two streaming chunks
         Assert.Equal(2, events.OfType<ResponseTextDeltaEvent>().Count());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);

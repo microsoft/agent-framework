@@ -48,10 +48,6 @@ internal static class OutputConverter
         string? previousMessageId = null;
         bool hasTerminalEvent = false;
         var executorItemIds = new Dictionary<string, string>();
-        // Function call emission is deferred until the matching FunctionResultContent arrives.
-        // Without a matching result, the function_call would be an orphan in Azure's stored
-        // conversation and break resume via previous_response_id (issue #5662).
-        var pendingFunctionCalls = new Dictionary<string, (string Name, string Arguments)>(StringComparer.Ordinal);
 
         await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
@@ -143,9 +139,11 @@ internal static class OutputConverter
                             ? JsonSerializer.Serialize(functionCall.Arguments)
                             : "{}";
 
-                        // Buffer name+arguments; only build/emit when the matching
-                        // FunctionResultContent arrives (issue #5662).
-                        pendingFunctionCalls[functionCall.CallId] = (functionCall.Name, arguments);
+                        var fcBuilder = stream.AddOutputItemFunctionCall(functionCall.Name, functionCall.CallId);
+                        yield return fcBuilder.EmitAdded();
+                        yield return fcBuilder.EmitArgumentsDelta(arguments);
+                        yield return fcBuilder.EmitArgumentsDone(arguments);
+                        yield return fcBuilder.EmitDone();
                         break;
                     }
 
@@ -259,16 +257,10 @@ internal static class OutputConverter
 
                     case FunctionResultContent functionResult:
                     {
-                        // Pair this result with a previously-buffered function_call. If none
-                        // exists, drop the result — it likely belongs to an approval flow
-                        // (paired on the wire by mcp_approval_request) and would otherwise
-                        // leave an orphan function_call_output (issue #5662).
-                        if (!pendingFunctionCalls.TryGetValue(functionResult.CallId, out var pending))
+                        if (functionResult.CallId is not { Length: > 0 })
                         {
                             break;
                         }
-
-                        pendingFunctionCalls.Remove(functionResult.CallId);
 
                         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
                         {
@@ -279,12 +271,6 @@ internal static class OutputConverter
                         currentMessageBuilder = null;
                         accumulatedText = null;
                         previousMessageId = null;
-
-                        var fcBuilder = stream.AddOutputItemFunctionCall(pending.Name, functionResult.CallId);
-                        yield return fcBuilder.EmitAdded();
-                        yield return fcBuilder.EmitArgumentsDelta(pending.Arguments);
-                        yield return fcBuilder.EmitArgumentsDone(pending.Arguments);
-                        yield return fcBuilder.EmitDone();
 
                         var outputJson = functionResult.Result switch
                         {
