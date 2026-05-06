@@ -85,6 +85,7 @@ agent-framework-foundry-hosting = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
 agent-framework-gemini = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
+agent-framework-hosting = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
@@ -205,6 +206,7 @@ executionEnvironments = [
     { root = "packages/foundry/tests", reportPrivateUsage = "none" },
     { root = "packages/foundry_local/tests", reportPrivateUsage = "none" },
     { root = "packages/github_copilot/tests", reportPrivateUsage = "none" },
+    { root = "packages/hosting/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/gaia/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/lightning/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/tau2/tests", reportPrivateUsage = "none" },
