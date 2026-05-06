@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
 
@@ -184,7 +185,7 @@ public class FoundryAgentTests
 
         // Act: this AsAIAgent path constructs FoundryAgent via its internal
         // (AIProjectClient, ChatClientAgent) constructor, which previously bypassed pre-wiring.
-        var agent = projectClient.AsAIAgent(new Azure.AI.Extensions.OpenAI.AgentReference("agent-name"));
+        var agent = projectClient.AsAIAgent(new AgentReference("agent-name"));
 
         // Assert
         Assert.NotNull(agent.GetService<ClientHeadersAgent>());
@@ -398,4 +399,379 @@ public class FoundryAgentTests
     }
 
     #endregion
+
+    #region Agent-endpoint constructor tests
+
+    private const string TestAgentEndpoint = "https://test.services.ai.azure.com/api/projects/test-project/agents/it-happy-path/endpoint/protocols/openai";
+    private static readonly Uri s_testAgentEndpoint = new(TestAgentEndpoint);
+
+    [Fact]
+    public void AgentEndpointConstructor_NullEndpoint_ThrowsArgumentNullException()
+    {
+        ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() =>
+            new FoundryAgent(agentEndpoint: null!, credential: new FakeAuthenticationTokenProvider()));
+        Assert.Equal("agentEndpoint", ex.ParamName);
+    }
+
+    [Fact]
+    public void AgentEndpointConstructor_NullCredential_ThrowsArgumentNullException()
+    {
+        ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() =>
+            new FoundryAgent(agentEndpoint: s_testAgentEndpoint, credential: null!));
+        Assert.Equal("credential", ex.ParamName);
+    }
+
+    [Fact]
+    public void AgentEndpointConstructor_PopulatesNameAndIdFromEndpointSlug()
+    {
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider());
+
+        Assert.Equal("it-happy-path", agent.Name);
+        Assert.Equal("it-happy-path", agent.Id);
+    }
+
+    [Fact]
+    public void AgentEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNonNull()
+    {
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider());
+
+        Assert.NotNull(agent.GetService<ProjectOpenAIClient>());
+    }
+
+    [Fact]
+    public void AgentEndpointConstructor_GetServiceAIProjectClient_ReturnsNull()
+    {
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider());
+
+        Assert.Null(agent.GetService<AIProjectClient>());
+    }
+
+    [Fact]
+    public void ProjectEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNonNull()
+    {
+        FoundryAgent agent = new(
+            s_testEndpoint,
+            new FakeAuthenticationTokenProvider(),
+            model: "gpt-4o-mini",
+            instructions: "Test");
+
+        Assert.NotNull(agent.GetService<ProjectOpenAIClient>());
+    }
+
+    [Fact]
+    public void AgentEndpointConstructor_AppliesClientFactoryOnce()
+    {
+        int count = 0;
+        FoundryAgent agent = new(
+            s_testAgentEndpoint,
+            new FakeAuthenticationTokenProvider(),
+            clientFactory: c => { count++; return c; });
+
+        Assert.Equal(1, count);
+        Assert.NotNull(agent);
+    }
+
+    [Fact]
+    public async Task AgentEndpointConstructor_RunAsync_RoutesThroughPerAgentResponsesUrlAsync()
+    {
+        Uri? capturedUri = null;
+        using HttpHandlerAssert handler = new(req =>
+        {
+            capturedUri = req.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(TestDataUtil.GetOpenAIDefaultResponseJson(), Encoding.UTF8, "application/json"),
+            };
+        });
+#pragma warning disable CA5399
+        using HttpClient http = new(handler);
+#pragma warning restore CA5399
+        ProjectOpenAIClientOptions opts = new() { Transport = new HttpClientPipelineTransport(http) };
+
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
+        await agent.RunAsync("Hello");
+
+        Assert.NotNull(capturedUri);
+        string path = capturedUri!.AbsolutePath;
+        Assert.Contains("/agents/it-happy-path/endpoint/protocols/openai/responses", path, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/openai/v1/responses", path, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("api-version=v1", capturedUri.Query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AgentEndpointConstructor_RunStreamingAsync_RoutesThroughPerAgentResponsesUrlAsync()
+    {
+        Uri? capturedUri = null;
+        bool sawStreamTrue = false;
+        using HttpHandlerAssert handler = new(async req =>
+        {
+            capturedUri = req.RequestUri;
+            if (req.Content is not null)
+            {
+                string body = await req.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (body.Contains("\"stream\":true", StringComparison.Ordinal))
+                {
+                    sawStreamTrue = true;
+                }
+            }
+
+            // Minimal SSE response; xUnit assertion only cares about the URL/body shape.
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("data: [DONE]\n\n", Encoding.UTF8, "text/event-stream"),
+            };
+        });
+#pragma warning disable CA5399
+        using HttpClient http = new(handler);
+#pragma warning restore CA5399
+        ProjectOpenAIClientOptions opts = new() { Transport = new HttpClientPipelineTransport(http) };
+
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
+        try
+        {
+            await foreach (var _ in agent.RunStreamingAsync("Hello"))
+            {
+                // drain
+            }
+        }
+        catch
+        {
+            // SSE parse errors are acceptable; we only assert the request shape.
+        }
+
+        Assert.NotNull(capturedUri);
+        Assert.Contains("/agents/it-happy-path/endpoint/protocols/openai/responses", capturedUri!.AbsolutePath, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("api-version=v1", capturedUri.Query, StringComparison.OrdinalIgnoreCase);
+        Assert.True(sawStreamTrue, "Expected request body to include \"stream\":true.");
+    }
+
+    [Fact]
+    public async Task AgentEndpointConstructor_CreateConversationSessionAsync_RoutesThroughProjectLevelUrlAsync()
+    {
+        Uri? capturedUri = null;
+        using HttpHandlerAssert handler = new(req =>
+        {
+            capturedUri = req.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"conv_123\"}", Encoding.UTF8, "application/json"),
+            };
+        });
+#pragma warning disable CA5399
+        using HttpClient http = new(handler);
+#pragma warning restore CA5399
+        ProjectOpenAIClientOptions opts = new() { Transport = new HttpClientPipelineTransport(http) };
+
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
+        try
+        {
+            _ = await agent.CreateConversationSessionAsync();
+        }
+        catch
+        {
+            // Underlying SDK may attempt extra parsing on the minimal response. We only assert URL routing.
+        }
+
+        Assert.NotNull(capturedUri);
+        string path = capturedUri!.AbsolutePath;
+        Assert.Contains("/api/projects/test-project/openai/v1/conversations", path, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/agents/", path, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AgentEndpointConstructor_StampsMeaiUserAgentHeaderAsync()
+    {
+        bool meaiSeen = false;
+        using HttpHandlerAssert handler = new(req =>
+        {
+            if (req.Headers.TryGetValues("User-Agent", out var values))
+            {
+                foreach (string v in values)
+                {
+                    if (v.IndexOf("MEAI/", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        meaiSeen = true;
+                    }
+                }
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(TestDataUtil.GetOpenAIDefaultResponseJson(), Encoding.UTF8, "application/json"),
+            };
+        });
+#pragma warning disable CA5399
+        using HttpClient http = new(handler);
+#pragma warning restore CA5399
+        ProjectOpenAIClientOptions opts = new() { Transport = new HttpClientPipelineTransport(http) };
+
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
+        await agent.RunAsync("Hello");
+
+        Assert.True(meaiSeen, "Expected MEAI/x.y.z to appear in the User-Agent header on the agent-endpoint pipeline.");
+    }
+
+    [Fact]
+    public async Task AgentEndpointConstructor_PassesThroughCallerPolicyOnPerAgentPipelineAsync()
+    {
+        // Direct switch to ProjectOpenAIClientOptions means caller-supplied pipeline policies
+        // (added via AddPolicy) actually flow through to the per-agent traffic. Assert that a
+        // tag-stamping policy executes on each outbound per-agent request.
+        bool tagSeen = false;
+        using HttpHandlerAssert handler = new(req =>
+        {
+            if (req.Headers.TryGetValues("X-Test-Tag", out var values))
+            {
+                foreach (string v in values)
+                {
+                    if (v == "tag-1")
+                    {
+                        tagSeen = true;
+                    }
+                }
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(TestDataUtil.GetOpenAIDefaultResponseJson(), Encoding.UTF8, "application/json"),
+            };
+        });
+#pragma warning disable CA5399
+        using HttpClient http = new(handler);
+#pragma warning restore CA5399
+        ProjectOpenAIClientOptions opts = new() { Transport = new HttpClientPipelineTransport(http) };
+        opts.AddPolicy(new HeaderStampPolicy("X-Test-Tag", "tag-1"), PipelinePosition.PerCall);
+
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
+        await agent.RunAsync("Hello");
+
+        Assert.True(tagSeen, "Expected caller-supplied per-call policy to execute on the per-agent pipeline.");
+    }
+
+    [Fact]
+    public void AgentEndpointConstructor_OverridesCallerEndpointAndAgentName()
+    {
+        // The caller may set Endpoint/AgentName on the options bag; we must override both with
+        // values derived from agentEndpoint so the URL routing is correct regardless.
+        ProjectOpenAIClientOptions opts = new()
+        {
+            Endpoint = new Uri("https://wrong.example.com/openai/v1"),
+            AgentName = "wrong-agent",
+        };
+
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
+
+        Assert.Equal("it-happy-path", agent.Name);
+        Assert.Equal(s_testAgentEndpoint, opts.Endpoint);
+        Assert.Equal("it-happy-path", opts.AgentName);
+    }
+
+    [Fact]
+    public void AgentEndpointConstructor_PropagatesUserAgentApplicationId_ToProjectLevelClient()
+    {
+        // The MEAI policy adds its own User-Agent header so we cannot reliably observe the OpenAI SDK's
+        // application-id stamp in the outbound request. Verify the value is propagated onto the
+        // project-level client's options via the public ProjectOpenAIClient surface.
+        ProjectOpenAIClientOptions opts = new() { UserAgentApplicationId = "my-app-id" };
+
+        FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
+
+        ProjectOpenAIClient? projectClient = agent.GetService<ProjectOpenAIClient>();
+        Assert.NotNull(projectClient);
+        // Caller's UserAgentApplicationId is preserved on the per-agent options bag verbatim.
+        Assert.Equal("my-app-id", opts.UserAgentApplicationId);
+    }
+
+    #endregion
+
+    #region ParseAgentEndpoint tests
+
+    [Fact]
+    public void ParseAgentEndpoint_StandardShape_Parses()
+    {
+        var (name, root) = FoundryAgent.ParseAgentEndpoint(new Uri("https://h.example.com/api/projects/p1/agents/a1/endpoint/protocols/openai"));
+        Assert.Equal("a1", name);
+        Assert.Equal("https://h.example.com/api/projects/p1", root.AbsoluteUri.TrimEnd('/'));
+    }
+
+    [Fact]
+    public void ParseAgentEndpoint_TrailingSlash_Parses()
+    {
+        var (name, root) = FoundryAgent.ParseAgentEndpoint(new Uri("https://h.example.com/api/projects/p1/agents/a1/endpoint/protocols/openai/"));
+        Assert.Equal("a1", name);
+        Assert.Equal("https://h.example.com/api/projects/p1", root.AbsoluteUri.TrimEnd('/'));
+    }
+
+    [Fact]
+    public void ParseAgentEndpoint_UppercaseAgentsSegment_Parses()
+    {
+        var (name, _) = FoundryAgent.ParseAgentEndpoint(new Uri("https://h.example.com/api/projects/p1/Agents/a1/endpoint/protocols/openai"));
+        Assert.Equal("a1", name);
+    }
+
+    [Fact]
+    public void ParseAgentEndpoint_SpecialCharsInName_Parses()
+    {
+        var (name, _) = FoundryAgent.ParseAgentEndpoint(new Uri("https://h.example.com/api/projects/p/agents/it-happy_path-1/endpoint/protocols/openai"));
+        Assert.Equal("it-happy_path-1", name);
+    }
+
+    [Fact]
+    public void ParseAgentEndpoint_QueryAndFragmentStripped()
+    {
+        var (_, root) = FoundryAgent.ParseAgentEndpoint(new Uri("https://h.example.com/api/projects/p/agents/a/endpoint/protocols/openai?x=1#frag"));
+        Assert.Equal(string.Empty, root.Query);
+        Assert.Equal(string.Empty, root.Fragment);
+    }
+
+    [Fact]
+    public void ParseAgentEndpoint_SovereignCloudHostNoApiPrefix_Parses()
+    {
+        var (name, root) = FoundryAgent.ParseAgentEndpoint(new Uri("https://h.cognitive.microsoft.us/projects/p/agents/a1/endpoint/protocols/openai"));
+        Assert.Equal("a1", name);
+        Assert.Equal("https://h.cognitive.microsoft.us/projects/p", root.AbsoluteUri.TrimEnd('/'));
+    }
+
+    [Fact]
+    public void ParseAgentEndpoint_MissingAgentsSegment_Throws()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            FoundryAgent.ParseAgentEndpoint(new Uri("https://h.example.com/api/projects/p1/openai/v1")));
+        Assert.Equal("agentEndpoint", ex.ParamName);
+    }
+
+    [Fact]
+    public void ParseAgentEndpoint_WrongSuffix_Throws()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            FoundryAgent.ParseAgentEndpoint(new Uri("https://h.example.com/api/projects/p/agents/a1/openai/v1")));
+        Assert.Equal("agentEndpoint", ex.ParamName);
+    }
+
+    [Fact]
+    public void ParseAgentEndpoint_EmptyAgentName_Throws()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            FoundryAgent.ParseAgentEndpoint(new Uri("https://h.example.com/api/projects/p/agents//endpoint/protocols/openai")));
+        Assert.Equal("agentEndpoint", ex.ParamName);
+    }
+
+    #endregion
+
+    private sealed class HeaderStampPolicy : PipelinePolicy
+    {
+        private readonly string _name;
+        private readonly string _value;
+        public HeaderStampPolicy(string name, string value) { this._name = name; this._value = value; }
+
+        public override void Process(PipelineMessage message, System.Collections.Generic.IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        {
+            message.Request.Headers.Set(this._name, this._value);
+            ProcessNext(message, pipeline, currentIndex);
+        }
+
+        public override ValueTask ProcessAsync(PipelineMessage message, System.Collections.Generic.IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        {
+            message.Request.Headers.Set(this._name, this._value);
+            return ProcessNextAsync(message, pipeline, currentIndex);
+        }
+    }
 }

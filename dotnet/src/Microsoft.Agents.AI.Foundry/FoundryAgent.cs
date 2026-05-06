@@ -2,6 +2,7 @@
 
 using System;
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
@@ -38,7 +39,28 @@ namespace Microsoft.Agents.AI.Foundry;
 [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class FoundryAgent : DelegatingAIAgent
 {
-    private readonly AIProjectClient _aiProjectClient;
+    /// <summary>
+    /// Default OAuth scope for the Azure AI resource. Matches the scope used by
+    /// <c>Azure.AI.Extensions.OpenAI</c>'s internal authentication helper so the bearer token is
+    /// accepted by the Foundry control plane.
+    /// </summary>
+    private const string AzureAiResourceScope = "https://ai.azure.com/.default";
+
+    /// <summary>
+    /// The cached <see cref="AIProjectClient"/> when one was supplied or constructed by the active
+    /// constructor. Null when the agent was constructed via the agent-endpoint constructor, which
+    /// does not build a full <see cref="AIProjectClient"/>.
+    /// </summary>
+    private readonly AIProjectClient? _aiProjectClient;
+
+    /// <summary>
+    /// Project-scoped <see cref="ProjectOpenAIClient"/>. Always non-null. Used for project-level
+    /// operations such as <see cref="CreateConversationSessionAsync(CancellationToken)"/>.
+    /// In agent-endpoint mode this is built directly from the project root derived from the
+    /// supplied agent endpoint; in project-endpoint mode it is the cached client returned by
+    /// <see cref="AIProjectClient"/>.
+    /// </summary>
+    private readonly ProjectOpenAIClient _projectOpenAIClient;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryAgent"/> class using the direct Responses API path.
@@ -72,30 +94,49 @@ public sealed class FoundryAgent : DelegatingAIAgent
             out var aiProjectClient))
     {
         this._aiProjectClient = aiProjectClient;
+        this._projectOpenAIClient = aiProjectClient.GetProjectOpenAIClient();
     }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryAgent"/> class from an agent-specific endpoint.
     /// </summary>
-    /// <param name="agentEndpoint">The agent-specific endpoint URI (must contain the agent name in the path).</param>
+    /// <param name="agentEndpoint">
+    /// The agent-specific endpoint URI. Must be of the shape
+    /// <c>https://&lt;host&gt;/.../projects/&lt;project&gt;/agents/&lt;agentName&gt;/endpoint/protocols/openai</c>.
+    /// </param>
     /// <param name="credential">The authentication credential.</param>
-    /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
+    /// <param name="clientOptions">
+    /// Optional configuration for the underlying <see cref="ProjectOpenAIClient"/>. When supplied:
+    /// <list type="bullet">
+    ///   <item><description>The instance is passed through to the per-agent client; pipeline policies added via <c>AddPolicy(...)</c> on it execute on the per-agent traffic.</description></item>
+    ///   <item><description><c>Endpoint</c> and <see cref="ProjectOpenAIClientOptions.AgentName"/> are owned by this constructor and are overwritten with values derived from <paramref name="agentEndpoint"/>; any caller value is replaced.</description></item>
+    ///   <item><description>For the project-level conversations client a separate fresh options bag is built that copies only <see cref="ClientPipelineOptions.RetryPolicy"/>, <see cref="ClientPipelineOptions.NetworkTimeout"/>, <see cref="ClientPipelineOptions.Transport"/>, and <c>UserAgentApplicationId</c>; pipeline policies added via <c>AddPolicy(...)</c> do <strong>not</strong> propagate to the conversations pipeline.</description></item>
+    /// </list>
+    /// </param>
     /// <param name="tools">Optional tools to use when interacting with the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/>.</param>
     /// <param name="services">Optional service provider for resolving dependencies required by AI functions.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="agentEndpoint"/> or <paramref name="credential"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="agentEndpoint"/> does not match the expected agent-endpoint shape.</exception>
+    /// <remarks>
+    /// This is the lightweight constructor for invoking an existing Foundry hosted agent when the
+    /// caller already has the per-agent endpoint URL. It populates <see cref="ChatClientAgentOptions.Id"/>
+    /// and <see cref="ChatClientAgentOptions.Name"/> from the agent name parsed out of the endpoint
+    /// path; <c>Description</c>, <c>Instructions</c>, <c>Temperature</c>, and <c>TopP</c> are not
+    /// populated. Callers that need those fields hydrated from server-side state should use
+    /// <c>AIProjectClient.AsAIAgent(ProjectsAgentVersion)</c> or
+    /// <c>AIProjectClient.AsAIAgent(ProjectsAgentRecord)</c> instead.
+    /// </remarks>
     public FoundryAgent(
         Uri agentEndpoint,
         AuthenticationTokenProvider credential,
-        AIProjectClientOptions? clientOptions = null,
+        ProjectOpenAIClientOptions? clientOptions = null,
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         IServiceProvider? services = null)
-        : base(CreateInnerAgentFromEndpoint(
-            CreateProjectClient(agentEndpoint, credential, clientOptions),
-            agentEndpoint, tools, clientFactory, services,
-            out var aiProjectClient))
+        : base(CreateInnerAgentFromAgentEndpoint(agentEndpoint, credential, clientOptions, tools, clientFactory, services))
     {
-        this._aiProjectClient = aiProjectClient;
+        this._projectOpenAIClient = CreateProjectLevelOpenAIClientFromAgentEndpoint(agentEndpoint, credential, clientOptions);
     }
 
     /// <summary>
@@ -105,6 +146,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
         : base(WireClientHeaders(Throw.IfNull(innerAgent)))
     {
         this._aiProjectClient = Throw.IfNull(aiProjectClient);
+        this._projectOpenAIClient = aiProjectClient.GetProjectOpenAIClient();
     }
 
     #region Convenience methods
@@ -137,9 +179,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// <returns>A <see cref="ChatClientAgentSession"/> linked to the newly created server-side conversation.</returns>
     public async Task<ChatClientAgentSession> CreateConversationSessionAsync(CancellationToken cancellationToken = default)
     {
-        var conversationsClient = this._aiProjectClient
-            .GetProjectOpenAIClient()
-            .GetProjectConversationsClient();
+        var conversationsClient = this._projectOpenAIClient.GetProjectConversationsClient();
 
         var conversation = (await conversationsClient.CreateProjectConversationAsync(options: null, cancellationToken).ConfigureAwait(false)).Value;
 
@@ -159,6 +199,11 @@ public sealed class FoundryAgent : DelegatingAIAgent
         if (serviceKey is null && serviceType == typeof(AIProjectClient))
         {
             return this._aiProjectClient;
+        }
+
+        if (serviceKey is null && serviceType == typeof(ProjectOpenAIClient))
+        {
+            return this._projectOpenAIClient;
         }
 
         return base.GetService(serviceType, serviceKey);
@@ -238,38 +283,172 @@ public sealed class FoundryAgent : DelegatingAIAgent
             OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
                 policies,
                 ClientHeadersPolicy.Instance,
-                System.ClientModel.Primitives.PipelinePosition.PerCall);
+                PipelinePosition.PerCall);
         }
 
         return new ClientHeadersAgent(innerAgent);
     }
 
-    private static AIAgent CreateInnerAgentFromEndpoint(
-        AIProjectClient aiProjectClient,
+    /// <summary>
+    /// Builds the inner <see cref="ChatClientAgent"/> for the agent-endpoint constructor by
+    /// constructing a per-agent <see cref="ProjectOpenAIClient"/> via the
+    /// <c>ProjectOpenAIClient(AuthenticationPolicy, ProjectOpenAIClientOptions)</c>
+    /// constructor with <see cref="ProjectOpenAIClientOptions.AgentName"/> set. This routes the
+    /// outbound URL through the per-agent endpoint shape that the Foundry service expects for
+    /// hosted agents and lets the SDK auto-append the <c>api-version</c> query string.
+    /// Caller-supplied <paramref name="clientOptions"/> are passed through to the per-agent
+    /// client with <c>Endpoint</c> and
+    /// <see cref="ProjectOpenAIClientOptions.AgentName"/> overridden by values derived from
+    /// <paramref name="agentEndpoint"/>; any policies the caller added via <c>AddPolicy</c>
+    /// remain in effect on the per-agent pipeline. The MEAI user-agent policy is appended last.
+    /// </summary>
+    private static AIAgent CreateInnerAgentFromAgentEndpoint(
         Uri agentEndpoint,
+        AuthenticationTokenProvider credential,
+        ProjectOpenAIClientOptions? clientOptions,
         IList<AITool>? tools,
         Func<IChatClient, IChatClient>? clientFactory,
-        IServiceProvider? services,
-        out AIProjectClient outClient)
+        IServiceProvider? services)
     {
-        outClient = aiProjectClient;
+        Throw.IfNull(agentEndpoint);
+        Throw.IfNull(credential);
 
-        AgentReference agentReference = agentEndpoint.Segments[^1].TrimEnd('/');
+        var (agentName, _) = ParseAgentEndpoint(agentEndpoint);
 
-        ChatClientAgentOptions agentOptions = new()
-        {
-            Name = agentReference.Name,
-            ChatOptions = new() { Tools = tools },
-        };
+        var perAgentOptions = clientOptions ?? new ProjectOpenAIClientOptions();
+        perAgentOptions.Endpoint = agentEndpoint;
+        perAgentOptions.AgentName = agentName;
+        perAgentOptions.AddPolicy(RequestOptionsExtensions.UserAgentPolicy, PipelinePosition.PerCall);
 
-        IChatClient chatClient = new AzureAIProjectChatClient(aiProjectClient, agentReference, defaultModelId: null, agentOptions.ChatOptions);
+        var authPolicy = new BearerTokenPolicy(credential, AzureAiResourceScope);
+        var perAgentClient = new ProjectOpenAIClient(authPolicy, perAgentOptions);
 
+        IChatClient chatClient = perAgentClient.GetProjectResponsesClient().AsIChatClient();
         if (clientFactory is not null)
         {
             chatClient = clientFactory(chatClient);
         }
 
+        ChatClientAgentOptions agentOptions = new()
+        {
+            Id = agentName,
+            Name = agentName,
+            ChatOptions = new() { Tools = tools },
+        };
+
         return WireClientHeaders(new ChatClientAgent(chatClient, agentOptions, services: services));
+    }
+
+    /// <summary>
+    /// Builds the project-scoped <see cref="ProjectOpenAIClient"/> for the agent-endpoint
+    /// constructor by deriving the project root from the supplied agent endpoint and constructing
+    /// a fresh client without <see cref="ProjectOpenAIClientOptions.AgentName"/> so the SDK
+    /// appends the standard <c>/openai/v1</c> suffix expected for project-level surfaces such as
+    /// conversations.
+    /// </summary>
+    /// <remarks>
+    /// Only the four observable primitive properties (<see cref="ClientPipelineOptions.RetryPolicy"/>,
+    /// <see cref="ClientPipelineOptions.NetworkTimeout"/>, <see cref="ClientPipelineOptions.Transport"/>,
+    /// and <c>UserAgentApplicationId</c>) are copied from the caller's options bag. Pipeline
+    /// policies added via <c>AddPolicy</c> on the caller bag do not propagate because
+    /// <see cref="ClientPipelineOptions"/> does not publicly enumerate its policies. The MEAI
+    /// user-agent policy is appended last.
+    /// </remarks>
+    private static ProjectOpenAIClient CreateProjectLevelOpenAIClientFromAgentEndpoint(
+        Uri agentEndpoint,
+        AuthenticationTokenProvider credential,
+        ProjectOpenAIClientOptions? clientOptions)
+    {
+        var (_, projectRoot) = ParseAgentEndpoint(agentEndpoint);
+
+        var projectOptions = new ProjectOpenAIClientOptions();
+        if (clientOptions is not null)
+        {
+            if (clientOptions.RetryPolicy is not null)
+            {
+                projectOptions.RetryPolicy = clientOptions.RetryPolicy;
+            }
+
+            if (clientOptions.NetworkTimeout is not null)
+            {
+                projectOptions.NetworkTimeout = clientOptions.NetworkTimeout;
+            }
+
+            if (clientOptions.Transport is not null)
+            {
+                projectOptions.Transport = clientOptions.Transport;
+            }
+
+            if (!string.IsNullOrEmpty(clientOptions.UserAgentApplicationId))
+            {
+                projectOptions.UserAgentApplicationId = clientOptions.UserAgentApplicationId;
+            }
+        }
+
+        projectOptions.AddPolicy(RequestOptionsExtensions.UserAgentPolicy, PipelinePosition.PerCall);
+
+        return new ProjectOpenAIClient(projectRoot, credential, projectOptions);
+    }
+
+    /// <summary>
+    /// Parses an agent endpoint URI of shape
+    /// <c>https://&lt;host&gt;/.../projects/&lt;project&gt;/agents/&lt;agentName&gt;/endpoint/protocols/openai</c>
+    /// and returns the agent name and the derived project-root URI.
+    /// </summary>
+    /// <remarks>
+    /// Single source of truth for both agent-name extraction and project-root derivation.
+    /// Tolerates trailing slash, casing variants on <c>/agents/</c> and the suffix segment, and
+    /// strips query string and fragment. Throws <see cref="ArgumentException"/> for inputs that
+    /// do not match the expected shape.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// The endpoint is missing the <c>/agents/</c> segment, has an empty agent name, or has a
+    /// suffix other than <c>/endpoint/protocols/openai</c>.
+    /// </exception>
+    internal static (string AgentName, Uri ProjectRoot) ParseAgentEndpoint(Uri agentEndpoint)
+    {
+        Throw.IfNull(agentEndpoint);
+
+        const string AgentsSegment = "/agents/";
+        const string ExpectedSuffix = "/endpoint/protocols/openai";
+
+        var path = agentEndpoint.AbsolutePath.TrimEnd('/');
+        var idx = path.IndexOf(AgentsSegment, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+        {
+            throw new ArgumentException(
+                $"Expected an agent endpoint of shape 'https://<host>/.../projects/<project>/agents/<agentName>/endpoint/protocols/openai' but got '{agentEndpoint}'. " +
+                "If you want to construct a FoundryAgent against a project endpoint, use the (Uri projectEndpoint, AuthenticationTokenProvider credential, string model, string instructions, ...) constructor instead.",
+                nameof(agentEndpoint));
+        }
+
+        var afterAgents = path.Substring(idx + AgentsSegment.Length);
+        var nextSlash = afterAgents.IndexOf('/');
+        if (nextSlash <= 0)
+        {
+            throw new ArgumentException(
+                $"Agent endpoint '{agentEndpoint}' is missing the '<agentName>{ExpectedSuffix}' suffix.",
+                nameof(agentEndpoint));
+        }
+
+        var agentName = afterAgents.Substring(0, nextSlash);
+        var suffix = afterAgents.Substring(nextSlash);
+        if (!string.Equals(suffix, ExpectedSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"Agent endpoint '{agentEndpoint}' has an unexpected suffix '{suffix}'. Expected '{ExpectedSuffix}'.",
+                nameof(agentEndpoint));
+        }
+
+        var rootPath = path.Substring(0, idx);
+        var projectRoot = new UriBuilder(agentEndpoint)
+        {
+            Path = rootPath,
+            Query = string.Empty,
+            Fragment = string.Empty,
+        }.Uri;
+
+        return (agentName, projectRoot);
     }
 
     private static AIProjectClient CreateProjectClient(Uri endpoint, AuthenticationTokenProvider credential, AIProjectClientOptions? clientOptions = null)
@@ -278,7 +457,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
         Throw.IfNull(credential);
 
         clientOptions ??= new AIProjectClientOptions();
-        clientOptions.AddPolicy(RequestOptionsExtensions.UserAgentPolicy, System.ClientModel.Primitives.PipelinePosition.PerCall);
+        clientOptions.AddPolicy(RequestOptionsExtensions.UserAgentPolicy, PipelinePosition.PerCall);
         return new AIProjectClient(endpoint, credential, clientOptions);
     }
 
