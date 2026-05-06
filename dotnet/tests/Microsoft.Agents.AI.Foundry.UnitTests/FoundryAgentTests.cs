@@ -5,6 +5,7 @@ using System.ClientModel.Primitives;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
@@ -151,6 +152,48 @@ public class FoundryAgentTests
         ChatClientAgent? innerAgent = agent.GetService<ChatClientAgent>();
 
         Assert.NotNull(innerAgent);
+    }
+
+    [Fact]
+    public void Constructor_PreWiresClientHeadersAgent()
+    {
+        // Arrange / Act: the public FoundryAgent ctor should pre-wire the client-headers
+        // pipeline so x-client-* headers stamped on ChatClientAgentRunOptions reach the wire.
+        FoundryAgent agent = new(
+            s_testEndpoint,
+            new FakeAuthenticationTokenProvider(),
+            model: "gpt-4o-mini",
+            instructions: "Test");
+
+        // Assert: ClientHeadersAgent decorator is present in the delegating chain.
+        Assert.NotNull(agent.GetService<ClientHeadersAgent>());
+    }
+
+    [Fact]
+    public void Constructor_FromAsAIAgentExtension_PreWiresClientHeadersAgent()
+    {
+        // Arrange: stand up a real AIProjectClient pointed at a fake transport.
+        using var handler = new NoopHandler();
+#pragma warning disable CA5399
+        using var http = new HttpClient(handler);
+#pragma warning restore CA5399
+        var projectClient = new AIProjectClient(
+            s_testEndpoint,
+            new FakeAuthenticationTokenProvider(),
+            new AIProjectClientOptions { Transport = new HttpClientPipelineTransport(http) });
+
+        // Act: this AsAIAgent path constructs FoundryAgent via its internal
+        // (AIProjectClient, ChatClientAgent) constructor, which previously bypassed pre-wiring.
+        var agent = projectClient.AsAIAgent(new Azure.AI.Extensions.OpenAI.AgentReference("agent-name"));
+
+        // Assert
+        Assert.NotNull(agent.GetService<ClientHeadersAgent>());
+    }
+
+    private sealed class NoopHandler : HttpClientHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
     }
 
     [Fact]
