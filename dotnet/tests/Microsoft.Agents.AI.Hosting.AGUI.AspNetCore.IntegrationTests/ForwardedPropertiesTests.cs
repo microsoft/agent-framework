@@ -265,6 +265,55 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
         fakeAgent.ReceivedForwardedProperties.GetProperty("objectProp").GetProperty("nested").GetString().Should().Be("value");
     }
 
+    [Fact]
+    public async Task MultimodalUserMessage_IsAcceptedAndPassedToAgentAsync()
+    {
+        // Arrange
+        FakeForwardedPropsAgent fakeAgent = new();
+        await this.SetupTestServerAsync(fakeAgent);
+
+        const string RequestJson = """
+            {
+                "threadId": "thread-1",
+                "runId": "run-1",
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": [
+                            { "type": "text", "text": "What is in this image?" },
+                            {
+                                "type": "binary",
+                                "mimeType": "image/png",
+                                "filename": "pixel.png",
+                                "data": "aGVsbG8="
+                            }
+                        ]
+                    }
+                ],
+                "context": []
+            }
+            """;
+
+        using StringContent content = new(RequestJson, Encoding.UTF8, "application/json");
+
+        // Act
+        HttpResponseMessage response = await this._client!.PostAsync(new Uri("/agent", UriKind.Relative), content);
+
+        // Assert
+        response.IsSuccessStatusCode.Should().BeTrue();
+        fakeAgent.ReceivedMessages.Should().HaveCount(1);
+        ChatMessage message = fakeAgent.ReceivedMessages[0];
+        message.Role.Should().Be(ChatRole.User);
+        message.Contents.Should().HaveCount(2);
+        message.Contents[0].Should().BeOfType<TextContent>();
+        message.Contents[1].Should().BeOfType<DataContent>();
+
+        DataContent dataContent = (DataContent)message.Contents[1];
+        dataContent.MediaType.Should().Be("image/png");
+        dataContent.Name.Should().Be("pixel.png");
+    }
+
     private async Task SetupTestServerAsync(FakeForwardedPropsAgent fakeAgent)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -303,9 +352,11 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
     public override string? Description => "Agent for forwarded properties testing";
 
     public JsonElement ReceivedForwardedProperties { get; private set; }
+    public List<ChatMessage> ReceivedMessages { get; } = [];
 
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
+        this.CaptureMessages(messages);
         return this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
@@ -315,6 +366,8 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        this.CaptureMessages(messages);
+
         // Extract forwarded properties from ChatOptions.AdditionalProperties (set by AG-UI hosting layer)
         if (options is ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties } &&
             properties.TryGetValue("ag_ui_forwarded_properties", out object? propsObj) &&
@@ -364,4 +417,10 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
     }
 
     public override object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+    private void CaptureMessages(IEnumerable<ChatMessage> messages)
+    {
+        this.ReceivedMessages.Clear();
+        this.ReceivedMessages.AddRange(messages);
+    }
 }
