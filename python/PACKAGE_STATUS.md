@@ -30,6 +30,7 @@ Status is grouped into these buckets:
 | `agent-framework-declarative` | `python/packages/declarative` | `beta` |
 | `agent-framework-devui` | `python/packages/devui` | `beta` |
 | `agent-framework-durabletask` | `python/packages/durabletask` | `beta` |
+| `agent-framework-fake` | `python/packages/core` | `alpha` |
 | `agent-framework-foundry` | `python/packages/foundry` | `released` |
 | `agent-framework-foundry-local` | `python/packages/foundry_local` | `beta` |
 | `agent-framework-gemini` | `python/packages/gemini` | `alpha` |
