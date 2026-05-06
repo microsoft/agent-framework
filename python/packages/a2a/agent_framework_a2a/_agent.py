@@ -367,7 +367,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 update = AgentResponseUpdate(
                     contents=contents,
                     role="assistant" if item.role == A2ARole.agent else "user",
-                    response_id=str(getattr(item, "message_id", uuid.uuid4())),
+                    response_id=item.task_id or str(uuid.uuid4()),
+                    message_id=item.message_id,
                     additional_properties={"a2a_metadata": item.metadata} if item.metadata else None,
                     raw_representation=item,
                 )

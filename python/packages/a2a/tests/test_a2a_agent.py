@@ -48,7 +48,9 @@ class MockA2AClient:
         self.get_task_response: Task | None = None
         self.last_message: Any = None
 
-    def add_message_response(self, message_id: str, text: str, role: str = "agent") -> None:
+    def add_message_response(
+        self, message_id: str, text: str, role: str = "agent", task_id: str | None = None
+    ) -> None:
         """Add a mock Message response."""
 
         # Create actual TextPart instance and wrap it in Part
@@ -56,7 +58,10 @@ class MockA2AClient:
 
         # Create actual Message instance
         message = A2AMessage(
-            message_id=message_id, role=A2ARole.agent if role == "agent" else A2ARole.user, parts=[text_part]
+            message_id=message_id,
+            role=A2ARole.agent if role == "agent" else A2ARole.user,
+            parts=[text_part],
+            task_id=task_id,
         )
         self.responses.append(message)
 
@@ -226,7 +231,9 @@ async def test_run_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: M
     assert len(response.messages) == 1
     assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "Hello from agent!"
-    assert response.response_id == "msg-123"
+    # Without task_id, response_id is a generated UUID (not the message_id)
+    assert response.response_id is not None
+    assert response.response_id != "msg-123"
     assert mock_a2a_client.call_count == 1
 
 
@@ -462,8 +469,27 @@ async def test_run_streaming_with_message_response(a2a_agent: A2AAgent, mock_a2a
     assert content.type == "text"
     assert content.text == "Streaming response from agent!"
 
-    assert updates[0].response_id == "msg-stream-123"
+    # Without task_id, response_id is a generated UUID, message_id carries the message identifier
+    assert updates[0].response_id is not None
+    assert updates[0].response_id != "msg-stream-123"
+    assert updates[0].message_id == "msg-stream-123"
     assert mock_a2a_client.call_count == 1
+
+
+@mark.asyncio
+async def test_message_response_id_uses_task_id_and_propagates_message_id(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that response_id uses task_id and message_id is separately propagated (fixes #5263)."""
+    mock_a2a_client.add_message_response("msg-100", "Hello!", "agent", task_id="task-200")
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hi", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].response_id == "task-200"
+    assert updates[0].message_id == "msg-100"
 
 
 async def test_context_manager_cleanup() -> None:
