@@ -700,11 +700,6 @@ class WorkflowBuilder:
                     max_iterations=self._max_iterations,
                     output_executors=output_executors_for_workflow,
                 )
-                # Bind the runner context to the workflow so the runner can consult it as
-                # the single source of truth for output-event labeling. Both objects must
-                # exist first (the workflow needs the context for its Runner), so the
-                # back-reference is assigned here as the last step of build().
-                context._workflow = workflow
                 build_attributes: dict[str, Any] = {
                     OtelAttr.WORKFLOW_BUILDER_NAME: self._name,
                     OtelAttr.WORKFLOW_ID: workflow.id,

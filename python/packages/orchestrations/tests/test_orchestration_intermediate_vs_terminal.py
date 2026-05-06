@@ -351,7 +351,7 @@ async def test_group_chat_intermediate_outputs_true_designates_all() -> None:
 def test_handoff_builder_designates_every_participant_as_output() -> None:
     """Handoff has no intermediate channel — every participant's reply is a primary
     output. The builder must designate all participants in the workflow's
-    ``_output_executors`` set so each per-agent yield surfaces as type='output'.
+    output designation so each per-agent yield surfaces as type='output'.
 
     Structural assertion (vs end-to-end) because Handoff agents require a full
     chat-client/middleware stack that we don't want to reproduce in this contract test.
@@ -385,7 +385,7 @@ def test_handoff_builder_designates_every_participant_as_output() -> None:
 
     workflow = HandoffBuilder(participants=[alpha, beta]).with_start_agent(alpha).build()
 
-    designated = set(workflow._output_executors or [])  # type: ignore[arg-type]
+    designated = {ex.id for ex in workflow.get_output_executors()}
     assert "alpha" in designated, f"alpha must be designated; got {designated}"
     assert "beta" in designated, f"beta must be designated; got {designated}"
 
@@ -429,7 +429,7 @@ def test_magentic_builder_default_only_manager_designated() -> None:
     """Default Magentic: only the orchestrator (manager) is designated for terminal output;
     participant replies surface as type='intermediate'.
 
-    Structural assertion on ``workflow._output_executors`` because exercising a Magentic
+    Structural assertion on the workflow's output designation because exercising a Magentic
     plan/replan loop end-to-end is heavy and orthogonal to this contract.
     """
     manager = _StubMagenticManager()
@@ -437,7 +437,7 @@ def test_magentic_builder_default_only_manager_designated() -> None:
 
     workflow = MagenticBuilder(participants=[alpha], manager=manager).build()
 
-    designated = set(workflow._output_executors or [])  # type: ignore[arg-type]
+    designated = {ex.id for ex in workflow.get_output_executors()}
     assert "magentic_orchestrator" in designated, f"manager must be designated; got {designated}"
     assert "alpha" not in designated, f"participant must not be designated by default; got {designated}"
 
@@ -449,5 +449,5 @@ def test_magentic_builder_intermediate_outputs_true_designates_all() -> None:
 
     workflow = MagenticBuilder(participants=[alpha], manager=manager, intermediate_outputs=True).build()
 
-    designated = set(workflow._output_executors or [])  # type: ignore[arg-type]
+    designated = {ex.id for ex in workflow.get_output_executors()}
     assert {"magentic_orchestrator", "alpha"}.issubset(designated)

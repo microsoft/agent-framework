@@ -11,6 +11,7 @@ import logging
 import types
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .._sessions import ContextProvider
@@ -100,6 +101,24 @@ class WorkflowRunResult(list[WorkflowEvent]):
 
 
 # region Workflow
+
+
+@dataclass(frozen=True)
+class OutputDesignation:
+    """Immutable rule for labeling executor yields as terminal vs intermediate outputs.
+
+    ``designated`` is ``None`` in legacy mode (every yield is terminal) and a
+    ``frozenset[str]`` of executor IDs in strict mode (only those yields are terminal).
+    Package-internal value type owned by ``Workflow``; not exported from ``agent_framework``.
+    """
+
+    designated: frozenset[str] | None = field(default=None)
+
+    def is_terminal(self, executor_id: str) -> bool:
+        """Return True when ``executor_id``'s yields should be labeled type='output'."""
+        if self.designated is None:
+            return True
+        return executor_id in self.designated
 
 
 class Workflow(DictConvertible):
@@ -217,10 +236,11 @@ class Workflow(DictConvertible):
         self.graph_signature = self._compute_graph_signature()
         self.graph_signature_hash = self._hash_graph_signature(self.graph_signature)
 
-        # Stored as the original nullable shape so legacy (None) and strict-no-terminals ([])
-        # are distinguishable; consumed by `_should_yield_output_event` and the runner's
-        # labeling check.
-        self._output_executors: list[str] | None = list(output_executors) if output_executors is not None else None
+        # Single value type encodes legacy (None) vs strict (frozenset, possibly empty)
+        # output-designation policy; threaded as a parameter into executor invocations.
+        self._output_designation: OutputDesignation = OutputDesignation(
+            designated=frozenset(output_executors) if output_executors is not None else None,
+        )
 
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
@@ -232,6 +252,7 @@ class Workflow(DictConvertible):
             runner_context,
             self.name,
             self.graph_signature_hash,
+            self._output_designation,
             max_iterations=max_iterations,
         )
 
@@ -257,7 +278,9 @@ class Workflow(DictConvertible):
             "max_iterations": self.max_iterations,
             "edge_groups": [group.to_dict() for group in self.edge_groups],
             "executors": {executor_id: executor.to_dict() for executor_id, executor in self.executors.items()},
-            "output_executors": self._output_executors,
+            "output_executors": (
+                sorted(self._output_designation.designated) if self._output_designation.designated is not None else None
+            ),
         }
 
         if self.description is not None:
@@ -297,9 +320,19 @@ class Workflow(DictConvertible):
         In legacy mode (no explicit ``output_executors``), returns every executor in the
         workflow. In strict mode, returns only the designated output executors.
         """
-        if self._output_executors is None:
+        designated = self._output_designation.designated
+        if designated is None:
             return list(self.executors.values())
-        return [self.executors[executor_id] for executor_id in self._output_executors]
+        return [self.executors[executor_id] for executor_id in designated if executor_id in self.executors]
+
+    def is_terminal_executor(self, executor_id: str) -> bool:
+        """Return True when ``executor_id``'s yields are labeled type='output'.
+
+        Public read-only predicate over the workflow's output designation. External
+        observers (e.g., orchestration tests, DevUI mappers) should consult this rather
+        than re-encoding the rule as a set-membership check.
+        """
+        return self._output_designation.is_terminal(executor_id)
 
     def get_executors_list(self) -> list[Executor]:
         """Get the list of executors in the workflow."""
@@ -489,6 +522,7 @@ class Workflow(DictConvertible):
                 [self.__class__.__name__],
                 self._state,
                 self._runner.context,
+                output_designation=self._output_designation,
                 trace_contexts=None,
                 source_span_ids=None,
             )
@@ -640,7 +674,11 @@ class Workflow(DictConvertible):
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
         ):
-            if event.type == "output" and not self._should_yield_output_event(event):
+            if (
+                event.type == "output"
+                and event.executor_id is not None
+                and not self._output_designation.is_terminal(event.executor_id)
+            ):
                 continue
             if event.type == "request_info" and event.request_id in (responses or {}):
                 # Don't yield request_info events for which we have responses to send -
@@ -833,21 +871,6 @@ class Workflow(DictConvertible):
             param_name,
         )
         return {GLOBAL_KWARGS_KEY: dict(kwargs)}
-
-    def _should_yield_output_event(self, event: WorkflowEvent[Any]) -> bool:
-        """Determine if an output event should be yielded as a workflow output.
-
-        Args:
-            event: The WorkflowEvent with type='output' to evaluate.
-
-        Returns:
-            True if the event should be yielded as a workflow output, False otherwise.
-        """
-        # Legacy mode: every yield is treated as a workflow output.
-        if self._output_executors is None:
-            return True
-        # Strict mode: only yields from designated executors are workflow outputs.
-        return event.executor_id in self._output_executors
 
     # Graph signature helpers
 

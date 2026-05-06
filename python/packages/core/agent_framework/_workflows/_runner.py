@@ -5,7 +5,7 @@ import contextlib
 import logging
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..exceptions import (
     WorkflowCheckpointException,
@@ -24,6 +24,9 @@ from ._runner_context import (
 )
 from ._state import State
 
+if TYPE_CHECKING:
+    from ._workflow import OutputDesignation
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,6 +41,7 @@ class Runner:
         ctx: RunnerContext,
         workflow_name: str,
         graph_signature_hash: str,
+        output_designation: "OutputDesignation | None" = None,
         max_iterations: int = 100,
     ) -> None:
         """Initialize the runner with edges, state, and context.
@@ -49,8 +53,13 @@ class Runner:
             ctx: The runner context for the workflow.
             workflow_name: The name of the workflow, used for checkpoint labeling.
             graph_signature_hash: A hash representing the workflow graph topology for checkpoint validation.
+            output_designation: Snapshot of the workflow's output designation policy. Threaded
+                through edge runners to executors so yields are labeled correctly. Defaults to
+                legacy mode (every yield is type='output') for direct ``Runner`` callers.
             max_iterations: The maximum number of iterations to run.
         """
+        from ._workflow import OutputDesignation
+
         # Workflow instance related attributes
         self._executors = executors
         self._edge_runners = [create_edge_runner(group, executors) for group in edge_groups]
@@ -58,6 +67,7 @@ class Runner:
         self._ctx = ctx
         self._workflow_name = workflow_name
         self._graph_signature_hash = graph_signature_hash
+        self._output_designation: OutputDesignation = output_designation or OutputDesignation()
 
         # Runner state related attributes
         self._iteration = 0
@@ -184,7 +194,7 @@ class Runner:
 
             async def _deliver_message_inner(edge_runner: EdgeRunner, message: WorkflowMessage) -> bool:
                 """Inner loop to deliver a single message through an edge runner."""
-                return await edge_runner.send_message(message, self._state, self._ctx)
+                return await edge_runner.send_message(message, self._state, self._ctx, self._output_designation)
 
             async def _deliver_messages_for_edge_runner(edge_runner: EdgeRunner) -> None:
                 # Preserve message order per edge runner (and therefore per routed target path)

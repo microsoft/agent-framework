@@ -555,7 +555,7 @@ def test_output_validation_with_valid_output_executors():
     )
 
     assert workflow is not None
-    assert workflow._output_executors == ["executor2"]  # pyright: ignore[reportPrivateUsage]
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor2"}
 
 
 def test_output_validation_with_multiple_valid_output_executors():
@@ -572,7 +572,7 @@ def test_output_validation_with_multiple_valid_output_executors():
     )
 
     assert workflow is not None
-    assert set(workflow._output_executors) == {"executor1", "executor3"}  # pyright: ignore[reportPrivateUsage]
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor1", "executor3"}
 
 
 def test_output_validation_fails_for_nonexistent_executor():
@@ -622,7 +622,9 @@ def test_output_validation_empty_list_passes():
 
     assert workflow is not None
     # Explicit empty list = strict mode with zero designated outputs.
-    assert workflow._output_executors == []  # type: ignore[attr-defined]
+    assert workflow.get_output_executors() == []
+    assert not workflow.is_terminal_executor("executor1")
+    assert not workflow.is_terminal_executor("executor2")
 
 
 def test_output_validation_with_direct_validate_workflow_graph():
