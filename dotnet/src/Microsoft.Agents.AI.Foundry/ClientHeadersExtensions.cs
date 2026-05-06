@@ -31,7 +31,7 @@ namespace Microsoft.Agents.AI.Foundry;
 /// When either condition is not met the call is a silent no-op.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+[Experimental(DiagnosticIds.Experiments.AIOpenAIRequestPolicies)]
 public static class ClientHeadersExtensions
 {
     /// <summary>The well-known <see cref="ChatOptions.AdditionalProperties"/> key used to carry the dictionary across packages.</summary>

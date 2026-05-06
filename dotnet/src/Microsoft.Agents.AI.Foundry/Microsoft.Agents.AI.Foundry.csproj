@@ -3,7 +3,7 @@
   <PropertyGroup>
     <IsReleased>true</IsReleased>
     <InjectSharedThrow>true</InjectSharedThrow>
-    <NoWarn>$(NoWarn);OPENAI001;MEAI001</NoWarn>
+    <NoWarn>$(NoWarn);OPENAI001</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

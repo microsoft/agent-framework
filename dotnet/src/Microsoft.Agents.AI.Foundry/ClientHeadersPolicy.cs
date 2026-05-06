@@ -3,12 +3,11 @@
 using System;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
-#if NET
 using System.Diagnostics.CodeAnalysis;
-#endif
 using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry;
 
@@ -72,6 +71,7 @@ internal sealed class ClientHeadersPolicy : PipelinePolicy
 /// <see cref="ClientHeadersPolicy"/> uses <c>Headers.Set</c>. A CI test asserts the field shape
 /// to fail loudly on future MEAI bumps.
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIRequestPolicies)]
 internal static class OpenAIRequestPoliciesReflection
 {
     private static readonly Lazy<FieldInfo?> s_entriesField = new(() =>

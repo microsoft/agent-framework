@@ -11,7 +11,10 @@ namespace Microsoft.Agents.AI.Foundry;
 /// <see cref="ClientHeadersPolicy"/> running inside the SCM transport pipeline.
 /// </summary>
 /// <remarks>
-/// Stack-style usage with <c>using</c> ensures LIFO restoration of any prior value.
+/// AsyncLocal flows the value into downstream awaits but does not roll the value back when the
+/// setting method returns. This type pairs each <see cref="Push(IReadOnlyDictionary{string, string}?)"/>
+/// with a disposable that explicitly restores the prior value, giving stack-style LIFO semantics
+/// for nested or sequential per-call scopes on the same async flow.
 /// </remarks>
 internal static class ClientHeadersScope
 {
