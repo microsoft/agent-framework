@@ -95,6 +95,8 @@ internal static partial class WorkflowsJsonUtilities
 
     // Built-in Executor State Types
     [JsonSerializable(typeof(AIAgentHostState))]
+    [JsonSerializable(typeof(HandoffSharedState))]
+    [JsonSerializable(typeof(HandoffAgentHostState))]
 
     // Event Types
     //[JsonSerializable(typeof(WorkflowEvent))]

@@ -204,7 +204,7 @@ public class OutputConverterTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
         {
-            await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(updates, stream, cts.Token))
+            await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(updates, stream, cancellationToken: cts.Token))
             {
                 // Should throw before yielding
             }
@@ -1066,6 +1066,133 @@ public class OutputConverterTests
         // Only the terminal completed event
         Assert.Single(events);
         Assert.IsType<ResponseCompletedEvent>(events[0]);
+    }
+
+    // === Tool-approval (HITL) wire-format coverage ===
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolApprovalRequest_EmitsMcpApprovalRequestAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        const string AfRequestId = "af_request_abc";
+        var functionCall = new FunctionCallContent("call_1", "delete_resource",
+            new Dictionary<string, object?> { ["target"] = "db" });
+        var approval = new ToolApprovalRequestContent(AfRequestId, functionCall);
+
+        var update = new AgentResponseUpdate { Contents = [approval] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream, stateBag))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var item = Assert.IsType<OutputItemMcpApprovalRequest>(added.Item);
+        Assert.Equal("agent_framework", item.ServerLabel);
+        Assert.Equal("delete_resource", item.Name);
+        Assert.Contains("\"target\":\"db\"", item.Arguments);
+        Assert.StartsWith("mcpr_", item.Id);
+
+        // Mapping persisted to state bag.
+        Assert.Equal(AfRequestId, ToolApprovalIdMap.Resolve(stateBag, item.Id));
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolApprovalRequest_NonFunctionToolCall_SkippedAsync()
+    {
+        // ToolCall implementations that aren't FunctionCallContent (e.g. raw MCP calls)
+        // are intentionally NOT emitted — mirrors the OpenAI Hosting layer's behavior.
+        var (stream, _) = CreateTestStream();
+        var unknownTool = new RawToolCallContent("call_x");
+        var approval = new ToolApprovalRequestContent("af_x", unknownTool);
+
+        var update = new AgentResponseUpdate { Contents = [approval] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        Assert.DoesNotContain(events.OfType<ResponseOutputItemAddedEvent>(),
+            e => e.Item is OutputItemMcpApprovalRequest);
+
+        // Defense in depth: only the terminal ResponseCompletedEvent should be emitted.
+        // No spurious output-item-added/output-item-done events should leak for the
+        // unsupported tool-call shape.
+        Assert.Single(events);
+        Assert.IsType<ResponseCompletedEvent>(events[0]);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolApprovalResponse_NotReEmittedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var fc = new FunctionCallContent("call_1", "noop");
+        var response = new ToolApprovalResponseContent("af_x", true, fc);
+
+        var update = new AgentResponseUpdate { Contents = [response] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Approval responses are inbound-only; output side should silently drop them
+        // and emit only the terminal completed event.
+        Assert.Single(events);
+        Assert.IsType<ResponseCompletedEvent>(events[0]);
+    }
+
+    // D1: WorkflowEvent in RawRepresentation but Contents is non-empty → fall through to content path.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_WorkflowEventWithTextContent_FlowsThroughContentPathAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            MessageId = "msg_workflow_text",
+            RawRepresentation = new ExecutorInvokedEvent("exec_x", "invoked"),
+            Contents = [new MeaiTextContent("payload from workflow event")],
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Content path must have been taken: a text-delta event must be emitted from the payload.
+        Assert.Contains(events, e => e is ResponseTextDeltaEvent);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_WorkflowEventWithErrorContent_EmitsFailedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            RawRepresentation = new ExecutorFailedEvent("exec_y", new InvalidOperationException("boom")),
+            Contents = [new ErrorContent("boom")],
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // ErrorContent should drive a failed event rather than being swallowed by the workflow branch.
+        Assert.Contains(events, e => e is ResponseFailedEvent);
+    }
+
+    private sealed class RawToolCallContent : ToolCallContent
+    {
+        public RawToolCallContent(string callId) : base(callId) { }
     }
 
     private static async IAsyncEnumerable<T> ToAsync<T>(IEnumerable<T> source)
