@@ -3,6 +3,7 @@
 import logging
 import sys
 import uuid
+import warnings
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -98,8 +99,15 @@ class WorkflowBuilder:
             start_executor: The starting executor for the workflow. Can be an Executor instance
                 or SupportsAgentRun instance.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
-            output_executors: Optional list of executors whose outputs should be collected.
-                If not provided, outputs from all executors are collected.
+            output_executors: Designates which executors emit terminal output (``type='output'``
+                workflow events). Three-state contract:
+
+                - **Unset (default):** legacy mode. Every ``yield_output`` produces ``type='output'``.
+                  A ``DeprecationWarning`` is raised at ``build()`` recommending explicit designation.
+                - **``[]`` (explicit empty list):** strict mode with no terminals. Every ``yield_output``
+                  produces ``type='intermediate'``. ``WorkflowRunResult.get_outputs()`` returns ``[]``.
+                - **``[X, ...]`` (explicit list):** strict mode. Yields from designated executors
+                  produce ``type='output'``; all other yields produce ``type='intermediate'``.
         """
         self._edge_groups: list[EdgeGroup] = []
         self._executors: dict[str, Executor] = {}
@@ -113,8 +121,12 @@ class WorkflowBuilder:
         # being created for the same agent.
         self._agent_wrappers: dict[str, Executor] = {}
 
-        # Output executors filter; if set, only outputs from these executors are yielded
-        self._output_executors: list[Executor | SupportsAgentRun] = output_executors if output_executors else []
+        # Output executors filter. ``None`` means legacy mode (every yield_output produces
+        # type='output'). Any list (including ``[]``) opts into strict mode — designated
+        # executors emit type='output', all other executors emit type='intermediate'.
+        self._output_executors: list[Executor | SupportsAgentRun] | None = (
+            list(output_executors) if output_executors is not None else None
+        )
 
         # Set the start executor
         self._set_start_executor(start_executor)
@@ -637,19 +649,39 @@ class WorkflowBuilder:
                         "Starting executor must be set via the start_executor constructor parameter before building."
                     )
 
+                if self._output_executors is None:
+                    warnings.warn(
+                        "WorkflowBuilder built without explicit output_executors; every yield_output "
+                        "produces type='output' (legacy default). Pass output_executors=[...] to opt "
+                        "into the strict contract — explicit designation will be required in a future "
+                        "major release.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
+
                 start_executor = self._start_executor
                 executors = self._executors
                 edge_groups = self._edge_groups
-                output_executors = [ex.id for ex in self._output_executors if isinstance(ex, Executor)] + [
-                    resolve_agent_id(agent) for agent in self._output_executors if isinstance(agent, SupportsAgentRun)
-                ]
+                # Resolve designated executor ids when output_executors was passed explicitly.
+                # Legacy mode (None) and strict mode (any list) are distinguished here once;
+                # both the runner context and the Workflow receive a single shape.
+                output_executors_for_workflow: list[str] | None = (
+                    [ex.id for ex in self._output_executors if isinstance(ex, Executor)]
+                    + [
+                        resolve_agent_id(agent)
+                        for agent in self._output_executors
+                        if isinstance(agent, SupportsAgentRun)
+                    ]
+                    if self._output_executors is not None
+                    else None
+                )
 
                 # Perform validation before creating the workflow
                 validate_workflow_graph(
                     edge_groups,
                     executors,
                     start_executor,
-                    output_executors,
+                    output_executors_for_workflow or [],
                 )
 
                 # Add validation completed event
@@ -666,7 +698,7 @@ class WorkflowBuilder:
                     self._name,
                     description=self._description,
                     max_iterations=self._max_iterations,
-                    output_executors=output_executors,
+                    output_executors=output_executors_for_workflow,
                 )
                 build_attributes: dict[str, Any] = {
                     OtelAttr.WORKFLOW_BUILDER_NAME: self._name,

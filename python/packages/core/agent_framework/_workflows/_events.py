@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 import sys
 import traceback as _traceback
+import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -106,8 +107,9 @@ WorkflowEventType = Literal[
     "status",  # Workflow state changed (use .state)
     "failed",  # Workflow terminated with error (use .details)
     # Data events
-    "output",  # Executor yielded final output (use .executor_id, .data)
-    "data",  # Executor emitted data during execution (use .executor_id, .data)
+    "output",  # Executor yielded final terminal output (use .executor_id, .data)
+    "intermediate",  # Executor emitted intermediate (non-terminal) output (use .executor_id, .data)
+    "data",  # DEPRECATED — legacy alias for intermediate emissions; use type='intermediate' instead.
     # Request events (human-in-the-loop)
     "request_info",  # Executor requests external info (use .request_id, .source_executor_id)
     # Diagnostic events (warnings/errors from user code)
@@ -128,6 +130,19 @@ WorkflowEventType = Literal[
 ]
 
 
+# Event types forwarded across the ``workflow.as_agent()`` boundary. Anything not
+# in this set — lifecycle events, diagnostics, executor bookkeeping, and
+# orchestration-internal events (``group_chat``, ``handoff_sent``,
+# ``magentic_orchestrator``) — stays inside the workflow and is not surfaced to
+# agent callers. Internal to the ``_workflows`` package.
+_AGENT_FORWARDED_EVENT_TYPES: frozenset[str] = frozenset({
+    "output",
+    "intermediate",
+    "data",  # deprecated alias for intermediate; retained for backward compat
+    "request_info",
+})
+
+
 class WorkflowEvent(Generic[DataT]):
     """Unified event for all workflow emissions.
 
@@ -141,8 +156,8 @@ class WorkflowEvent(Generic[DataT]):
     - `WorkflowEvent.failed(details)` - workflow terminated with error
     - `WorkflowEvent.warning(message)` - warning from user code
     - `WorkflowEvent.error(exception)` - error from user code
-    - `WorkflowEvent.output(executor_id, data)` - executor yielded final output
-    - `WorkflowEvent.data(executor_id, data)` - executor emitted data (e.g., AgentResponse)
+    - `WorkflowEvent.output(executor_id, data)` - executor yielded final terminal output
+    - `WorkflowEvent.intermediate(executor_id, data)` - executor emitted intermediate (non-terminal) data
     - `WorkflowEvent.request_info(...)` - executor requests external info
     - `WorkflowEvent.superstep_started(iteration)` - superstep began
     - `WorkflowEvent.superstep_completed(iteration)` - superstep ended
@@ -265,16 +280,33 @@ class WorkflowEvent(Generic[DataT]):
 
     @classmethod
     def output(cls, executor_id: str, data: DataT) -> WorkflowEvent[DataT]:
-        """Create an 'output' event when an executor yields final output."""
+        """Create an 'output' event when an executor yields final terminal output."""
         return cls("output", executor_id=executor_id, data=data)
 
     @classmethod
-    def emit(cls, executor_id: str, data: DataT) -> WorkflowEvent[DataT]:
-        """Create a 'data' event when an executor emits data during execution.
+    def intermediate(cls, executor_id: str, data: DataT) -> WorkflowEvent[DataT]:
+        """Create an 'intermediate' event for a non-terminal emission.
 
-        This is the primary method for executors to emit typed data
-        (e.g., AgentResponse, AgentResponseUpdate, custom data).
+        The runner labels yields automatically based on the workflow's ``output_executors``;
+        this factory exists for cases that need to construct events directly.
         """
+        return cls("intermediate", executor_id=executor_id, data=data)
+
+    @classmethod
+    def emit(cls, executor_id: str, data: DataT) -> WorkflowEvent[DataT]:
+        """Create a 'data' event (deprecated alias for intermediate emissions).
+
+        .. deprecated::
+            Use :meth:`WorkflowEvent.intermediate` instead. Will be removed in a future
+            major release along with the ``type='data'`` event variant.
+        """
+        warnings.warn(
+            "WorkflowEvent.emit() / type='data' are deprecated; use WorkflowEvent.intermediate() "
+            "(or ctx.yield_output() from a non-designated executor). Will be removed in a future "
+            "major release.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return cls("data", executor_id=executor_id, data=data)
 
     @classmethod

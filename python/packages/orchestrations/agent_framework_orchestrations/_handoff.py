@@ -955,11 +955,15 @@ class HandoffBuilder:
         if self._start_id is None:
             raise ValueError("Must call with_start_agent(...) before building the workflow.")
         start_executor = executors[self._resolve_to_id(resolved_agents[self._start_id])]
+        # Handoff has no separate terminator: every participant's reply is a primary
+        # output (termination is implicit when no handoff fires). All participants are
+        # designated outputs so each yield surfaces as type='output'.
         builder = WorkflowBuilder(
             name=self._name,
             description=self._description,
             start_executor=start_executor,
             checkpoint_storage=self._checkpoint_storage,
+            output_executors=list(executors.values()),
         )
 
         # Add the appropriate edges

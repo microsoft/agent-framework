@@ -5,7 +5,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from ..observability import EdgeGroupDeliveryStatus, OtelAttr, create_edge_group_processing_span
 from ._edge import (
@@ -20,6 +20,9 @@ from ._edge import (
 from ._executor import Executor
 from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
+
+if TYPE_CHECKING:
+    from ._workflow import OutputDesignation
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +41,21 @@ class EdgeRunner(ABC):
         self._executors = executors
 
     @abstractmethod
-    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(
+        self,
+        message: WorkflowMessage,
+        state: State,
+        ctx: RunnerContext,
+        output_designation: "OutputDesignation | None" = None,
+    ) -> bool:
         """Send a message through the edge group.
 
         Args:
             message: The message to send.
             state: The workflow state.
             ctx: The context for the runner.
+            output_designation: Snapshot of the workflow's output designation policy. Defaults
+                to legacy mode (every yield is type='output') for direct callers.
 
         Returns:
             bool: True if the message was processed successfully,
@@ -65,6 +76,7 @@ class EdgeRunner(ABC):
         message: WorkflowMessage,
         state: State,
         ctx: RunnerContext,
+        output_designation: "OutputDesignation | None" = None,
     ) -> None:
         """Execute a message on a target executor with trace context."""
         if target_id not in self._executors:
@@ -78,6 +90,7 @@ class EdgeRunner(ABC):
             source_ids,  # source_executor_ids
             state,  # state
             ctx,  # runner_context
+            output_designation=output_designation,
             trace_contexts=message.trace_contexts,  # Pass trace contexts
             source_span_ids=message.source_span_ids,  # Pass source span IDs for linking
         )
@@ -90,7 +103,13 @@ class SingleEdgeRunner(EdgeRunner):
         super().__init__(edge_group, executors)
         self._edge = edge_group.edges[0]
 
-    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(
+        self,
+        message: WorkflowMessage,
+        state: State,
+        ctx: RunnerContext,
+        output_designation: "OutputDesignation | None" = None,
+    ) -> bool:
         """Send a message through the single edge."""
         should_execute = False
         target_id: str | None = None
@@ -144,7 +163,7 @@ class SingleEdgeRunner(EdgeRunner):
 
         # Execute outside the span
         if should_execute and target_id and source_id:
-            await self._execute_on_target(target_id, [source_id], message, state, ctx)
+            await self._execute_on_target(target_id, [source_id], message, state, ctx, output_designation)
             return True
 
         return False
@@ -162,7 +181,13 @@ class FanOutEdgeRunner(EdgeRunner):
             Callable[[Any, list[str]], list[str]] | None, getattr(edge_group, "selection_func", None)
         )
 
-    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(
+        self,
+        message: WorkflowMessage,
+        state: State,
+        ctx: RunnerContext,
+        output_designation: "OutputDesignation | None" = None,
+    ) -> bool:
         """Send a message through all edges in the fan-out edge group."""
         deliverable_edges: list[Edge] = []
         single_target_edge: Edge | None = None
@@ -253,14 +278,19 @@ class FanOutEdgeRunner(EdgeRunner):
         # Execute outside the span
         if single_target_edge:
             await self._execute_on_target(
-                single_target_edge.target_id, [single_target_edge.source_id], message, state, ctx
+                single_target_edge.target_id,
+                [single_target_edge.source_id],
+                message,
+                state,
+                ctx,
+                output_designation,
             )
             return True
 
         if deliverable_edges:
 
             async def send_to_edge(edge: Edge) -> bool:
-                await self._execute_on_target(edge.target_id, [edge.source_id], message, state, ctx)
+                await self._execute_on_target(edge.target_id, [edge.source_id], message, state, ctx, output_designation)
                 return True
 
             tasks = [send_to_edge(edge) for edge in deliverable_edges]
@@ -285,7 +315,13 @@ class FanInEdgeRunner(EdgeRunner):
         # Key is the source executor ID, value is a list of messages
         self._buffer: dict[str, list[WorkflowMessage]] = defaultdict(list)
 
-    async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+    async def send_message(
+        self,
+        message: WorkflowMessage,
+        state: State,
+        ctx: RunnerContext,
+        output_designation: "OutputDesignation | None" = None,
+    ) -> bool:
         """Send a message through all edges in the fan-in edge group."""
         execution_data: dict[str, Any] | None = None
         with create_edge_group_processing_span(
@@ -362,7 +398,12 @@ class FanInEdgeRunner(EdgeRunner):
         # Execute outside the span if needed
         if execution_data:
             await self._execute_on_target(
-                execution_data["target_id"], execution_data["source_ids"], execution_data["message"], state, ctx
+                execution_data["target_id"],
+                execution_data["source_ids"],
+                execution_data["message"],
+                state,
+                ctx,
+                output_designation,
             )
             return True
 

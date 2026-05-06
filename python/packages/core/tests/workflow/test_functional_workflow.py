@@ -165,13 +165,13 @@ class TestEventEmission:
 
         @workflow
         async def pipeline(x: int, ctx: RunContext) -> int:
-            await ctx.add_event(WorkflowEvent.emit("pipeline", "custom_data"))
+            await ctx.add_event(WorkflowEvent.intermediate("pipeline", "custom_data"))
             return x
 
         result = await pipeline.run(1)
-        data_events = [e for e in result if e.type == "data"]
-        assert len(data_events) == 1
-        assert data_events[0].data == "custom_data"
+        intermediate_events = [e for e in result if e.type == "intermediate"]
+        assert len(intermediate_events) == 1
+        assert intermediate_events[0].data == "custom_data"
 
 
 # ---------------------------------------------------------------------------

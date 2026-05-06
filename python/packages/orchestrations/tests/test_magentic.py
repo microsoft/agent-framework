@@ -632,7 +632,8 @@ async def _collect_agent_responses_setup(participant: SupportsAgentRun) -> list[
 
     wf = MagenticBuilder(participants=[participant], intermediate_outputs=True, manager=InvokeOnceManager()).build()
 
-    # Run a bounded stream to allow one invoke and then completion
+    # With intermediate_outputs=True, participants are designated as outputs alongside
+    # the manager — so their streaming chunks surface as type='output' (not intermediate).
     events: list[WorkflowEvent] = []
     async for ev in wf.run("task", stream=True):
         events.append(ev)

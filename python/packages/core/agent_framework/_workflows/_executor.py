@@ -8,7 +8,10 @@ import logging
 import types
 import typing
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
+
+if TYPE_CHECKING:
+    from ._workflow import OutputDesignation
 
 from ..observability import create_processing_span
 from ._events import (
@@ -222,6 +225,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         source_executor_ids: list[str],
         state: State,
         runner_context: RunnerContext,
+        output_designation: "OutputDesignation | None" = None,
         trace_contexts: list[dict[str, str]] | None = None,
         source_span_ids: list[str] | None = None,
     ) -> None:
@@ -235,6 +239,8 @@ class Executor(RequestInfoMixin, DictConvertible):
             source_executor_ids: The IDs of the source executors that sent messages to this executor.
             state: The state for the workflow.
             runner_context: The runner context that provides methods to send messages and events.
+            output_designation: Snapshot of the workflow's output designation policy used to label
+                yields as terminal vs intermediate.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking.
 
@@ -263,6 +269,7 @@ class Executor(RequestInfoMixin, DictConvertible):
                 source_executor_ids=source_executor_ids,
                 state=state,
                 runner_context=runner_context,
+                output_designation=output_designation,
                 trace_contexts=trace_contexts,
                 source_span_ids=source_span_ids,
                 request_id=original_message.original_request_info_event.request_id
@@ -298,6 +305,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         source_executor_ids: list[str],
         state: State,
         runner_context: RunnerContext,
+        output_designation: "OutputDesignation | None" = None,
         trace_contexts: list[dict[str, str]] | None = None,
         source_span_ids: list[str] | None = None,
         request_id: str | None = None,
@@ -308,6 +316,8 @@ class Executor(RequestInfoMixin, DictConvertible):
             source_executor_ids: The IDs of the source executors that sent messages to this executor.
             state: The state for the workflow.
             runner_context: The runner context that provides methods to send messages and events.
+            output_designation: Snapshot of the workflow's output designation policy passed to
+                the WorkflowContext for yield labeling.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking.
             request_id: Optional request ID if this context is for a `handle_response` handler.
@@ -321,6 +331,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             source_executor_ids=source_executor_ids,
             state=state,
             runner_context=runner_context,
+            output_designation=output_designation,
             trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,
             request_id=request_id,

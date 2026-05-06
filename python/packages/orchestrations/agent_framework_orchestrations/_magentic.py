@@ -1762,11 +1762,17 @@ class MagenticBuilder:
         participants: list[Executor] = self._resolve_participants()
         orchestrator: Executor = self._resolve_orchestrator(participants)
 
-        # Build workflow graph
+        # Default: only the manager is designated; worker yields surface as intermediate.
+        # With intermediate_outputs=True, workers are also designated so their yields
+        # surface as type='output' — preserving the legacy contract.
+        # `magentic_orchestrator` events keep their dedicated event type.
+        designated: list[Executor | SupportsAgentRun] = (
+            [orchestrator, *participants] if self._intermediate_outputs else [orchestrator]
+        )
         workflow_builder = WorkflowBuilder(
             start_executor=orchestrator,
             checkpoint_storage=self._checkpoint_storage,
-            output_executors=[orchestrator] if not self._intermediate_outputs else None,
+            output_executors=designated,
         )
         for participant in participants:
             # Orchestrator and participant bi-directional edges

@@ -1056,7 +1056,7 @@ class PassthroughExecutor(Executor):
 
 
 async def test_output_executors_empty_yields_all_outputs() -> None:
-    """Test that when _output_executors is empty (default), all outputs are yielded."""
+    """Test that in legacy mode (no output_executors specified), all outputs are yielded."""
     # Create executors that each produce different outputs
     executor_a = PassthroughExecutor(id="executor_a", output_value=10)
     executor_b = OutputProducerExecutor(id="executor_b", output_value=20)
@@ -1154,12 +1154,14 @@ async def test_output_executors_with_multiple_specified_executors() -> None:
 
 async def test_output_executors_with_nonexistent_executor_id() -> None:
     """Test that specifying a non-existent executor ID doesn't break the workflow."""
+    from agent_framework._workflows._workflow import OutputDesignation
+
     executor_a = OutputProducerExecutor(id="executor_a", output_value=42)
 
     workflow = WorkflowBuilder(start_executor=executor_a).build()
 
-    # Set output_executors to an ID that doesn't exist
-    workflow._output_executors = ["nonexistent_executor"]  # type: ignore
+    # Designate a nonexistent executor so the workflow-level filter drops every yield.
+    workflow._output_designation = OutputDesignation(designated=frozenset({"nonexistent_executor"}))  # type: ignore[attr-defined]
 
     result = await workflow.run(NumberMessage(data=0))
     outputs = result.get_outputs()
@@ -1252,8 +1254,10 @@ async def test_output_executors_filtering_with_run_responses_streaming() -> None
     request_events = [e for e in events_list if e.type == "request_info"]
     assert len(request_events) == 1
 
-    # Set output_executors to exclude the approval executor
-    workflow._output_executors = ["other_executor"]  # type: ignore
+    # Designate a different executor so the workflow-level filter drops the approval yield.
+    from agent_framework._workflows._workflow import OutputDesignation
+
+    workflow._output_designation = OutputDesignation(designated=frozenset({"other_executor"}))  # type: ignore[attr-defined]
 
     # Send approval response via streaming
     responses = {request_events[0].request_id: ApprovalMessage(approved=True)}

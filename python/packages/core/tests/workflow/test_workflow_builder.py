@@ -272,7 +272,7 @@ def test_with_output_from_with_executor_instances():
     )
 
     # Verify that the workflow was built with the correct output executors
-    assert workflow._output_executors == ["executor_b"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor_b"}
 
 
 def test_with_output_from_with_agent_instances():
@@ -283,7 +283,7 @@ def test_with_output_from_with_agent_instances():
     workflow = WorkflowBuilder(start_executor=agent_a, output_executors=[agent_b]).add_edge(agent_a, agent_b).build()
 
     # Verify that the workflow was built with the agent's name as output executor
-    assert workflow._output_executors == ["reviewer"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"reviewer"}
 
 
 def test_with_output_from_with_executor_instances_by_id():
@@ -297,7 +297,7 @@ def test_with_output_from_with_executor_instances_by_id():
         .build()
     )
 
-    assert workflow._output_executors == ["ExecutorB"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"ExecutorB"}
 
 
 def test_with_output_from_with_multiple_executors():
@@ -314,7 +314,7 @@ def test_with_output_from_with_multiple_executors():
     )
 
     # Verify that the workflow was built with both output executors
-    assert set(workflow._output_executors) == {"executor_a", "executor_c"}  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor_a", "executor_c"}
 
 
 def test_with_output_from_can_be_set_to_different_value():
@@ -329,7 +329,7 @@ def test_with_output_from_can_be_set_to_different_value():
     )
 
     # Verify that the setting is applied
-    assert workflow._output_executors == ["executor_b"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor_b"}
 
 
 def test_with_output_from_with_agent_instances_resolves_name():
@@ -343,7 +343,7 @@ def test_with_output_from_with_agent_instances_resolves_name():
         .build()
     )
 
-    assert workflow._output_executors == ["reviewer"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"reviewer"}
 
 
 def test_with_output_from_in_constructor():
@@ -361,7 +361,7 @@ def test_with_output_from_in_constructor():
     )
 
     # Verify that the setting persists through the chain
-    assert workflow._output_executors == ["executor_c"]  # type: ignore
+    assert {ex.id for ex in workflow.get_output_executors()} == {"executor_c"}
 
 
 def test_with_output_from_with_invalid_executor_raises_validation_error():

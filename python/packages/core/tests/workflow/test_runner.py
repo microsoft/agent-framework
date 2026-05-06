@@ -158,7 +158,9 @@ async def test_runner_run_iteration_preserves_message_order_per_edge_runner() ->
         def __init__(self) -> None:
             self.received: list[int] = []
 
-        async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+        async def send_message(
+            self, message: WorkflowMessage, state: State, ctx: RunnerContext, *args: object, **kwargs: object
+        ) -> bool:
             message_data = message.data
             assert isinstance(message_data, MockMessage)
             self.received.append(message_data.data)
@@ -188,7 +190,9 @@ async def test_runner_run_iteration_delivers_different_edge_runners_concurrently
             self.release = asyncio.Event()
             self.call_count = 0
 
-        async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+        async def send_message(
+            self, message: WorkflowMessage, state: State, ctx: RunnerContext, *args: object, **kwargs: object
+        ) -> bool:
             self.call_count += 1
             self.started.set()
             await self.release.wait()
@@ -199,7 +203,9 @@ async def test_runner_run_iteration_delivers_different_edge_runners_concurrently
             self.probe_completed = asyncio.Event()
             self.call_count = 0
 
-        async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+        async def send_message(
+            self, message: WorkflowMessage, state: State, ctx: RunnerContext, *args: object, **kwargs: object
+        ) -> bool:
             self.call_count += 1
             self.probe_completed.set()
             return True
