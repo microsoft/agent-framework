@@ -212,14 +212,22 @@ def _capture_raw(message: Message, item: Mapping[str, Any]) -> Message:
     (citations, reasoning, tool results, …) and any extras Foundry
     layered on top of the declared schema.
 
-    A best-effort ``dict(...)`` is used so failure to snapshot (e.g. a
-    non-mapping subclass surfacing in the future) degrades gracefully to
-    the lossy-but-functional synthesise-from-text path rather than
-    crashing the read.
+    Narrow ``TypeError`` is the only swallowed failure (matches the
+    ``Mapping`` contract precondition); ``MemoryError`` and other
+    ``Exception`` subclasses propagate so genuine bugs aren't masked.
+    A WARNING with ``exc_info`` is logged so the lossy fallback is
+    observable downstream — without it a regression in the SDK schema
+    silently drops citations / reasoning / tool-result extras on every
+    round-tripped message and there is no breadcrumb pointing here.
     """
     try:
         raw = dict(item)
-    except Exception:
+    except TypeError:
+        logger.warning(
+            "_capture_raw: SDK item %r is not mapping-like; round-tripping without raw snapshot",
+            type(item).__name__,
+            exc_info=True,
+        )
         return message
     message.additional_properties.setdefault(EXTRAS_KEY, {})[RAW_KEY] = raw
     return message

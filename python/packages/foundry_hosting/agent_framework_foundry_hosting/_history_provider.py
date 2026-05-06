@@ -47,7 +47,6 @@ via :class:`agent_framework.FileHistoryProvider`.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 import time
@@ -70,6 +69,7 @@ from azure.ai.agentserver.responses.models import OutputItem, ResponseObject
 from azure.ai.agentserver.responses.store._foundry_errors import (  # pyright: ignore[reportPrivateUsage]
     FoundryBadRequestError,
     FoundryResourceNotFoundError,
+    FoundryStorageError,
 )
 
 from ._shared import (
@@ -418,6 +418,12 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
         self._hosted_local_root_warned = False
         if self._local_storage_root is not None and self.is_hosted_environment():
             self._warn_hosted_local_root_ignored()
+
+        # Observability: number of ``save_messages`` calls dropped by
+        # :class:`FoundryStorageError` from ``backend.create_response``.
+        # Operators / health probes can read this attribute directly to
+        # detect silent persistence loss; never decremented.
+        self.failed_writes: int = 0
 
     @staticmethod
     def is_hosted_environment() -> bool:
@@ -789,8 +795,16 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
             if factory is None:
                 continue
             new_id = factory(response_id)
-            with contextlib.suppress(AttributeError, TypeError):
-                item.id = new_id  # type: ignore[attr-defined]
+            # Plain attribute assignment — the SDK ``OutputItem`` models
+            # are ``MutableMapping``s with ``__setattr__`` wired to dict
+            # set, so this is expected to succeed for every type listed
+            # above. The previous ``contextlib.suppress`` masked SDK
+            # contract changes (next save would silently retain the
+            # synthetic prefix-based id and the storage backend would
+            # reject the entire ``create_response`` with HTTP 500).
+            # Letting it raise surfaces those breakages to the test
+            # suite instead.
+            item.id = new_id  # type: ignore[attr-defined]
 
         input_items: list[Any] = []
         output_items: list[Any] = []
@@ -916,15 +930,32 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
                 history_item_ids=history_item_ids,
                 isolation=isolation,
             )
-        except Exception as exc:
+        except FoundryStorageError as exc:
+            # Storage-validation failures (4xx ``invalid_payload`` /
+            # ``not_found``, opaque 5xx) are best-effort losses: the
+            # caller's run already produced output and we don't want to
+            # crash the whole turn over a chain-write the user can't
+            # recover from. They are still observable: every drop bumps
+            # ``failed_writes`` (operators can poll it / surface in
+            # health probes) and the full traceback + ``response_body``
+            # is logged.
+            #
+            # Network / TLS / DNS errors, expired-credential 401/403s,
+            # and bugs in the wire-payload builder above (e.g. a
+            # required-field regression) deliberately propagate so they
+            # surface to the caller and trigger retry / alerting paths
+            # instead of being silently dropped here.
+            self.failed_writes += 1
             err_body = getattr(exc, "response_body", None)
             logger.exception(
-                "FoundryHostedAgentHistoryProvider.save_messages: backend rejected "
-                "%d message(s) (response_id=%s, previous_response_id=%s, error_body=%s).",
+                "FoundryHostedAgentHistoryProvider.save_messages: storage rejected "
+                "%d message(s) (response_id=%s, previous_response_id=%s, error_body=%s, "
+                "failed_writes=%d).",
                 len(messages),
                 response_id,
                 previous_response_id,
                 err_body,
+                self.failed_writes,
             )
             return
         logger.debug(

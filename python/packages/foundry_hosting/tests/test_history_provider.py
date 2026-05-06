@@ -366,20 +366,42 @@ class TestSaveMessages:
         await prov.save_messages(None, [Message(role="user", contents=[Content.from_text("hi")])])
         backend.create_response.assert_not_called()
 
-    async def test_save_messages_swallows_backend_errors(self) -> None:
-        """Persistence is best-effort — backend failures must NOT propagate.
+    async def test_save_messages_swallows_storage_errors(self) -> None:
+        """Persistence is best-effort for *Foundry storage* failures.
 
-        A successful agent turn that hits a transient storage error
-        (RBAC propagation lag, throttling, …) should still return a 2xx
-        to the caller; we only log so operators can spot systematic
-        failures.
+        Storage-validation rejections, opaque 5xx, etc. should be
+        swallowed (the agent run already produced output and the
+        caller can't recover from a chain-write failure mid-stream).
+        Counter is bumped for observability.
         """
         backend = _make_fake_backend()
-        backend.create_response.side_effect = RuntimeError("simulated 500 from storage")
+        backend.create_response.side_effect = FoundryBadRequestError(
+            "simulated invalid_payload",
+            response_body={"error": {"code": "invalid_payload"}},
+        )
         prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
         # Must not raise.
         await prov.save_messages("resp_session_x", [Message(role="user", contents=[Content.from_text("hi")])])
         backend.create_response.assert_awaited_once()
+        assert prov.failed_writes == 1
+
+    async def test_save_messages_propagates_non_storage_errors(self) -> None:
+        """Network / auth / payload-builder bugs MUST surface to the caller.
+
+        Anything that's not a ``FoundryStorageError`` — connection
+        resets, expired credential 401/403s, ``AttributeError`` from a
+        regression in the wire-payload builder — propagates so the
+        caller can retry / alert. Counter is NOT bumped for these.
+        """
+        backend = _make_fake_backend()
+        backend.create_response.side_effect = ConnectionError("simulated network failure")
+        prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
+        with pytest.raises(ConnectionError, match="simulated network failure"):
+            await prov.save_messages(
+                "resp_session_x",
+                [Message(role="user", contents=[Content.from_text("hi")])],
+            )
+        assert prov.failed_writes == 0
 
     async def test_save_then_get_round_trip_via_in_memory_backend(self) -> None:
         """End-to-end save→get round-trip through ``InMemoryResponseProvider``.
@@ -552,6 +574,347 @@ class TestLocalFileStorage:
         assert prov._file_providers  # pyright: ignore[reportPrivateUsage]
         await prov.aclose()
         assert not prov._file_providers  # pyright: ignore[reportPrivateUsage]
+
+
+# region Foundry id helpers (`_ids.py`)
+
+
+class TestFoundryIdHelpers:
+    """Cover the public ``_ids`` re-exports so SDK ``IdGenerator``
+    contract changes surface in unit tests rather than as opaque
+    HTTP 500 ``server_error`` from Foundry storage at runtime."""
+
+    def test_foundry_response_id_carries_partition_key(self) -> None:
+        """A minted ``caresp_*`` id must embed an 18-char partition key.
+
+        Free-form ``resp_<uuid>`` ids carry no parseable partition key
+        and Foundry storage rejects writes with HTTP 500.
+        """
+        from agent_framework_foundry_hosting import foundry_response_id
+
+        new_id = foundry_response_id()
+        assert new_id.startswith("caresp_")
+        # ``caresp_`` (7) + 18-char partition key + 32-char entropy = 57.
+        # The legacy 48-char body variant is also accepted by storage,
+        # so just check the lower bound.
+        assert len(new_id) >= 7 + 18 + 32 - 8
+
+    def test_foundry_response_id_reuses_previous_partition_key(self) -> None:
+        """Chained writes co-locate by reusing the prior partition key.
+
+        Foundry storage rejects chained writes whose new record sits in
+        a different partition than the prior one. Passing a ``caresp_*``
+        ``previous_response_id`` should produce a new id whose partition
+        segment matches.
+        """
+        from agent_framework_foundry_hosting import foundry_response_id
+
+        prior = foundry_response_id()
+        # Partition key = 18 chars after the ``caresp_`` prefix.
+        prior_partition = prior[len("caresp_") : len("caresp_") + 18]
+        chained = foundry_response_id(prior)
+        assert chained.startswith("caresp_")
+        assert chained != prior
+        assert chained[len("caresp_") : len("caresp_") + 18] == prior_partition
+
+    def test_foundry_response_id_factory_returns_callable(self) -> None:
+        """The factory wrapper used by ``ResponsesChannel`` must
+        delegate to :func:`foundry_response_id` so chained turns can
+        seed the partition key from ``previous_response_id``."""
+        from agent_framework_foundry_hosting import (
+            foundry_response_id,
+            foundry_response_id_factory,
+        )
+
+        factory = foundry_response_id_factory()
+        assert factory is foundry_response_id
+
+    def test_foundry_item_id_for_known_input_type(self) -> None:
+        """Recognised ``Item`` types get a typed prefix and a
+        partition-key hint matching the response id when supplied."""
+        from azure.ai.agentserver.responses.models import (
+            ItemMessage,
+            MessageContentInputTextContent,
+        )
+
+        from agent_framework_foundry_hosting import foundry_item_id, foundry_response_id
+
+        response_id = foundry_response_id()
+        partition = response_id[len("caresp_") : len("caresp_") + 18]
+        item = ItemMessage(
+            type="message",
+            role="user",
+            content=[MessageContentInputTextContent(type="input_text", text="hi")],
+        )
+        new_id = foundry_item_id(item, response_id)
+        assert new_id is not None
+        # ``msg_*`` is what ``IdGenerator.new_message_item_id`` mints.
+        assert new_id.startswith("msg_")
+        assert partition in new_id
+
+    def test_foundry_item_id_returns_none_for_unknown_type(self) -> None:
+        """Reference-only / unrecognised types must return ``None``
+        per the SDK helper's contract — callers (e.g.
+        ``save_messages``'s id-stamping loop) skip these so storage
+        only receives ids it can parse."""
+        from agent_framework_foundry_hosting import foundry_item_id
+
+        class _UnknownItem:
+            pass
+
+        assert foundry_item_id(_UnknownItem()) is None
+
+
+# region Wire payload stamping (`save_messages`)
+
+
+class TestSaveMessagesWirePayload:
+    """Storage rejects ``create_response`` payloads that omit fields
+    flagged as REQUIRED in ``ResponseObject`` (``parallel_tool_calls``,
+    ``instructions``, ``background``) or that leak extras the validator
+    refuses (``conversation``, ``model=None``, …). Any regression that
+    drops one of these silently breaks every hosted deploy with an
+    opaque 4xx; cover them here so the test suite catches it first."""
+
+    async def test_envelope_includes_required_storage_fields(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``background``, ``parallel_tool_calls``, ``instructions``,
+        and ``agent_reference`` MUST be present on every stamped
+        envelope; storage returns HTTP 400 ``invalid_payload`` if any
+        of them is missing."""
+        from agent_framework_foundry_hosting import bind_request_context
+
+        # Strip env so the defaults are exercised cleanly.
+        for var in (
+            "FOUNDRY_AGENT_NAME",
+            "FOUNDRY_AGENT_VERSION",
+            "FOUNDRY_AGENT_SESSION_ID",
+            "MODEL_DEPLOYMENT_NAME",
+            "AZURE_AI_MODEL_DEPLOYMENT_NAME",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
+        backend = _make_fake_backend()
+        prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
+        with bind_request_context(response_id="resp_envelope_1", previous_response_id=None):
+            await prov.save_messages(
+                "session-x",
+                [Message(role="assistant", contents=[Content.from_text("hi")])],
+            )
+
+        backend.create_response.assert_awaited_once()
+        response = backend.create_response.await_args.args[0]
+        body = response.as_dict()
+
+        # Required-by-storage fields.
+        assert body["background"] is False
+        assert body["parallel_tool_calls"] is False
+        assert body["instructions"] == ""
+        assert body["agent_reference"] == {
+            "type": "agent_reference",
+            "name": "agent-framework-host",
+        }
+
+    async def test_envelope_omits_optional_fields_when_env_unset(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``model``, ``agent_session_id``, and the ``version`` slot of
+        ``agent_reference`` are omitted (NOT stamped as ``None``) when
+        their env vars are unset — storage rejects ``model: null``."""
+        from agent_framework_foundry_hosting import bind_request_context
+
+        for var in (
+            "FOUNDRY_AGENT_NAME",
+            "FOUNDRY_AGENT_VERSION",
+            "FOUNDRY_AGENT_SESSION_ID",
+            "MODEL_DEPLOYMENT_NAME",
+            "AZURE_AI_MODEL_DEPLOYMENT_NAME",
+        ):
+            monkeypatch.delenv(var, raising=False)
+
+        backend = _make_fake_backend()
+        prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
+        with bind_request_context(response_id="resp_omit_1", previous_response_id=None):
+            await prov.save_messages(
+                "session-x",
+                [Message(role="assistant", contents=[Content.from_text("hi")])],
+            )
+
+        body = backend.create_response.await_args.args[0].as_dict()
+        # Either entirely absent or explicitly None — assert the field
+        # was NOT stamped to a non-None value.
+        assert body.get("model") is None
+        assert body.get("agent_session_id") is None
+        # ``version`` slot inside agent_reference is omitted entirely
+        # (the key is absent, not set to None) when the env var is unset.
+        assert "version" not in body["agent_reference"]
+
+    async def test_envelope_picks_up_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When the platform-set env vars are present they MUST land on
+        the envelope: ``FOUNDRY_AGENT_NAME`` / ``FOUNDRY_AGENT_VERSION``
+        feed ``agent_reference``, ``FOUNDRY_AGENT_SESSION_ID`` feeds
+        ``agent_session_id``, and ``MODEL_DEPLOYMENT_NAME`` feeds
+        ``model``."""
+        from agent_framework_foundry_hosting import bind_request_context
+
+        monkeypatch.setenv("FOUNDRY_AGENT_NAME", "concierge")
+        monkeypatch.setenv("FOUNDRY_AGENT_VERSION", "v3")
+        monkeypatch.setenv("FOUNDRY_AGENT_SESSION_ID", "caresp_envsessionABCDEF")
+        monkeypatch.setenv("MODEL_DEPLOYMENT_NAME", "gpt-4o-mini-prod")
+        monkeypatch.delenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", raising=False)
+
+        backend = _make_fake_backend()
+        prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
+        with bind_request_context(response_id="resp_env_1", previous_response_id=None):
+            await prov.save_messages(
+                "session-x",
+                [Message(role="assistant", contents=[Content.from_text("hi")])],
+            )
+
+        body = backend.create_response.await_args.args[0].as_dict()
+        assert body["agent_reference"] == {
+            "type": "agent_reference",
+            "name": "concierge",
+            "version": "v3",
+        }
+        assert body["agent_session_id"] == "caresp_envsessionABCDEF"
+        assert body["model"] == "gpt-4o-mini-prod"
+
+    async def test_envelope_falls_back_to_local_dev_model_var(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Local dev sets ``AZURE_AI_MODEL_DEPLOYMENT_NAME`` rather than
+        the platform-only ``MODEL_DEPLOYMENT_NAME``; the latter wins
+        when both are present, the former fills in when only it is."""
+        from agent_framework_foundry_hosting import bind_request_context
+
+        monkeypatch.delenv("MODEL_DEPLOYMENT_NAME", raising=False)
+        monkeypatch.setenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o-mini-dev")
+        for var in ("FOUNDRY_AGENT_NAME", "FOUNDRY_AGENT_VERSION", "FOUNDRY_AGENT_SESSION_ID"):
+            monkeypatch.delenv(var, raising=False)
+
+        backend = _make_fake_backend()
+        prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
+        with bind_request_context(response_id="resp_devmodel_1", previous_response_id=None):
+            await prov.save_messages(
+                "session-x",
+                [Message(role="assistant", contents=[Content.from_text("hi")])],
+            )
+
+        body = backend.create_response.await_args.args[0].as_dict()
+        assert body["model"] == "gpt-4o-mini-dev"
+
+
+# region FOUNDRY_AGENT_SESSION_ID chain anchor
+
+
+class TestFoundryAgentSessionIdAnchor:
+    """The Foundry runtime stamps the previous turn's response id into
+    ``FOUNDRY_AGENT_SESSION_ID`` for the next turn's container so each
+    new container can chain back without us keeping any cross-request
+    state. A regression that moves the lookup, mistypes the prefix
+    check, or stops gating on ``caresp_*``/``resp_*`` would silently
+    make hosted multi-turn conversations forget every prior turn."""
+
+    async def test_get_messages_uses_env_anchor_when_unbound(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No host binding, ``session_id`` is opaque (not ``caresp_*``):
+        ``get_messages`` must fall back to ``FOUNDRY_AGENT_SESSION_ID``
+        and walk from there."""
+        for var in ("MODEL_DEPLOYMENT_NAME", "AZURE_AI_MODEL_DEPLOYMENT_NAME"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("FOUNDRY_AGENT_SESSION_ID", "caresp_envanchor1")
+
+        backend = _make_fake_backend(
+            history_ids=["msg_envanchor_1"],
+            items=[_make_text_item("msg_envanchor_1", "from-env-anchor")],
+        )
+        prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
+
+        # Opaque session_id — no host binding either. Without the env
+        # fallback this would return [] without making any backend call.
+        messages = await prov.get_messages("opaque-session")
+
+        assert [m.text for m in messages] == ["from-env-anchor"]
+        assert backend.get_history_item_ids.await_args.args[0] == "caresp_envanchor1"
+
+    async def test_get_messages_ignores_non_caresp_env_anchor(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Defence in depth: if the runtime ever stamps a non-``caresp_*``
+        value into the env var (or it leaks from another source), we
+        must NOT pass it to storage — the partition-key extractor
+        would reject it with HTTP 500."""
+        monkeypatch.setenv("FOUNDRY_AGENT_SESSION_ID", "garbage-not-an-id")
+
+        backend = _make_fake_backend()
+        prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
+        messages = await prov.get_messages("opaque-session")
+
+        assert messages == []
+        backend.get_history_item_ids.assert_not_called()
+
+    async def test_save_messages_uses_env_anchor_when_unbound(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When no host binding supplies a previous_response_id, the
+        env anchor must be used so the new write chains correctly."""
+        for var in (
+            "FOUNDRY_AGENT_NAME",
+            "FOUNDRY_AGENT_VERSION",
+            "MODEL_DEPLOYMENT_NAME",
+            "AZURE_AI_MODEL_DEPLOYMENT_NAME",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("FOUNDRY_AGENT_SESSION_ID", "caresp_envchain1")
+
+        backend = _make_fake_backend()
+        prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
+        # Opaque session_id, no host binding → without the env anchor
+        # the prior chain wouldn't be walked.
+        await prov.save_messages(
+            "opaque-session",
+            [Message(role="assistant", contents=[Content.from_text("hi")])],
+        )
+
+        # Provider walked the prior chain via the env anchor.
+        assert backend.get_history_item_ids.await_args.args[0] == "caresp_envchain1"
+
+    async def test_save_messages_env_anchor_skipped_when_host_bound(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A host-bound previous_response_id wins over the env anchor;
+        the binding is the authoritative chain seed for the request."""
+        from agent_framework_foundry_hosting import bind_request_context
+
+        for var in (
+            "FOUNDRY_AGENT_NAME",
+            "FOUNDRY_AGENT_VERSION",
+            "MODEL_DEPLOYMENT_NAME",
+            "AZURE_AI_MODEL_DEPLOYMENT_NAME",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("FOUNDRY_AGENT_SESSION_ID", "caresp_envignored")
+
+        backend = _make_fake_backend()
+        prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
+        with bind_request_context(response_id="resp_bound_2", previous_response_id="caresp_boundprev"):
+            await prov.save_messages(
+                "session-x",
+                [Message(role="assistant", contents=[Content.from_text("hi")])],
+            )
+
+        # Host binding wins; the env anchor is ignored.
+        assert backend.get_history_item_ids.await_args.args[0] == "caresp_boundprev"
 
 
 # region Shared module re-exports
