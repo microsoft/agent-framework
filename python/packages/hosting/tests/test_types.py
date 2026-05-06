@@ -4,12 +4,18 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from agent_framework_hosting import (
     ChannelIdentity,
     ChannelRequest,
     ChannelSession,
+    DeliveryReport,
     ResponseTarget,
     ResponseTargetKind,
+    apply_run_hook,
 )
 
 
@@ -103,3 +109,120 @@ class TestChannelIdentity:
     def test_attributes_passthrough(self) -> None:
         ident = ChannelIdentity(channel="teams", native_id="abc", attributes={"role": "user"})
         assert dict(ident.attributes) == {"role": "user"}
+
+
+class _DummyTarget:
+    """Stand-in for the ``SupportsAgentRun | Workflow`` arg `apply_run_hook` forwards.
+
+    `apply_run_hook` doesn't introspect the target — it just forwards
+    it as a kwarg to the user's hook — so a bare class is enough.
+    """
+
+
+class TestApplyRunHook:
+    """`apply_run_hook` is the channel-side helper that invokes a
+    `ChannelRunHook` with the standard kwargs (`request` positional,
+    `target` / `protocol_request` keyword). Channels call this rather
+    than calling the hook directly so the convention is enforced in
+    one place. Cover both branching paths (sync vs async hook return)
+    and assert kwargs forwarding so a regression that drops `target`
+    or `protocol_request` is caught."""
+
+    @pytest.mark.asyncio
+    async def test_sync_hook_returning_modified_request(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def hook(request: ChannelRequest, **kwargs: Any) -> ChannelRequest:
+            # Snapshot the kwargs for the assertion below, then return a
+            # NEW request so we also verify the helper passes the
+            # replacement straight through (no merging / mutation).
+            captured["target"] = kwargs.get("target")
+            captured["protocol_request"] = kwargs.get("protocol_request")
+            return ChannelRequest(channel=request.channel, operation="HOOK_TOUCHED", input=request.input)
+
+        original = ChannelRequest(channel="responses", operation="op", input="hi")
+        target = _DummyTarget()
+        proto = {"raw": "payload"}
+
+        result = await apply_run_hook(hook, original, target=target, protocol_request=proto)
+
+        assert result is not original
+        assert result.operation == "HOOK_TOUCHED"
+        assert captured["target"] is target
+        assert captured["protocol_request"] is proto
+
+    @pytest.mark.asyncio
+    async def test_async_hook_returning_modified_request(self) -> None:
+        captured: dict[str, Any] = {}
+
+        async def hook(request: ChannelRequest, **kwargs: Any) -> ChannelRequest:
+            captured["target"] = kwargs.get("target")
+            captured["protocol_request"] = kwargs.get("protocol_request")
+            # Return an awaitable result to exercise the async branch
+            # (`isinstance(result, Awaitable) → await it`).
+            return ChannelRequest(channel=request.channel, operation="ASYNC_HOOK", input=request.input)
+
+        original = ChannelRequest(channel="telegram", operation="op", input="hi")
+        target = _DummyTarget()
+        proto = {"update_id": 42}
+
+        result = await apply_run_hook(hook, original, target=target, protocol_request=proto)
+
+        assert result.operation == "ASYNC_HOOK"
+        assert captured["target"] is target
+        assert captured["protocol_request"] is proto
+
+    @pytest.mark.asyncio
+    async def test_protocol_request_can_be_none(self) -> None:
+        """Channels that don't have a raw protocol payload (e.g. CLI / test
+        harness invocations) pass ``protocol_request=None``; the helper
+        forwards it as-is so hooks can ``if protocol_request is None`` to
+        gate channel-specific logic."""
+        captured: dict[str, Any] = {}
+
+        async def hook(request: ChannelRequest, **kwargs: Any) -> ChannelRequest:
+            captured["protocol_request"] = kwargs.get("protocol_request")
+            captured["protocol_request_in_kwargs"] = "protocol_request" in kwargs
+            return request
+
+        await apply_run_hook(
+            hook,
+            ChannelRequest(channel="x", operation="op", input="hi"),
+            target=_DummyTarget(),
+            protocol_request=None,
+        )
+
+        assert captured["protocol_request"] is None
+        assert captured["protocol_request_in_kwargs"] is True
+
+
+class TestDeliveryReport:
+    """`DeliveryReport.failed` distinguishes "push raised" (an outage)
+    from "no link recorded" (`skipped`). Assert the field exists,
+    defaults empty, accepts the documented shape, and that the original
+    `pushed` / `skipped` semantics are preserved."""
+
+    def test_defaults_are_empty_tuples(self) -> None:
+        report = DeliveryReport(include_originating=True)
+        assert report.include_originating is True
+        assert report.pushed == ()
+        assert report.skipped == ()
+        assert report.failed == ()
+
+    def test_failed_carries_token_and_error_summary(self) -> None:
+        # Channels return a (token, summary) tuple per failed push so
+        # the originating channel can tell "telegram outage" from
+        # "no link" without parsing logs.
+        report = DeliveryReport(
+            include_originating=False,
+            pushed=("teams:42",),
+            skipped=("telegram",),
+            failed=(("telegram:99", "RuntimeError: rate limited"),),
+        )
+        assert report.pushed == ("teams:42",)
+        assert report.skipped == ("telegram",)
+        assert len(report.failed) == 1
+        token, summary = report.failed[0]
+        assert token == "telegram:99"
+        assert "RuntimeError" in summary
+        assert "rate limited" in summary

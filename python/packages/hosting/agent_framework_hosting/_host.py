@@ -26,10 +26,10 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from agent_framework import (
     AgentResponse,
@@ -112,19 +112,37 @@ def _workflow_event_to_update(event: WorkflowEvent[Any]) -> AgentResponseUpdate 
 
 @asynccontextmanager
 async def _suppress_already_consumed() -> AsyncIterator[None]:  # noqa: RUF029
-    """Yield, swallowing the ``RuntimeError`` ``ResponseStream`` raises on double-consume.
+    """Yield, swallowing finalizer failures so consumer cleanup never crashes the host.
 
     The bridge stream calls ``get_final_response()`` after iterating the
     workflow stream so the workflow's cleanup hooks run; on some paths the
-    stream considers itself already finalized and raises, which we treat
-    as benign — we're only after the side effect.
+    stream considers itself already finalized (or its inner stream was
+    closed by ``__anext__`` auto-finalization) and the finalizer raises.
+    We are inside an async-generator ``finally`` block during teardown,
+    so we MUST NOT propagate — that would mask the iteration's real
+    result and cascade into the channel's own cleanup. We always log
+    with ``exc_info=True`` so the swallowed failure is observable in
+    operator logs (a regression in the workflow's own cleanup hooks
+    would otherwise vanish into a clean run).
     """
     try:
         yield
-    except RuntimeError as exc:
-        logger.debug("workflow stream finalize skipped: %s", exc)
-    except Exception:  # pragma: no cover - defensive: never let cleanup hide the real result
-        logger.exception("workflow stream finalize failed")
+    except RuntimeError:
+        # Documented benign cases: ``ResponseStream`` raises
+        # ``RuntimeError("Inner stream not available")`` on certain
+        # double-finalize paths, and async-iteration teardown of a
+        # workflow whose tasks were already cancelled can surface
+        # ``RuntimeError("Event loop is closed")`` here. Promoted from
+        # ``debug`` to ``warning`` so production deploys see the
+        # signal and a real bug doesn't masquerade as benign noise.
+        logger.warning("workflow stream finalize raised RuntimeError; cleanup skipped", exc_info=True)
+    except Exception:
+        # Anything else (checkpoint write failure, context-provider
+        # error in a cleanup hook, executor-side bug, …) is a real
+        # problem. ``logger.exception`` includes the traceback and
+        # routes at ERROR so it's grep-able in production. We still
+        # don't propagate — see the docstring.
+        logger.exception("workflow stream finalize raised an unexpected error; cleanup skipped")
 
 
 class _BoundResponseStream:
@@ -134,9 +152,22 @@ class _BoundResponseStream:
     consumption happens later (the channel iterates). For host-bound
     request context (e.g. Foundry response-id binding) to survive that
     gap, we hold the stack open until the underlying stream is exhausted
-    or :meth:`close` is called. We forward awaitable + async-iterator +
+    or :meth:`aclose` is called. We forward awaitable + async-iterator +
     ``get_final_response`` semantics so the channel sees a normal
     ``ResponseStream``-shaped object.
+
+    Lifecycle:
+
+    * Async iteration (``async for u in stream``) — the stack is closed
+      in the iterator's ``finally`` after the inner stream is drained.
+    * ``await stream`` — convenience for ``await get_final_response()``;
+      the stack is closed when ``get_final_response`` runs because that
+      path also routes through :meth:`_close`.
+    * ``await stream.get_final_response()`` — closes the stack in
+      ``finally``.
+    * Manual cleanup — call :meth:`aclose` (idempotent). Safe to call
+      from a ``finally`` even after iteration / ``get_final_response``
+      already closed the stack.
     """
 
     def __init__(self, inner: Any, stack: ExitStack) -> None:
@@ -150,11 +181,23 @@ class _BoundResponseStream:
         self._closed = True
         self._stack.close()
 
+    async def aclose(self) -> None:
+        """Idempotently release the bound request context.
+
+        Channels that abandon the stream without iterating it (e.g.
+        early-return on a validation failure) MUST call this in a
+        ``finally`` so the host-bound contextvars don't leak for the
+        lifetime of the host. Calling after the stack already closed
+        (via iteration / ``get_final_response``) is a no-op.
+        """
+        self._close()
+
     def __await__(self) -> Any:
-        # ``__await__`` returns a generator; closing here would be too
-        # eager — we close in ``__aiter__`` finally instead. Awaitable
-        # consumers (rare for streams) call ``aclose()`` separately.
-        return self._inner.__await__()
+        # Convenience: ``await stream`` ≡ ``await stream.get_final_response()``.
+        # We route through ``get_final_response`` so the stack closes in
+        # its ``finally`` block, instead of leaking the binding for the
+        # host's lifetime as the previous direct-await delegation did.
+        return self.get_final_response().__await__()
 
     def __aiter__(self) -> AsyncIterator[Any]:
         return self._wrap()
@@ -179,7 +222,7 @@ class _BoundResponseStream:
 class ChannelContext:
     """Host-owned bridge that channels call to invoke the target."""
 
-    def __init__(self, host: "AgentFrameworkHost") -> None:
+    def __init__(self, host: AgentFrameworkHost) -> None:
         """Bind the context to its owning :class:`AgentFrameworkHost`.
 
         The host instance is the source of truth for the target, registered
@@ -483,13 +526,56 @@ class AgentFrameworkHost:
 
         @asynccontextmanager
         async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+            # Run every startup callback; collect (don't propagate) so
+            # one bad channel doesn't leave its peers half-initialised
+            # AND deny us a chance to pair-up shutdown calls. After all
+            # callbacks have been attempted, raise the FIRST error so
+            # Starlette / the ASGI server still aborts boot — and log
+            # every other failure so operators can see them all in one
+            # log scrape rather than discovering them turn-by-turn.
+            startup_errors: list[tuple[str, BaseException]] = []
             for cb in on_startup:
-                await cb()
+                try:
+                    await cb()
+                except Exception as exc:
+                    name = getattr(cb, "__qualname__", repr(cb))
+                    logger.exception("lifespan startup: callback %s failed", name)
+                    startup_errors.append((name, exc))
+            if startup_errors:
+                _, first_exc = startup_errors[0]
+                if len(startup_errors) > 1:
+                    logger.error(
+                        "lifespan startup: %d callback(s) failed; first error re-raised, "
+                        "remaining failures already logged above (%s)",
+                        len(startup_errors),
+                        ", ".join(n for n, _ in startup_errors[1:]),
+                    )
+                raise first_exc
             try:
                 yield
             finally:
+                # Same shape on the shutdown side: walk every callback
+                # so a bad one can't leave its peers leaking
+                # tasks/sockets/sessions, then raise the first if any
+                # failed so the server's exit code reflects the failure.
+                shutdown_errors: list[tuple[str, BaseException]] = []
                 for cb in on_shutdown:
-                    await cb()
+                    try:
+                        await cb()
+                    except Exception as exc:
+                        name = getattr(cb, "__qualname__", repr(cb))
+                        logger.exception("lifespan shutdown: callback %s failed", name)
+                        shutdown_errors.append((name, exc))
+                if shutdown_errors:
+                    _, first_exc = shutdown_errors[0]
+                    if len(shutdown_errors) > 1:
+                        logger.error(
+                            "lifespan shutdown: %d callback(s) failed; first error re-raised, "
+                            "remaining failures already logged above (%s)",
+                            len(shutdown_errors),
+                            ", ".join(n for n, _ in shutdown_errors[1:]),
+                        )
+                    raise first_exc
 
         return Starlette(
             debug=self._debug,
@@ -511,12 +597,23 @@ class AgentFrameworkHost:
                 session_id = self._session_aliases.get(isolation_key, isolation_key)
                 session = self._sessions.get(isolation_key)
                 if session is None:
+                    # Concurrency note: ``create_session`` is sync today,
+                    # so the get/set window has no await point and CPython
+                    # serialises us against other tasks. ``setdefault`` is
+                    # the atomic primitive that keeps us safe even if a
+                    # future ``create_session`` ever yields — both racers
+                    # would see ``session is None``, both construct a new
+                    # session, but only the first ``setdefault`` wins; the
+                    # loser's just-built session is discarded (one
+                    # transient orphan max per race window) instead of
+                    # silently overwriting a peer-bound session that
+                    # other in-flight requests are already using.
                     # ``create_session`` lives on agent-typed targets but not on
                     # ``Workflow``; the ``hasattr`` above guards the call site.
-                    session = self.target.create_session(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownVariableType, reportUnknownMemberType]
+                    new_session = self.target.create_session(  # pyright: ignore[reportAttributeAccessIssue, reportUnknownVariableType, reportUnknownMemberType]
                         session_id=session_id
                     )
-                    self._sessions[isolation_key] = session  # pyright: ignore[reportUnknownArgumentType]
+                    session = self._sessions.setdefault(isolation_key, new_session)  # pyright: ignore[reportUnknownArgumentType]
 
         run_kwargs: dict[str, Any] = {}
         if session is not None:
@@ -899,6 +996,12 @@ class AgentFrameworkHost:
         by_name = {ch.name: ch for ch in self.channels}
         pushed: list[str] = []
         skipped: list[str] = []
+        # ``(target_token, error_summary)`` for each destination whose
+        # ``ChannelPush.push`` raised. Distinct from ``skipped`` so the
+        # caller can tell an outage (every destination push raised) from
+        # the documented "no link recorded" drop (no identity yet
+        # mapped to that channel for this isolation_key).
+        failed: list[tuple[str, str]] = []
         for channel_name, dest_identity in destinations:
             channel = by_name.get(channel_name)
             token = f"{channel_name}:{dest_identity.native_id}" if dest_identity is not None else channel_name
@@ -924,22 +1027,35 @@ class AgentFrameworkHost:
                 continue
             try:
                 await channel.push(dest_identity, payload)
-            except Exception:
+            except Exception as exc:
                 logger.exception("deliver_response: push failed for target=%s", token)
-                skipped.append(token)
+                failed.append((token, f"{type(exc).__name__}: {exc}"))
                 continue
             pushed.append(token)
             logger.info("deliver_response: pushed to %s (%d chars)", token, len(payload.text))
 
         if not pushed and not include_originating:
-            # Spec policy: if every destination drops, deliver to originating.
-            logger.warning("deliver_response: every destination dropped — falling back to originating")
-            include_originating = True
+            # Spec policy: if every destination drops *without ever
+            # raising*, deliver to originating so the user gets a
+            # response. When the drop reason is a push outage (every
+            # ``failed`` entry), we don't fall back — the originating
+            # channel can inspect ``DeliveryReport.failed`` and decide
+            # whether to surface a degraded reply itself rather than
+            # double-delivering on a flaky link.
+            if failed:
+                logger.warning(
+                    "deliver_response: every destination push raised — surfacing failures via "
+                    "DeliveryReport.failed (no originating fallback)"
+                )
+            else:
+                logger.warning("deliver_response: every destination dropped — falling back to originating")
+                include_originating = True
 
         return DeliveryReport(
             include_originating=include_originating,
             pushed=tuple(pushed),
             skipped=tuple(skipped),
+            failed=tuple(failed),
         )
 
 
