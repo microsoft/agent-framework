@@ -16,6 +16,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _resolve_toolbox_endpoint() -> str:
+    """Resolve the toolbox MCP endpoint URL.
+
+    Prefers the explicit ``FOUNDRY_TOOLBOX_ENDPOINT`` env var; falls back to
+    constructing the URL from ``FOUNDRY_PROJECT_ENDPOINT`` and ``TOOLBOX_NAME``
+    (the variables injected by the Foundry hosting scaffolding after ``azd provision``).
+    """
+    if endpoint := os.environ.get("FOUNDRY_TOOLBOX_ENDPOINT"):
+        return endpoint
+    project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")
+    toolbox_name = os.environ["TOOLBOX_NAME"]
+    return f"{project_endpoint}/toolsets/{toolbox_name}/mcp?api-version=v1"
+
+
 def make_toolbox_header_provider(credential: TokenCredential) -> Callable[[dict[str, Any]], dict[str, str]]:
     """Build a header_provider that injects a fresh Azure AI bearer token on every MCP request."""
     get_token = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
@@ -40,7 +54,7 @@ async def main():
     toolbox_tool = MCPStreamableHTTPTool(
         name="foundry_toolbox",
         description="Tools exposed by the configured Foundry toolbox",
-        url=os.environ["FOUNDRY_TOOLBOX_ENDPOINT"],
+        url=_resolve_toolbox_endpoint(),
         header_provider=make_toolbox_header_provider(credential),
         load_prompts=False,
     )

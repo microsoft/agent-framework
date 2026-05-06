@@ -22,3 +22,13 @@ def test_azure_namespace_no_longer_exposes_foundry_symbols() -> None:
 
     with pytest.raises(AttributeError, match="Module `azure` has no attribute FoundryChatClient\\."):
         _ = azure.FoundryChatClient
+
+
+def test_foundry_namespace_no_longer_exposes_toolbox_helpers() -> None:
+    assert "FoundryHostedToolType" not in dir(foundry)
+    assert "get_toolbox_tool_name" not in dir(foundry)
+    assert "get_toolbox_tool_type" not in dir(foundry)
+    assert "select_toolbox_tools" not in dir(foundry)
+
+    with pytest.raises(AttributeError, match="Module `foundry` has no attribute FoundryHostedToolType\\."):
+        _ = foundry.FoundryHostedToolType
