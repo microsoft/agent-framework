@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -128,20 +128,10 @@ internal static class ToolApprovalIdMap
             return false;
         }
 
-        try
-        {
-            map = stateBag.GetValue<Dictionary<string, ApprovalEntry>>(StateBagKey)
-                ?? new Dictionary<string, ApprovalEntry>(StringComparer.Ordinal);
-            return true;
-        }
-        catch (JsonException)
-        {
-            // Defensive: if a state bag carries an older-format value we cannot deserialize,
-            // start fresh rather than failing the whole request. This only loses the ability
-            // to round-trip an in-flight approval, which the caller already gracefully handles
-            // via the wire-id fallback path.
-            map = new Dictionary<string, ApprovalEntry>(StringComparer.Ordinal);
-            return true;
-        }
+        // Don't swallow JsonException: ConvertMcpApprovalResponse fails fast on a missing entry,
+        // so an empty map here would just turn a clear deserialization error into a confusing one.
+        map = stateBag.GetValue<Dictionary<string, ApprovalEntry>>(StateBagKey)
+            ?? new Dictionary<string, ApprovalEntry>(StringComparer.Ordinal);
+        return true;
     }
 }
