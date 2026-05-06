@@ -140,12 +140,18 @@ class GitHubCopilotSettings(TypedDict, total=False):
             Can be set via environment variable GITHUB_COPILOT_TIMEOUT.
         log_level: CLI log level.
             Can be set via environment variable GITHUB_COPILOT_LOG_LEVEL.
+        copilot_home: Directory where the CLI stores session state, configuration,
+            and other persistent data. Can be set via environment variable
+            GITHUB_COPILOT_COPILOT_HOME. Defaults to ~/.copilot when not set.
+            Only applicable when the SDK spawns the CLI process (ignored when
+            connecting to an external server via a pre-configured client).
     """
 
     cli_path: str | None
     model: str | None
     timeout: float | None
     log_level: str | None
+    copilot_home: str | None
 
 
 class GitHubCopilotOptions(TypedDict, total=False):
@@ -168,6 +174,12 @@ class GitHubCopilotOptions(TypedDict, total=False):
     log_level: str
     """CLI log level. Defaults to GITHUB_COPILOT_LOG_LEVEL environment variable."""
 
+    copilot_home: str
+    """Directory where the CLI stores session state, configuration, and other
+    persistent data. Defaults to ~/.copilot when not set. Only applicable when
+    the SDK spawns the CLI process (ignored when connecting to an external server
+    via a pre-configured client)."""
+
     on_permission_request: PermissionHandlerType
     """Permission request handler.
     Called when Copilot requests permission to perform an action (shell, read, write, etc.).
@@ -185,6 +197,12 @@ class GitHubCopilotOptions(TypedDict, total=False):
     """Custom API provider configuration for BYOK (Bring Your Own Key) scenarios.
     Allows routing requests through your own OpenAI, Azure, or Anthropic endpoint
     instead of the default GitHub Copilot backend.
+    """
+
+    instruction_directories: list[str]
+    """Additional directories to search for custom instruction files.
+    Lets applications point the CLI at project-specific or team-shared instruction
+    files beyond the default locations.
     """
 
     on_function_approval: FunctionApprovalCallback
@@ -300,7 +318,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         on_permission_request: PermissionHandlerType | None = opts.pop("on_permission_request", None)
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
         provider: ProviderConfig | None = opts.pop("provider", None)
+        instruction_directories: list[str] | None = opts.pop("instruction_directories", None)
         on_function_approval: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
+        copilot_home = opts.pop("copilot_home", None)
 
         self._settings = load_settings(
             GitHubCopilotSettings,
@@ -309,6 +329,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             model=model,
             timeout=timeout,
             log_level=log_level,
+            copilot_home=copilot_home,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
@@ -318,6 +339,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._function_approval_handler: FunctionApprovalCallback | None = on_function_approval
         self._mcp_servers = mcp_servers
         self._provider = provider
+        self._instruction_directories = instruction_directories
         self._default_options = opts
         self._started = False
 
@@ -346,10 +368,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if self._client is None:
             cli_path = self._settings.get("cli_path") or None
             log_level = self._settings.get("log_level") or None
+            copilot_home = self._settings.get("copilot_home") or None
 
             subprocess_kwargs: dict[str, Any] = {"cli_path": cli_path}
             if log_level:
                 subprocess_kwargs["log_level"] = log_level
+            if copilot_home:
+                subprocess_kwargs["copilot_home"] = copilot_home
             self._client = CopilotClient(SubprocessConfig(**subprocess_kwargs))
 
         try:
@@ -523,13 +548,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # send_and_wait returns only the final ASSISTANT_MESSAGE event;
         # other events (deltas, tool calls) are handled internally by the SDK.
         if response_event and response_event.type == SessionEventType.ASSISTANT_MESSAGE:
-            message_id = response_event.data.message_id
+            data: Any = response_event.data
+            message_id = data.message_id
 
-            if response_event.data.content:
+            if data.content:
                 response_messages.append(
                     Message(
                         role="assistant",
-                        contents=[Content.from_text(response_event.data.content)],
+                        contents=[Content.from_text(data.content)],
                         message_id=message_id,
                         raw_representation=response_event,
                     )
@@ -603,12 +629,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         def event_handler(event: SessionEvent) -> None:
             if event.type == SessionEventType.ASSISTANT_MESSAGE_DELTA:
-                if event.data.delta_content:
+                data: Any = event.data
+                if data.delta_content:
                     update = AgentResponseUpdate(
                         role="assistant",
-                        contents=[Content.from_text(event.data.delta_content)],
-                        response_id=event.data.message_id,
-                        message_id=event.data.message_id,
+                        contents=[Content.from_text(data.delta_content)],
+                        response_id=data.message_id,
+                        message_id=data.message_id,
                         raw_representation=event,
                     )
                     queue.put_nowait(update)
@@ -652,7 +679,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             elif event.type == SessionEventType.SESSION_IDLE:
                 queue.put_nowait(None)
             elif event.type == SessionEventType.SESSION_ERROR:
-                error_msg = event.data.message or "Unknown error"
+                error_data: Any = event.data
+                error_msg = error_data.message or "Unknown error"
                 queue.put_nowait(AgentException(f"GitHub Copilot session error: {error_msg}"))
 
         unsubscribe = copilot_session.on(event_handler)
@@ -868,6 +896,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         )
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
+        instruction_directories = opts.get("instruction_directories", self._instruction_directories)
         tools = self._prepare_tools(self._tools) if self._tools else None
 
         return await self._client.create_session(
@@ -878,6 +907,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             tools=tools or None,
             mcp_servers=mcp_servers or None,
             provider=provider or None,
+            instruction_directories=instruction_directories,
         )
 
     async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:
