@@ -4,14 +4,19 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
+using Azure.Core;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 using Microsoft.Extensions.AI;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 
@@ -48,9 +53,9 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
     #region InvokeHttpRequest Tests
 
     [RetryTheory(3, 5000)]
-    [InlineData("HttpRequest.yaml", "visibility: public")]
-    public Task ValidateHttpRequestAsync(string workflowFileName, string? expectedResultContains) =>
-        this.RunHttpRequestTestAsync(workflowFileName, expectedResultContains);
+    [InlineData("HttpRequest.yaml")]
+    public Task ValidateHttpRequestAsync(string workflowFileName) =>
+        this.RunHttpRequestTestAsync(workflowFileName);
 
     #endregion
 
@@ -262,15 +267,59 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
     #region InvokeHttpRequest Test Helpers
 
     /// <summary>
+    /// The Azure ARM scope used to acquire bearer tokens for the HttpRequestAction
+    /// integration test. Matches the URL configured in <c>HttpRequest.yaml</c>.
+    /// </summary>
+    private const string ArmScope = "https://management.azure.com/.default";
+
+    /// <summary>
+    /// The URL prefix used to gate which requests receive the authenticated
+    /// <see cref="HttpClient"/>. Other URLs fall through to the handler default.
+    /// </summary>
+    private const string ArmUrlPrefix = "https://management.azure.com";
+
+    /// <summary>
     /// Runs an HttpRequestAction workflow test with the specified configuration.
     /// </summary>
+    /// <remarks>
+    /// The workflow under test calls an authenticated Azure ARM endpoint. We acquire a
+    /// single bearer token via the same Azure CLI credential used elsewhere in the
+    /// integration test suite, attach it to a cached <see cref="HttpClient"/>, and route
+    /// matching requests through that client via <see cref="DefaultHttpRequestHandler"/>'s
+    /// <c>httpClientProvider</c> callback. The test owns the <see cref="HttpClient"/>'s
+    /// lifetime and disposes it explicitly — <see cref="DefaultHttpRequestHandler"/> does
+    /// not dispose provider-returned clients.
+    /// </remarks>
     private async Task RunHttpRequestTestAsync(
-        string workflowFileName,
-        string? expectedResultContains = null)
+        string workflowFileName)
     {
         // Arrange
         string workflowPath = GetWorkflowPath(workflowFileName);
-        await using DefaultHttpRequestHandler httpRequestHandler = new();
+
+        AccessToken accessToken =
+            await TestAzureCliCredentials
+                .CreateAzureCliCredential()
+                .GetTokenAsync(new TokenRequestContext([ArmScope]), CancellationToken.None)
+                .ConfigureAwait(false);
+
+        using HttpClient authenticatedClient = new();
+        authenticatedClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", accessToken.Token);
+
+        await using DefaultHttpRequestHandler httpRequestHandler =
+            new(httpClientProvider: (request, _) =>
+            {
+                if (request.Url.StartsWith(ArmUrlPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+#pragma warning disable CA2025 // authenticatedClient outlives the handler (LIFO using disposal) and the workflow awaits all dispatches.
+                    return Task.FromResult<HttpClient?>(authenticatedClient);
+#pragma warning restore CA2025
+                }
+
+                // Fall back to the handler's internal client for any non-ARM URLs.
+                return Task.FromResult<HttpClient?>(null);
+            });
+
         DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(
             externalConversation: false,
             httpRequestHandler: httpRequestHandler);
@@ -284,11 +333,14 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
         // Assert - Verify executor and action events
         AssertWorkflowEventsEmitted(workflowEvents);
 
-        // Assert - Verify expected result if specified
-        if (expectedResultContains is not null)
-        {
-            AssertResultContains(workflowEvents, expectedResultContains);
-        }
+        MessageActivityEvent? messageEvent = workflowEvents.Events
+            .OfType<MessageActivityEvent>()
+            .LastOrDefault();
+
+        Assert.NotNull(messageEvent);
+        Assert.NotNull(messageEvent.Message);
+        _ = Guid.TryParse(messageEvent.Message, out Guid retrievedTenantId);
+        Assert.NotEqual(Guid.Empty, retrievedTenantId);
     }
 
     #endregion
