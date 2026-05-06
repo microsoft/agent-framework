@@ -234,10 +234,9 @@ class RawFoundryChatClient(  # type: ignore[misc]
     ) -> list[Any]:
         """Prepare tools for Foundry Responses API calls.
 
-        Foundry toolbox reads can surface MCP tool objects with extra fields
-        (for example ``name``) that are accepted by the toolbox API but rejected
-        by the Responses API. Sanitize those hosted-tool payloads before sending
-        them downstream.
+        Hosted MCP tool objects may carry extra fields (for example ``name``)
+        that are rejected by the Responses API. Sanitize those hosted-tool
+        payloads before sending them downstream.
         """
         response_tools = super()._prepare_tools_for_openai(tools)
         return [_sanitize_foundry_response_tool(tool_item) for tool_item in response_tools]

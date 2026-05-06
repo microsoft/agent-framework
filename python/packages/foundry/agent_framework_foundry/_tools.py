@@ -17,7 +17,7 @@ def _validate_hosted_tool_payload(sanitized: Mapping[str, Any]) -> None:
     """Fail fast on hosted tool payloads that would always be rejected by the Responses API.
 
     These mismatches are not injectable defaults — the caller must supply the
-    missing information — so surfacing a clear error here points at the toolbox
+    missing information — so surfacing a clear error here points at the tool
     definition instead of letting the API return a generic 400.
     """
     tool_type = sanitized.get("type")
