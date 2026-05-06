@@ -139,7 +139,6 @@ def test_prepare_options_tool_choice_required_includes_any() -> None:
     assert request["toolConfig"]["toolChoice"] == {"any": {}}
 
 
-
 def test_prepare_options_tool_choice_auto_without_tools_omits_tool_config() -> None:
     """When tool_choice='auto' but no tools are provided, toolConfig must be omitted.
 

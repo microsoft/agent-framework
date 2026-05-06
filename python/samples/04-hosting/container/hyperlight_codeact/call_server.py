@@ -20,8 +20,7 @@ from openai import OpenAI
 #   https://<your-foundry-resource>.services.ai.azure.com/api/projects/<project>/agents/<agent-name>
 ENDPOINT = os.environ.get(
     "FOUNDRY_AGENT_ENDPOINT",
-    "https://<your-foundry-resource>.services.ai.azure.com"
-    "/api/projects/<project>/agents/<agent-name>",
+    "https://<your-foundry-resource>.services.ai.azure.com/api/projects/<project>/agents/<agent-name>",
 )
 SCOPE = "https://ai.azure.com/.default"
 PROMPT = (
