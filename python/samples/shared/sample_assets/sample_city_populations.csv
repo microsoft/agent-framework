@@ -1,0 +1,16 @@
+city,country,population_millions,area_sq_km,density_per_sq_km,continent
+Tokyo,Japan,37.4,2194,17049,Asia
+Delhi,India,32.9,1484,22177,Asia
+Shanghai,China,29.2,6341,4607,Asia
+São Paulo,Brazil,22.6,1521,14862,South America
+Mumbai,India,21.7,603,36003,Asia
+Cairo,Egypt,21.3,3085,6906,Africa
+Beijing,China,20.9,16411,1274,Asia
+Mexico City,Mexico,21.8,1485,14680,North America
+Dhaka,Bangladesh,22.4,306,73275,Asia
+Osaka,Japan,19.1,225,84889,Asia
+New York,USA,18.8,783,24009,North America
+Lagos,Nigeria,15.9,1171,13578,Africa
+Istanbul,Turkey,15.6,5461,2856,Europe
+Buenos Aires,Argentina,15.4,4758,3237,South America
+Kolkata,India,15.1,1887,8003,Asia
