@@ -1467,17 +1467,15 @@ class TestMiddlewareDecoratorLogic:
 
         # This will cause a type error at decoration time, so we need to test differently
         # Should raise MiddlewareException due to mismatch during agent creation
+        @agent_middleware  # type: ignore[arg-type]
+        async def mismatched_middleware(
+            context: FunctionInvocationContext,  # Wrong type for @agent_middleware
+            call_next: Any,
+        ) -> None:
+            await call_next()
+
         with pytest.raises(MiddlewareException, match="MiddlewareTypes type mismatch"):
-
-            @agent_middleware  # type: ignore[arg-type]
-            async def mismatched_middleware(
-                context: FunctionInvocationContext,  # Wrong type for @agent_middleware
-                call_next: Any,
-            ) -> None:
-                await call_next()
-
-            agent = Agent(client=client, middleware=[mismatched_middleware])
-            await agent.run([Message(role="user", contents=["test"])])
+            Agent(client=client, middleware=[mismatched_middleware])
 
     async def test_only_decorator_specified(self, chat_client_base: "MockBaseChatClient") -> None:
         """Only decorator specified - rely on decorator."""
@@ -1595,22 +1593,19 @@ class TestMiddlewareDecoratorLogic:
 
         # Should raise MiddlewareException
         with pytest.raises(MiddlewareException, match="Cannot determine middleware type"):
-            agent = Agent(client=client, middleware=[no_info_middleware])
-            await agent.run([Message(role="user", contents=["test"])])
+            Agent(client=client, middleware=[no_info_middleware])
 
     async def test_insufficient_parameters_error(self, client: Any) -> None:
         """Test that middleware with insufficient parameters raises an error."""
         from agent_framework import Agent, agent_middleware
 
         # Should raise MiddlewareException about insufficient parameters
+        @agent_middleware  # type: ignore[arg-type]
+        async def insufficient_params_middleware(context: Any) -> None:  # Missing 'next' parameter
+            pass
+
         with pytest.raises(MiddlewareException, match="must have at least 2 parameters"):
-
-            @agent_middleware  # type: ignore[arg-type]
-            async def insufficient_params_middleware(context: Any) -> None:  # Missing 'next' parameter
-                pass
-
-            agent = Agent(client=client, middleware=[insufficient_params_middleware])
-            await agent.run([Message(role="user", contents=["test"])])
+            Agent(client=client, middleware=[insufficient_params_middleware])
 
     async def test_decorator_markers_preserved(self) -> None:
         """Test that decorator markers are properly set on functions."""
