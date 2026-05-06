@@ -882,9 +882,9 @@ def _discover_marked_members(cls: type, marker_attr: str) -> list[tuple[str, dic
             continue
         try:
             attr = getattr(cls, attr_name, None)
-        except Exception:  # noqa: S112
+        except Exception:  # noqa: BAN-B112
             # Some descriptors (e.g. abstract properties) may raise on access.
-            continue
+            attr = None
         if attr is not None and callable(attr) and hasattr(attr, marker_attr):
             results.append((attr_name, getattr(attr, marker_attr)))
     return results
