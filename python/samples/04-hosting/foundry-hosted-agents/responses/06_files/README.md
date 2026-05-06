@@ -29,16 +29,16 @@ This agent uses four tools:
 
 Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
 
-An extra environment variable `TOOLBOX_NAME` must be set to the name of the Foundry Toolbox that the agent should load at runtime. This allows the agent host to dynamically retrieve the correct toolbox from Foundry when it starts. Run the following:
+An extra environment variable `FOUNDRY_TOOLBOX_ENDPOINT` must be set to the MCP endpoint URL of the Foundry toolbox. Run the following:
 
 ```bash
-export TOOLBOX_NAME="<your-toolbox-name>"
+export FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=v1"
 ```
 
 Or in PowerShell:
 
 ```powershell
-$env:TOOLBOX_NAME="<your-toolbox-name>"
+$env:FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=v1"
 ```
 
 ## Interacting with the agent
