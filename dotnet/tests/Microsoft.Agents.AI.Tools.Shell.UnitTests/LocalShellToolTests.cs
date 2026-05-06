@@ -73,11 +73,8 @@ public sealed class LocalShellToolTests
     public async Task RunAsync_NonZeroExit_PropagatesExitCodeAsync()
     {
         await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
-        // Exit-1 phrasing portable across bash and PowerShell.
-        var script = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? "exit 7"
-            : "exit 7";
-        var result = await shell.RunAsync(script);
+        // `exit <n>` works in both bash and PowerShell.
+        var result = await shell.RunAsync("exit 7");
         Assert.Equal(7, result.ExitCode);
     }
 

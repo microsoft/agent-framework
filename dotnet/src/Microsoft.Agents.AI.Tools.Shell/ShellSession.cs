@@ -760,10 +760,10 @@ internal sealed class ShellSession : IAsyncDisposable
 
                 lock (this._bufferGate)
                 {
-                    for (var i = 0; i < n; i++)
-                    {
-                        buf.Add(chunk[i]);
-                    }
+                    // Bulk-copy the chunk into the backing list. ArraySegment<byte>
+                    // implements ICollection<byte>, so AddRange takes the fast path
+                    // and avoids per-byte resize/branching on the hot path.
+                    buf.AddRange(new ArraySegment<byte>(chunk, 0, n));
                     if (isStdout)
                     {
                         // Swap the signal BEFORE completing the old one so any

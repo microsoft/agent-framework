@@ -100,7 +100,7 @@ public sealed class ShellPolicy
         {
             foreach (var pattern in allowList)
             {
-                allow.Add(new Regex(pattern, RegexOptions.Compiled));
+                allow.Add(new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase));
             }
         }
         this._allows = allow;

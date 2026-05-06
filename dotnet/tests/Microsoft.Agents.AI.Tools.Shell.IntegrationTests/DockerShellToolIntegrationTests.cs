@@ -86,7 +86,8 @@ public sealed class DockerShellToolIntegrationTests
         var result = await tool.RunAsync("getent hosts example.com 2>&1; echo MARKER:$?");
 
         Assert.Contains("MARKER:", result.Stdout);
-        // Non-zero status from wget proves network was blocked.
+        // Non-zero status from getent proves DNS resolution (and therefore the
+        // network) was blocked.
         Assert.DoesNotContain("MARKER:0", result.Stdout);
     }
 
