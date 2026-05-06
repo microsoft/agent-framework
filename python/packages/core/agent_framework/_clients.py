@@ -646,8 +646,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             "tokenizer": tokenizer,
             "additional_properties": dict(additional_properties) if additional_properties is not None else None,
         }
-        if function_invocation_configuration is not None:
-            agent_kwargs["function_invocation_configuration"] = function_invocation_configuration
+        if function_invocation_configuration is not None and hasattr(self, "function_invocation_configuration"):
+            client_function_invocation_configuration = getattr(self, "function_invocation_configuration")
+            if isinstance(client_function_invocation_configuration, dict):
+                client_function_invocation_configuration.update(function_invocation_configuration)
 
         return Agent(**agent_kwargs)
 
