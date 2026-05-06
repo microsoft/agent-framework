@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from agent_framework import AgentResponseUpdate
+from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
@@ -698,7 +698,16 @@ class TestDeliverResponse:
         assert report.pushed == ()
 
     @pytest.mark.asyncio
-    async def test_push_exception_marks_skipped(self) -> None:
+    async def test_push_exception_lands_in_failed_no_fallback(self) -> None:
+        """Push-raised destinations land in ``DeliveryReport.failed`` (with
+        an ``error_summary``) and do NOT trigger the originating-fallback.
+
+        Distinct from a "no link recorded" drop — that lands in
+        ``skipped`` (and DOES trigger the fallback). The originating
+        channel is meant to inspect ``failed`` and decide whether to
+        surface a degraded reply itself rather than double-delivering
+        on a flaky link.
+        """
         host, _a, b, ctx = _make_host_with_two_channels()
         b._push_raises = RuntimeError("boom")  # type: ignore[attr-defined]
         host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
@@ -710,5 +719,563 @@ class TestDeliverResponse:
             response_target=ResponseTarget.channel("telegram"),
         )
         report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
-        assert report.skipped == ("telegram:42",)
-        assert report.include_originating is True  # fallback
+        # Push raised → ``failed``, NOT ``skipped``.
+        assert report.skipped == ()
+        assert len(report.failed) == 1
+        token, summary = report.failed[0]
+        assert token == "telegram:42"
+        assert "RuntimeError" in summary
+        assert "boom" in summary
+        # No fallback: caller decides whether to surface a degraded reply.
+        assert report.include_originating is False
+
+
+# --------------------------------------------------------------------------- #
+# Bind request context — duck-typed hook on context providers                 #
+# --------------------------------------------------------------------------- #
+
+
+from contextlib import contextmanager  # noqa: E402
+
+
+class _RecordingContextProvider:
+    """Stand-in for a ``HistoryProvider`` that exposes the duck-typed
+    ``bind_request_context(response_id=..., previous_response_id=..., **_)``
+    seam the host calls. Records (event, payload) pairs so tests can
+    assert call ordering relative to the agent run + stream lifecycle.
+    """
+
+    def __init__(self, *, name: str = "rec") -> None:
+        self.name = name
+        # (event, payload) tuples — events: "enter", "exit", "agent_start",
+        # "agent_end", "stream_yield", "stream_done".
+        self.events: list[tuple[str, Any]] = []
+
+    @contextmanager
+    def bind_request_context(self, **kwargs: Any) -> Any:
+        # Snapshot the call kwargs on enter (so tests can assert
+        # response_id / previous_response_id forwarding) and the same
+        # snapshot on exit so we can verify the SAME payload bracketed
+        # the agent run.
+        snapshot = dict(kwargs)
+        self.events.append(("enter", snapshot))
+        try:
+            yield
+        finally:
+            self.events.append(("exit", snapshot))
+
+
+class _ProvidersAgent:
+    """Agent stand-in that exposes ``context_providers`` so the host's
+    ``_flat_context_providers`` finds the recording provider.
+
+    Mirrors the real :class:`agent_framework.Agent.run` shape: a sync
+    ``def`` that returns either an ``Awaitable[AgentResponse]`` (for
+    ``stream=False``) or a :class:`ResponseStream` synchronously (for
+    ``stream=True``). The host's ``_invoke_stream`` relies on the sync
+    return so it can wrap the stream in ``_BoundResponseStream`` and
+    hand it to channels for later iteration.
+    """
+
+    def __init__(self, providers: Sequence[Any], *, reply: str = "ok") -> None:
+        self.context_providers = list(providers)
+        self._reply = reply
+        self.calls: list[dict[str, Any]] = []
+
+    def create_session(self, *, session_id: str | None = None) -> _FakeAgentSession:
+        return _FakeAgentSession(session_id=session_id)
+
+    def run(
+        self,
+        messages: Any = None,
+        *,
+        stream: bool = False,
+        session: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        self.calls.append({"messages": messages, "stream": stream, "session": session, "kwargs": kwargs})
+
+        if stream:
+            providers = self.context_providers
+            updates = [
+                AgentResponseUpdate(contents=[Content.from_text("chunk-1")], role="assistant"),
+                AgentResponseUpdate(contents=[Content.from_text("chunk-2")], role="assistant"),
+            ]
+
+            async def _gen() -> AsyncIterator[AgentResponseUpdate]:
+                # ``agent_start`` is only recorded once iteration begins;
+                # if the channel abandons the stream without iterating
+                # we expect to see neither ``agent_start`` nor any
+                # ``stream_yield`` events.
+                for prov in providers:
+                    if isinstance(prov, _RecordingContextProvider):
+                        prov.events.append(("agent_start", None))
+                for u in updates:
+                    for prov in providers:
+                        if isinstance(prov, _RecordingContextProvider):
+                            prov.events.append(("stream_yield", u.text))
+                    yield u
+
+            async def _finalize(items: Sequence[AgentResponseUpdate]) -> AgentResponse:  # noqa: RUF029
+                for prov in providers:
+                    if isinstance(prov, _RecordingContextProvider):
+                        prov.events.append(("stream_done", len(items)))
+                return AgentResponse.from_updates(items)
+
+            return ResponseStream[AgentResponseUpdate, AgentResponse](_gen(), finalizer=_finalize)
+
+        async def _coro() -> _FakeAgentResponse:
+            for prov in self.context_providers:
+                if isinstance(prov, _RecordingContextProvider):
+                    prov.events.append(("agent_start", None))
+                    prov.events.append(("agent_end", None))
+            return _FakeAgentResponse(text=self._reply)
+
+        return _coro()
+
+
+class _ProviderWrapper:
+    """Wrap children in a ``providers`` attribute (mirrors the
+    ``ContextProviderBase`` aggregation shape)."""
+
+    def __init__(self, providers: Sequence[Any]) -> None:
+        self.providers = list(providers)
+
+
+class TestBindRequestContext:
+    """The host walks ``target.context_providers``, descends one level
+    when a provider exposes a ``providers`` attribute, and calls
+    ``bind_request_context(response_id=..., previous_response_id=...)``
+    on every provider that supports it. Foundry response-id chaining
+    plugs into this exact seam — a regression that mistypes the kwarg
+    name, drops the descent, or fails to keep the binding open across
+    the agent run silently breaks chained writes."""
+
+    @pytest.mark.asyncio
+    async def test_bind_called_with_request_attributes(self) -> None:
+        prov = _RecordingContextProvider()
+        agent = _ProvidersAgent([prov])
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            session=ChannelSession(isolation_key="alice"),
+            attributes={"response_id": "resp_abc", "previous_response_id": "resp_prev"},
+        )
+        result = await ch.context.run(req)
+        assert result.text == "ok"
+
+        # Bind ↔ unbind brackets the agent run.
+        events = [name for name, _ in prov.events]
+        assert events == ["enter", "agent_start", "agent_end", "exit"]
+
+        # Both response_id and previous_response_id forwarded by name.
+        _, enter_payload = prov.events[0]
+        assert enter_payload["response_id"] == "resp_abc"
+        assert enter_payload["previous_response_id"] == "resp_prev"
+
+    @pytest.mark.asyncio
+    async def test_bind_skipped_when_no_response_id_attribute(self) -> None:
+        """Without a ``response_id`` attribute on the request, the host
+        skips the binding entirely — the contract requires one to anchor
+        the chain."""
+        prov = _RecordingContextProvider()
+        agent = _ProvidersAgent([prov])
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(channel="responses", operation="op", input="hi")
+        await ch.context.run(req)
+        assert prov.events == [("agent_start", None), ("agent_end", None)]
+
+    @pytest.mark.asyncio
+    async def test_bind_descends_one_level_into_providers_attribute(self) -> None:
+        """``ContextProviderBase`` style aggregation wraps children under
+        a ``providers`` attribute; the host descends one level so the
+        Foundry history provider gets called even when the agent
+        configures it via the wrapper."""
+        prov = _RecordingContextProvider(name="inner")
+        wrapper = _ProviderWrapper([prov])
+        agent = _ProvidersAgent([wrapper])
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            attributes={"response_id": "resp_xyz"},
+        )
+        await ch.context.run(req)
+        assert ("enter", {"response_id": "resp_xyz", "previous_response_id": None}) in prov.events
+
+    @pytest.mark.asyncio
+    async def test_bind_held_open_until_stream_exhaustion(self) -> None:
+        """Streaming runs return a ``ResponseStream`` synchronously but
+        consumption happens later. The binding must survive that gap and
+        only release after the iterator drains so the provider sees
+        every yielded chunk under the bound context."""
+        prov = _RecordingContextProvider()
+        agent = _ProvidersAgent([prov])
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            stream=True,
+            attributes={"response_id": "resp_stream"},
+        )
+        stream = ch.context.run_stream(req)
+
+        # As soon as run_stream returns, the binding must already be open
+        # so any provider work that happens during iteration sees it.
+        names_after_create = [name for name, _ in prov.events]
+        assert names_after_create.count("enter") == 1
+        assert "exit" not in names_after_create
+
+        chunks: list[str] = []
+        async for u in stream:
+            chunks.append(u.text)
+        assert chunks == ["chunk-1", "chunk-2"]
+
+        # After exhaustion the binding must be released — exactly once.
+        names_after_drain = [name for name, _ in prov.events]
+        assert names_after_drain.count("enter") == 1
+        assert names_after_drain.count("exit") == 1
+        # Brackets surround every stream_yield.
+        enter_idx = names_after_drain.index("enter")
+        exit_idx = names_after_drain.index("exit")
+        yield_idxs = [i for i, name in enumerate(names_after_drain) if name == "stream_yield"]
+        assert all(enter_idx < i < exit_idx for i in yield_idxs)
+
+
+# --------------------------------------------------------------------------- #
+# Agent-target streaming — `_BoundResponseStream` adapter behaviour            #
+# --------------------------------------------------------------------------- #
+
+
+class TestBoundResponseStream:
+    """The ``_BoundResponseStream`` adapter holds the bind-context
+    ``ExitStack`` open across iteration. Cover the iterator-finally
+    close, ``get_final_response`` close, double-close idempotence,
+    ``aclose()``, ``__getattr__`` forwarding, and the awaitable path
+    (which now routes through ``get_final_response`` so it doesn't
+    leak the binding)."""
+
+    @pytest.mark.asyncio
+    async def test_get_final_response_closes_binding(self) -> None:
+        prov = _RecordingContextProvider()
+        agent = _ProvidersAgent([prov])
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            stream=True,
+            attributes={"response_id": "resp_get_final"},
+        )
+        stream = ch.context.run_stream(req)
+        # Skip iteration and go straight to ``get_final_response``;
+        # the adapter must drain the inner stream itself and close
+        # the binding in ``finally``.
+        final = await stream.get_final_response()
+        assert final.text == "chunk-1chunk-2"
+        names = [n for n, _ in prov.events]
+        assert names.count("enter") == 1
+        assert names.count("exit") == 1
+
+    @pytest.mark.asyncio
+    async def test_double_close_is_idempotent(self) -> None:
+        prov = _RecordingContextProvider()
+        agent = _ProvidersAgent([prov])
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            stream=True,
+            attributes={"response_id": "resp_idem"},
+        )
+        stream = ch.context.run_stream(req)
+        async for _u in stream:
+            pass
+        # Iteration's finally already closed; an explicit ``aclose``
+        # afterwards must be a no-op (no second exit event).
+        await stream.aclose()  # type: ignore[attr-defined]
+        await stream.aclose()  # type: ignore[attr-defined]
+        names = [n for n, _ in prov.events]
+        assert names.count("exit") == 1
+
+    @pytest.mark.asyncio
+    async def test_aclose_releases_binding_when_stream_abandoned(self) -> None:
+        """A channel that abandons the stream without iterating must
+        be able to call ``aclose()`` so the host-bound contextvars
+        don't leak for the host's lifetime."""
+        prov = _RecordingContextProvider()
+        agent = _ProvidersAgent([prov])
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            stream=True,
+            attributes={"response_id": "resp_abandon"},
+        )
+        stream = ch.context.run_stream(req)
+        await stream.aclose()  # type: ignore[attr-defined]
+
+        # Binding released without iterating.
+        names = [n for n, _ in prov.events]
+        assert names.count("enter") == 1
+        assert names.count("exit") == 1
+        # Agent never ran — we abandoned before iteration.
+        assert "agent_start" not in names
+
+    @pytest.mark.asyncio
+    async def test_getattr_forwards_to_inner_stream(self) -> None:
+        """``_BoundResponseStream.__getattr__`` forwards unknown
+        attributes to the inner ``ResponseStream``; channels that
+        check, e.g., ``stream.add_result_hook(...)`` must keep working."""
+        prov = _RecordingContextProvider()
+        agent = _ProvidersAgent([prov])
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            stream=True,
+            attributes={"response_id": "resp_getattr"},
+        )
+        stream = ch.context.run_stream(req)
+        # ``with_result_hook`` is a real method on ``ResponseStream``;
+        # if forwarding broke this would AttributeError.
+        try:
+            assert callable(stream.with_result_hook)  # type: ignore[attr-defined]
+        finally:
+            await stream.aclose()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_await_path_routes_through_get_final_response(self) -> None:
+        """``await stream`` is a convenience for ``await
+        get_final_response()``. The previous direct delegation leaked
+        the binding for the host's lifetime; the new routing closes the
+        stack in the same ``finally`` as ``get_final_response``."""
+        prov = _RecordingContextProvider()
+        agent = _ProvidersAgent([prov])
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            stream=True,
+            attributes={"response_id": "resp_await"},
+        )
+        stream = ch.context.run_stream(req)
+        final = await stream  # exercises __await__
+        assert final.text == "chunk-1chunk-2"
+        names = [n for n, _ in prov.events]
+        assert names.count("enter") == 1
+        assert names.count("exit") == 1
+
+
+# --------------------------------------------------------------------------- #
+# `_wrap_input` — list[Message] LAST-message metadata stamping                 #
+# --------------------------------------------------------------------------- #
+
+
+class TestWrapInputListMessages:
+    """The ``hosting`` block lands on the LAST message of a list — the
+    contract is load-bearing: the user turn (typically last) must
+    carry the channel provenance + identity for history correlation;
+    a regression stamping ``messages[0]`` instead silently breaks
+    every multi-message payload."""
+
+    @pytest.mark.asyncio
+    async def test_metadata_lands_on_last_message_only(self) -> None:
+        agent = _FakeAgent()
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        # Responses-API style: a system instruction followed by a user
+        # turn. Only the user turn (LAST) gets stamped.
+        system = Message(role="system", contents=[Content.from_text("be concise")])
+        user = Message(role="user", contents=[Content.from_text("hi")])
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input=[system, user],
+            identity=ChannelIdentity(channel="responses", native_id="user:1"),
+        )
+        await ch.context.run(req)
+
+        forwarded = agent.calls[0]["messages"]
+        assert isinstance(forwarded, list)
+        assert len(forwarded) == 2
+        # System stays clean.
+        assert (system.additional_properties or {}).get("hosting") is None
+        # User turn carries the metadata.
+        hosting = forwarded[-1].additional_properties["hosting"]
+        assert hosting["channel"] == "responses"
+        assert hosting["identity"]["native_id"] == "user:1"
+
+    @pytest.mark.asyncio
+    async def test_single_message_payload_still_works(self) -> None:
+        """Regression guard: the single-``Message`` branch must be
+        unchanged by the LAST-of-list logic above."""
+        agent = _FakeAgent()
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=agent, channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        only = Message(role="user", contents=[Content.from_text("hi")])
+        req = ChannelRequest(channel="responses", operation="op", input=only)
+        await ch.context.run(req)
+        forwarded = agent.calls[0]["messages"]
+        assert isinstance(forwarded, Message)
+        assert forwarded.additional_properties["hosting"]["channel"] == "responses"
+
+
+# --------------------------------------------------------------------------- #
+# Lifespan callback aggregation                                                 #
+# --------------------------------------------------------------------------- #
+
+
+class _RaisingLifecycleChannel:
+    """Channel whose startup OR shutdown callback raises a controlled error."""
+
+    def __init__(self, name: str, *, fail_on: str) -> None:
+        self.name = name
+        self.path = ""
+        self._fail_on = fail_on  # "startup" | "shutdown"
+        self.start_calls: list[str] = []
+        self.stop_calls: list[str] = []
+
+    def contribute(self, _context: ChannelContext) -> ChannelContribution:
+        async def _start() -> None:
+            self.start_calls.append("up")
+            if self._fail_on == "startup":
+                raise RuntimeError(f"startup-boom-{self.name}")
+
+        async def _stop() -> None:
+            self.stop_calls.append("down")
+            if self._fail_on == "shutdown":
+                raise RuntimeError(f"shutdown-boom-{self.name}")
+
+        return ChannelContribution(on_startup=[_start], on_shutdown=[_stop])
+
+
+class _OkLifecycleChannel:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.path = ""
+        self.start_calls: list[str] = []
+        self.stop_calls: list[str] = []
+
+    def contribute(self, _context: ChannelContext) -> ChannelContribution:
+        async def _start() -> None:
+            self.start_calls.append("up")
+
+        async def _stop() -> None:
+            self.stop_calls.append("down")
+
+        return ChannelContribution(on_startup=[_start], on_shutdown=[_stop])
+
+
+class TestLifespanAggregation:
+    """One bad startup / shutdown callback must NOT abort the rest —
+    every channel gets a chance to wire / unwire so half-initialised
+    state doesn't leak. The first error is still raised so the
+    process exits with a failure; remaining errors are logged so
+    operators see them all in one log scrape."""
+
+    def test_shutdown_failure_does_not_skip_peer_shutdowns(self, caplog: Any) -> None:
+        import logging as _logging
+
+        agent = _FakeAgent()
+        bad = _RaisingLifecycleChannel("bad", fail_on="shutdown")
+        ok1 = _OkLifecycleChannel("ok1")
+        ok2 = _OkLifecycleChannel("ok2")
+        # Order: bad first so that without aggregation, ok1+ok2 would
+        # never get to run their shutdown callbacks.
+        host = AgentFrameworkHost(target=agent, channels=[bad, ok1, ok2])
+
+        with caplog.at_level(_logging.ERROR, logger="agent_framework.hosting"):  # noqa: SIM117
+            with pytest.raises(RuntimeError, match="shutdown-boom-bad"), TestClient(host.app):
+                pass
+
+        # Every channel had its shutdown attempted, even though `bad` raised.
+        assert bad.stop_calls == ["down"]
+        assert ok1.stop_calls == ["down"]
+        assert ok2.stop_calls == ["down"]
+
+    def test_startup_failure_aggregates_logs_and_raises_first(self, caplog: Any) -> None:
+        import logging as _logging
+
+        agent = _FakeAgent()
+        ok1 = _OkLifecycleChannel("ok1")
+        bad = _RaisingLifecycleChannel("bad", fail_on="startup")
+        ok2 = _OkLifecycleChannel("ok2")
+        another_bad = _RaisingLifecycleChannel("bad2", fail_on="startup")
+        host = AgentFrameworkHost(
+            target=agent,
+            channels=[ok1, bad, ok2, another_bad],
+        )
+
+        with caplog.at_level(_logging.ERROR, logger="agent_framework.hosting"):  # noqa: SIM117
+            # The first failing callback's error is the one that
+            # propagates; remaining failures are logged.
+            with pytest.raises(RuntimeError, match="startup-boom-bad"), TestClient(host.app):
+                pass
+
+        # Every startup callback ran (even ok2 / another_bad after the
+        # first failure) so we get a complete picture in the logs.
+        assert ok1.start_calls == ["up"]
+        assert bad.start_calls == ["up"]
+        assert ok2.start_calls == ["up"]
+        assert another_bad.start_calls == ["up"]
+
+        # Both failures show up in operator logs. ``logger.exception`` puts
+        # the exception payload in ``record.exc_text``; the formatted summary
+        # of the second failure goes into ``record.message`` via the
+        # aggregate "N callback(s) failed" line.
+        log_messages = [rec.getMessage() for rec in caplog.records]
+        log_exc_texts = [rec.exc_text or "" for rec in caplog.records]
+        log_text = "\n".join(log_messages + log_exc_texts)
+        assert "startup-boom-bad" in log_text
+        assert "startup-boom-bad2" in log_text or "callback(s) failed" in log_text

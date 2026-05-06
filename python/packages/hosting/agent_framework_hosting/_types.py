@@ -129,12 +129,12 @@ class ResponseTarget:
     # -- builders ---------------------------------------------------------- #
 
     @classmethod
-    def channel(cls, name: str) -> "ResponseTarget":
+    def channel(cls, name: str) -> ResponseTarget:
         """Target a single named destination channel."""
         return cls(kind=ResponseTargetKind.CHANNELS, targets=(name,))
 
     @classmethod
-    def channels(cls, names: Sequence[str]) -> "ResponseTarget":
+    def channels(cls, names: Sequence[str]) -> ResponseTarget:
         """Target an explicit list of destination channels."""
         return cls(kind=ResponseTargetKind.CHANNELS, targets=tuple(names))
 
@@ -194,7 +194,7 @@ class ChannelCommand:
         self,
         name: str,
         description: str,
-        handle: Callable[["ChannelCommandContext"], Awaitable[None]],
+        handle: Callable[[ChannelCommandContext], Awaitable[None]],
     ) -> None:
         self.name = name
         self.description = description
@@ -249,6 +249,15 @@ class DeliveryReport:
     ``originating`` target, or when ``"originating"`` is one of the listed
     destinations) or to return only an acknowledgement (``False`` — when
     the target lists only out-of-band destinations).
+
+    ``skipped`` and ``failed`` are intentionally distinct so callers can
+    tell a structural drop (no link recorded for the destination
+    channel — ``skipped``) from a transport / runtime failure
+    (``ChannelPush.push`` raised — ``failed``). A non-empty ``failed``
+    indicates an outage / outage-like condition (Telegram, Teams,
+    expired credentials, rate limits) and is the right signal for a
+    caller that wants to surface a degraded reply to the originating
+    user instead of treating the request as fully delivered.
     """
 
     def __init__(
@@ -256,10 +265,18 @@ class DeliveryReport:
         include_originating: bool,
         pushed: tuple[str, ...] = (),
         skipped: tuple[str, ...] = (),
+        failed: tuple[tuple[str, str], ...] = (),
     ) -> None:
         self.include_originating = include_originating
         self.pushed = pushed  # destination tokens delivered to (e.g. "telegram:123")
-        self.skipped = skipped  # destinations resolved but skipped (no push, failed, …)
+        self.skipped = (
+            skipped  # destinations dropped without a push attempt (no identity / no ChannelPush / unknown channel)
+        )
+        # destinations whose ``ChannelPush.push`` raised — each entry is
+        # ``(target_token, error_summary)`` so callers can distinguish
+        # the "all destinations down" outage case from the documented
+        # "no link recorded" drop case (which lands in ``skipped``).
+        self.failed = failed
 
 
 # A transform hook runs over each AgentResponseUpdate as the channel consumes
@@ -335,7 +352,7 @@ class Channel(Protocol):
     name: str
     path: str  # default mount path (e.g. "/responses"); use "" to mount routes at the app root
 
-    def contribute(self, context: "ChannelContext") -> ChannelContribution: ...
+    def contribute(self, context: ChannelContext) -> ChannelContribution: ...
 
 
 @runtime_checkable
