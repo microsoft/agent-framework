@@ -1117,28 +1117,34 @@ class MCPTool:
                 return parser(result)
             except ToolExecutionException:
                 raise
-            except ClosedResourceError as cl_ex:
-                if attempt == 0:
-                    # First attempt failed, try reconnecting
-                    logger.info("MCP connection closed unexpectedly. Reconnecting...")
-                    try:
-                        await self.connect(reset=True)
-                        continue  # Retry the operation
-                    except Exception as reconn_ex:
+            except (ClosedResourceError, McpError) as cl_ex:
+                # Check if this is a session termination error that should trigger reconnection
+                is_session_terminated = isinstance(cl_ex, McpError) and "session terminated" in str(cl_ex).lower()
+                is_closed_resource = isinstance(cl_ex, ClosedResourceError)
+
+                if is_closed_resource or is_session_terminated:
+                    if attempt == 0:
+                        # First attempt failed, try reconnecting
+                        logger.info("MCP connection closed or terminated unexpectedly. Reconnecting...")
+                        try:
+                            await self.connect(reset=True)
+                            continue  # Retry the operation
+                        except Exception as reconn_ex:
+                            raise ToolExecutionException(
+                                "Failed to reconnect to MCP server.",
+                                inner_exception=reconn_ex,
+                            ) from reconn_ex
+                    else:
+                        # Second attempt also failed, give up
+                        logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
                         raise ToolExecutionException(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
-                        ) from reconn_ex
+                            f"Failed to call tool '{tool_name}' - connection lost.",
+                            inner_exception=cl_ex,
+                        ) from cl_ex
                 else:
-                    # Second attempt also failed, give up
-                    logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
-                    raise ToolExecutionException(
-                        f"Failed to call tool '{tool_name}' - connection lost.",
-                        inner_exception=cl_ex,
-                    ) from cl_ex
-            except McpError as mcp_exc:
-                error_message = mcp_exc.error.message
-                raise ToolExecutionException(error_message, inner_exception=mcp_exc) from mcp_exc
+                    # This is a different McpError, not related to connection
+                    error_message = cl_ex.error.message if isinstance(cl_ex, McpError) else str(cl_ex)
+                    raise ToolExecutionException(error_message, inner_exception=cl_ex) from cl_ex
             except Exception as ex:
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
