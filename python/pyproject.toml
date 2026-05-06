@@ -94,6 +94,7 @@ agent-framework-orchestrations = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-azure-contentunderstanding = { workspace = true }
+agent-framework-tools = { workspace = true }
 
 [tool.ruff]
 line-length = 120
