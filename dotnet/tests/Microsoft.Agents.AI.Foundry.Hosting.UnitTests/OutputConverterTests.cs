@@ -590,6 +590,51 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
+    // K-05: An FCC with an empty CallId is dropped without disturbing in-flight text.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallEmptyCallIdMidText_PreservesTextBoundaryAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var updates = new[]
+        {
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent("Hello, ")] },
+            new AgentResponseUpdate { Contents = [new FunctionCallContent(string.Empty, "skipped", new Dictionary<string, object?>())] },
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent("world!")] },
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // The FCC is skipped (no CallId), and because we now validate CallId before
+        // closing the in-flight assistant message, both text deltas land in the same
+        // output item — only one message-added event is emitted.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.Equal(2, events.OfType<ResponseTextDeltaEvent>().Count());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    // K-06: FRC string results are emitted as raw text on the wire (not JSON-quoted).
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultStringPayload_EmittedAsRawTextAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "sunny")] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        // String FRC payloads must not be double-encoded — `sunny`, not `"sunny"`.
+        Assert.Equal("sunny", output.Output.ToString());
+    }
+
     // L-01
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_ExecutorInvokedEvent_EmitsWorkflowActionItemAsync()

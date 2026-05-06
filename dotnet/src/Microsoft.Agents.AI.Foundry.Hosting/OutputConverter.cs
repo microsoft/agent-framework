@@ -120,6 +120,11 @@ internal static class OutputConverter
 
                     case FunctionCallContent functionCall:
                     {
+                        if (functionCall.CallId is not { Length: > 0 })
+                        {
+                            break;
+                        }
+
                         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
                         {
                             yield return evt;
@@ -129,11 +134,6 @@ internal static class OutputConverter
                         currentMessageBuilder = null;
                         accumulatedText = null;
                         previousMessageId = null;
-
-                        if (functionCall.CallId is not { Length: > 0 })
-                        {
-                            break;
-                        }
 
                         var arguments = functionCall.Arguments is not null
                             ? JsonSerializer.Serialize(functionCall.Arguments)
@@ -194,11 +194,18 @@ internal static class OutputConverter
                         // wireId↔afRequestId mapping in the session state bag for later lookup
                         // when the matching `mcp_approval_response` arrives on a subsequent turn.
                         var wireId = ToolApprovalIdMap.ComputeWireId(approvalRequest.RequestId);
-                        ToolApprovalIdMap.Record(stateBag, wireId, approvalRequest.RequestId, approvalFunctionCall);
 
                         var approvalArguments = approvalFunctionCall.Arguments is not null
                             ? JsonSerializer.Serialize(approvalFunctionCall.Arguments)
                             : "{}";
+
+                        ToolApprovalIdMap.Record(
+                            stateBag,
+                            wireId,
+                            approvalRequest.RequestId,
+                            approvalFunctionCall.CallId,
+                            approvalFunctionCall.Name,
+                            approvalArguments);
 
                         var approvalItem = new OutputItemMcpApprovalRequest(
                             wireId,
@@ -272,17 +279,17 @@ internal static class OutputConverter
                         accumulatedText = null;
                         previousMessageId = null;
 
-                        var outputJson = functionResult.Result switch
+                        var outputText = functionResult.Result switch
                         {
-                            null => "null",
-                            string s => JsonSerializer.Serialize(s),
+                            null => string.Empty,
+                            string s => s,
                             _ => JsonSerializer.Serialize(functionResult.Result),
                         };
 
                         var itemId = GenerateItemId("fc");
                         var outputItem = new OutputItemFunctionToolCallOutput(
                             functionResult.CallId,
-                            BinaryData.FromString(outputJson));
+                            BinaryData.FromString(outputText));
 
                         var outputBuilder = stream.AddOutputItem<OutputItemFunctionToolCallOutput>(itemId);
                         yield return outputBuilder.EmitAdded(outputItem);

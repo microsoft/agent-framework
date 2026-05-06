@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
@@ -783,6 +782,11 @@ public class InputConverterTests
     [Fact]
     public void ConvertItemsToMessages_McpApprovalResponse_ThrowsWhenNoMapping()
     {
+        // Without a recorded ApprovalEntry the converter cannot reconstruct the original
+        // function call faithfully — any placeholder it produced would still fail downstream
+        // (FICC has no tool to invoke; Azure's stored function_call can't pair with the
+        // synthetic id). Fail fast with a clear error instead of continuing into a confusing
+        // HTTP 400 deep inside the agent loop.
         var wireId = "mcpr_" + new string('a', 50);
         var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: true);
 
@@ -800,7 +804,9 @@ public class InputConverterTests
             stateBag,
             wireId,
             AfRequestId,
-            new FunctionCallContent("call_xyz", "issue_refund", new Dictionary<string, object?> { ["order_id"] = 123 }));
+            "call_xyz",
+            "issue_refund",
+            "{\"order_id\":123}");
 
         var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: false);
 
@@ -848,7 +854,9 @@ public class InputConverterTests
             stateBag,
             wireId,
             AfRequestId,
-            new FunctionCallContent("call_history", "delete_file", new Dictionary<string, object?> { ["path"] = "/tmp/x" }));
+            "call_history",
+            "delete_file",
+            "{\"path\":\"/tmp/x\"}");
 
         var item = new OutputItemMcpApprovalResponseResource(
             id: "ar_history_id",
@@ -867,21 +875,6 @@ public class InputConverterTests
     }
 
     [Fact]
-    public void ConvertItemsToMessages_McpApprovalResponse_NoMapping_Throws()
-    {
-        // Without a recorded ApprovalEntry the converter cannot reconstruct the original
-        // function call faithfully — any placeholder it produced would still fail downstream
-        // (FICC has no tool to invoke; Azure's stored function_call can't pair with the
-        // synthetic id). Fail fast with a clear error instead of continuing into a confusing
-        // HTTP 400 deep inside the agent loop.
-        var wireId = "mcpr_" + new string('c', 50);
-        var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: true);
-
-        var ex = Assert.Throws<InvalidOperationException>(() => InputConverter.ConvertItemsToMessages([item]));
-        Assert.Contains(wireId, ex.Message);
-    }
-
-    [Fact]
     public void ConvertItemsToMessages_McpApprovalRequest_MalformedArguments_PreservesRaw()
     {
         var item = new ItemMcpApprovalRequest(
@@ -896,6 +889,28 @@ public class InputConverterTests
         var fc = Assert.IsType<FunctionCallContent>(content.ToolCall);
         Assert.NotNull(fc.Arguments);
         Assert.Equal("not valid json", fc.Arguments!["_raw"]?.ToString());
+    }
+
+    [Fact]
+    public void ToolApprovalIdMap_Record_EmptyCallId_IsNoOp()
+    {
+        var stateBag = new AgentSessionStateBag();
+        var wireId = "mcpr_" + new string('d', 50);
+
+        ToolApprovalIdMap.Record(stateBag, wireId, "ficc_x", callId: string.Empty, name: "tool", argumentsJson: "{}");
+
+        Assert.Null(ToolApprovalIdMap.ResolveEntry(stateBag, wireId));
+    }
+
+    [Fact]
+    public void ToolApprovalIdMap_Record_EmptyName_IsNoOp()
+    {
+        var stateBag = new AgentSessionStateBag();
+        var wireId = "mcpr_" + new string('e', 50);
+
+        ToolApprovalIdMap.Record(stateBag, wireId, "ficc_x", callId: "call_xyz", name: string.Empty, argumentsJson: "{}");
+
+        Assert.Null(ToolApprovalIdMap.ResolveEntry(stateBag, wireId));
     }
 
     // ── input_file data-URI decoding (TryDecodeTextDataUri) ──

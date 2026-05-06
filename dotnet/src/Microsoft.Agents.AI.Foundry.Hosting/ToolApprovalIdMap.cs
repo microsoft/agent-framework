@@ -2,10 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -62,27 +60,31 @@ internal static class ToolApprovalIdMap
 
     /// <summary>
     /// Records the wire-id → approval-entry mapping in the supplied state bag.
+    /// Arguments are passed as already-serialized JSON to keep this method
+    /// trim/AOT-friendly (no polymorphic <c>object</c> serialization here).
+    /// No-op when <paramref name="callId"/> or <paramref name="name"/> is empty —
+    /// without those fields the entry cannot be used to faithfully reconstruct
+    /// the original <see cref="FunctionCallContent"/> on the inbound side.
     /// </summary>
-    [RequiresUnreferencedCode("FunctionCallContent.Arguments serialization may require types that cannot be statically analyzed.")]
-    [RequiresDynamicCode("FunctionCallContent.Arguments serialization may require runtime code generation.")]
-    public static void Record(AgentSessionStateBag? stateBag, string wireId, string afRequestId, FunctionCallContent functionCall)
+    public static void Record(AgentSessionStateBag? stateBag, string wireId, string afRequestId, string? callId, string? name, string? argumentsJson)
     {
         if (stateBag is null)
         {
             return;
         }
 
-        ArgumentNullException.ThrowIfNull(functionCall);
+        if (string.IsNullOrEmpty(callId) || string.IsNullOrEmpty(name))
+        {
+            return;
+        }
 
         var map = LoadMap(stateBag);
         map[wireId] = new ApprovalEntry
         {
             AfRequestId = afRequestId,
-            CallId = functionCall.CallId,
-            Name = functionCall.Name,
-            Arguments = functionCall.Arguments is not null
-                ? JsonSerializer.Serialize(functionCall.Arguments)
-                : null,
+            CallId = callId!,
+            Name = name!,
+            Arguments = argumentsJson,
         };
         stateBag.SetValue(StateBagKey, map);
     }
