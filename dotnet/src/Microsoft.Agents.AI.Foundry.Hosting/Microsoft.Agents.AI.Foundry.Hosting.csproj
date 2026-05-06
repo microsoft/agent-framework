@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
@@ -31,7 +31,7 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.AgentServer.Responses" />
-    <PackageReference Include="Azure.AI.Projects" VersionOverride="2.1.0-beta.1" />
+    <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
