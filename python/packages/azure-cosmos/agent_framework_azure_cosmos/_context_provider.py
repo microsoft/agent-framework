@@ -95,8 +95,8 @@ class CosmosContextProvider(ContextProvider):
     ) -> None:
         super().__init__(source_id)
 
-        self.top_k = top_k or 5
-        self.scan_limit = scan_limit or 25
+        self.top_k = top_k if top_k is not None and top_k > 0 else 5
+        self.scan_limit = scan_limit if scan_limit is not None and scan_limit > 0 else 25
         self.search_mode = search_mode
         self.content_field_names = tuple(content_field_names)
         self.message_field_name = message_field_name
@@ -139,10 +139,10 @@ class CosmosContextProvider(ContextProvider):
         self.database_name = settings["database_name"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
         self.container_name = settings["container_name"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
         env_top_k = settings.get("top_k")
-        if env_top_k is not None:
+        if env_top_k is not None and env_top_k > 0:
             self.top_k = env_top_k
         env_scan_limit = settings.get("scan_limit")
-        if env_scan_limit is not None:
+        if env_scan_limit is not None and env_scan_limit > 0:
             self.scan_limit = env_scan_limit
 
         if self._cosmos_client is None:
@@ -188,7 +188,6 @@ class CosmosContextProvider(ContextProvider):
             msg = self._shape_context_message(item)
             if msg is not None:
                 result_messages.append(msg)
-            # Redundant check
             if len(result_messages) >= self.top_k:
                 break
 
