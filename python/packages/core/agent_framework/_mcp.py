@@ -248,6 +248,8 @@ class MCPTool:
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
+        self._ping_supported: bool = True
+        self._reconnecting: bool = False
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -651,6 +653,7 @@ class MCPTool:
             await self._safe_close_exit_stack()
             self.session = None
             self.is_connected = False
+            self._ping_supported = True
             self._exit_stack = AsyncExitStack()
         if not self.session:
             try:
@@ -1041,28 +1044,28 @@ class MCPTool:
         """
         from mcp.shared.exceptions import McpError
 
-        # JSON-RPC error code for "Method not found"
-        METHOD_NOT_FOUND = -32601
+        # Avoid re-entrant reconnection when connect() calls load_tools()/load_prompts()
+        if self._reconnecting:
+            return
+
+        # If the server previously indicated it doesn't support ping, skip the check.
+        # The actual list_tools/list_prompts call will surface transport errors if any.
+        if not self._ping_supported:
+            return
 
         try:
             await self.session.send_ping()  # type: ignore[union-attr]
         except McpError as mcp_exc:
-            # If the server responds with "Method not found", it means the
-            # connection is alive but the server doesn't implement the optional
-            # ping method (per the MCP spec, ping is optional). Treat as connected.
-            if mcp_exc.error.code == METHOD_NOT_FOUND:
+            # McpError means the server received the request and responded—the
+            # transport is alive. If the error is "Method not found" (-32601),
+            # the server doesn't implement the optional ping method per MCP spec.
+            if mcp_exc.error.code == -32601:  # JSON-RPC "Method not found"
+                self._ping_supported = False
                 logger.debug("MCP server does not support ping (method not found). Connection is valid.")
-                return
-            logger.info("MCP connection invalid or closed. Reconnecting...")
-            try:
-                await self.connect(reset=True)
-            except Exception as ex:
-                raise ToolExecutionException(
-                    "Failed to establish MCP connection.",
-                    inner_exception=ex,
-                ) from ex
+            return
         except Exception:
             logger.info("MCP connection invalid or closed. Reconnecting...")
+            self._reconnecting = True
             try:
                 await self.connect(reset=True)
             except Exception as ex:
@@ -1070,6 +1073,8 @@ class MCPTool:
                     "Failed to establish MCP connection.",
                     inner_exception=ex,
                 ) from ex
+            finally:
+                self._reconnecting = False
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool with the given arguments.
