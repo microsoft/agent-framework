@@ -1,0 +1,110 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Text;
+
+namespace Microsoft.Agents.AI.Tools.Shell;
+
+/// <summary>
+/// The outcome of a single shell command invocation.
+/// </summary>
+/// <param name="Stdout">Captured standard output, possibly truncated.</param>
+/// <param name="Stderr">Captured standard error, possibly truncated.</param>
+/// <param name="ExitCode">The exit status reported by the shell or subprocess. <c>-1</c> if the process never exited cleanly.</param>
+/// <param name="Duration">How long the command took to execute end-to-end.</param>
+/// <param name="Truncated"><see langword="true"/> when stdout or stderr was truncated.</param>
+/// <param name="TimedOut"><see langword="true"/> when the command was killed because it exceeded the configured timeout.</param>
+public sealed record ShellResult(
+    string Stdout,
+    string Stderr,
+    int ExitCode,
+    TimeSpan Duration,
+    bool Truncated = false,
+    bool TimedOut = false)
+{
+    /// <summary>
+    /// Format the result as a single text block suitable for return to a language model.
+    /// </summary>
+    /// <returns>A multi-line string combining stdout, stderr, status flags, and the exit code.</returns>
+    public string FormatForModel()
+    {
+        var sb = new StringBuilder();
+        if (!string.IsNullOrEmpty(this.Stdout))
+        {
+            _ = sb.Append(this.Stdout);
+            if (this.Truncated)
+            {
+                _ = sb.AppendLine().Append("[stdout truncated]");
+            }
+            _ = sb.AppendLine();
+        }
+        if (!string.IsNullOrEmpty(this.Stderr))
+        {
+            _ = sb.Append("stderr: ").Append(this.Stderr).AppendLine();
+        }
+        if (this.TimedOut)
+        {
+            _ = sb.AppendLine("[command timed out]");
+        }
+        _ = sb.Append("exit_code: ").Append(this.ExitCode);
+        return sb.ToString();
+    }
+}
+
+/// <summary>
+/// Specifies how a <see cref="LocalShellTool"/> dispatches commands to the underlying shell.
+/// </summary>
+public enum ShellMode
+{
+    /// <summary>
+    /// Each command runs in a fresh shell subprocess. State (working directory,
+    /// environment variables) is reset between calls.
+    /// </summary>
+    Stateless,
+
+    /// <summary>
+    /// A single long-lived shell subprocess is reused across calls so
+    /// <c>cd</c> and exported / <c>$env:</c> variables persist between
+    /// invocations. Commands are executed via a sentinel protocol that
+    /// brackets stdout to determine completion. This is the recommended
+    /// default for coding agents because it eliminates the "agent runs cd
+    /// and then runs the wrong path" failure class.
+    /// </summary>
+    Persistent,
+}
+
+/// <summary>
+/// Thrown when a shell command exceeds its configured timeout.
+/// </summary>
+public sealed class ShellTimeoutException : Exception
+{
+    /// <summary>Initializes a new instance of the <see cref="ShellTimeoutException"/> class.</summary>
+    public ShellTimeoutException() { }
+
+    /// <summary>Initializes a new instance of the <see cref="ShellTimeoutException"/> class.</summary>
+    /// <param name="message">The exception message.</param>
+    public ShellTimeoutException(string message) : base(message) { }
+
+    /// <summary>Initializes a new instance of the <see cref="ShellTimeoutException"/> class.</summary>
+    /// <param name="message">The exception message.</param>
+    /// <param name="inner">The inner exception.</param>
+    public ShellTimeoutException(string message, Exception inner) : base(message, inner) { }
+}
+
+/// <summary>
+/// Thrown when a shell command fails to launch or the shell session is unrecoverable.
+/// </summary>
+public sealed class ShellExecutionException : Exception
+{
+    /// <summary>Initializes a new instance of the <see cref="ShellExecutionException"/> class.</summary>
+    public ShellExecutionException() { }
+
+    /// <summary>Initializes a new instance of the <see cref="ShellExecutionException"/> class.</summary>
+    /// <param name="message">The exception message.</param>
+    public ShellExecutionException(string message) : base(message) { }
+
+    /// <summary>Initializes a new instance of the <see cref="ShellExecutionException"/> class.</summary>
+    /// <param name="message">The exception message.</param>
+    /// <param name="inner">The inner exception.</param>
+    public ShellExecutionException(string message, Exception inner) : base(message, inner) { }
+}
