@@ -71,9 +71,7 @@ internal sealed class ClientHeadersAgent : DelegatingAIAgent
         var snapshot = TrySnapshot(options);
         using var _ = snapshot is null ? default : ClientHeadersScope.Push(snapshot);
 
-        await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken)
-            .WithCancellation(cancellationToken)
-            .ConfigureAwait(false))
+        await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
         {
             yield return update;
         }
