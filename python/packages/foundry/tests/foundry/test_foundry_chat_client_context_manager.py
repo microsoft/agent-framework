@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from agent_framework_foundry import FoundryChatClient
 
@@ -45,3 +48,23 @@ async def test_context_manager_does_not_close_injected_project_client() -> None:
         assert client.project_client is project_client
 
     project_client.close.assert_not_awaited()
+
+
+async def test_constructor_closes_owned_project_client_when_openai_client_creation_fails() -> None:
+    credential = MagicMock()
+    project_client = MagicMock()
+    project_client.get_openai_client.side_effect = RuntimeError("boom")
+    project_client.close = AsyncMock()
+
+    with (
+        patch("agent_framework_foundry._chat_client.AIProjectClient", return_value=project_client),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        FoundryChatClient(
+            project_endpoint=_TEST_FOUNDRY_PROJECT_ENDPOINT,
+            model=_TEST_FOUNDRY_MODEL,
+            credential=credential,
+        )
+
+    await asyncio.sleep(0)
+    project_client.close.assert_awaited_once_with()

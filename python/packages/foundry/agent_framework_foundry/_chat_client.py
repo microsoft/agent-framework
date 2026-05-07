@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -131,6 +132,15 @@ class RawFoundryChatClient(  # type: ignore[misc]
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = False  # type: ignore[reportIncompatibleVariableOverride, misc]
 
+    @staticmethod
+    def _close_project_client_after_init_error(project_client: AIProjectClient) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(project_client.close())
+        else:
+            loop.create_task(project_client.close())
+
     def __init__(
         self,
         *,
@@ -188,7 +198,8 @@ class RawFoundryChatClient(  # type: ignore[misc]
                 "Set project_endpoint via parameter or 'FOUNDRY_PROJECT_ENDPOINT' environment variable."
             )
         self._should_close_client = False
-        if not project_client:
+        project_client_created = False
+        if project_client is None:
             if not project_endpoint:
                 raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
@@ -205,21 +216,30 @@ class RawFoundryChatClient(  # type: ignore[misc]
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             project_client = AIProjectClient(**project_client_kwargs)
-            self._should_close_client = True
+            project_client_created = True
 
         openai_kwargs: dict[str, Any] = {}
         if default_headers:
             openai_kwargs["default_headers"] = default_headers
 
-        super().__init__(
-            model=resolved_model,
-            async_client=project_client.get_openai_client(**openai_kwargs),
-            default_headers=default_headers,
-            instruction_role=instruction_role,
-            compaction_strategy=compaction_strategy,
-            tokenizer=tokenizer,
-            additional_properties=additional_properties,
-        )
+        try:
+            super().__init__(
+                model=resolved_model,
+                async_client=project_client.get_openai_client(**openai_kwargs),
+                default_headers=default_headers,
+                instruction_role=instruction_role,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                additional_properties=additional_properties,
+            )
+        except Exception:
+            if project_client_created:
+                try:
+                    self._close_project_client_after_init_error(project_client)
+                except Exception:
+                    logger.warning("Failed to close Foundry project client after initialization error.", exc_info=True)
+            raise
+        self._should_close_client = project_client_created
         self.project_client = project_client
 
     async def close(self) -> None:
