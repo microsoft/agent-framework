@@ -558,21 +558,278 @@ async def test_on_startup_calls_app_initialize_idempotently() -> None:
     # Patch app.initialize to count calls
     initialize_mock = AsyncMock()
     channel._app.initialize = initialize_mock  # type: ignore[method-assign]
-    # Force not-initialized so startup would call it
-    channel._app._initialized = False  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage]
 
     await channel._on_startup()  # pyright: ignore[reportPrivateUsage]
     initialize_mock.assert_awaited_once()
 
 
-async def test_on_startup_skips_initialize_when_already_initialized() -> None:
+async def test_on_startup_skips_initialize_when_already_started() -> None:
+    """Second startup call must not re-invoke ``app.initialize``.
+
+    The channel tracks its own ``_started`` flag rather than relying on
+    the SDK's private ``App._initialized`` (which we never flip after
+    the partial sync init in ``contribute()``).
+    """
     channel = _make_channel()
     ctx = _FakeChannelContext()
     channel.contribute(ctx)  # type: ignore[arg-type]
 
     initialize_mock = AsyncMock()
     channel._app.initialize = initialize_mock  # type: ignore[method-assign]
-    channel._app._initialized = True  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage]
+    channel._started = True  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage]
 
     await channel._on_startup()  # pyright: ignore[reportPrivateUsage]
     initialize_mock.assert_not_awaited()
+
+
+# --------------------------------------------------------------------------- #
+# Construction guards                                                         #
+# --------------------------------------------------------------------------- #
+
+
+def test_constructor_rejects_already_initialized_app() -> None:
+    """An ``App`` whose ``_initialized`` flag is True is rejected at construction.
+
+    The SDK's synchronous server-init step (which registers routes) has
+    already run against the previous adapter; swapping in our capturing
+    adapter would see zero routes and silently mount nothing.
+    """
+    import pytest
+    from microsoft_teams.apps import App
+
+    app = App(skip_auth=True)
+    app._initialized = True  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(ValueError, match="already been initialized"):
+        TeamsChannel(app=app)
+
+
+def test_contribute_raises_when_no_routes_registered() -> None:
+    """If the SDK populates zero routes the channel refuses to contribute.
+
+    Mounts zero routes would surface as a 404 storm in production with no
+    log signal; we make the failure loud at boot.
+    """
+    import pytest
+
+    channel = _make_channel()
+    # Force the adapter to drop everything HttpServer.initialize would
+    # have registered. In real life this would happen if the SDK API
+    # moves route registration into the async App.initialize path.
+    channel._adapter.handlers.clear()  # pyright: ignore[reportPrivateUsage]
+    # Re-clear after contribute() runs HttpServer.initialize again, by
+    # patching the adapter to discard handlers.
+    original_register = channel._adapter.register_route  # pyright: ignore[reportPrivateUsage]
+
+    def _noop_register(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    channel._adapter.register_route = _noop_register  # type: ignore[method-assign]
+    try:
+        with pytest.raises(RuntimeError, match="registered no routes"):
+            channel.contribute(_FakeChannelContext())  # type: ignore[arg-type]
+    finally:
+        channel._adapter.register_route = original_register  # type: ignore[method-assign]
+
+
+# --------------------------------------------------------------------------- #
+# Inbound HTTP error handling                                                 #
+# --------------------------------------------------------------------------- #
+
+
+class TestStarletteHandlerErrors:
+    async def test_client_disconnect_returns_408(self) -> None:
+        """ClientDisconnect during body-read is logged and returns 408."""
+        import contextlib
+
+        from starlette.requests import ClientDisconnect
+
+        async def handler(_: Any) -> Any:  # pragma: no cover - never reached
+            raise AssertionError("handler must not be called when client disconnects")
+
+        route = _route_for(handler, "/teams/messages", "POST")
+
+        # Build a Starlette Request whose body() raises ClientDisconnect.
+        # Easiest path: mock the receive callable to return a disconnect message.
+        from starlette.requests import Request
+
+        async def disconnect_receive() -> Any:
+            return {"type": "http.disconnect"}
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/teams/messages",
+            "headers": [],
+            "query_string": b"",
+        }
+        request = Request(scope, receive=disconnect_receive)
+        # Body raises ClientDisconnect on disconnect message.
+        with contextlib.suppress(ClientDisconnect):
+            await request.body()
+        # Now exercise the real handler with a fresh request that disconnects
+        # mid-read.
+        request2 = Request(scope, receive=disconnect_receive)
+        # Drive through the route's endpoint
+        endpoint = route.endpoint  # type: ignore[attr-defined]
+        resp = await endpoint(request2)
+        assert resp.status_code == 408
+
+
+# --------------------------------------------------------------------------- #
+# Streaming hardening                                                         #
+# --------------------------------------------------------------------------- #
+
+
+async def test_streaming_finalises_on_iteration_failure() -> None:
+    """Mid-stream exception still closes the stream and delivers the response.
+
+    Without try/finally the SDK stream stays half-open and the host's
+    history desyncs from the wire.
+    """
+
+    @dataclass
+    class _FailingCtx:
+        runs: list[ChannelRequest] = field(default_factory=list)
+        delivered: list[tuple[ChannelRequest, HostedRunResult]] = field(default_factory=list)
+        streamed: list[ChannelRequest] = field(default_factory=list)
+        target: Any = None
+
+        def run_stream(self, request: ChannelRequest) -> Any:
+            self.streamed.append(request)
+
+            async def _gen() -> Any:
+                update = MagicMock()
+                update.contents = [_text_content("partial")]
+                yield update
+                raise RuntimeError("stream failed mid-flight")
+
+            return _gen()
+
+        async def run(self, request: ChannelRequest) -> HostedRunResult:  # pragma: no cover
+            raise AssertionError("streaming path should not call run")
+
+        async def deliver_response(self, request: ChannelRequest, payload: HostedRunResult) -> Any:
+            self.delivered.append((request, payload))
+            return None
+
+    import pytest
+
+    channel = _make_channel(streaming=True)
+    ctx = _FailingCtx()
+    channel.contribute(ctx)  # type: ignore[arg-type]
+
+    activity_ctx = _FakeActivityContext(_make_message_activity())
+    with pytest.raises(RuntimeError, match="stream failed mid-flight"):
+        await channel._on_message_activity(activity_ctx)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+    # Stream closed and partial result delivered despite the failure.
+    assert activity_ctx.stream.closed is True
+    assert ctx.delivered[0][1].text == "partial"
+
+
+async def test_streaming_applies_outbound_transform_after_close() -> None:
+    """``outbound_transform`` runs after the stream so cards/citations apply."""
+    captured: list[TeamsOutboundContext] = []
+
+    def to_card(c: TeamsOutboundContext) -> TeamsOutboundPayload:
+        captured.append(c)
+        return TeamsOutboundPayload(card=MagicMock(name="adaptive-card"))
+
+    channel = _make_channel(streaming=True, outbound_transform=to_card)
+    ctx = _FakeChannelContext()
+    channel.contribute(ctx)  # type: ignore[arg-type]
+
+    activity_ctx = _FakeActivityContext(_make_message_activity())
+    await channel._on_message_activity(activity_ctx)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+    # Live deltas still emitted via stream
+    assert activity_ctx.stream.chunks == ["hel", "lo"]
+    # Final card sent via the SDK send() after stream closes
+    assert len(activity_ctx.sent) == 1
+    assert captured and captured[0].result.text == "hello"
+
+
+# --------------------------------------------------------------------------- #
+# Outbound silent fallthrough warning                                         #
+# --------------------------------------------------------------------------- #
+
+
+async def test_outbound_payload_with_no_text_or_card_is_logged(caplog: Any) -> None:
+    """Missing text+card produces a WARNING so the dropped reply is visible."""
+    import logging
+
+    def empty(_: TeamsOutboundContext) -> TeamsOutboundPayload:
+        return TeamsOutboundPayload()
+
+    channel = _make_channel(outbound_transform=empty)
+    ctx = _FakeChannelContext()
+    channel.contribute(ctx)  # type: ignore[arg-type]
+
+    activity_ctx = _FakeActivityContext(_make_message_activity())
+    with caplog.at_level(logging.WARNING, logger="agent_framework.hosting"):
+        await channel._on_message_activity(activity_ctx)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+    assert any("neither text nor card" in r.message for r in caplog.records)
+    assert activity_ctx.sent == []
+
+
+# --------------------------------------------------------------------------- #
+# Feedback handler hardening                                                  #
+# --------------------------------------------------------------------------- #
+
+
+async def test_feedback_handler_exception_is_swallowed_and_logged(caplog: Any) -> None:
+    """Handler exceptions never propagate (no 500 / error toast)."""
+    import logging
+
+    async def boom(_: TeamsFeedbackContext) -> None:
+        raise RuntimeError("handler exploded")
+
+    channel = _make_channel(feedback_handler=boom)
+    ctx = _FakeChannelContext()
+    channel.contribute(ctx)  # type: ignore[arg-type]
+
+    invoke = MagicMock()
+    invoke.from_ = MagicMock(id="user-1", name="Tester", aad_object_id="aad-1")
+    invoke.conversation = MagicMock(id="conv-1")
+    invoke.channel_id = "msteams"
+    invoke.reply_to_id = "msg-42"
+    invoke.value.action_value.reaction = "like"
+    invoke.value.action_value.feedback = "great answer"
+
+    activity_ctx = _FakeActivityContext(invoke)
+    with caplog.at_level(logging.ERROR, logger="agent_framework.hosting"):
+        # Must not raise
+        await channel._on_feedback_activity(activity_ctx)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+    assert any("feedback_handler raised" in r.message for r in caplog.records)
+
+
+async def test_feedback_handler_logs_warning_when_action_value_missing(caplog: Any) -> None:
+    """Missing ``action_value`` (SDK rename) logs a warning, not a silent empty rating."""
+    import logging
+
+    received: list[TeamsFeedbackContext] = []
+
+    async def handler(c: TeamsFeedbackContext) -> None:
+        received.append(c)
+
+    channel = _make_channel(feedback_handler=handler)
+    ctx = _FakeChannelContext()
+    channel.contribute(ctx)  # type: ignore[arg-type]
+
+    invoke = MagicMock()
+    invoke.from_ = MagicMock(id="user-1", name="Tester", aad_object_id=None)
+    invoke.conversation = MagicMock(id="c")
+    invoke.channel_id = "msteams"
+    invoke.reply_to_id = "m1"
+    invoke.value.action_value = None  # SDK contract drift
+
+    activity_ctx = _FakeActivityContext(invoke)
+    with caplog.at_level(logging.WARNING, logger="agent_framework.hosting"):
+        await channel._on_feedback_activity(activity_ctx)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+    assert any("missing action_value" in r.message for r in caplog.records)
+    # Handler was still invoked with empty rating so callers can react.
+    assert received and received[0].rating == ""

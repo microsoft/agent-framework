@@ -52,6 +52,7 @@ returns a :class:`TeamsOutboundPayload`. See the README for examples.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeAlias, cast
@@ -99,7 +100,7 @@ from microsoft_teams.apps.http.adapter import (
     HttpRouteHandler,
 )
 from microsoft_teams.cards.core import AdaptiveCard
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
@@ -246,12 +247,27 @@ def _route_for(handler: HttpRouteHandler, mount_path: str, method: str) -> Route
     """
 
     async def _starlette_handler(request: Request) -> Response:
-        raw_body = await request.body()
+        try:
+            raw_body = await request.body()
+        except ClientDisconnect:
+            # Caller hung up before sending the body. Bot Service treats
+            # 499/aborted as a transient — we surface 408 so retries
+            # happen, but no one should be reading our log for this.
+            logger.info("TeamsChannel inbound request aborted by client (ClientDisconnect)")
+            return Response(status_code=408)
         body: dict[str, Any] = {}
         if raw_body:
             try:
                 parsed = await request.json()
+            except json.JSONDecodeError:
+                logger.warning("TeamsChannel inbound JSON parse failed; returning 400")
+                return JSONResponse({"error": "invalid json"}, status_code=400)
             except Exception:
+                # Body-reader bugs / unexpected encoding errors / framework
+                # surprises shouldn't be silent — log with a stack so
+                # operators see the cause and don't chase phantom Bot
+                # Service retries.
+                logger.exception("TeamsChannel inbound body read failed unexpectedly; returning 400")
                 return JSONResponse({"error": "invalid json"}, status_code=400)
             if isinstance(parsed, dict):
                 body = cast(dict[str, Any], parsed)
@@ -357,6 +373,19 @@ class TeamsChannel:
 
         self._adapter = _StarletteCaptureAdapter()
         if app is not None:
+            # Reject an app that the caller already initialized: the SDK's
+            # synchronous server-init step (which is what registers routes
+            # on the adapter) has already run against the previous adapter,
+            # so swapping our capturing adapter in here would see zero
+            # routes. The downstream contract for the host (mount routes,
+            # serve traffic) would then silently fail at boot. Surface this
+            # at construction so the operator gets a clear, early error.
+            if getattr(app, "_initialized", False):  # type: ignore[attr-defined]
+                raise ValueError(
+                    "TeamsChannel: the supplied `app` has already been initialized "
+                    "(`await app.initialize()` was called). Pass an uninitialized "
+                    "App so the channel can capture the SDK's route registration."
+                )
             self._app = app
             # Replace whatever adapter the user gave the App with our capturing
             # one so the host can mount the routes. The SDK exposes
@@ -395,6 +424,12 @@ class TeamsChannel:
         synchronously so the SDK populates the capturing adapter before
         we hand the host a :class:`ChannelContribution`. Plugin
         ``on_init`` callbacks (async) run from :meth:`_on_startup`.
+
+        If the SDK populates zero routes (caller passed an `App` whose
+        adapter was already populated before the swap, or a future SDK
+        version moves `register_route` into the async `App.initialize`
+        path) we raise: silently mounting nothing would surface as a
+        404 storm in production with no log signal.
         """
         self._ctx = context
         # Synchronously register the route on our capturing adapter.
@@ -407,7 +442,17 @@ class TeamsChannel:
         # is normally done inside App.initialize, but we did the
         # synchronous initialization piecewise to obtain routes early).
         self._app.server.on_request = self._app._process_activity_event  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage]
+        self._sync_initialized = True
 
+        if not self._adapter.handlers:
+            raise RuntimeError(
+                "TeamsChannel: the SDK's HttpServer.initialize() registered no routes "
+                "on the capturing adapter. Either the supplied App had a populated "
+                "adapter before the channel swapped its own in, or the SDK version "
+                "in use moved route registration out of HttpServer.initialize. "
+                "Mounting zero routes would surface as a 404 storm in production — "
+                "refusing to contribute."
+            )
         routes = [
             _route_for(handler, mount_path, method) for (method, mount_path), handler in self._adapter.handlers.items()
         ]
@@ -422,14 +467,24 @@ class TeamsChannel:
     async def _on_startup(self) -> None:
         """Run plugin :meth:`on_init` callbacks via ``app.initialize``.
 
-        :meth:`microsoft_teams.apps.App.initialize` is idempotent: the
-        synchronous server-init step we already ran is short-circuited
-        on the second call, but plugin async initialization still runs.
+        ``contribute()`` already ran the synchronous server-init step
+        (route registration on the capturing adapter). Tracking that via
+        our own ``_sync_initialized`` flag — relying on the SDK's
+        private ``App._initialized`` would be wrong because we never
+        flip it after the partial init.
+
+        :meth:`microsoft_teams.apps.App.initialize` is the SDK's
+        documented entry point; calling it here lets the SDK run plugin
+        ``on_init`` hooks and any other async-only init it owns. The
+        SDK is expected to internally guard the synchronous
+        ``HttpServer.initialize`` step from re-running.
+
         Logs a warning when ``skip_auth=True`` so users notice the
         auth bypass in their startup output.
         """
-        if not self._app._initialized:  # type: ignore[attr-defined]  # pyright: ignore[reportPrivateUsage]
+        if not getattr(self, "_started", False):
             await self._app.initialize()
+            self._started = True
         if self._app.options.skip_auth:
             logger.warning(
                 "TeamsChannel running with skip_auth=True — inbound "
@@ -508,32 +563,68 @@ class TeamsChannel:
         """Iterate the host stream and emit deltas through ``activity_context.stream``.
 
         Teams renders ``HttpStream.emit`` calls as live mid-message edits
-        (the typing-then-text streaming UI). We close the stream when
-        the host stream completes and call ``deliver_response`` with the
-        accumulated final result so cross-channel delivery still runs.
+        (the typing-then-text streaming UI). When the host stream
+        completes we resolve the outbound payload via
+        :meth:`_resolve_outbound` so ``outbound_transform`` (cards,
+        citations, rewrites) applies symmetrically with the non-streaming
+        path. The ``HttpStream.close`` call uses the accumulated text as
+        the Teams "final" message; if the resolved payload is a card or
+        a transformed text we send it as a follow-up via the SDK's
+        ``activity_context.send`` (Teams treats this as the
+        canonical final message).
+
+        Wraps the iterate / close / deliver block in ``try/finally`` so
+        an exception mid-stream still calls :meth:`HttpStream.close` and
+        :meth:`ChannelHostContext.deliver_response` with whatever text we
+        accumulated. Skipping either would leave Teams hanging on a
+        half-open stream and the host's history desynced from the wire.
         """
         if self._ctx is None:  # pragma: no cover - contribute() ran first
             raise RuntimeError("TeamsChannel was not contributed to a host.")
         stream: ResponseStream[AgentResponseUpdate, AgentResponse] = self._ctx.run_stream(request)
         accumulated: list[str] = []
-        async for update in stream:
-            transformed: AgentResponseUpdate | None = update
-            if self._stream_transform_hook is not None:
-                maybe = self._stream_transform_hook(update)
-                if isinstance(maybe, Awaitable):
-                    transformed = await cast("Awaitable[AgentResponseUpdate | None]", maybe)
-                else:
-                    transformed = maybe
-            if transformed is None:
-                continue
-            chunk = _update_text(transformed)
-            if not chunk:
-                continue
-            activity_context.stream.emit(chunk)
-            accumulated.append(chunk)
-        await activity_context.stream.close()
-        result = HostedRunResult(text="".join(accumulated))
-        await self._ctx.deliver_response(request, result)
+        stream_failed = False
+        try:
+            try:
+                async for update in stream:
+                    transformed: AgentResponseUpdate | None = update
+                    if self._stream_transform_hook is not None:
+                        maybe = self._stream_transform_hook(update)
+                        if isinstance(maybe, Awaitable):
+                            transformed = await cast("Awaitable[AgentResponseUpdate | None]", maybe)
+                        else:
+                            transformed = maybe
+                    if transformed is None:
+                        continue
+                    chunk = _update_text(transformed)
+                    if not chunk:
+                        continue
+                    activity_context.stream.emit(chunk)
+                    accumulated.append(chunk)
+            except Exception:
+                stream_failed = True
+                logger.exception("TeamsChannel stream iteration failed; finalising with partial text")
+                raise
+        finally:
+            try:
+                await activity_context.stream.close()
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("TeamsChannel stream close failed")
+            result = HostedRunResult(text="".join(accumulated))
+            try:
+                await self._ctx.deliver_response(request, result)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("TeamsChannel deliver_response failed after stream finalise")
+            if not stream_failed and self._outbound_transform is not None:
+                # Outbound transform applies the same way as the
+                # non-streaming path so cards / citations / rewrites
+                # stay symmetric. The SDK's ``send`` posts a follow-up
+                # final message; Teams treats this as the canonical
+                # response and replaces the streamed deltas.
+                try:
+                    await self._send_outbound(request, activity_context, result)
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("TeamsChannel outbound transform failed after stream close")
 
     # -- outbound: message ------------------------------------------------- #
 
@@ -550,6 +641,17 @@ class TeamsChannel:
             await activity_context.send(payload.card)
             return
         if payload.text is None:
+            # Both ``text`` and ``card`` are None: nothing to send. This is
+            # almost always a misconfigured ``outbound_transform`` — log
+            # so the user notices the dropped reply rather than chasing a
+            # silent Teams conversation.
+            logger.warning(
+                "TeamsChannel outbound payload has neither text nor card; "
+                "skipping send (channel=%s, conversation_id=%s). Check "
+                "the outbound_transform implementation.",
+                self.name,
+                request.metadata.get("conversation_id"),
+            )
             return
         if not payload.citations:
             await activity_context.send(payload.text)
@@ -583,14 +685,47 @@ class TeamsChannel:
     # -- inbound: feedback ------------------------------------------------- #
 
     async def _on_feedback_activity(self, activity_context: ActivityContext[MessageSubmitActionInvokeActivity]) -> None:
-        """Translate a feedback invoke into a :class:`TeamsFeedbackContext`."""
+        """Translate a feedback invoke into a :class:`TeamsFeedbackContext`.
+
+        Wraps the user-supplied ``feedback_handler`` in try/except so a
+        handler exception turns into a logged warning instead of an HTTP
+        500 — a 500 surfaces as a "couldn't submit feedback" toast in
+        the Teams client, which is a confusing UX for an out-of-band
+        signal that the user has no agency over.
+
+        The activity-payload extraction is similarly defensive: the SDK
+        currently exposes the rating/feedback under
+        ``activity.value.action_value`` and ``...action_value.reaction``
+        / ``...action_value.feedback``. If a future SDK version renames
+        these (or the wire shape shifts), the helper logs a warning so
+        the silent-empty-rating regression is visible in logs instead
+        of just producing empty feedback contexts.
+        """
         if self._feedback_handler is None:  # pragma: no cover - guarded at registration
             return
         activity = activity_context.activity
         identity = self._identity_from_activity(activity)
         action_value = getattr(activity.value, "action_value", None)
-        rating = str(getattr(action_value, "reaction", "")) if action_value is not None else ""
-        feedback = getattr(action_value, "feedback", None) if action_value is not None else None
+        if action_value is None:
+            logger.warning(
+                "TeamsChannel feedback activity missing action_value "
+                "(SDK version mismatch?); rating/feedback will be empty "
+                "(reply_to_id=%s)",
+                activity.reply_to_id,
+            )
+            rating = ""
+            feedback: str | None = None
+        else:
+            reaction = getattr(action_value, "reaction", None)
+            if reaction is None:
+                logger.warning(
+                    "TeamsChannel feedback activity action_value missing "
+                    "reaction (SDK version mismatch?); rating will be "
+                    "empty (reply_to_id=%s)",
+                    activity.reply_to_id,
+                )
+            rating = str(reaction) if reaction is not None else ""
+            feedback = getattr(action_value, "feedback", None)
         ctx = TeamsFeedbackContext(
             activity_context=activity_context,
             rating=rating,
@@ -598,9 +733,21 @@ class TeamsChannel:
             reply_to_id=activity.reply_to_id,
             identity=identity,
         )
-        outcome = self._feedback_handler(ctx)
-        if isinstance(outcome, Awaitable):
-            await outcome
+        try:
+            outcome = self._feedback_handler(ctx)
+            if isinstance(outcome, Awaitable):
+                await outcome
+        except Exception:
+            # Never propagate: the user's feedback handler raising
+            # shouldn't surface to the Teams client as a 500 (which
+            # renders an error toast). Log loudly and swallow.
+            logger.exception(
+                "TeamsChannel feedback_handler raised; suppressing to avoid "
+                "surfacing a 500 to the Teams client (reply_to_id=%s, "
+                "rating=%s)",
+                activity.reply_to_id,
+                rating,
+            )
 
     # -- helpers ---------------------------------------------------------- #
 
