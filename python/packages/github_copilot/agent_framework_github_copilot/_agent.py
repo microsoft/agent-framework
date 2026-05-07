@@ -174,12 +174,6 @@ class GitHubCopilotOptions(TypedDict, total=False):
     log_level: str
     """CLI log level. Defaults to GITHUB_COPILOT_LOG_LEVEL environment variable."""
 
-    copilot_home: str
-    """Directory where the CLI stores session state, configuration, and other
-    persistent data. Defaults to ~/.copilot when not set. Only applicable when
-    the SDK spawns the CLI process (ignored when connecting to an external server
-    via a pre-configured client)."""
-
     on_permission_request: PermissionHandlerType
     """Permission request handler.
     Called when Copilot requests permission to perform an action (shell, read, write, etc.).
@@ -866,7 +860,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         try:
             if agent_session.service_session_id:
-                return await self._resume_session(agent_session.service_session_id, streaming)
+                return await self._resume_session(agent_session.service_session_id, streaming, runtime_options)
 
             session = await self._create_session(streaming, runtime_options)
             agent_session.service_session_id = session.session_id
@@ -910,21 +904,43 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             instruction_directories=instruction_directories,
         )
 
-    async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:
-        """Resume an existing Copilot session by ID."""
+    async def _resume_session(
+        self,
+        session_id: str,
+        streaming: bool,
+        runtime_options: dict[str, Any] | None = None,
+    ) -> CopilotSession:
+        """Resume an existing Copilot session by ID.
+
+        Args:
+            session_id: The session ID to resume.
+            streaming: Whether to enable streaming for the session.
+            runtime_options: Runtime options that take precedence over default_options.
+        """
         if not self._client:
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
-        permission_handler: PermissionHandlerType = self._permission_handler or _deny_all_permissions
+        opts = runtime_options or {}
+        model = opts.get("model") or self._settings.get("model") or None
+        system_message = opts.get("system_message") or self._default_options.get("system_message") or None
+        permission_handler: PermissionHandlerType = (
+            opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
+        )
+        mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
+        provider = opts.get("provider") or self._provider or None
+        instruction_directories = opts.get("instruction_directories", self._instruction_directories)
         tools = self._prepare_tools(self._tools) if self._tools else None
 
         return await self._client.resume_session(
             session_id,
             on_permission_request=permission_handler,
             streaming=streaming,
+            model=model or None,
+            system_message=system_message or None,
             tools=tools or None,
-            mcp_servers=self._mcp_servers or None,
-            provider=self._provider or None,
+            mcp_servers=mcp_servers or None,
+            provider=provider or None,
+            instruction_directories=instruction_directories,
         )
 
 

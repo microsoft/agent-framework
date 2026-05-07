@@ -944,9 +944,12 @@ class TestGitHubCopilotAgentSessionManagement:
             mock_session.session_id,
             on_permission_request=unittest.mock.ANY,
             streaming=unittest.mock.ANY,
+            model=unittest.mock.ANY,
+            system_message=unittest.mock.ANY,
             tools=unittest.mock.ANY,
             mcp_servers=unittest.mock.ANY,
             provider=unittest.mock.ANY,
+            instruction_directories=unittest.mock.ANY,
         )
 
     async def test_session_config_includes_model(
@@ -1148,6 +1151,29 @@ class TestGitHubCopilotAgentSessionManagement:
         call_args = mock_client.create_session.call_args
         config = call_args.kwargs
         assert config["instruction_directories"] == []
+
+    async def test_instruction_directories_override_on_resumed_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that instruction_directories override works on resumed sessions."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"instruction_directories": ["/default/path"]},
+        )
+        await agent.start()
+
+        # Simulate a session that already has a service_session_id (resume path)
+        session = AgentSession()
+        session.service_session_id = "existing-session-id"
+
+        runtime_options: GitHubCopilotOptions = {"instruction_directories": ["/override/path"]}
+        await agent._get_or_create_session(session, runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.resume_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] == ["/override/path"]
 
 
 class TestGitHubCopilotAgentMCPServers:
