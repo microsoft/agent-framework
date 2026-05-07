@@ -5,7 +5,7 @@
 Defines the core data model classes for the agent skills system:
 
 - **Skills:** :class:`Skill` (abstract base), :class:`InlineSkill` (code-defined),
-  and :class:`FileSkill` (filesystem-backed).
+  :class:`ClassSkill` (class-based), and :class:`FileSkill` (filesystem-backed).
 - **Resources:** :class:`SkillResource` (abstract base), :class:`InlineSkillResource`
   (static content or callable).
 - **Scripts:** :class:`SkillScript` (abstract base), :class:`InlineSkillScript`
@@ -27,6 +27,9 @@ Skills can come from different sources:
   Represented as :class:`FileSkill` instances.
 - **Code-defined** — created as :class:`InlineSkill` instances in Python code,
   with optional callable resources attached via the ``@skill.resource`` decorator.
+- **Class-based** — created by subclassing :class:`ClassSkill` to define
+  self-contained, reusable skill types with ``create_resource()`` and
+  ``create_script()`` factory methods.
 - **Custom sources** — any :class:`SkillsSource` implementation that provides
   skills from arbitrary origins (REST APIs, databases, etc.).
 
@@ -570,6 +573,65 @@ def _validate_skill_description(name: str, description: str) -> None:
         )
 
 
+def _build_skill_content(
+    name: str,
+    description: str,
+    instructions: str,
+    resources: Sequence[SkillResource] | None = None,
+    scripts: Sequence[SkillScript] | None = None,
+) -> str:
+    """Build XML-structured content for code-defined and class-based skills.
+
+    Produces an XML document containing name, description, instructions,
+    resources, and scripts elements.  Used by both :class:`InlineSkill`
+    and :class:`ClassSkill` to generate their ``content`` property.
+
+    Args:
+        name: The skill name.
+        description: The skill description.
+        instructions: The raw instructions text.
+        resources: Optional resources associated with the skill.
+        scripts: Optional scripts associated with the skill.
+
+    Returns:
+        An XML-structured content string.
+    """
+    result = (
+        f"<name>{xml_escape(name)}</name>\n"
+        f"<description>{xml_escape(description)}</description>\n"
+        "\n"
+        "<instructions>\n"
+        f"{instructions}\n"
+        "</instructions>"
+    )
+
+    if resources:
+        resource_lines = "\n".join(_create_resource_element(r) for r in resources)
+        result += f"\n\n<resources>\n{resource_lines}\n</resources>"
+
+    if scripts:
+        script_lines = "\n".join(_create_script_element(s) for s in scripts)
+        result += f"\n\n<scripts>\n{script_lines}\n</scripts>"
+
+    return result
+
+
+def _create_resource_element(resource: SkillResource) -> str:
+    """Create a self-closing ``<resource …/>`` XML element from a :class:`SkillResource`.
+
+    Args:
+        resource: The resource to create the element from.
+
+    Returns:
+        A single indented XML element string with ``name`` and optional
+        ``description`` attributes.
+    """
+    attrs = f'name="{xml_escape(resource.name, quote=True)}"'
+    if resource.description:
+        attrs += f' description="{xml_escape(resource.description, quote=True)}"'
+    return f"  <resource {attrs}/>"
+
+
 @experimental(feature_id=ExperimentalFeature.SKILLS)
 class InlineSkill(Skill):
     """A skill defined entirely in code with resources and scripts.
@@ -634,25 +696,10 @@ class InlineSkill(Skill):
         if self._cached_content is not None:
             return self._cached_content
 
-        result = (
-            f"<name>{xml_escape(self.name)}</name>\n"
-            f"<description>{xml_escape(self.description)}</description>\n"
-            "\n"
-            "<instructions>\n"
-            f"{self.instructions}\n"
-            "</instructions>"
+        self._cached_content = _build_skill_content(
+            self.name, self.description, self.instructions, self._resources, self._scripts
         )
-
-        if self._resources:
-            resource_lines = "\n".join(self._create_resource_element(r) for r in self._resources)
-            result += f"\n\n<resources>\n{resource_lines}\n</resources>"
-
-        if self._scripts:
-            script_lines = "\n".join(_create_script_element(s) for s in self._scripts)
-            result += f"\n\n<scripts>\n{script_lines}\n</scripts>"
-
-        self._cached_content = result
-        return result
+        return self._cached_content
 
     @property
     def resources(self) -> list[SkillResource]:
@@ -663,22 +710,6 @@ class InlineSkill(Skill):
     def scripts(self) -> list[SkillScript]:
         """Mutable list of :class:`SkillScript` instances."""
         return self._scripts
-
-    @staticmethod
-    def _create_resource_element(resource: SkillResource) -> str:
-        """Create a self-closing ``<resource …/>`` XML element from an :class:`SkillResource`.
-
-        Args:
-            resource: The resource to create the element from.
-
-        Returns:
-            A single indented XML element string with ``name`` and optional
-            ``description`` attributes.
-        """
-        attrs = f'name="{xml_escape(resource.name, quote=True)}"'
-        if resource.description:
-            attrs += f' description="{xml_escape(resource.description, quote=True)}"'
-        return f"  <resource {attrs}/>"
 
     def resource(
         self,
@@ -700,8 +731,7 @@ class InlineSkill(Skill):
 
         Keyword Args:
             name: Resource name override.  Defaults to ``func.__name__``.
-            description: Resource description override.  Defaults to the
-                function's docstring (via :func:`inspect.getdoc`).
+            description: Resource description override.  Defaults to ``None``.
 
         Returns:
             The original function unchanged, or a secondary decorator when
@@ -727,7 +757,7 @@ class InlineSkill(Skill):
 
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
             resource_name = name or f.__name__
-            resource_description = description or (inspect.getdoc(f) or None)
+            resource_description = description
             self._resources.append(
                 InlineSkillResource(
                     name=resource_name,
@@ -761,8 +791,7 @@ class InlineSkill(Skill):
 
         Keyword Args:
             name: Script name override.  Defaults to ``func.__name__``.
-            description: Script description override.  Defaults to the
-                function's docstring (via :func:`inspect.getdoc`).
+            description: Script description override.  Defaults to ``None``.
 
         Returns:
             The original function unchanged, or a secondary decorator when
@@ -789,7 +818,7 @@ class InlineSkill(Skill):
 
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
             script_name = name or f.__name__
-            script_description = description or (inspect.getdoc(f) or None)
+            script_description = description
             self._scripts.append(
                 InlineSkillScript(
                     name=script_name,
@@ -802,6 +831,420 @@ class InlineSkill(Skill):
         if func is None:
             return decorator
         return decorator(func)
+
+
+def _make_method_name(method_name: str) -> str:
+    """Convert a Python method name to a skill resource/script name.
+
+    Replaces underscores with hyphens to match the skill naming convention.
+
+    Args:
+        method_name: The Python method name (e.g. ``"conversion_table"``).
+
+    Returns:
+        The converted name (e.g. ``"conversion-table"``).
+    """
+    return method_name.replace("_", "-").strip("-")
+
+
+def _validate_member_name(name: str, kind: str) -> None:
+    """Validate a resource or script name at decoration time.
+
+    Args:
+        name: The name to validate.
+        kind: ``"resource"`` or ``"script"`` — used in error messages.
+
+    Raises:
+        ValueError: If the name is empty, too long, or contains invalid characters.
+    """
+    if not name or not name.strip():
+        raise ValueError(f"@ClassSkill.{kind} name cannot be empty.")
+    if len(name) > MAX_NAME_LENGTH or not VALID_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid @ClassSkill.{kind} name '{name}': Must be {MAX_NAME_LENGTH} characters or fewer, "
+            "using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen "
+            "or contain consecutive hyphens."
+        )
+
+
+def _discover_marked_members(cls: type, marker_attr: str) -> list[tuple[str, dict[str, Any]]]:
+    """Scan a class for methods or properties stamped with a marker attribute.
+
+    Checks both regular callable attributes (via ``dir``) and ``property``
+    descriptors (via ``cls.__dict__``) whose ``fget`` carries the marker.
+
+    Args:
+        cls: The class to scan.
+        marker_attr: The marker attribute name to look for (e.g.
+            ``"_skill_resource_marker"``).
+
+    Returns:
+        A list of ``(member_name, marker_dict)`` tuples.
+    """
+    results: list[tuple[str, dict[str, Any]]] = []
+    seen: set[str] = set()
+
+    # Walk the MRO so that property-resources defined on a parent class
+    # are also discovered.  ``cls.__dict__`` only sees the leaf class.
+    for klass in cls.__mro__:
+        for attr_name, attr_value in klass.__dict__.items():
+            if attr_name in seen:
+                continue
+            if (
+                isinstance(attr_value, property)
+                and attr_value.fget is not None
+                and hasattr(attr_value.fget, marker_attr)
+            ):
+                results.append((attr_name, getattr(attr_value.fget, marker_attr)))
+                seen.add(attr_name)
+
+    # Check regular callable attributes.
+    for attr_name in dir(cls):
+        if attr_name in seen:
+            continue
+        try:
+            attr = getattr(cls, attr_name, None)
+        except Exception:
+            # Some descriptors (e.g. abstract properties) may raise on access.
+            logger.warning("Skipping '%s' during skill discovery: descriptor raised on access", attr_name)
+            attr = None
+        if attr is not None and callable(attr) and hasattr(attr, marker_attr):
+            results.append((attr_name, getattr(attr, marker_attr)))
+    return results
+
+
+@experimental(feature_id=ExperimentalFeature.SKILLS)
+class ClassSkill(Skill, ABC):
+    """Abstract base class for defining skills as reusable Python classes.
+
+    Inherit from this class to create a self-contained skill definition.
+    Override :attr:`instructions` to provide the skill body.
+
+    Resources and scripts can be defined in two ways:
+
+    - **Decorator-based (recommended):** Mark methods with
+      :meth:`ClassSkill.resource` and :meth:`ClassSkill.script` decorators
+      for automatic discovery.
+    - **Explicit override:** Override the :attr:`resources` and
+      :attr:`scripts` properties, constructing :class:`InlineSkillResource`
+      and :class:`InlineSkillScript` instances directly.
+
+    Class-based skills can be distributed via shared libraries or PyPI
+    packages, making them easy to reuse across projects.
+
+    Attributes:
+        name: Skill name (lowercase letters, numbers, hyphens only).
+        description: Human-readable description of the skill.
+
+    Examples:
+        Decorator-based (recommended):
+
+        .. code-block:: python
+
+            class UnitConverterSkill(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(
+                        name="unit-converter",
+                        description="Convert between common units.",
+                    )
+
+                @property
+                def instructions(self) -> str:
+                    return "Use this skill to convert units..."
+
+                @ClassSkill.resource(name="table")
+                def conversion_table(self) -> str:
+                    return "| From | To | Factor |..."
+
+                @ClassSkill.script(name="convert")
+                def convert(self, value: float, factor: float) -> str:
+                    return json.dumps({"result": round(value * factor, 4)})
+
+        Explicit override:
+
+        .. code-block:: python
+
+            class UnitConverterSkill(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(
+                        name="unit-converter",
+                        description="Convert between common units.",
+                    )
+
+                @property
+                def instructions(self) -> str:
+                    return "Use this skill to convert units..."
+
+                @property
+                def resources(self) -> list[SkillResource]:
+                    return [
+                        InlineSkillResource(name="table", content="| From | To | Factor |..."),
+                    ]
+
+                @property
+                def scripts(self) -> list[SkillScript]:
+                    return [InlineSkillScript(name="convert", function=convert_fn)]
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+    ) -> None:
+        """Initialize a ClassSkill.
+
+        Args:
+            name: Skill name (lowercase letters, numbers, hyphens only;
+                max 64 characters).
+            description: Human-readable description of the skill
+                (≤1024 characters).
+        """
+        super().__init__(name=name, description=description)
+        self._cached_content: str | None = None
+        self._cached_resources: list[SkillResource] | None = None
+        self._cached_scripts: list[SkillScript] | None = None
+
+    @staticmethod
+    def resource(
+        func: Callable[..., Any] | None = None,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Any:
+        """Decorator that marks a method or property as a skill resource for auto-discovery.
+
+        When applied to a method or property on a :class:`ClassSkill` subclass,
+        it is automatically discovered and registered as an
+        :class:`InlineSkillResource`.  Methods are invoked each time the
+        resource is read.  Properties are evaluated via their getter.
+
+        Can be applied to a method directly, or stacked with ``@property``
+        (place ``@property`` first, ``@ClassSkill.resource`` second).
+
+        Supports bare usage (``@ClassSkill.resource``) and parameterized usage
+        (``@ClassSkill.resource(name="custom", description="...")``).
+
+        Args:
+            func: The function being decorated.  Populated automatically when
+                the decorator is applied without parentheses.
+
+        Keyword Args:
+            name: Resource name override.  Defaults to the method name with
+                underscores replaced by hyphens.
+            description: Resource description.  Defaults to ``None``.
+
+        Examples:
+            On a method:
+
+            .. code-block:: python
+
+                @ClassSkill.resource(name="conversion-table")
+                def get_table(self) -> str:
+                    return "..."
+
+            On a property:
+
+            .. code-block:: python
+
+                @property
+                @ClassSkill.resource
+                def conversion_table(self) -> str:
+                    return "..."
+        """
+
+        def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+            if isinstance(f, (property, classmethod, staticmethod)):
+                raise TypeError(
+                    "@ClassSkill.resource must be applied before @property, @classmethod, or @staticmethod. "
+                    "Place @property first, then @ClassSkill.resource."
+                )
+            if name is not None:
+                _validate_member_name(name, "resource")
+            f._skill_resource_marker = {  # type: ignore[attr-defined]
+                "name": name,
+                "description": description,
+            }
+            return f
+
+        if func is None:
+            return decorator
+        return decorator(func)
+
+    @staticmethod
+    def script(
+        func: Callable[..., Any] | None = None,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Any:
+        """Decorator that marks a method as a skill script for auto-discovery.
+
+        When applied to a method on a :class:`ClassSkill` subclass, the method is
+        automatically discovered and registered as an :class:`InlineSkillScript`.
+        The method's parameters (excluding ``self``) are used to generate a JSON
+        schema, and the method is invoked in-process when the script is run.
+
+        Supports bare usage (``@ClassSkill.script``) and parameterized usage
+        (``@ClassSkill.script(name="custom", description="...")``).
+
+        Args:
+            func: The function being decorated.  Populated automatically when
+                the decorator is applied without parentheses.
+
+        Keyword Args:
+            name: Script name override.  Defaults to the method name with
+                underscores replaced by hyphens.
+            description: Script description.  Defaults to ``None``.
+
+        Examples:
+            .. code-block:: python
+
+                @ClassSkill.script(name="convert")
+                def convert(self, value: float, factor: float) -> str:
+                    return json.dumps({"result": round(value * factor, 4)})
+        """
+
+        def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+            if isinstance(f, (property, classmethod, staticmethod)):
+                raise TypeError(
+                    "@ClassSkill.script must be applied before @property, @classmethod, or @staticmethod."
+                )
+            if name is not None:
+                _validate_member_name(name, "script")
+            f._skill_script_marker = {  # type: ignore[attr-defined]
+                "name": name,
+                "description": description,
+            }
+            return f
+
+        if func is None:
+            return decorator
+        return decorator(func)
+
+    @property
+    @abstractmethod
+    def instructions(self) -> str:
+        """The raw instructions text for this skill.
+
+        Subclasses must override this property to provide the skill body.
+        """
+        ...
+
+    @property
+    def resources(self) -> list[SkillResource]:
+        """Resources discovered from :meth:`ClassSkill.resource`-decorated methods.
+
+        On first access, scans the class for methods marked with the
+        :meth:`ClassSkill.resource` decorator and instantiates
+        :class:`InlineSkillResource` instances from them.
+        The result is cached after the first access.
+
+        Override this property to provide resources explicitly instead of
+        using decorator-based discovery.
+        """
+        if self._cached_resources is not None:
+            return list(self._cached_resources)
+
+        resources: list[SkillResource] = []
+        seen_names: set[str] = set()
+
+        for attr_name, attr in _discover_marked_members(type(self), "_skill_resource_marker"):
+            marker: dict[str, Any] = attr
+            resource_name = marker.get("name") or _make_method_name(attr_name)
+            if resource_name in seen_names:
+                raise ValueError(
+                    f"Skill '{self.name}' already has a resource named '{resource_name}'. "
+                    "Ensure each @ClassSkill.resource has a unique name."
+                )
+            seen_names.add(resource_name)
+
+            # Use inspect.getattr_static to check the descriptor type without
+            # triggering it, and walk the MRO so inherited properties are found.
+            static_attr = inspect.getattr_static(self, attr_name, None)
+            is_property = isinstance(static_attr, property)
+            resource_description = marker.get("description")
+
+            if is_property:
+                # Property — use a lambda that reads the property value each time.
+                # We capture attr_name to avoid late-binding issues.
+                # Do NOT call getattr here to avoid triggering the getter during discovery.
+                resource_func = (lambda name: lambda: getattr(self, name))(attr_name)
+                resources.append(
+                    InlineSkillResource(
+                        name=resource_name,
+                        function=resource_func,
+                        description=resource_description,
+                    )
+                )
+            else:
+                # Regular method — use the bound method directly.
+                bound_method = getattr(self, attr_name)
+                resources.append(
+                    InlineSkillResource(
+                        name=resource_name,
+                        function=bound_method,
+                        description=resource_description,
+                    )
+                )
+
+        self._cached_resources = resources
+        return list(self._cached_resources)
+
+    @property
+    def scripts(self) -> list[SkillScript]:
+        """Scripts discovered from :meth:`ClassSkill.script`-decorated methods.
+
+        On first access, scans the class for methods marked with the
+        :meth:`ClassSkill.script` decorator and instantiates
+        :class:`InlineSkillScript` instances from them.
+        The result is cached after the first access.
+
+        Override this property to provide scripts explicitly instead of
+        using decorator-based discovery.
+        """
+        if self._cached_scripts is not None:
+            return list(self._cached_scripts)
+
+        scripts: list[SkillScript] = []
+        seen_names: set[str] = set()
+
+        for attr_name, attr in _discover_marked_members(type(self), "_skill_script_marker"):
+            marker: dict[str, Any] = attr
+            script_name = marker.get("name") or _make_method_name(attr_name)
+            if script_name in seen_names:
+                raise ValueError(
+                    f"Skill '{self.name}' already has a script named '{script_name}'. "
+                    "Ensure each @ClassSkill.script has a unique name."
+                )
+            seen_names.add(script_name)
+
+            bound_method = getattr(self, attr_name)
+            script_description = marker.get("description")
+            scripts.append(
+                InlineSkillScript(
+                    name=script_name,
+                    function=bound_method,
+                    description=script_description,
+                )
+            )
+
+        self._cached_scripts = scripts
+        return list(self._cached_scripts)
+
+    @property
+    def content(self) -> str:
+        """Synthesized XML content containing name, description, instructions, resources, and scripts.
+
+        The result is cached after the first access.
+        """
+        if self._cached_content is not None:
+            return self._cached_content
+
+        self._cached_content = _build_skill_content(
+            self.name, self.description, self.instructions, self.resources, self.scripts
+        )
+        return self._cached_content
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)

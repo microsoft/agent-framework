@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+from abc import ABC
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ import pytest
 
 from agent_framework import (
     AggregatingSkillsSource,
+    ClassSkill,
     DeduplicatingSkillsSource,
     FileSkill,
     FileSkillScript,
@@ -32,6 +34,7 @@ from agent_framework._skills import (
     DEFAULT_SCRIPT_EXTENSIONS,
     InlineSkillResource,
     InlineSkillScript,
+    _create_resource_element,
     _create_script_element,
     _FileSkillResource,
 )
@@ -1004,7 +1007,7 @@ class TestInlineSkill:
 
         assert len(skill.resources) == 1
         assert skill.resources[0].name == "get_schema"
-        assert skill.resources[0].description == "Get the database schema."
+        assert skill.resources[0].description is None
         assert isinstance(skill.resources[0], InlineSkillResource)
         assert skill.resources[0].function is get_schema
 
@@ -1677,22 +1680,22 @@ class TestCreateResourceElement:
 
     def test_name_only(self) -> None:
         r = InlineSkillResource(name="my-ref", content="data")
-        elem = InlineSkill._create_resource_element(r)
+        elem = _create_resource_element(r)
         assert elem == '  <resource name="my-ref"/>'
 
     def test_with_description(self) -> None:
         r = InlineSkillResource(name="my-ref", description="A reference.", content="data")
-        elem = InlineSkill._create_resource_element(r)
+        elem = _create_resource_element(r)
         assert elem == '  <resource name="my-ref" description="A reference."/>'
 
     def test_xml_escapes_name(self) -> None:
         r = InlineSkillResource(name='ref"special', content="data")
-        elem = InlineSkill._create_resource_element(r)
+        elem = _create_resource_element(r)
         assert "&quot;" in elem
 
     def test_xml_escapes_description(self) -> None:
         r = InlineSkillResource(name="ref", description='Uses <tags> & "quotes"', content="data")
-        elem = InlineSkill._create_resource_element(r)
+        elem = _create_resource_element(r)
         assert "&lt;tags&gt;" in elem
         assert "&amp;" in elem
         assert "&quot;" in elem
@@ -2136,8 +2139,8 @@ class TestSkillResourceDecoratorEdgeCases:
             return "data"
 
         assert skill.resources[0].name == "custom-name"
-        # description falls back to docstring
-        assert skill.resources[0].description == "Some docs."
+        # description is None when not explicitly provided
+        assert skill.resources[0].description is None
 
     def test_decorator_with_description_only(self) -> None:
         skill = InlineSkill(name="my-skill", description="A skill.", instructions="Body")
@@ -2320,7 +2323,7 @@ class TestSkillScriptDecorator:
 
         assert len(skill.scripts) == 1
         assert skill.scripts[0].name == "analyze"
-        assert skill.scripts[0].description == "Run analysis."
+        assert skill.scripts[0].description is None
         assert isinstance(skill.scripts[0], InlineSkillScript)
         assert skill.scripts[0].function is analyze
 
@@ -3176,6 +3179,757 @@ class TestLoadSkillWithScripts:
         await _init_provider(provider)
         result = provider._load_skill(_raw_skills(provider), "my-skill")
         assert "<scripts>" not in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: ClassSkill
+# ---------------------------------------------------------------------------
+
+
+class _MinimalClassSkill(ClassSkill):
+    """A minimal class-based skill with no resources or scripts."""
+
+    def __init__(self) -> None:
+        super().__init__(name="minimal-skill", description="A minimal skill.")
+
+    @property
+    def instructions(self) -> str:
+        return "Do minimal things."
+
+
+class _FullClassSkill(ClassSkill):
+    """A class-based skill with resources and scripts."""
+
+    def __init__(self) -> None:
+        super().__init__(name="full-skill", description="A full skill.")
+        self._resources: list[SkillResource] | None = None
+        self._scripts: list[SkillScript] | None = None
+
+    @property
+    def instructions(self) -> str:
+        return "Use this skill for full tasks."
+
+    @property
+    def resources(self) -> list[SkillResource]:
+        if self._resources is None:
+            self._resources = [
+                InlineSkillResource(name="test-resource", content="Static resource content."),
+            ]
+        return self._resources
+
+    @property
+    def scripts(self) -> list[SkillScript]:
+        if self._scripts is None:
+            self._scripts = [
+                InlineSkillScript(name="test-script", function=_class_skill_test_fn),
+            ]
+        return self._scripts
+
+
+def _class_skill_test_fn(value: float, factor: float) -> str:
+    """Multiply value by factor."""
+    import json as _json
+
+    return _json.dumps({"result": round(value * factor, 4)})
+
+
+class TestClassSkill:
+    """Tests for ClassSkill abstract base class."""
+
+    def test_minimal_skill_has_no_resources(self) -> None:
+        skill = _MinimalClassSkill()
+        assert skill.resources == []
+
+    def test_minimal_skill_has_no_scripts(self) -> None:
+        skill = _MinimalClassSkill()
+        assert skill.scripts == []
+
+    def test_minimal_skill_content_contains_name(self) -> None:
+        skill = _MinimalClassSkill()
+        assert "<name>minimal-skill</name>" in skill.content
+
+    def test_minimal_skill_content_contains_description(self) -> None:
+        skill = _MinimalClassSkill()
+        assert "<description>A minimal skill.</description>" in skill.content
+
+    def test_minimal_skill_content_contains_instructions(self) -> None:
+        skill = _MinimalClassSkill()
+        assert "Do minimal things." in skill.content
+
+    def test_minimal_skill_content_no_resources_element(self) -> None:
+        skill = _MinimalClassSkill()
+        assert "<resources>" not in skill.content
+
+    def test_minimal_skill_content_no_scripts_element(self) -> None:
+        skill = _MinimalClassSkill()
+        assert "<scripts>" not in skill.content
+
+    def test_full_skill_has_resources(self) -> None:
+        skill = _FullClassSkill()
+        assert len(skill.resources) == 1
+        assert skill.resources[0].name == "test-resource"
+
+    def test_full_skill_has_scripts(self) -> None:
+        skill = _FullClassSkill()
+        assert len(skill.scripts) == 1
+        assert skill.scripts[0].name == "test-script"
+
+    def test_full_skill_content_contains_resources(self) -> None:
+        skill = _FullClassSkill()
+        assert "<resources>" in skill.content
+        assert 'name="test-resource"' in skill.content
+
+    def test_full_skill_content_contains_scripts(self) -> None:
+        skill = _FullClassSkill()
+        assert "<scripts>" in skill.content
+        assert 'name="test-script"' in skill.content
+
+    def test_content_is_cached(self) -> None:
+        skill = _MinimalClassSkill()
+        content1 = skill.content
+        content2 = skill.content
+        assert content1 is content2
+
+    def test_resources_are_lazy_cached(self) -> None:
+        skill = _FullClassSkill()
+        resources1 = skill.resources
+        resources2 = skill.resources
+        assert resources1 is resources2
+
+    def test_scripts_are_lazy_cached(self) -> None:
+        skill = _FullClassSkill()
+        scripts1 = skill.scripts
+        scripts2 = skill.scripts
+        assert scripts1 is scripts2
+
+    def test_script_has_parameters_schema(self) -> None:
+        skill = _FullClassSkill()
+        script = skill.scripts[0]
+        assert isinstance(script, InlineSkillScript)
+        schema = script.parameters_schema
+        assert schema is not None
+        assert "value" in schema.get("properties", {})
+        assert "factor" in schema.get("properties", {})
+
+    async def test_provider_with_class_skill(self) -> None:
+        skill = _FullClassSkill()
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+
+        skills = _raw_skills(provider)
+        assert len(skills) == 1
+        assert skills[0].name == "full-skill"
+
+    async def test_provider_loads_class_skill_content(self) -> None:
+        skill = _FullClassSkill()
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+
+        result = provider._load_skill(_raw_skills(provider), "full-skill")
+        assert "Use this skill for full tasks." in result
+        assert "<resources>" in result
+        assert "<scripts>" in result
+
+    async def test_in_memory_source_with_class_skill(self) -> None:
+        skill = _MinimalClassSkill()
+        source = InMemorySkillsSource([skill])
+        skills = await source.get_skills()
+        assert len(skills) == 1
+        assert skills[0].name == "minimal-skill"
+
+    async def test_mixed_inline_and_class_skills(self) -> None:
+        inline = InlineSkill(name="inline-skill", description="Inline", instructions="inline body")
+        class_skill = _MinimalClassSkill()
+        provider = SkillsProvider([inline, class_skill])
+        await _init_provider(provider)
+
+        skills = _raw_skills(provider)
+        names = {s.name for s in skills}
+        assert names == {"inline-skill", "minimal-skill"}
+
+    async def test_class_skill_script_runs(self) -> None:
+        skill = _FullClassSkill()
+        script = skill.scripts[0]
+        result = await script.run(skill, {"value": 10.0, "factor": 2.5})
+        import json as _json
+
+        parsed = _json.loads(result)
+        assert parsed["result"] == 25.0
+
+    async def test_class_skill_resource_reads(self) -> None:
+        skill = _FullClassSkill()
+        resource = skill.resources[0]
+        content = await resource.read()
+        assert content == "Static resource content."
+
+
+# ---------------------------------------------------------------------------
+# Tests: ClassSkill with decorator-based discovery
+# ---------------------------------------------------------------------------
+
+
+class _DecoratorClassSkill(ClassSkill):
+    """A class-based skill using @ClassSkill.resource and @ClassSkill.script decorators."""
+
+    def __init__(self) -> None:
+        super().__init__(name="decorator-skill", description="A decorator-discovered skill.")
+
+    @property
+    def instructions(self) -> str:
+        return "Use this skill for decorator tests."
+
+    @ClassSkill.resource(name="lookup-table")
+    def get_table(self) -> str:
+        """Conversion lookup table."""
+        return "| From | To | Factor |"
+
+    @ClassSkill.script(name="convert")
+    def run_convert(self, value: float, factor: float) -> str:
+        """Convert a value."""
+        import json as _json
+
+        return _json.dumps({"result": round(value * factor, 4)})
+
+
+class _BareDecoratorSkill(ClassSkill):
+    """Skill using bare decorators (no arguments) — name/description from method."""
+
+    def __init__(self) -> None:
+        super().__init__(name="bare-skill", description="Bare decorator skill.")
+
+    @property
+    def instructions(self) -> str:
+        return "Bare instructions."
+
+    @ClassSkill.resource
+    def my_table(self) -> str:
+        """The table docs."""
+        return "table content"
+
+    @ClassSkill.script
+    def my_script(self, x: int) -> int:
+        """Double x."""
+        return x * 2
+
+
+class _DuplicateResourceSkill(ClassSkill):
+    """Skill with duplicate resource names — should raise."""
+
+    def __init__(self) -> None:
+        super().__init__(name="dup-skill", description="Dup.")
+
+    @property
+    def instructions(self) -> str:
+        return "x"
+
+    @ClassSkill.resource(name="same-name")
+    def res_a(self) -> str:
+        return "a"
+
+    @ClassSkill.resource(name="same-name")
+    def res_b(self) -> str:
+        return "b"
+
+
+class _DuplicateScriptSkill(ClassSkill):
+    """Skill with duplicate script names — should raise."""
+
+    def __init__(self) -> None:
+        super().__init__(name="dup-script-skill", description="Dup.")
+
+    @property
+    def instructions(self) -> str:
+        return "x"
+
+    @ClassSkill.script(name="same-name")
+    def script_a(self, x: int) -> int:
+        return x
+
+    @ClassSkill.script(name="same-name")
+    def script_b(self, x: int) -> int:
+        return x
+
+
+class _SelfAccessSkill(ClassSkill):
+    """Skill where resource/script access instance state via self."""
+
+    def __init__(self, multiplier: int = 10) -> None:
+        super().__init__(name="self-access", description="Self access skill.")
+        self.multiplier = multiplier
+
+    @property
+    def instructions(self) -> str:
+        return "Use multiplier."
+
+    @ClassSkill.resource(name="config")
+    def get_config(self) -> str:
+        return f"multiplier={self.multiplier}"
+
+    @ClassSkill.script(name="multiply")
+    def multiply(self, value: int) -> int:
+        return value * self.multiplier
+
+
+class TestClassSkillDecoratorDiscovery:
+    """Tests for decorator-based resource/script discovery on ClassSkill."""
+
+    def test_discovers_resources(self) -> None:
+        skill = _DecoratorClassSkill()
+        assert len(skill.resources) == 1
+        assert skill.resources[0].name == "lookup-table"
+
+    def test_discovers_scripts(self) -> None:
+        skill = _DecoratorClassSkill()
+        assert len(skill.scripts) == 1
+        assert skill.scripts[0].name == "convert"
+
+    def test_resource_description_from_decorator(self) -> None:
+        skill = _DecoratorClassSkill()
+        assert skill.resources[0].description is None
+
+    def test_script_description_from_decorator(self) -> None:
+        skill = _DecoratorClassSkill()
+        assert skill.scripts[0].description is None
+
+    def test_bare_decorator_name_from_method(self) -> None:
+        skill = _BareDecoratorSkill()
+        assert skill.resources[0].name == "my-table"
+        assert skill.scripts[0].name == "my-script"
+
+    def test_bare_decorator_description_is_none(self) -> None:
+        skill = _BareDecoratorSkill()
+        assert skill.resources[0].description is None
+        assert skill.scripts[0].description is None
+
+    async def test_resource_reads(self) -> None:
+        skill = _DecoratorClassSkill()
+        content = await skill.resources[0].read()
+        assert content == "| From | To | Factor |"
+
+    async def test_script_runs(self) -> None:
+        skill = _DecoratorClassSkill()
+        import json as _json
+
+        result = await skill.scripts[0].run(skill, {"value": 10.0, "factor": 2.5})
+        parsed = _json.loads(result)
+        assert parsed["result"] == 25.0
+
+    def test_script_schema_excludes_self(self) -> None:
+        skill = _DecoratorClassSkill()
+        script = skill.scripts[0]
+        assert isinstance(script, InlineSkillScript)
+        schema = script.parameters_schema
+        assert schema is not None
+        props = schema.get("properties", {})
+        assert "self" not in props
+        assert "value" in props
+        assert "factor" in props
+
+    def test_resources_cached(self) -> None:
+        skill = _DecoratorClassSkill()
+        r1 = skill.resources
+        r2 = skill.resources
+        assert r1 == r2
+        assert r1 is not r2  # defensive copy
+
+    def test_scripts_cached(self) -> None:
+        skill = _DecoratorClassSkill()
+        s1 = skill.scripts
+        s2 = skill.scripts
+        assert s1 == s2
+        assert s1 is not s2  # defensive copy
+
+    def test_content_includes_discovered_resources(self) -> None:
+        skill = _DecoratorClassSkill()
+        assert "<resources>" in skill.content
+        assert 'name="lookup-table"' in skill.content
+
+    def test_content_includes_discovered_scripts(self) -> None:
+        skill = _DecoratorClassSkill()
+        assert "<scripts>" in skill.content
+        assert 'name="convert"' in skill.content
+
+    def test_duplicate_resource_name_raises(self) -> None:
+        skill = _DuplicateResourceSkill()
+        with pytest.raises(ValueError, match="already has a resource named"):
+            _ = skill.resources
+
+    def test_duplicate_script_name_raises(self) -> None:
+        skill = _DuplicateScriptSkill()
+        with pytest.raises(ValueError, match="already has a script named"):
+            _ = skill.scripts
+
+    async def test_self_access_resource(self) -> None:
+        skill = _SelfAccessSkill(multiplier=42)
+        content = await skill.resources[0].read()
+        assert content == "multiplier=42"
+
+    async def test_self_access_script(self) -> None:
+        skill = _SelfAccessSkill(multiplier=3)
+        result = await skill.scripts[0].run(skill, {"value": 7})
+        assert result == 21
+
+    def test_no_decorators_yields_empty(self) -> None:
+        skill = _MinimalClassSkill()
+        assert skill.resources == []
+        assert skill.scripts == []
+
+    async def test_provider_with_decorator_skill(self) -> None:
+        skill = _DecoratorClassSkill()
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+
+        skills = _raw_skills(provider)
+        assert len(skills) == 1
+        assert skills[0].name == "decorator-skill"
+
+    def test_manual_override_wins(self) -> None:
+        """A subclass that overrides resources/scripts bypasses decorator discovery."""
+        skill = _FullClassSkill()
+        assert len(skill.resources) == 1
+        assert skill.resources[0].name == "test-resource"
+
+    async def test_property_resource_reads(self) -> None:
+        """@ClassSkill.resource on a @property works correctly."""
+        skill = _PropertyResourceSkill()
+        assert len(skill.resources) == 1
+        assert skill.resources[0].name == "static-table"
+        content = await skill.resources[0].read()
+        assert "miles" in content
+
+    def test_property_resource_description_is_none_without_explicit(self) -> None:
+        skill = _PropertyResourceSkill()
+        assert skill.resources[0].description is None
+
+    def test_property_resource_in_content(self) -> None:
+        skill = _PropertyResourceSkill()
+        assert 'name="static-table"' in skill.content
+
+    async def test_mixed_property_and_method_resources(self) -> None:
+        """Property and method resources can coexist."""
+        skill = _MixedPropertyMethodSkill()
+        names = {r.name for r in skill.resources}
+        assert names == {"prop-data", "method-data"}
+        for r in skill.resources:
+            content = await r.read()
+            assert "content" in content.lower()
+
+    def test_explicit_resource_description_in_object(self) -> None:
+        """Explicit description= on @ClassSkill.resource is stored on the object."""
+        skill = _ExplicitDescriptionSkill()
+        res = next(r for r in skill.resources if r.name == "described-res")
+        assert res.description == "A described resource."
+
+    def test_explicit_script_description_in_object(self) -> None:
+        """Explicit description= on @ClassSkill.script is stored on the object."""
+        skill = _ExplicitDescriptionSkill()
+        scr = next(s for s in skill.scripts if s.name == "described-scr")
+        assert scr.description == "A described script."
+
+    def test_explicit_description_in_content_xml(self) -> None:
+        """Explicit descriptions appear in the skill content XML."""
+        skill = _ExplicitDescriptionSkill()
+        assert 'description="A described resource."' in skill.content
+        assert 'description="A described script."' in skill.content
+
+    def test_property_getter_not_called_during_discovery(self) -> None:
+        """Property getter must NOT be evaluated when resources are discovered."""
+        skill = _PropertyCallCountSkill()
+        assert skill.getter_call_count == 0
+        _ = skill.resources  # discovery should NOT call the getter
+        assert skill.getter_call_count == 0
+
+    async def test_property_getter_called_on_read(self) -> None:
+        """Property getter IS evaluated when the resource is read."""
+        skill = _PropertyCallCountSkill()
+        _ = skill.resources
+        assert skill.getter_call_count == 0
+        await skill.resources[0].read()
+        assert skill.getter_call_count == 1
+
+    def test_make_method_name_strips_leading_trailing_hyphens(self) -> None:
+        """_make_method_name strips leading/trailing underscores turned to hyphens."""
+        from agent_framework._skills import _make_method_name
+
+        assert _make_method_name("my_method") == "my-method"
+        assert _make_method_name("_private_method_") == "private-method"
+        assert _make_method_name("__dunder__") == "dunder"
+        assert _make_method_name("already_good") == "already-good"
+
+    def test_inherited_decorated_resources_are_discovered(self) -> None:
+        """Decorated resources from a parent class are discovered on subclass."""
+        skill = _ChildSkill()
+        names = {r.name for r in skill.resources}
+        assert "parent-data" in names
+
+    def test_inherited_decorated_scripts_are_discovered(self) -> None:
+        """Decorated scripts from a parent class are discovered on subclass."""
+        skill = _ChildSkill()
+        names = {s.name for s in skill.scripts}
+        assert "parent-action" in names
+
+    def test_child_can_add_own_resources(self) -> None:
+        """A child class can add resources alongside inherited ones."""
+        skill = _ChildSkill()
+        names = {r.name for r in skill.resources}
+        assert "parent-data" in names
+        assert "child-data" in names
+
+    async def test_script_receives_kwargs(self) -> None:
+        """ClassSkill scripts receive **kwargs forwarded from the runtime."""
+        skill = _KwargsSkill()
+        script = skill.scripts[0]
+        result = await script.run(skill, {"x": 5}, custom_key="hello")
+        assert result == "5-hello"
+
+    def test_wrong_decorator_order_resource_raises(self) -> None:
+        """@ClassSkill.resource above @property raises TypeError at class definition."""
+        with pytest.raises(TypeError, match="must be applied before @property"):
+
+            class _BadOrder(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(name="bad", description="bad")
+
+                @property
+                def instructions(self) -> str:
+                    return "x"
+
+                @ClassSkill.resource(name="oops")  # wrong: should be below @property
+                @property
+                def bad_prop(self) -> str:
+                    return "x"
+
+    def test_wrong_decorator_order_script_raises(self) -> None:
+        """@ClassSkill.script on a property raises TypeError."""
+        with pytest.raises(TypeError, match="must be applied before"):
+
+            class _BadOrder(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(name="bad", description="bad")
+
+                @property
+                def instructions(self) -> str:
+                    return "x"
+
+                @ClassSkill.script(name="oops")
+                @property
+                def bad_prop(self) -> str:
+                    return "x"
+
+    def test_invalid_explicit_resource_name_raises(self) -> None:
+        """Invalid name= on @ClassSkill.resource raises ValueError at decoration."""
+        with pytest.raises(ValueError, match="Invalid @ClassSkill.resource name"):
+
+            class _BadName(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(name="bad", description="bad")
+
+                @property
+                def instructions(self) -> str:
+                    return "x"
+
+                @ClassSkill.resource(name="UPPER CASE!")
+                def res(self) -> str:
+                    return "x"
+
+    def test_invalid_explicit_script_name_raises(self) -> None:
+        """Invalid name= on @ClassSkill.script raises ValueError at decoration."""
+        with pytest.raises(ValueError, match="Invalid @ClassSkill.script name"):
+
+            class _BadName(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(name="bad", description="bad")
+
+                @property
+                def instructions(self) -> str:
+                    return "x"
+
+                @ClassSkill.script(name="has spaces")
+                def scr(self, x: int) -> int:
+                    return x
+
+    def test_empty_explicit_name_raises(self) -> None:
+        """Empty name= on @ClassSkill.resource raises ValueError."""
+        with pytest.raises(ValueError, match="name cannot be empty"):
+
+            class _EmptyName(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(name="bad", description="bad")
+
+                @property
+                def instructions(self) -> str:
+                    return "x"
+
+                @ClassSkill.resource(name="")
+                def res(self) -> str:
+                    return "x"
+
+    def test_resources_copy_prevents_cache_mutation(self) -> None:
+        """Mutating the returned resources list does not affect the cache."""
+        skill = _DecoratorClassSkill()
+        r1 = skill.resources
+        r1.clear()
+        r2 = skill.resources
+        assert len(r2) == 1  # original cached list is intact
+
+    def test_scripts_copy_prevents_cache_mutation(self) -> None:
+        """Mutating the returned scripts list does not affect the cache."""
+        skill = _DecoratorClassSkill()
+        s1 = skill.scripts
+        s1.clear()
+        s2 = skill.scripts
+        assert len(s2) == 1  # original cached list is intact
+
+    async def test_inherited_property_resource_discovered(self) -> None:
+        """A @property @ClassSkill.resource on a parent class is discovered on child."""
+        skill = _ChildWithInheritedPropertySkill()
+        names = {r.name for r in skill.resources}
+        assert "parent-prop" in names
+        content = await next(r for r in skill.resources if r.name == "parent-prop").read()
+        assert content == "parent property content"
+
+
+# ---------------------------------------------------------------------------
+# Helper skills for additional tests
+# ---------------------------------------------------------------------------
+
+
+class _ExplicitDescriptionSkill(ClassSkill):
+    """Skill with explicit descriptions on decorator."""
+
+    def __init__(self) -> None:
+        super().__init__(name="desc-skill", description="Explicit desc.")
+
+    @property
+    def instructions(self) -> str:
+        return "x"
+
+    @ClassSkill.resource(name="described-res", description="A described resource.")
+    def res(self) -> str:
+        return "data"
+
+    @ClassSkill.script(name="described-scr", description="A described script.")
+    def scr(self, x: int) -> int:
+        return x
+
+
+class _PropertyCallCountSkill(ClassSkill):
+    """Tracks how many times the property getter is called."""
+
+    def __init__(self) -> None:
+        super().__init__(name="callcount-skill", description="Tracks calls.")
+        self.getter_call_count = 0
+
+    @property
+    def instructions(self) -> str:
+        return "x"
+
+    @property
+    @ClassSkill.resource(name="counted")
+    def counted_resource(self) -> str:
+        self.getter_call_count += 1
+        return "counted"
+
+
+class _ParentSkill(ClassSkill, ABC):
+    """Parent with decorated resources/scripts."""
+
+    @ClassSkill.resource(name="parent-data")
+    def parent_resource(self) -> str:
+        return "parent"
+
+    @ClassSkill.script(name="parent-action")
+    def parent_script(self, x: int) -> int:
+        return x
+
+
+class _ChildSkill(_ParentSkill):
+    """Child inheriting parent resources and adding its own."""
+
+    def __init__(self) -> None:
+        super().__init__(name="child-skill", description="Child.")
+
+    @property
+    def instructions(self) -> str:
+        return "child"
+
+    @ClassSkill.resource(name="child-data")
+    def child_resource(self) -> str:
+        return "child"
+
+
+class _KwargsSkill(ClassSkill):
+    """Skill that uses **kwargs from runtime."""
+
+    def __init__(self) -> None:
+        super().__init__(name="kwargs-skill", description="Kwargs.")
+
+    @property
+    def instructions(self) -> str:
+        return "x"
+
+    @ClassSkill.script(name="echo")
+    def echo(self, x: int, **kwargs: Any) -> str:
+        return f"{x}-{kwargs.get('custom_key', 'none')}"
+
+
+class _ParentWithPropertyResource(ClassSkill, ABC):
+    """Parent with a property-based resource."""
+
+    @property
+    @ClassSkill.resource(name="parent-prop")
+    def parent_property(self) -> str:
+        return "parent property content"
+
+
+class _ChildWithInheritedPropertySkill(_ParentWithPropertyResource):
+    """Child that should discover inherited property resource."""
+
+    def __init__(self) -> None:
+        super().__init__(name="child-prop-skill", description="Child prop.")
+
+    @property
+    def instructions(self) -> str:
+        return "x"
+
+
+class _PropertyResourceSkill(ClassSkill):
+    """Skill with a property-based resource."""
+
+    def __init__(self) -> None:
+        super().__init__(name="prop-skill", description="Property skill.")
+
+    @property
+    def instructions(self) -> str:
+        return "Use this skill."
+
+    @property
+    @ClassSkill.resource(name="static-table")
+    def conversion_table(self) -> str:
+        """Static conversion table."""
+        return "| miles | km | 1.60934 |"
+
+
+class _MixedPropertyMethodSkill(ClassSkill):
+    """Skill with both property and method resources."""
+
+    def __init__(self) -> None:
+        super().__init__(name="mixed-prop", description="Mixed.")
+
+    @property
+    def instructions(self) -> str:
+        return "x"
+
+    @property
+    @ClassSkill.resource(name="prop-data")
+    def static_data(self) -> str:
+        """Static content."""
+        return "Property Content"
+
+    @ClassSkill.resource(name="method-data")
+    def dynamic_data(self) -> str:
+        """Dynamic content."""
+        return "Method Content"
 
     async def test_code_skill_scripts_element_contains_parameters(self) -> None:
         """Scripts XML includes parameters schema when the function has typed parameters."""

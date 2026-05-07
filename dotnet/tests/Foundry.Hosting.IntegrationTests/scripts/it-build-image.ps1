@@ -41,7 +41,14 @@ param(
 
     [string] $Repository = "foundry-hosting-it",
 
-    [string] $TestContainerProject = "dotnet/tests/Foundry.Hosting.IntegrationTests.TestContainer"
+    [string] $TestContainerProject = "dotnet/tests/Foundry.Hosting.IntegrationTests.TestContainer",
+
+    # Explicit opt-in for the no-rebuild fast path. CI sets this after running the
+    # "Build Foundry hosted IT (and its deps)" step, which guarantees the prebuilt
+    # library DLLs match current source. Off by default so local invocations always
+    # let publish rebuild ProjectReferences and never produce an image whose tag is
+    # computed from current source while the contents come from a stale build.
+    [switch] $UsePrebuiltProjectReferences
 )
 
 $ErrorActionPreference = "Stop"
@@ -100,7 +107,60 @@ if (Test-Path $out) {
     Remove-Item -Recurse -Force $out
 }
 
-dotnet publish $TestContainerProject -c Release -f net10.0 -r linux-musl-x64 --self-contained false -o $out --tl:off | Out-Host
+# Conditionally tell publish to skip rebuilding ProjectReferences and consume the
+# prebuilt library DLLs in place. This avoids two failure modes that arise when
+# the CI workflow runs a `dotnet build` of the same library projects immediately
+# before this script:
+#   1) MSB3026 "file is being used by another process" when publish's MSBuild
+#      tries to overwrite src/<lib>/bin/Release/net10.0/<lib>.dll while the
+#      previous build's shared-compilation server still holds a file handle.
+#   2) Publish needlessly rebuilding identical managed (RID-agnostic) library
+#      DLLs that prebuild already produced.
+# Gated on -UsePrebuiltProjectReferences (a strict opt-in) instead of marker
+# detection, because a developer machine may have a stale Release build of the
+# libraries from days ago; using those would silently produce an image whose
+# content is older than the source the tag is computed from.
+$publishExtraArgs = @()
+if ($UsePrebuiltProjectReferences) {
+    Write-Host "-UsePrebuiltProjectReferences: skipping ProjectReference rebuild." -ForegroundColor DarkGray
+    $publishExtraArgs += "-p:BuildProjectReferences=false"
+} else {
+    # Preflight: in default (rebuild) mode, publish propagates RuntimeIdentifier=linux-musl-x64
+    # to library ProjectReferences and writes their intermediates to a RID-suffixed obj path
+    # (e.g. obj/Release/net10.0/linux-musl-x64/). DefaultItemExcludes follows the new
+    # IntermediateOutputPath, so any *.AssemblyInfo.cs left in obj/Release/net10.0/ from a
+    # prior `dotnet build` is no longer excluded and gets picked up by the **/*.cs Compile
+    # glob, producing CS0579 "duplicate attribute" errors. Detect that state up front and
+    # tell the user exactly how to recover.
+    $staleObjProbes = @(
+        "dotnet/src/Microsoft.Agents.AI.Foundry.Hosting/obj/Release/net10.0",
+        "dotnet/src/Microsoft.Agents.AI.Foundry/obj/Release/net10.0",
+        "dotnet/src/Microsoft.Agents.AI/obj/Release/net10.0",
+        "dotnet/src/Microsoft.Agents.AI.Abstractions/obj/Release/net10.0"
+    )
+    $stale = @($staleObjProbes | Where-Object { Test-Path (Join-Path $_ "*.AssemblyInfo.cs") })
+    if ($stale.Count -gt 0) {
+        $msg = @(
+            "Detected prior Release/net10.0 build outputs in:"
+            ($stale | ForEach-Object { "  - $_" })
+            ""
+            "Publish would propagate -r linux-musl-x64 to those ProjectReferences and the"
+            "leftover obj/Release/net10.0/*.AssemblyInfo.cs files would cause CS0579 duplicate"
+            "attribute errors. Pick one:"
+            "  (a) Pass -UsePrebuiltProjectReferences (skips ProjectReference rebuild and"
+            "      uses the existing src/<lib>/bin/Release/net10.0/*.dll outputs in place)."
+            "      Only safe when you know those DLLs match current source - this is the path"
+            "      CI uses immediately after its 'Build Foundry hosted IT (and its deps)' step."
+            "  (b) Remove the stale obj/Release trees, e.g.:"
+            "        Remove-Item -Recurse -Force dotnet/src/Microsoft.Agents.AI*/obj/Release"
+            "      and re-run."
+        ) -join "`n"
+        throw $msg
+    }
+    Write-Host "Letting publish build ProjectReferences (pass -UsePrebuiltProjectReferences in CI to skip)." -ForegroundColor DarkGray
+}
+
+dotnet publish $TestContainerProject -c Release -f net10.0 -r linux-musl-x64 --self-contained false -o $out @publishExtraArgs --tl:off | Out-Host
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE."
 }

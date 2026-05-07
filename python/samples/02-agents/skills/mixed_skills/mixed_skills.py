@@ -16,6 +16,7 @@ from typing import Any
 from agent_framework import (
     Agent,
     AggregatingSkillsSource,
+    ClassSkill,
     DeduplicatingSkillsSource,
     FileSkillsSource,
     InlineSkill,
@@ -34,28 +35,32 @@ if _SKILLS_ROOT not in sys.path:
 from subprocess_script_runner import subprocess_script_runner  # noqa: E402
 
 """
-Mixed Skills — Code skills and file skills in a single agent
+Mixed Skills — Code, class, and file skills in a single agent
 
 This sample demonstrates how to combine **code-defined skills** (with
-``@skill.script`` and ``@skill.resource`` decorators) and **file-based skills**
-(discovered from ``SKILL.md`` files on disk) in a single agent using
-``SkillsProvider`` and a ``SkillScriptRunner`` callable.
+``@skill.script`` and ``@skill.resource`` decorators), **class-based skills**
+(subclassing ``ClassSkill``), and **file-based skills** (discovered from
+``SKILL.md`` files on disk) in a single agent using ``SkillsProvider`` and
+a ``SkillScriptRunner`` callable.
 
 Key concepts shown:
 - Code skills with ``@skill.script``: executable Python functions the agent
   can invoke directly in-process.
 - Code skills with ``@skill.resource``: dynamic content the agent can read
   on demand.
+- Class skills: self-contained skill classes extending ``ClassSkill``.
 - File skills from disk: ``SKILL.md`` files with reference documents and
   executable script files.
 - ``script_runner``: routes **file-based** script execution
   through a callback, enabling custom handling (e.g. subprocess calls).
-  Code-defined scripts (``@skill.script``) run in-process automatically.
+  Code-defined and class-based scripts run in-process automatically.
 
-The sample registers two skills:
+The sample registers three skills:
 1. **volume-converter** (code skill) — converts between gallons and liters using
    ``@skill.script`` for conversion and ``@skill.resource`` for the factor table.
-2. **unit-converter** (file skill) — converts between common units (miles↔km,
+2. **temperature-converter** (class skill) — converts between temperature scales
+   (°F↔°C↔K) using a ``ClassSkill`` subclass.
+3. **unit-converter** (file skill) — converts between common units (miles↔km,
    pounds↔kg) via a subprocess-executed Python script discovered from
    ``skills/unit-converter/SKILL.md``.
 """
@@ -110,9 +115,68 @@ def convert_volume(value: float, factor: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 2. Wire everything together and run the agent
+# 2. Define a class-based skill for temperature conversion
 # ---------------------------------------------------------------------------
 
+class TemperatureConverterSkill(ClassSkill):
+    """A temperature-converter skill defined as a Python class.
+
+    Converts between temperature scales (Fahrenheit, Celsius, Kelvin).
+    Resources and scripts are discovered automatically via decorators.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            name="temperature-converter",
+            description="Convert between temperature scales (Fahrenheit, Celsius, Kelvin).",
+        )
+
+    @property
+    def instructions(self) -> str:
+        return dedent("""\
+            Use this skill when the user asks to convert temperatures.
+
+            1. Read the temperature-conversion-formulas resource to find the factor and offset
+               for the requested conversion.
+            2. Use the convert-temperature script, passing value, factor, and offset.
+            3. Present the result clearly with both temperature scales.
+        """)
+
+    @ClassSkill.resource(name="temperature-conversion-formulas")
+    def formulas(self) -> str:
+        """Temperature conversion formulas reference table."""
+        return dedent("""\
+            # Temperature Conversion Formulas
+
+            Formula: **result = value × factor + offset**
+
+            | From        | To          | Factor   | Offset    |
+            |-------------|-------------|----------|-----------|
+            | Fahrenheit  | Celsius     | 0.555556 | -17.7778  |
+            | Celsius     | Fahrenheit  | 1.8      | 32        |
+            | Celsius     | Kelvin      | 1        | 273.15    |
+            | Kelvin      | Celsius     | 1        | -273.15   |
+        """)
+
+    @ClassSkill.script(name="convert-temperature")
+    def convert_temperature(self, value: float, factor: float, offset: float = 0) -> str:
+        """Convert a temperature value using factor and offset from the formulas resource.
+
+        Args:
+            value: The numeric temperature value to convert.
+            factor: Conversion factor from the formulas resource.
+            offset: Offset to add after multiplying (default 0).
+
+        Returns:
+            JSON string with the conversion result.
+        """
+        result = round(value * factor + offset, 4)
+        return json.dumps({"value": value, "factor": factor, "offset": offset, "result": result})
+
+
+# ---------------------------------------------------------------------------
+# 3. Wire everything together and run the agent
+# ---------------------------------------------------------------------------
 
 async def main() -> None:
     """Run the combined skills demo."""
@@ -126,9 +190,11 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # Create the SkillsProvider with both code and file skills.
-    # The script_runner handles file-based scripts; code-defined scripts
-    # (@skill.script) run in-process automatically.
+    # Create the SkillsProvider with code, class, and file skills.
+    # The script_runner handles file-based scripts; code-defined and
+    # class-based scripts run in-process automatically.
+    temperature_converter = TemperatureConverterSkill()
+
     skills_provider = SkillsProvider(
         DeduplicatingSkillsSource(
             AggregatingSkillsSource([
@@ -136,7 +202,7 @@ async def main() -> None:
                     str(Path(__file__).parent / "skills"),
                     script_runner=subprocess_script_runner,
                 ),
-                InMemorySkillsSource([volume_converter_skill]),
+                InMemorySkillsSource([volume_converter_skill, temperature_converter]),
             ])
         )
     )
@@ -144,14 +210,17 @@ async def main() -> None:
     # Run the agent
     async with Agent(
         client=client,
-        instructions="You are a helpful assistant that can convert units.",
+        instructions="You are a helpful assistant that can convert units, volumes, and temperatures.",
         context_providers=[skills_provider],
     ) as agent:
-        # Ask the agent to use both skills
-        print("Converting units")
+        # Ask the agent to use all three skills
+        print("Converting with mixed skills (file + code + class)")
         print("-" * 60)
         response = await agent.run(
-            "How many kilometers is a marathon (26.2 miles)? And how many liters is a 5-gallon bucket?"
+            "I need three conversions: "
+            "1) How many kilometers is a marathon (26.2 miles)? "
+            "2) How many liters is a 5-gallon bucket? "
+            "3) What is 98.6°F in Celsius?"
         )
         print(f"Agent: {response}\n")
 
@@ -162,12 +231,11 @@ if __name__ == "__main__":
 """
 Sample output:
 
-Converting units
+Converting with mixed skills (file + code + class)
 ------------------------------------------------------------
 Agent: Here are your conversions:
 
 1. **26.2 miles → 42.16 km** (a marathon distance)
 2. **5 gallons → 18.93 liters**
-
-I used the conversion factors from each skill's reference table.
+3. **98.6°F → 37.0°C**
 """

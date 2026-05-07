@@ -135,6 +135,7 @@ from ._sessions import (
 from ._settings import SecretString, load_settings
 from ._skills import (
     AggregatingSkillsSource,
+    ClassSkill,
     DeduplicatingSkillsSource,
     DelegatingSkillsSource,
     FileSkill,
@@ -345,6 +346,7 @@ __all__ = [
     "ChatResponseUpdate",
     "CheckResult",
     "CheckpointStorage",
+    "ClassSkill",
     "CompactionProvider",
     "CompactionStrategy",
     "Content",

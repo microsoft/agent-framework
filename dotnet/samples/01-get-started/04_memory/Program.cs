@@ -50,12 +50,12 @@ Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", session));
 Console.WriteLine(await agent.RunAsync("I am 20 years old", session));
 
 // We can serialize the session. The serialized state will include the state of the memory component.
-JsonElement sesionElement = await agent.SerializeSessionAsync(session);
+JsonElement sessionElement = await agent.SerializeSessionAsync(session);
 
 Console.WriteLine("\n>> Use deserialized session with previously created memories\n");
 
 // Later we can deserialize the session and continue the conversation with the previous memory component state.
-var deserializedSession = await agent.DeserializeSessionAsync(sesionElement);
+var deserializedSession = await agent.DeserializeSessionAsync(sessionElement);
 Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedSession));
 
 Console.WriteLine("\n>> Read memories using memory component\n");
