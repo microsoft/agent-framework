@@ -671,6 +671,10 @@ class MCPTool:
                     error_msg = f"Failed to start MCP server '{command}': {ex}"
                 else:
                     error_msg = f"Failed to connect to MCP server: {ex}"
+                # CancelledError is a BaseException (not Exception) on Python >= 3.8, so
+                # inner_exception=None and ToolException.__init__ won't log exc_info.
+                if isinstance(ex, asyncio.CancelledError):
+                    logger.debug(error_msg, exc_info=ex)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             try:
                 try:
@@ -708,8 +712,11 @@ class MCPTool:
                         await self._safe_close_exit_stack()
                         raise
                 await self._safe_close_exit_stack()
+                session_error_msg = "Failed to create MCP session. Please check your configuration."
+                if isinstance(ex, asyncio.CancelledError):
+                    logger.debug(session_error_msg, exc_info=ex)
                 raise ToolException(
-                    message="Failed to create MCP session. Please check your configuration.",
+                    message=session_error_msg,
                     inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
             try:
@@ -729,6 +736,8 @@ class MCPTool:
                     error_msg = f"MCP server '{full_command}' failed to initialize: {ex}"
                 else:
                     error_msg = f"MCP server failed to initialize: {ex}"
+                if isinstance(ex, asyncio.CancelledError):
+                    logger.debug(error_msg, exc_info=ex)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             self.session = session
         elif self.session._request_id == 0:  # type: ignore[attr-defined]
