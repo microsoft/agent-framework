@@ -1335,6 +1335,205 @@ tools:
         tools = agent.default_options.get("tools", [])
         assert len(tools) == 1
 
+    def test_parse_mcp_tool_with_explicit_bindings(self):
+        """Test parsing McpTool with explicit bindings resolves from factory bindings."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: product-mcp
+    bindings:
+      - name: my_mcp_binding
+"""
+
+        prebuilt_mcp_tool = {
+            "type": "mcp",
+            "server_label": "product_mcp",
+            "server_url": "https://product.example.com/mcp",
+            "allowed_tools": ["search", "lookup"],
+        }
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client, bindings={"my_mcp_binding": prebuilt_mcp_tool})
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        tools = agent.default_options.get("tools", [])
+        assert len(tools) == 1
+        assert tools[0] is prebuilt_mcp_tool
+
+    def test_parse_mcp_tool_with_name_binding(self):
+        """Test parsing McpTool resolved by tool name when no explicit bindings list."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: product-mcp
+"""
+
+        prebuilt_mcp_tool = {
+            "type": "mcp",
+            "server_label": "product_mcp",
+            "server_url": "https://product.example.com/mcp",
+        }
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client, bindings={"product-mcp": prebuilt_mcp_tool})
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        tools = agent.default_options.get("tools", [])
+        assert len(tools) == 1
+        assert tools[0] is prebuilt_mcp_tool
+
+    def test_parse_mcp_tool_binding_by_name_with_allowed_tools(self):
+        """Regression test for issue #4927: MCP tool binding by reference with allowedTools.
+
+        When YAML specifies an MCP tool by name with allowedTools but no url,
+        the tool should resolve from bindings rather than producing server_url: ''.
+        """
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: You are a helpful assistant.
+tools:
+  - kind: mcp
+    name: product-mcp
+    allowedTools:
+      - customer_search
+"""
+
+        prebuilt_mcp_tool = {
+            "type": "mcp",
+            "server_label": "product_mcp",
+            "server_url": "https://product.example.com/mcp",
+            "allowed_tools": ["customer_search"],
+            "headers": {"X-API-Key": "secret"},
+            "require_approval": "never",
+        }
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client, bindings={"product-mcp": prebuilt_mcp_tool})
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        tools = agent.default_options.get("tools", [])
+        assert len(tools) == 1
+        # Must return the pre-built tool, not a dict with server_url: ''
+        assert tools[0] is prebuilt_mcp_tool
+        assert tools[0]["server_url"] == "https://product.example.com/mcp"
+        assert tools[0]["headers"] == {"X-API-Key": "secret"}
+
+    def test_parse_mcp_tool_without_binding_falls_through(self):
+        """Test that McpTool without matching binding falls through to dict-building logic."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: other-mcp
+    url: https://api.example.com/mcp
+"""
+
+        prebuilt_mcp_tool = {
+            "type": "mcp",
+            "server_label": "product_mcp",
+            "server_url": "https://product.example.com/mcp",
+        }
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client, bindings={"product-mcp": prebuilt_mcp_tool})
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        tools = agent.default_options.get("tools", [])
+        assert len(tools) == 1
+        # Should have built the dict from YAML, not used the binding
+        assert tools[0]["server_label"] == "other-mcp"
+        assert tools[0]["server_url"] == "https://api.example.com/mcp"
+
+    def test_parse_mcp_tool_explicit_binding_takes_priority_over_name(self):
+        """Test that explicit bindings list takes priority over name-based lookup."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: product-mcp
+    url: https://product.example.com/mcp
+    bindings:
+      - name: my_binding
+"""
+
+        explicit_binding_tool = {
+            "type": "mcp",
+            "server_label": "explicit_binding",
+            "server_url": "https://explicit.example.com/mcp",
+        }
+        name_binding_tool = {
+            "type": "mcp",
+            "server_label": "name_binding",
+            "server_url": "https://name.example.com/mcp",
+        }
+
+        mock_client = MagicMock()
+        factory = AgentFactory(
+            client=mock_client,
+            bindings={"my_binding": explicit_binding_tool, "product-mcp": name_binding_tool},
+        )
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        tools = agent.default_options.get("tools", [])
+        assert len(tools) == 1
+        assert tools[0] is explicit_binding_tool
+
+    def test_parse_mcp_tool_no_bindings_on_factory_falls_through(self):
+        """Test that MCP tool without factory bindings falls through to dict-building."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+instructions: Test agent
+tools:
+  - kind: mcp
+    name: my-mcp-server
+    url: https://api.example.com/mcp
+"""
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client, bindings=None)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        tools = agent.default_options.get("tools", [])
+        assert len(tools) == 1
+        assert tools[0]["server_label"] == "my-mcp-server"
+        assert tools[0]["server_url"] == "https://api.example.com/mcp"
+
     def test_parse_file_search_tool_with_all_options(self):
         """Test parsing FileSearchTool with ranker and filters."""
         from unittest.mock import MagicMock
