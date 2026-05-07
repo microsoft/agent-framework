@@ -177,6 +177,40 @@ def test_raw_anthropic_client_init_with_base_url(
     assert custom_url in str(client.anthropic_client.base_url)
 
 
+@pytest.mark.parametrize(
+    "override_env_param_dict",
+    [{"ANTHROPIC_BASE_URL": "https://env-base-url.example.com"}],
+    indirect=True,
+)
+def test_anthropic_client_init_base_url_from_env(
+    anthropic_unit_test_env: dict[str, str],
+) -> None:
+    """Test AnthropicClient picks up base_url from ANTHROPIC_BASE_URL env variable when not passed explicitly."""
+    client = AnthropicClient(
+        api_key=anthropic_unit_test_env["ANTHROPIC_API_KEY"],
+        model=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"],
+    )
+
+    assert anthropic_unit_test_env["ANTHROPIC_BASE_URL"] in str(client.anthropic_client.base_url)
+
+
+@pytest.mark.parametrize(
+    "override_env_param_dict",
+    [{"ANTHROPIC_BASE_URL": "https://env-base-url.example.com"}],
+    indirect=True,
+)
+def test_raw_anthropic_client_init_base_url_from_env(
+    anthropic_unit_test_env: dict[str, str],
+) -> None:
+    """Test RawAnthropicClient picks up base_url from ANTHROPIC_BASE_URL env variable when not passed explicitly."""
+    client = RawAnthropicClient(
+        api_key=anthropic_unit_test_env["ANTHROPIC_API_KEY"],
+        model=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"],
+    )
+
+    assert anthropic_unit_test_env["ANTHROPIC_BASE_URL"] in str(client.anthropic_client.base_url)
+
+
 def test_anthropic_client_init_missing_api_key() -> None:
     """Test AnthropicClient initialization when API key is missing."""
     with patch("agent_framework_anthropic._chat_client.load_settings") as mock_load:
