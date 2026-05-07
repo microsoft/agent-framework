@@ -52,7 +52,23 @@ public class UserIdentityScopedSessionStoreTests
     /// </summary>
     [Fact]
     public void RequiresInnerStore() =>
-        Assert.Throws<ArgumentNullException>("innerStore", () => new UserIdentityScopedSessionStore(null!, this._httpContextAccessorMock.Object));
+        Assert.Throws<ArgumentNullException>("innerStore", () => new UserIdentityScopedSessionStore(null!, this._httpContextAccessorMock.Object, CreateOptions()));
+
+    /// <summary>
+    /// Verify that constructor uses default options when options is null.
+    /// </summary>
+    [Fact]
+    public void UsesDefaultOptionsWhenNull()
+    {
+        // Arrange
+        this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, TestUserId);
+
+        // Act - should not throw and use default claim type
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, options: null);
+
+        // Assert
+        Assert.NotNull(store);
+    }
 
     /// <summary>
     /// Verify that constructor accepts null IHttpContextAccessor.
@@ -61,7 +77,7 @@ public class UserIdentityScopedSessionStoreTests
     public void Constructor_WithNullHttpContextAccessor_DoesNotThrow()
     {
         // Act & Assert - should not throw
-        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, contextAccessor: null, strict: false);
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, contextAccessor: null, CreateOptions(strict: false));
         Assert.NotNull(store);
     }
 
@@ -70,21 +86,21 @@ public class UserIdentityScopedSessionStoreTests
     /// </summary>
     [Fact]
     public void RequiresClaimType_NotNull() =>
-        Assert.Throws<ArgumentNullException>("claimType", () => new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, claimType: null!));
+        Assert.Throws<ArgumentNullException>("options.ClaimType", () => new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions(claimType: null!)));
 
     /// <summary>
     /// Verify that constructor throws ArgumentException when claimType is empty.
     /// </summary>
     [Fact]
     public void RequiresClaimType_NotEmpty() =>
-        Assert.Throws<ArgumentException>("claimType", () => new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, claimType: string.Empty));
+        Assert.Throws<ArgumentException>("options.ClaimType", () => new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions(claimType: string.Empty)));
 
     /// <summary>
     /// Verify that constructor throws ArgumentException when claimType is whitespace.
     /// </summary>
     [Fact]
     public void RequiresClaimType_NotWhitespace() =>
-        Assert.Throws<ArgumentException>("claimType", () => new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, claimType: "   "));
+        Assert.Throws<ArgumentException>("options.ClaimType", () => new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions(claimType: "   ")));
 
     #endregion
 
@@ -98,7 +114,7 @@ public class UserIdentityScopedSessionStoreTests
     {
         // Arrange
         this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, TestUserId);
-        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions());
 
         // Act
         await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
@@ -123,7 +139,7 @@ public class UserIdentityScopedSessionStoreTests
         var store = new UserIdentityScopedSessionStore(
             this._innerStoreMock.Object,
             this._httpContextAccessorMock.Object,
-            claimType: CustomClaimType);
+            CreateOptions(claimType: CustomClaimType));
 
         // Act
         await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
@@ -148,7 +164,7 @@ public class UserIdentityScopedSessionStoreTests
         var store = new UserIdentityScopedSessionStore(
             this._innerStoreMock.Object,
             this._httpContextAccessorMock.Object,
-            strict: true);
+            CreateOptions(strict: true));
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -168,7 +184,7 @@ public class UserIdentityScopedSessionStoreTests
         var store = new UserIdentityScopedSessionStore(
             this._innerStoreMock.Object,
             this._httpContextAccessorMock.Object,
-            strict: false);
+            CreateOptions(strict: false));
 
         // Act - should not throw
         await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
@@ -190,7 +206,7 @@ public class UserIdentityScopedSessionStoreTests
     {
         // Arrange
         this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, TestUserId);
-        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions());
 
         // Act
         var result = await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
@@ -211,7 +227,7 @@ public class UserIdentityScopedSessionStoreTests
     {
         // Arrange
         this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, TestUserId);
-        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions());
         var sessionToSave = new TestAgentSession();
 
         // Act
@@ -238,7 +254,7 @@ public class UserIdentityScopedSessionStoreTests
         var store = new UserIdentityScopedSessionStore(
             this._innerStoreMock.Object,
             this._httpContextAccessorMock.Object,
-            claimType: CustomClaimType);
+            CreateOptions(claimType: CustomClaimType));
         var sessionToSave = new TestAgentSession();
 
         // Act
@@ -265,7 +281,7 @@ public class UserIdentityScopedSessionStoreTests
         var store = new UserIdentityScopedSessionStore(
             this._innerStoreMock.Object,
             this._httpContextAccessorMock.Object,
-            strict: true);
+            CreateOptions(strict: true));
         var sessionToSave = new TestAgentSession();
 
         // Act & Assert
@@ -286,7 +302,7 @@ public class UserIdentityScopedSessionStoreTests
         var store = new UserIdentityScopedSessionStore(
             this._innerStoreMock.Object,
             this._httpContextAccessorMock.Object,
-            strict: false);
+            CreateOptions(strict: false));
         var sessionToSave = new TestAgentSession();
 
         // Act - should not throw
@@ -317,7 +333,7 @@ public class UserIdentityScopedSessionStoreTests
         var store = new UserIdentityScopedSessionStore(
             this._innerStoreMock.Object,
             this._httpContextAccessorMock.Object,
-            strict: true);
+            CreateOptions(strict: true));
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(
@@ -335,7 +351,7 @@ public class UserIdentityScopedSessionStoreTests
         var store = new UserIdentityScopedSessionStore(
             this._innerStoreMock.Object,
             this._httpContextAccessorMock.Object,
-            strict: false);
+            CreateOptions(strict: false));
 
         // Act - should not throw
         await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
@@ -376,12 +392,12 @@ public class UserIdentityScopedSessionStoreTests
 
         // Act - User 1
         this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, User1);
-        var store1 = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+        var store1 = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions());
         await store1.GetSessionAsync(this._agentMock.Object, TestConversationId);
 
         // Act - User 2
         this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, User2);
-        var store2 = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+        var store2 = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions());
         await store2.GetSessionAsync(this._agentMock.Object, TestConversationId);
 
         // Assert
@@ -399,7 +415,7 @@ public class UserIdentityScopedSessionStoreTests
         // Arrange
         const string UserIdWithColon = "user:with:colons";
         this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, UserIdWithColon);
-        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions());
 
         // Act
         await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
@@ -422,7 +438,7 @@ public class UserIdentityScopedSessionStoreTests
         // Arrange
         const string UserIdWithBackslash = @"domain\user";
         this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, UserIdWithBackslash);
-        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions());
 
         // Act
         await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
@@ -445,7 +461,7 @@ public class UserIdentityScopedSessionStoreTests
         // Arrange
         const string UserIdWithBoth = @"domain\user:role";
         this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, UserIdWithBoth);
-        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, CreateOptions());
 
         // Act
         await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
@@ -462,6 +478,17 @@ public class UserIdentityScopedSessionStoreTests
     #endregion
 
     #region Helper Methods
+
+    private static UserIdentityScopedSessionStoreOptions CreateOptions(
+        string? claimType = ClaimsIdentity.DefaultNameClaimType,
+        bool strict = true)
+    {
+        return new UserIdentityScopedSessionStoreOptions
+        {
+            ClaimType = claimType!,
+            Strict = strict
+        };
+    }
 
     private void SetupHttpContextWithClaim(string claimType, string claimValue)
     {
