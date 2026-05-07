@@ -35,7 +35,7 @@ class _FakeExecutor:
 
     async def close(self) -> None: ...
 
-    async def __aenter__(self) -> "_FakeExecutor":
+    async def __aenter__(self) -> _FakeExecutor:
         await self.start()
         return self
 
@@ -138,6 +138,7 @@ async def test_probe_swallows_expected_executor_failures() -> None:
 
 async def test_unexpected_exception_propagates() -> None:
     class Boom(RuntimeError): ...
+
     executor = _FakeExecutor({"echo": Boom("kaboom")})
     provider = ShellEnvironmentProvider(
         executor,
@@ -196,7 +197,7 @@ async def test_failed_probe_does_not_poison_subsequent_calls() -> None:
 
         async def close(self) -> None: ...
 
-        async def __aenter__(self) -> "Flaky":
+        async def __aenter__(self) -> Flaky:
             return self
 
         async def __aexit__(self, *_: object) -> None: ...
@@ -230,7 +231,7 @@ async def test_concurrent_first_callers_share_a_single_probe() -> None:
     class Slow:
         async def start(self) -> None: ...
         async def close(self) -> None: ...
-        async def __aenter__(self) -> "Slow":
+        async def __aenter__(self) -> Slow:
             return self
 
         async def __aexit__(self, *_: object) -> None: ...

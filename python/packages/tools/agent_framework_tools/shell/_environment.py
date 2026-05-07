@@ -202,10 +202,7 @@ class ShellEnvironmentProvider(ContextProvider):
                 'Write-Output ("CWD=" + (Get-Location).Path)'
             )
         else:
-            command = (
-                'echo "VERSION=${BASH_VERSION:-${ZSH_VERSION:-unknown}}"; '
-                'echo "CWD=$PWD"'
-            )
+            command = 'echo "VERSION=${BASH_VERSION:-${ZSH_VERSION:-unknown}}"; echo "CWD=$PWD"'
 
         result = await self._run_probe(command)
         if result is None:
@@ -216,10 +213,10 @@ class ShellEnvironmentProvider(ContextProvider):
         for raw in result.stdout.splitlines():
             line = raw.strip()
             if line.startswith("VERSION="):
-                value = line[len("VERSION="):].strip()
+                value = line[len("VERSION=") :].strip()
                 version = None if not value or value == "unknown" else value
             elif line.startswith("CWD="):
-                cwd = line[len("CWD="):].strip()
+                cwd = line[len("CWD=") :].strip()
         return version, cwd
 
     async def _probe_tool_version(self, tool: str) -> str | None:
@@ -260,9 +257,7 @@ def default_instructions_formatter(snapshot: ShellEnvironmentSnapshot) -> str:
     version_suffix = f" {snapshot.shell_version}" if snapshot.shell_version else ""
 
     if snapshot.family is ShellFamily.POWERSHELL:
-        lines.append(
-            f"You are operating a PowerShell{version_suffix} session on {snapshot.os_description}."
-        )
+        lines.append(f"You are operating a PowerShell{version_suffix} session on {snapshot.os_description}.")
         lines.append("Use PowerShell idioms, NOT bash:")
         lines.append("- Set environment variables with `$env:NAME = 'value'` (NOT `NAME=value`).")
         lines.append("- Change directory with `Set-Location` or `cd`. Paths use `\\` separators.")
@@ -270,9 +265,7 @@ def default_instructions_formatter(snapshot: ShellEnvironmentSnapshot) -> str:
         lines.append("- The system temp directory is `[System.IO.Path]::GetTempPath()` (NOT `/tmp`).")
         lines.append("- Pipe to `Out-Null` to suppress output (NOT `> /dev/null`).")
     else:
-        lines.append(
-            f"You are operating a POSIX shell{version_suffix} session on {snapshot.os_description}."
-        )
+        lines.append(f"You are operating a POSIX shell{version_suffix} session on {snapshot.os_description}.")
         lines.append("Use POSIX shell idioms (bash/sh).")
         lines.append("- Set environment variables for the next command with `export NAME=value`.")
         lines.append("- Reference environment variables as `$NAME` or `${NAME}`.")

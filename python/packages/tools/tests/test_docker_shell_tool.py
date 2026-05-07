@@ -10,6 +10,8 @@ available in CI / dev sandboxes).
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from agent_framework_tools.shell import (
@@ -20,6 +22,13 @@ from agent_framework_tools.shell import (
 from agent_framework_tools.shell._docker import (
     build_exec_argv,
     build_run_argv,
+)
+
+# Integration tests use Linux container images (alpine) that don't run
+# under Docker Desktop's default Windows-container mode.
+_skip_if_no_linux_docker = pytest.mark.skipif(
+    not is_docker_available() or sys.platform == "win32",
+    reason="docker daemon unavailable or running Windows containers",
 )
 
 # --------------------------------------------------------------------- argv builders
@@ -176,7 +185,7 @@ def test_as_function_carries_shell_kind():
 # --------------------------------------------------------------------- integration
 
 
-@pytest.mark.skipif(not is_docker_available(), reason="docker daemon unavailable")
+@_skip_if_no_linux_docker
 async def test_docker_persistent_session_preserves_state():
     async with DockerShellTool(image="alpine:3", shell="sh", network="none") as shell:
         r1 = await shell.run("export AF_X=hello")
@@ -186,7 +195,7 @@ async def test_docker_persistent_session_preserves_state():
         assert "hello" in r2.stdout
 
 
-@pytest.mark.skipif(not is_docker_available(), reason="docker daemon unavailable")
+@_skip_if_no_linux_docker
 async def test_docker_stateless_each_command_isolated():
     shell = DockerShellTool(mode="stateless", image="alpine:3", shell="sh", network="none")
     r1 = await shell.run("export AF_X=hello")
@@ -195,7 +204,7 @@ async def test_docker_stateless_each_command_isolated():
     assert "unset" in r2.stdout
 
 
-@pytest.mark.skipif(not is_docker_available(), reason="docker daemon unavailable")
+@_skip_if_no_linux_docker
 async def test_docker_no_network_by_default():
     async with DockerShellTool(image="alpine:3", shell="sh") as shell:
         # busybox wget against a host that should be unreachable with --network none

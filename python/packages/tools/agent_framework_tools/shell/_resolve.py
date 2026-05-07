@@ -14,9 +14,7 @@ from ._types import ShellExecutionError
 _ENV_OVERRIDE = "AGENT_FRAMEWORK_SHELL"
 
 
-def resolve_shell(
-    shell: str | Sequence[str] | None, *, interactive: bool
-) -> list[str]:
+def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> list[str]:
     """Resolve the shell invocation argv.
 
     Priority:
@@ -55,8 +53,7 @@ def resolve_shell(
         binary = shutil.which("pwsh") or shutil.which("powershell")
         if binary is None:
             raise ShellExecutionError(
-                "Neither 'pwsh' nor 'powershell' was found on PATH. "
-                f"Install PowerShell 7+ or set {_ENV_OVERRIDE}."
+                f"Neither 'pwsh' nor 'powershell' was found on PATH. Install PowerShell 7+ or set {_ENV_OVERRIDE}."
             )
         if interactive:
             # Interactive persistent session reads from stdin via '-'.
@@ -71,9 +68,7 @@ def resolve_shell(
     # Last-ditch fallback: let PATH resolve 'sh'.
     sh = shutil.which("sh")
     if sh is None:
-        raise ShellExecutionError(
-            f"No POSIX shell found on PATH. Set {_ENV_OVERRIDE} to override."
-        )
+        raise ShellExecutionError(f"No POSIX shell found on PATH. Set {_ENV_OVERRIDE} to override.")
     return [sh] if interactive else [sh, "-c"]
 
 

@@ -55,10 +55,7 @@ async def run_stateless(
     # For PowerShell we prepend a UTF-8 encoding preamble so powershell.exe
     # on Windows (cp1252 by default) doesn't mojibake non-ASCII output.
     if is_powershell(argv):
-        command = (
-            "$OutputEncoding = [Console]::OutputEncoding = "
-            "[System.Text.UTF8Encoding]::new($false); " + command
-        )
+        command = "$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); " + command
     full_argv = [*argv, command]
     started = time.monotonic()
     proc = await asyncio.create_subprocess_exec(
@@ -72,9 +69,7 @@ async def run_stateless(
 
     timed_out = False
     try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         timed_out = True
         await kill_process_tree(proc)

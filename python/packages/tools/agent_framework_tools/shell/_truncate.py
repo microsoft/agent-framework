@@ -20,7 +20,7 @@ def truncate_head_tail(data: bytes, cap: int) -> tuple[str, bool]:
     head_cap = cap // 2
     tail_cap = cap - head_cap
     head = data[:head_cap].decode("utf-8", errors="replace")
-    tail = data[len(data) - tail_cap:].decode("utf-8", errors="replace")
+    tail = data[len(data) - tail_cap :].decode("utf-8", errors="replace")
     dropped = len(data) - cap
     return f"{head}\n[... truncated {dropped} bytes ...]\n{tail}", True
 

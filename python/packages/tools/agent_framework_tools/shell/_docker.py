@@ -248,9 +248,7 @@ class DockerShellTool:
         self._image = image
         self._container_name = container_name or f"af-shell-{secrets.token_hex(6)}"
         self._mode: ShellMode = mode
-        self._host_workdir: str | None = (
-            os.fspath(host_workdir) if host_workdir is not None else None
-        )
+        self._host_workdir: str | None = os.fspath(host_workdir) if host_workdir is not None else None
         self._workdir = workdir
         self._mount_readonly = mount_readonly
         self._network = network
@@ -263,7 +261,7 @@ class DockerShellTool:
         self._policy = policy or ShellPolicy()
         self._timeout = timeout
         self._max_output_bytes = max_output_bytes
-        self._approval_mode = approval_mode
+        self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
         self._binary = docker_binary
         self._shell = shell
@@ -320,7 +318,7 @@ class DockerShellTool:
                 await self._stop_container()
                 self._container_started = False
 
-    async def __aenter__(self) -> "DockerShellTool":
+    async def __aenter__(self) -> DockerShellTool:
         await self.start()
         return self
 
@@ -396,9 +394,7 @@ class DockerShellTool:
         )
         timed_out = False
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=self._timeout
-            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
         except asyncio.TimeoutError:
             timed_out = True
             # Kill the container by name; --rm reaps it.
@@ -421,12 +417,8 @@ class DockerShellTool:
                 stdout_bytes, stderr_bytes = b"", b""
 
         duration_ms = int((time.monotonic() - started) * 1000)
-        stdout_str, stdout_truncated = _truncate_bytes(
-            stdout_bytes or b"", self._max_output_bytes
-        )
-        stderr_str, stderr_truncated = _truncate_bytes(
-            stderr_bytes or b"", self._max_output_bytes
-        )
+        stdout_str, stdout_truncated = _truncate_bytes(stdout_bytes or b"", self._max_output_bytes)
+        stderr_str, stderr_truncated = _truncate_bytes(stderr_bytes or b"", self._max_output_bytes)
         return ShellResult(
             stdout=stdout_str,
             stderr=stderr_str,
@@ -462,8 +454,7 @@ class DockerShellTool:
         out, err = await proc.communicate()
         if proc.returncode != 0:
             raise DockerNotAvailableError(
-                f"Failed to start container ({proc.returncode}): "
-                f"{err.decode('utf-8', errors='replace').strip()}"
+                f"Failed to start container ({proc.returncode}): {err.decode('utf-8', errors='replace').strip()}"
             )
         logger.info(
             "started docker container %s (id=%s)",

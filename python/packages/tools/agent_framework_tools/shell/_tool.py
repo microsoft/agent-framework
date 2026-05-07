@@ -144,7 +144,7 @@ class LocalShellTool:
         self._policy = policy or ShellPolicy()
         self._timeout = timeout
         self._max_output_bytes = max_output_bytes
-        self._approval_mode = approval_mode
+        self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
 
         merged_env: dict[str, str] | None
@@ -159,9 +159,9 @@ class LocalShellTool:
         self._interactive_argv = resolve_shell(self._shell_override, interactive=True)
         self._stateless_argv = resolve_shell(self._shell_override, interactive=False)
         self._session: ShellSession | None = None
-        self._session_lock: "asyncio.Lock | None" = None
+        self._session_lock: asyncio.Lock | None = None
 
-    def _get_session_lock(self) -> "asyncio.Lock":
+    def _get_session_lock(self) -> asyncio.Lock:
         # Lazily create in the running loop so construction outside a loop is fine.
         if self._session_lock is None:
             self._session_lock = asyncio.Lock()
@@ -192,7 +192,7 @@ class LocalShellTool:
                 finally:
                     self._session = None
 
-    async def __aenter__(self) -> "LocalShellTool":
+    async def __aenter__(self) -> LocalShellTool:
         await self.start()
         return self
 

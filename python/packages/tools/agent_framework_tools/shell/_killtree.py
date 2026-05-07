@@ -25,25 +25,26 @@ import signal
 import sys
 
 try:  # pragma: no cover - importable on every platform we ship
-    import psutil
+    import psutil  # type: ignore[import-untyped]
 
-    _HAS_PSUTIL = True
+    _has_psutil = True
 except ImportError:  # pragma: no cover
-    _HAS_PSUTIL = False
+    _has_psutil = False
+    psutil = None  # type: ignore[assignment]
 
 
-_TASKKILL_PATH: str | None = None
+_taskkill_path: str | None = None
 
 
 def _resolve_taskkill() -> str:
     """Absolute path to taskkill.exe to defeat PATH poisoning."""
-    global _TASKKILL_PATH
-    if _TASKKILL_PATH is not None:
-        return _TASKKILL_PATH
+    global _taskkill_path
+    if _taskkill_path is not None:
+        return _taskkill_path
     system_root = os.environ.get("SystemRoot") or os.environ.get("SYSTEMROOT") or r"C:\Windows"  # noqa: SIM112
     candidate = os.path.join(system_root, "System32", "taskkill.exe")
-    _TASKKILL_PATH = candidate if os.path.isfile(candidate) else "taskkill"
-    return _TASKKILL_PATH
+    _taskkill_path = candidate if os.path.isfile(candidate) else "taskkill"
+    return _taskkill_path
 
 
 async def kill_process_tree(
@@ -54,7 +55,7 @@ async def kill_process_tree(
     """Terminate ``proc`` and all of its descendants. Best-effort, never raises."""
     if proc.returncode is not None:
         return
-    if _HAS_PSUTIL:
+    if _has_psutil:
         await _kill_via_psutil(proc, grace=grace)
         return
     await _kill_via_stdlib(proc, grace=grace)
@@ -65,6 +66,7 @@ async def _kill_via_psutil(
     *,
     grace: float,
 ) -> None:
+    assert psutil is not None
     try:
         parent = psutil.Process(proc.pid)
     except psutil.NoSuchProcess:

@@ -42,7 +42,8 @@ async def test_policy_denies_before_execution() -> None:
 async def test_allowlist_narrows_to_approved_commands() -> None:
     tool = LocalShellTool(
         mode="stateless",
-        approval_mode="never_require", acknowledge_unsafe=True,
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
         policy=ShellPolicy(allowlist=[r"^echo\b", r"^Write-Output\b"]),
     )
     cmd = "Write-Output ok" if sys.platform == "win32" else "echo ok"
@@ -56,7 +57,8 @@ async def test_audit_hook_fires_for_allowed_commands() -> None:
     seen: list[str] = []
     tool = LocalShellTool(
         mode="stateless",
-        approval_mode="never_require", acknowledge_unsafe=True,
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
         on_command=seen.append,
     )
     cmd = "Write-Output hi" if sys.platform == "win32" else "echo hi"
@@ -68,7 +70,8 @@ async def test_audit_hook_fires_for_allowed_commands() -> None:
 async def test_persistent_preserves_cwd_and_exports_across_calls(tmp_path: os.PathLike[str]) -> None:
     async with LocalShellTool(
         mode="persistent",
-        approval_mode="never_require", acknowledge_unsafe=True,
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
         workdir=str(tmp_path),
         confine_workdir=False,
     ) as tool:
@@ -110,9 +113,7 @@ async def test_concurrent_first_calls_do_not_spawn_two_sessions() -> None:
 
     tool = LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True)
     try:
-        cmd = (
-            "Write-Output $PID" if sys.platform == "win32" else "echo $$"
-        )
+        cmd = "Write-Output $PID" if sys.platform == "win32" else "echo $$"
         r1, r2 = await _asyncio.gather(tool.run(cmd), tool.run(cmd))
         assert r1.stdout.strip() == r2.stdout.strip(), (
             f"Different PIDs => multiple subprocesses spawned: {r1.stdout!r} vs {r2.stdout!r}"
@@ -125,7 +126,8 @@ async def test_concurrent_first_calls_do_not_spawn_two_sessions() -> None:
 async def test_persistent_preserves_state_powershell(tmp_path: os.PathLike[str]) -> None:
     async with LocalShellTool(
         mode="persistent",
-        approval_mode="never_require", acknowledge_unsafe=True,
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
         workdir=str(tmp_path),
         confine_workdir=False,
     ) as tool:

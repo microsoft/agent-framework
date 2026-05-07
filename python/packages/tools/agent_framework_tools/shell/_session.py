@@ -119,9 +119,7 @@ class ShellSession:
             self._stdout_closed = False
 
             assert self._proc.stdout is not None and self._proc.stderr is not None
-            self._stdout_reader = asyncio.create_task(
-                self._reader(self._proc.stdout, self._stdout_buf, is_stdout=True)
-            )
+            self._stdout_reader = asyncio.create_task(self._reader(self._proc.stdout, self._stdout_buf, is_stdout=True))
             self._stderr_reader = asyncio.create_task(
                 self._reader(self._proc.stderr, self._stderr_buf, is_stdout=False)
             )
@@ -170,7 +168,7 @@ class ShellSession:
         self._stdout_reader = None
         self._stderr_reader = None
 
-    async def __aenter__(self) -> "ShellSession":
+    async def __aenter__(self) -> ShellSession:
         await self.start()
         return self
 
@@ -230,18 +228,14 @@ class ShellSession:
                             break
                         self._stdout_event.clear()
                         try:
-                            await asyncio.wait_for(
-                                self._stdout_event.wait(), timeout=0.1
-                            )
+                            await asyncio.wait_for(self._stdout_event.wait(), timeout=0.1)
                         except asyncio.TimeoutError:
                             pass
                     after = bytes(self._stdout_buf[tail_start:])
                     rc = _parse_rc(after)
                     return idx, rc
                 if self._stdout_closed:
-                    raise RuntimeError(
-                        "shell closed stdout before emitting sentinel"
-                    )
+                    raise RuntimeError("shell closed stdout before emitting sentinel")
                 if len(self._stdout_buf) - stdout_offset > hard_cap:
                     raise _SentinelOverflow
                 self._stdout_event.clear()
@@ -254,16 +248,12 @@ class ShellSession:
         sentinel_idx: int
         exit_code: int
         try:
-            sentinel_idx, exit_code = await asyncio.wait_for(
-                _wait_for_sentinel(), timeout=timeout
-            )
+            sentinel_idx, exit_code = await asyncio.wait_for(_wait_for_sentinel(), timeout=timeout)
         except asyncio.TimeoutError:
             timed_out = True
             await self._interrupt_current_command()
             try:
-                sentinel_idx, exit_code = await asyncio.wait_for(
-                    _wait_for_sentinel(), timeout=_SHUTDOWN_GRACE
-                )
+                sentinel_idx, exit_code = await asyncio.wait_for(_wait_for_sentinel(), timeout=_SHUTDOWN_GRACE)
             except (asyncio.TimeoutError, RuntimeError, _SentinelOverflow):
                 # Session is unrecoverable; tear it down so the next call
                 # gets a fresh subprocess.
@@ -286,9 +276,7 @@ class ShellSession:
             await self._interrupt_current_command()
             await self.close()
             duration_ms = int((time.monotonic() - started) * 1000)
-            stdout_bytes = bytes(
-                self._stdout_buf[stdout_offset : stdout_offset + hard_cap]
-            )
+            stdout_bytes = bytes(self._stdout_buf[stdout_offset : stdout_offset + hard_cap])
             stderr_bytes = bytes(self._stderr_buf[stderr_offset:])
             stdout_str, _ = _truncate_bytes(stdout_bytes, self._max_output_bytes)
             stderr_str, _ = _truncate_bytes(stderr_bytes, self._max_output_bytes)
@@ -363,12 +351,7 @@ class ShellSession:
         # status, then print the sentinel on a line of its own. ``errexit``
         # is disabled around the trailer so a prior ``set -e`` in the user
         # command cannot skip the sentinel print.
-        return (
-            "{ "
-            f"{command}\n"
-            "}; __af_rc=$?; set +e; "
-            f"printf '\\n{sentinel}_%s\\n' \"$__af_rc\"\n"
-        )
+        return f"{{ {command}\n}}; __af_rc=$?; set +e; printf '\\n{sentinel}_%s\\n' \"$__af_rc\"\n"
 
     async def _write_raw(self, text: str) -> None:
         if self._proc is None or self._proc.stdin is None:
@@ -412,11 +395,6 @@ class ShellSession:
                 os.killpg(os.getpgid(self._proc.pid), signal.SIGINT)
         except (ProcessLookupError, PermissionError, OSError):
             pass
-
-
-async def _kill_tree(proc: asyncio.subprocess.Process) -> None:
-    """Deprecated: use :func:`kill_process_tree` from ``_killtree``."""
-    await kill_process_tree(proc, grace=_SHUTDOWN_GRACE)
 
 
 def _parse_rc(after: bytes) -> int:

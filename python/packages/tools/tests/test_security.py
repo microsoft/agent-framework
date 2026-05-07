@@ -94,9 +94,9 @@ def test_as_function_default_requires_approval() -> None:
         # Variable expansion / indirection
         ("${RM:=rm} -rf /", "variable-expansion"),
         # Interpreter escape hatches (Python)
-        ('python -c "import os; os.system(\'echo would-rm\')"', "interpreter-escape"),
+        ("python -c \"import os; os.system('echo would-rm')\"", "interpreter-escape"),
         # Interpreter escape hatches (Perl)
-        ('perl -e "system(\'echo would-rm\')"', "interpreter-escape"),
+        ("perl -e \"system('echo would-rm')\"", "interpreter-escape"),
         # Base64-encoded payload
         ("echo cm0gLXJmIC8K | base64 -d | sh", "base64-smuggling"),
         # eval / exec
@@ -125,9 +125,7 @@ def test_known_denylist_bypasses(bypass: str, category: str) -> None:
     decision = policy.evaluate_command(bypass)
     if decision.decision == "deny":
         pytest.xfail(f"{category}: now caught (good); update test to assert this")
-    assert decision.decision == "allow", (
-        f"{category} bypass behaviour changed: {bypass!r} -> {decision}"
-    )
+    assert decision.decision == "allow", f"{category} bypass behaviour changed: {bypass!r} -> {decision}"
 
 
 # ---------------------------------------------------------------------------
