@@ -656,6 +656,15 @@ class MCPTool:
             try:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
             except (Exception, asyncio.CancelledError) as ex:
+                # On Python >= 3.11, re-raise genuine task cancellation (task.cancelling() > 0)
+                # instead of wrapping it in ToolException. On Python < 3.11, task.cancelling()
+                # is unavailable so MCP-internal CancelledErrors cannot be distinguished from
+                # caller-driven cancellation; they are wrapped as ToolException in that case.
+                if isinstance(ex, asyncio.CancelledError) and sys.version_info >= (3, 11):
+                    _task = asyncio.current_task()
+                    if _task is not None and _task.cancelling() > 0:
+                        await self._safe_close_exit_stack()
+                        raise
                 await self._safe_close_exit_stack()
                 command = getattr(self, "command", None)
                 if command:
@@ -693,6 +702,11 @@ class MCPTool:
                     )
                 )
             except (Exception, asyncio.CancelledError) as ex:
+                if isinstance(ex, asyncio.CancelledError) and sys.version_info >= (3, 11):
+                    _task = asyncio.current_task()
+                    if _task is not None and _task.cancelling() > 0:
+                        await self._safe_close_exit_stack()
+                        raise
                 await self._safe_close_exit_stack()
                 raise ToolException(
                     message="Failed to create MCP session. Please check your configuration.",
@@ -701,6 +715,11 @@ class MCPTool:
             try:
                 await session.initialize()
             except (Exception, asyncio.CancelledError) as ex:
+                if isinstance(ex, asyncio.CancelledError) and sys.version_info >= (3, 11):
+                    _task = asyncio.current_task()
+                    if _task is not None and _task.cancelling() > 0:
+                        await self._safe_close_exit_stack()
+                        raise
                 await self._safe_close_exit_stack()
                 # Provide context about initialization failure
                 command = getattr(self, "command", None)
