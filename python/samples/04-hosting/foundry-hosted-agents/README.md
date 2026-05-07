@@ -157,7 +157,7 @@ cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
 2. Install dependencies:
 
    ```bash
-   pip install -r requirements.txt
+   uv pip install -r requirements.txt
    ```
 
 3. Create a `.env` file with your Foundry configuration following the `env.example` file in the sample.
