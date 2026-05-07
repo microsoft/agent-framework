@@ -20,12 +20,16 @@ Two credential modes are supported:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import html
 import json
 import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import msal
@@ -185,6 +189,8 @@ class EntraIdentityLinkChannel:
         certificate_path: str | Path | None = None,
         certificate_password: bytes | None = None,
         scope: str = "openid profile User.Read",
+        link_token_secret: str | None = None,
+        link_token_ttl_seconds: int = 600,
     ) -> None:
         if bool(client_secret) == bool(certificate_path):
             raise ValueError("IdentityLinkChannel: pass exactly one of client_secret or certificate_path.")
@@ -209,6 +215,20 @@ class EntraIdentityLinkChannel:
         )
         self._pending: dict[str, _PendingAuth] = {}
         self._http: httpx.AsyncClient | None = None
+        # ``link_token_secret`` is the HMAC key that gates ``/auth/start``.
+        # Without it any open-internet caller can mint a binding for an
+        # arbitrary ``(channel, channel_id)`` pair and IDOR the victim's
+        # isolation key (see PR review on 0026 for the threat model).
+        # Optional only so dev-mode samples without the integration in
+        # place don't have to scramble for a secret; unsigned mode logs
+        # a loud warning at startup and wire-time.
+        self._link_token_secret = link_token_secret.encode("utf-8") if link_token_secret else None
+        self._link_token_ttl = link_token_ttl_seconds
+        # Allowed redirect-back hosts: relative paths and same-origin only.
+        # ``return_to`` from the unauthenticated /start query string is
+        # otherwise an open redirect (auth-host phishing vector).
+        parsed = urlparse(self._public_base_url)
+        self._allowed_return_host = parsed.netloc.lower() if parsed.netloc else None
 
     @property
     def redirect_uri(self) -> str:
@@ -233,9 +253,20 @@ class EntraIdentityLinkChannel:
     async def _on_startup(self) -> None:
         """Open the shared HTTP client used for Microsoft Graph calls."""
         self._http = httpx.AsyncClient(timeout=15.0)
+        if self._link_token_secret is None:
+            logger.warning(
+                "EntraIdentityLinkChannel running WITHOUT link_token_secret. "
+                "GET /auth/start accepts unauthenticated (channel, id) pairs, "
+                "which means any open-internet caller can bind their Entra "
+                "account to a victim's per-channel id (IDOR on the identity "
+                "store). Pass link_token_secret=<random>, mint URLs via "
+                "mint_start_url(...), and gate /start in front of the "
+                "channel that issues those URLs."
+            )
         logger.info(
-            "IdentityLinkChannel ready (auth=%s); redirect_uri=%s",
+            "IdentityLinkChannel ready (auth=%s, signed_start=%s); redirect_uri=%s",
             self._auth_kind,
+            self._link_token_secret is not None,
             self.redirect_uri,
         )
 
@@ -243,6 +274,71 @@ class EntraIdentityLinkChannel:
         """Close the Graph HTTP client; safe to call when never started."""
         if self._http is not None:
             await self._http.aclose()
+
+    # -- link-token helpers ----------------------------------------------- #
+
+    def _sign_link_token(self, channel: str, channel_id: str, expires_at: int) -> str:
+        """Sign ``(channel, channel_id, expires_at)`` with HMAC-SHA256."""
+        if self._link_token_secret is None:  # pragma: no cover - guarded by callers
+            raise RuntimeError("link_token_secret is required to mint link tokens")
+        msg = f"{channel}|{channel_id}|{expires_at}".encode()
+        return hmac.new(self._link_token_secret, msg, hashlib.sha256).hexdigest()
+
+    def _verify_link_token(self, channel: str, channel_id: str, expires_at: int, signature: str) -> bool:
+        """Constant-time verify the link-token signature and TTL."""
+        if self._link_token_secret is None:  # pragma: no cover - guarded by callers
+            return False
+        if expires_at < int(time.time()):
+            return False
+        expected = self._sign_link_token(channel, channel_id, expires_at)
+        return hmac.compare_digest(expected, signature)
+
+    def mint_start_url(self, channel: str, channel_id: str, return_to: str | None = None) -> str:
+        """Return a one-shot signed URL for ``GET /auth/start``.
+
+        Required when ``link_token_secret`` is set. Channels that issue
+        these URLs (e.g. a Telegram ``/link`` command after verifying the
+        inbound webhook signature) call this helper so the resulting URL
+        proves the caller authorised the ``(channel, channel_id)`` binding.
+
+        Without this layer ``GET /auth/start`` is an IDOR vector: any
+        anonymous caller can bind a victim's per-channel id to their own
+        Entra ``oid``.
+        """
+        if self._link_token_secret is None:
+            raise RuntimeError("mint_start_url requires link_token_secret in the constructor")
+        if return_to is not None:
+            self._validate_return_to(return_to)  # fail fast at mint time
+        expires_at = int(time.time()) + self._link_token_ttl
+        sig = self._sign_link_token(channel, str(channel_id), expires_at)
+        params = {
+            "channel": channel,
+            "id": str(channel_id),
+            "exp": str(expires_at),
+            "sig": sig,
+        }
+        if return_to:
+            params["return_to"] = return_to
+        return f"{self._public_base_url}{self.path}/start?{urlencode(params)}"
+
+    def _validate_return_to(self, return_to: str) -> None:
+        """Reject open-redirect targets.
+
+        Allows: relative paths starting with ``/``, or absolute URLs whose
+        host equals the configured ``public_base_url``'s host. Rejects
+        everything else with ``ValueError``.
+        """
+        if return_to.startswith("/") and not return_to.startswith("//"):
+            return  # relative path, safe.
+        parsed = urlparse(return_to)
+        if not parsed.netloc:
+            return
+        if self._allowed_return_host and parsed.netloc.lower() == self._allowed_return_host:
+            return
+        raise ValueError(
+            f"return_to must be a relative path or same-origin URL "
+            f"(public_base_url host={self._allowed_return_host!r}); got {return_to!r}"
+        )
 
     def authorize_url_for(self, channel: str, channel_id: str, return_to: str | None = None) -> str:
         """Mint a one-shot authorize URL the user can visit to bind their account."""
@@ -271,17 +367,61 @@ class EntraIdentityLinkChannel:
                 self._pending.pop(key, None)
 
     async def _handle_start(self, request: Request) -> Response:
-        """``GET /start?channel=&id=&return_to=`` — redirect the user to Entra to sign in.
+        """``GET /start?channel=&id=&return_to=&exp=&sig=`` — redirect to Entra to sign in.
 
-        The caller (typically a channel command like ``/link`` in Telegram or
-        a Teams adaptive-card button) hands the user this URL; we mint the
-        authorize URL and 302 to it.
+        **Security model.** When ``link_token_secret`` is set the
+        request must include ``exp`` + ``sig`` — an HMAC over
+        ``(channel, channel_id, expires_at)`` minted by
+        :meth:`mint_start_url`. Without that gate, any open-internet
+        caller can bind a victim's per-channel id (e.g.
+        ``telegram:<victim_chat>``) to their own Entra ``oid``: the
+        callback would persist
+        ``"telegram:<victim>" -> "entra:<attacker_oid>"`` and any
+        future inbound message from the victim would resolve to the
+        attacker's isolation key. We make the unsigned mode opt-in
+        with a loud startup warning so the dev-mode default doesn't
+        ship to production.
+
+        ``return_to`` is validated against the configured
+        ``public_base_url`` host (or restricted to relative paths) to
+        prevent open-redirect phishing on a successful sign-in.
         """
         channel = request.query_params.get("channel")
         channel_id = request.query_params.get("id")
         return_to = request.query_params.get("return_to")
         if not channel or not channel_id:
             return _link_html("Missing 'channel' or 'id' query parameter.", status=400)
+
+        if self._link_token_secret is not None:
+            sig = request.query_params.get("sig")
+            exp_raw = request.query_params.get("exp")
+            try:
+                exp = int(exp_raw) if exp_raw else 0
+            except ValueError:
+                exp = 0
+            if not sig or not exp or not self._verify_link_token(channel, channel_id, exp, sig):
+                logger.warning(
+                    "EntraIdentityLinkChannel /start rejected: missing/invalid signed link-token (channel=%s, id=%s)",
+                    channel,
+                    channel_id,
+                )
+                return _link_html("Invalid or expired sign-in link.", status=403)
+        else:
+            # See _on_startup warning. Logged on every wire access so
+            # operators can't miss the IDOR exposure in their access logs.
+            logger.warning(
+                "EntraIdentityLinkChannel /start accepted UNSIGNED request "
+                "for (channel=%s, id=%s) — set link_token_secret to require "
+                "HMAC-signed link tokens minted via mint_start_url().",
+                channel,
+                channel_id,
+            )
+        if return_to is not None:
+            try:
+                self._validate_return_to(return_to)
+            except ValueError as exc:
+                logger.warning("EntraIdentityLinkChannel /start invalid return_to: %s", exc)
+                return _link_html("Invalid return_to URL.", status=400)
         url = self.authorize_url_for(channel, channel_id, return_to=return_to)
         return RedirectResponse(url, status_code=302)
 
@@ -292,13 +432,23 @@ class EntraIdentityLinkChannel:
         ``id``/``userPrincipalName`` from Microsoft Graph, then stores the
         ``channel:channel_id -> entra:<oid>`` mapping in the identity store.
         Renders a small HTML page so a browser-based flow has something to
-        show; if ``return_to`` was supplied it appears as a deep link.
+        show; if ``return_to`` was supplied (and validated at /start time
+        against the same-origin allowlist) it appears as a deep link.
+
+        All values that flow into HTML output (``error``, ``error_description``,
+        ``channel_key``, ``upn``) are passed through :func:`html.escape` to
+        avoid reflected XSS — both the OAuth-error path and the
+        sign-in-success body would otherwise execute attacker-controlled
+        markup on the auth host's origin.
         """
         if self._http is None:  # pragma: no cover - guarded by lifecycle
             raise RuntimeError("entra identity channel not started")
         if error := request.query_params.get("error"):
             description = request.query_params.get("error_description", "")
-            return _link_html(f"Sign-in failed: {error}<br>{description}", status=400)
+            return _link_html(
+                f"Sign-in failed: {html.escape(error)}<br>{html.escape(description)}",
+                status=400,
+            )
 
         code = request.query_params.get("code")
         state = request.query_params.get("state")
@@ -315,8 +465,9 @@ class EntraIdentityLinkChannel:
         )
         if "access_token" not in result:
             logger.warning("Entra token exchange failed: %s", result)
+            err_text = result.get("error_description") or result.get("error") or "unknown error"
             return _link_html(
-                f"Token exchange failed: {result.get('error_description', result.get('error'))}",
+                f"Token exchange failed: {html.escape(str(err_text))}",
                 status=502,
             )
         access_token = result["access_token"]
@@ -335,8 +486,20 @@ class EntraIdentityLinkChannel:
         logger.info("Linked %s → entra:%s (%s)", channel_key, oid, upn)
 
         if pending.return_to:
-            return RedirectResponse(pending.return_to, status_code=302)
+            # ``return_to`` was already validated at /start time against
+            # the allowlist (relative path or same-origin only). Re-check
+            # defensively to harden against any future code path that
+            # bypasses the /start gate.
+            try:
+                self._validate_return_to(pending.return_to)
+                return RedirectResponse(pending.return_to, status_code=302)
+            except ValueError:
+                logger.warning(
+                    "EntraIdentityLinkChannel /callback dropping invalid return_to: %s",
+                    pending.return_to,
+                )
         return _link_html(
-            f"<h2>Linked</h2><p>{channel_key} is now bound to <b>{upn}</b>.</p>"
+            f"<h2>Linked</h2><p>{html.escape(channel_key)} is now bound to "
+            f"<b>{html.escape(str(upn))}</b>.</p>"
             "<p>You can close this window and return to your chat.</p>"
         )
