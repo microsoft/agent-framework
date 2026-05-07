@@ -446,14 +446,10 @@ class FileSkillScript(SkillScript):
         """
         if not isinstance(skill, FileSkill):
             raise TypeError(
-                f"File-based script '{self.name}' requires a FileSkill "
-                f"but received '{type(skill).__name__}'."
+                f"File-based script '{self.name}' requires a FileSkill but received '{type(skill).__name__}'."
             )
         if self._runner is None:
-            raise ValueError(
-                f"Script '{self.name}' requires a runner. "
-                "Provide a script_runner for file-based scripts."
-            )
+            raise ValueError(f"Script '{self.name}' requires a runner. Provide a script_runner for file-based scripts.")
         result = self._runner(skill, self, args)
         if inspect.isawaitable(result):
             return await result
@@ -570,8 +566,7 @@ def _validate_skill_description(name: str, description: str) -> None:
         raise ValueError("Skill description cannot be empty.")
     if len(description) > MAX_DESCRIPTION_LENGTH:
         raise ValueError(
-            f"Skill '{name}' has an invalid description: "
-            f"Must be {MAX_DESCRIPTION_LENGTH} characters or fewer."
+            f"Skill '{name}' has an invalid description: Must be {MAX_DESCRIPTION_LENGTH} characters or fewer."
         )
 
 
@@ -1993,10 +1988,7 @@ class FileSkillsSource(SkillsSource):
             raise ValueError(f"Resource file '{resource_name}' not found in skill directory '{skill_dir}'.")
 
         if FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
-            raise ValueError(
-                f"Resource file '{resource_name}' "
-                "has a symlink in its path; symlinks are not allowed."
-            )
+            raise ValueError(f"Resource file '{resource_name}' has a symlink in its path; symlinks are not allowed.")
 
         return resource_full_path
 
