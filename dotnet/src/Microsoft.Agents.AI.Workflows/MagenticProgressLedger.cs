@@ -14,6 +14,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Maintains a ledger of progress made by the Magentic workflow.
 /// </summary>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public class MagenticProgressLedger
 {
     internal static readonly BooleanProgressLedgerSlot IsRequestSatisfiedSlot = new("is_request_satisfied",

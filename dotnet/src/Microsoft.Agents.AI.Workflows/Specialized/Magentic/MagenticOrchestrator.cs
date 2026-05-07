@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -17,6 +18,7 @@ namespace Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 [JsonDerivedType(typeof(MagenticPlanCreatedEvent))]
 [JsonDerivedType(typeof(MagenticReplannedEvent))]
 [JsonDerivedType(typeof(MagenticProgressLedgerUpdatedEvent))]
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public abstract class MagenticOrchestratorEvent(object? data) : WorkflowEvent(data)
 {
 }
@@ -25,6 +27,7 @@ public abstract class MagenticOrchestratorEvent(object? data) : WorkflowEvent(da
 /// Represents the creation of the initial plan
 /// </summary>
 /// <param name="fullTaskLeger"></param>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public sealed class MagenticPlanCreatedEvent(ChatMessage fullTaskLeger) : MagenticOrchestratorEvent(fullTaskLeger)
 {
     /// <summary>
@@ -37,6 +40,7 @@ public sealed class MagenticPlanCreatedEvent(ChatMessage fullTaskLeger) : Magent
 /// Represents the creation of a new plan in response to a stall.
 /// </summary>
 /// <param name="fullTaskLeger"></param>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public sealed class MagenticReplannedEvent(ChatMessage fullTaskLeger) : MagenticOrchestratorEvent(fullTaskLeger)
 {
     /// <summary>
@@ -49,6 +53,7 @@ public sealed class MagenticReplannedEvent(ChatMessage fullTaskLeger) : Magentic
 /// Represents an update to the <see cref="MagenticProgressLedger"/> when running a coordination round.
 /// </summary>
 /// <param name="progressLedger"></param>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public sealed class MagenticProgressLedgerUpdatedEvent(MagenticProgressLedger progressLedger) : MagenticOrchestratorEvent(progressLedger)
 {
     /// <summary>

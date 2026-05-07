@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Microsoft.Extensions.AI;
 
@@ -15,6 +16,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// contain the latest progress ledger that determined that no progress has been made or the workflow was in
 /// a loop.</param>
 /// <param name="IsStalled">Whether the workflow is currently stalled.</param>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public record MagenticPlanReviewRequest(ChatMessage Plan, MagenticProgressLedger? CurrentProgress, bool IsStalled)
 {
     /// <summary>

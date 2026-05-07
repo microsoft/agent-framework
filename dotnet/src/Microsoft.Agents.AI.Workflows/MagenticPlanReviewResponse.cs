@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -12,6 +13,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <param name="Review">
 /// Review feedback for a generated plan. Empty if the plan is approved as-is and changes are requested.
 /// </param>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public record MagenticPlanReviewResponse(List<ChatMessage> Review)
 {
     internal bool IsApproved => this.Review.Count == 0;
