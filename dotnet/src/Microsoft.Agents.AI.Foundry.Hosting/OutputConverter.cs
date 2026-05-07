@@ -279,12 +279,24 @@ internal static class OutputConverter
                         accumulatedText = null;
                         previousMessageId = null;
 
-                        var outputText = functionResult.Result switch
+                        // The OpenAI Responses spec requires `function_call_output.output` to
+                        // be a JSON string. The Responses SDK's OutputItemFunctionToolCallOutput
+                        // accepts a BinaryData containing the *raw JSON value* for the field, so
+                        // we must always wrap the payload as a JSON string literal:
+                        //   - string s   → JSON-encode s (quoted, with escapes)
+                        //   - object o   → JSON-serialize o, then JSON-encode the resulting text
+                        // Without this wrapping, complex tool results (e.g. List<TodoItem>)
+                        // would land on the wire as an unquoted JSON array, which the strict-
+                        // parsing OpenAI .NET client (FunctionCallOutputResponseItem) rejects
+                        // with "requires an element of type 'String', but the target element
+                        // has type 'Array'".
+                        string innerText = functionResult.Result switch
                         {
                             null => string.Empty,
                             string s => s,
                             _ => JsonSerializer.Serialize(functionResult.Result),
                         };
+                        string outputText = JsonSerializer.Serialize(innerText);
 
                         var itemId = GenerateItemId("fc");
                         var outputItem = new OutputItemFunctionToolCallOutput(
