@@ -112,7 +112,7 @@ public sealed class GitHubCopilotAgentTests
         PermissionRequestHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
         UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
         var mcpServers = new Dictionary<string, object> { ["server1"] = new McpLocalServerConfig() };
-        
+
         var source = new SessionConfig
         {
             Model = "gpt-4o",
