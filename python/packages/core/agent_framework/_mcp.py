@@ -158,6 +158,22 @@ def streamable_http_client(*args: Any, **kwargs: Any) -> _AsyncGeneratorContextM
     return _streamable_http_client(*args, **kwargs)  # type: ignore[return-value]
 
 
+def _should_propagate_cancelled_error(ex: BaseException) -> bool:
+    """Return True if *ex* is a genuine task-cancellation that should propagate unchanged.
+
+    On Python >= 3.11, ``task.cancelling() > 0`` distinguishes a real caller-driven
+    cancellation from a CancelledError raised internally by a library (e.g. via an
+    anyio cancel scope).  On older Python versions the API is unavailable, so we
+    always return False and let callers wrap the error in ToolException instead.
+    """
+    if not isinstance(ex, asyncio.CancelledError):
+        return False
+    if sys.version_info < (3, 11):
+        return False
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
 # region: MCP Plugin
 
 
@@ -660,11 +676,9 @@ class MCPTool:
                 # instead of wrapping it in ToolException. On Python < 3.11, task.cancelling()
                 # is unavailable so MCP-internal CancelledErrors cannot be distinguished from
                 # caller-driven cancellation; they are wrapped as ToolException in that case.
-                if isinstance(ex, asyncio.CancelledError) and sys.version_info >= (3, 11):
-                    task = asyncio.current_task()
-                    if task is not None and task.cancelling() > 0:
-                        await self._safe_close_exit_stack()
-                        raise
+                if _should_propagate_cancelled_error(ex):
+                    await self._safe_close_exit_stack()
+                    raise
                 await self._safe_close_exit_stack()
                 command = getattr(self, "command", None)
                 if command:
@@ -674,7 +688,7 @@ class MCPTool:
                 # CancelledError is a BaseException (not Exception) on Python >= 3.8, so
                 # inner_exception=None and ToolException.__init__ won't log exc_info.
                 if isinstance(ex, asyncio.CancelledError):
-                    logger.debug(error_msg, exc_info=ex)
+                    logger.debug(error_msg, exc_info=True)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             try:
                 try:
@@ -706,15 +720,13 @@ class MCPTool:
                     )
                 )
             except (Exception, asyncio.CancelledError) as ex:
-                if isinstance(ex, asyncio.CancelledError) and sys.version_info >= (3, 11):
-                    task = asyncio.current_task()
-                    if task is not None and task.cancelling() > 0:
-                        await self._safe_close_exit_stack()
-                        raise
+                if _should_propagate_cancelled_error(ex):
+                    await self._safe_close_exit_stack()
+                    raise
                 await self._safe_close_exit_stack()
-                session_error_msg = "Failed to create MCP session. Please check your configuration."
+                session_error_msg = f"Failed to create MCP session: {ex}"
                 if isinstance(ex, asyncio.CancelledError):
-                    logger.debug(session_error_msg, exc_info=ex)
+                    logger.debug(session_error_msg, exc_info=True)
                 raise ToolException(
                     message=session_error_msg,
                     inner_exception=ex if isinstance(ex, Exception) else None,
@@ -722,11 +734,9 @@ class MCPTool:
             try:
                 await session.initialize()
             except (Exception, asyncio.CancelledError) as ex:
-                if isinstance(ex, asyncio.CancelledError) and sys.version_info >= (3, 11):
-                    task = asyncio.current_task()
-                    if task is not None and task.cancelling() > 0:
-                        await self._safe_close_exit_stack()
-                        raise
+                if _should_propagate_cancelled_error(ex):
+                    await self._safe_close_exit_stack()
+                    raise
                 await self._safe_close_exit_stack()
                 # Provide context about initialization failure
                 command = getattr(self, "command", None)
@@ -737,7 +747,7 @@ class MCPTool:
                 else:
                     error_msg = f"MCP server failed to initialize: {ex}"
                 if isinstance(ex, asyncio.CancelledError):
-                    logger.debug(error_msg, exc_info=ex)
+                    logger.debug(error_msg, exc_info=True)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             self.session = session
         elif self.session._request_id == 0:  # type: ignore[attr-defined]

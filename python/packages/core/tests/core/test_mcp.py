@@ -29,6 +29,7 @@ from agent_framework._mcp import (
     _build_prefixed_mcp_name,
     _get_input_model_from_mcp_prompt,
     _normalize_mcp_name,
+    _should_propagate_cancelled_error,
     logger,
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline
@@ -2178,6 +2179,7 @@ async def test_connect_session_creation_failure():
             await tool.connect()
 
         assert "Failed to create MCP session" in str(exc_info.value)
+        assert "Session creation failed" in str(exc_info.value)  # exception text is now part of the message
         assert "Session creation failed" in str(exc_info.value.__cause__)
 
 
@@ -2433,6 +2435,86 @@ async def test_aenter_cancelled_error_during_connect_is_catchable_as_exception()
 
         assert caught is not None, "Expected an exception to be caught by except Exception"
         assert isinstance(caught, ToolException)
+
+
+
+# Tests for _should_propagate_cancelled_error helper
+
+
+def test_should_propagate_cancelled_error_returns_false_for_non_cancelled_error():
+    assert _should_propagate_cancelled_error(RuntimeError("boom")) is False
+
+
+def test_should_propagate_cancelled_error_returns_false_when_no_current_task():
+    with patch("asyncio.current_task", return_value=None):
+        assert _should_propagate_cancelled_error(asyncio.CancelledError()) is False
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
+def test_should_propagate_cancelled_error_returns_true_when_task_is_cancelling():
+    mock_task = Mock()
+    mock_task.cancelling.return_value = 1
+    with patch("asyncio.current_task", return_value=mock_task):
+        assert _should_propagate_cancelled_error(asyncio.CancelledError()) is True
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
+def test_should_propagate_cancelled_error_returns_false_when_task_not_cancelling():
+    mock_task = Mock()
+    mock_task.cancelling.return_value = 0
+    with patch("asyncio.current_task", return_value=mock_task):
+        assert _should_propagate_cancelled_error(asyncio.CancelledError()) is False
+
+
+async def test_connect_cancelled_error_during_session_creation_includes_exception_in_message():
+    """Test that CancelledError from session creation includes exception details in ToolException message."""
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    with patch("mcp.client.session.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(
+            side_effect=asyncio.CancelledError("cancel scope detail")
+        )
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with pytest.raises(ToolException) as exc_info:
+            await tool.connect()
+
+        assert "Failed to create MCP session" in str(exc_info.value)
+        assert "cancel scope detail" in str(exc_info.value)
+
+
+async def test_connect_cancelled_error_during_session_creation_logs_with_exc_info():
+    """Test that CancelledError from session creation is logged with exc_info=True."""
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    with patch("mcp.client.session.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("cancel scope"))
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        from agent_framework._mcp import logger as mcp_logger
+
+        with patch.object(mcp_logger, "debug") as mock_debug:
+            with pytest.raises(ToolException):
+                await tool.connect()
+
+            # Verify logger.debug was called with exc_info=True (not an exception instance)
+            debug_calls = mock_debug.call_args_list
+            cancel_calls = [c for c in debug_calls if "Failed to create MCP session" in str(c)]
+            assert cancel_calls, "Expected a debug log for the cancelled session creation"
+            _, kwargs = cancel_calls[0]
+            assert kwargs.get("exc_info") is True
 
 
 def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
