@@ -142,3 +142,95 @@ class TestInvocations:
         # we get JSON back, not SSE.
         assert r.headers["content-type"].startswith("application/json")
         assert captured and captured[0].channel == "invocations"
+
+    def test_stream_transform_hook_can_rewrite_chunks(self) -> None:
+        agent = _FakeAgent(chunks=["foo", "bar"])
+
+        def transform(update: Any) -> Any:
+            return _FakeUpdate(text=update.text.upper())
+
+        host = AgentFrameworkHost(
+            target=agent,
+            channels=[InvocationsChannel(stream_transform_hook=transform)],
+        )
+        with TestClient(host.app) as client:
+            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+        assert r.status_code == 200
+        body = r.text
+        assert "data: FOO" in body
+        assert "data: BAR" in body
+        assert "data: foo" not in body
+
+    def test_stream_transform_hook_can_drop_chunks(self) -> None:
+        agent = _FakeAgent(chunks=["keep", "drop", "keep2"])
+
+        def transform(update: Any) -> Any:
+            return None if update.text == "drop" else update
+
+        host = AgentFrameworkHost(
+            target=agent,
+            channels=[InvocationsChannel(stream_transform_hook=transform)],
+        )
+        with TestClient(host.app) as client:
+            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+        assert r.status_code == 200
+        body = r.text
+        assert "data: keep" in body
+        assert "data: keep2" in body
+        assert "data: drop" not in body
+
+    def test_stream_transform_hook_supports_async(self) -> None:
+        agent = _FakeAgent(chunks=["aa"])
+
+        async def transform(update: Any) -> Any:
+            return _FakeUpdate(text=update.text + "!")
+
+        host = AgentFrameworkHost(
+            target=agent,
+            channels=[InvocationsChannel(stream_transform_hook=transform)],
+        )
+        with TestClient(host.app) as client:
+            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+        assert r.status_code == 200
+        assert "data: aa!" in r.text
+
+    def test_streaming_chunk_with_crlf_splits_into_separate_data_lines(self) -> None:
+        # Per SSE spec, ``\r``, ``\n`` and ``\r\n`` are all line terminators;
+        # a chunk like ``"line1\r\nline2"`` must produce two ``data:`` lines,
+        # not one ``data:`` line containing an embedded ``\r``.
+        agent = _FakeAgent(chunks=["line1\r\nline2"])
+        host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel()])
+        with TestClient(host.app) as client:
+            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+        assert r.status_code == 200
+        body = r.text
+        assert "data: line1\n" in body
+        assert "data: line2\n" in body
+        assert "\r" not in body.split("data: [DONE]")[0]
+
+    def test_streaming_finalize_error_emits_error_frame_no_done(self) -> None:
+        # ``get_final_response()`` is what triggers history-provider
+        # persistence on the agent side; if it fails we must surface that
+        # to the client as ``event: error`` rather than emitting ``[DONE]``
+        # as if the run completed cleanly.
+        class _FailingFinalStream(_FakeStream):
+            async def get_final_response(self) -> _FakeAgentResponse:
+                raise RuntimeError("history backend exploded")
+
+        class _AgentWithFailingFinal(_FakeAgent):
+            def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
+                self.calls.append({"messages": messages, "stream": stream, "kwargs": kwargs})
+                if stream:
+                    return _FailingFinalStream(["partial"])
+                return super().run(messages, stream=stream, **kwargs)
+
+        agent = _AgentWithFailingFinal()
+        host = AgentFrameworkHost(target=agent, channels=[InvocationsChannel()])
+        with TestClient(host.app) as client:
+            r = client.post("/invocations/invoke", json={"message": "x", "stream": True})
+        assert r.status_code == 200
+        body = r.text
+        assert "data: partial" in body
+        assert "event: error" in body
+        assert "history backend exploded" in body
+        assert "[DONE]" not in body
