@@ -32,21 +32,17 @@ public class UserIdentityScopedSessionStore : DelegatingAgentSessionStore
     /// <param name="contextAccessor">
     /// The <see cref="IHttpContextAccessor"/> used to retrieve the current user's claims.
     /// </param>
-    /// <param name="claimType">
-    /// The claim type to extract from the user's identity for scoping. Defaults to <see cref="ClaimsIdentity.DefaultNameClaimType"/>.
-    /// </param>
-    /// <param name="strict">
-    /// If <see langword="true"/>, an exception is thrown when the specified claim is not found.
-    /// If <see langword="false"/>, the conversation ID is passed through unmodified when the claim is absent.
-    /// </param>
-    public UserIdentityScopedSessionStore(AgentSessionStore innerStore,
-                                          IHttpContextAccessor? contextAccessor,
-                                          string claimType = ClaimsIdentity.DefaultNameClaimType,
-                                          bool strict = true) : base(innerStore)
+    /// <param name="options">The options for configuring the session store. If null, defaults are used.</param>
+    public UserIdentityScopedSessionStore(
+        AgentSessionStore innerStore,
+        IHttpContextAccessor? contextAccessor,
+        UserIdentityScopedSessionStoreOptions? options = null) : base(innerStore)
     {
+        options ??= new UserIdentityScopedSessionStoreOptions();
+
         this._httpContextAccessor = contextAccessor;
-        this._claimType = Throw.IfNullOrWhitespace(claimType);
-        this._strict = strict;
+        this._claimType = Throw.IfNullOrWhitespace(options.ClaimType);
+        this._strict = options.Strict;
     }
 
     private string? GetScopeFromIdentity()
