@@ -1190,7 +1190,9 @@ class TestSkillsProviderCodeSkill:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_raw_skills(provider), "prog-skill", "get_user_data", auth_token="abc")
+        result = await provider._read_skill_resource(
+            _raw_skills(provider), "prog-skill", "get_user_data", auth_token="abc"
+        )
         assert result == "data with token=abc"
 
     async def test_read_callable_resource_without_kwargs_ignores_extra_args(self) -> None:
@@ -2059,6 +2061,7 @@ class TestSkillResourceRead:
 
     async def test_read_async_function(self) -> None:
         """read() awaits an async function and returns its result."""
+
         async def get_data() -> str:
             return "async result"
 
@@ -2068,6 +2071,7 @@ class TestSkillResourceRead:
 
     async def test_read_function_with_kwargs(self) -> None:
         """read() forwards kwargs to functions that accept them."""
+
         def get_config(**kwargs: Any) -> str:
             return f"user={kwargs.get('user_id')}"
 
@@ -2077,6 +2081,7 @@ class TestSkillResourceRead:
 
     async def test_read_async_function_with_kwargs(self) -> None:
         """read() forwards kwargs to async functions that accept them."""
+
         async def get_config(**kwargs: Any) -> str:
             return f"user={kwargs.get('user_id')}"
 
@@ -2086,6 +2091,7 @@ class TestSkillResourceRead:
 
     async def test_read_function_without_kwargs_ignores_extra(self) -> None:
         """read() does not pass kwargs to functions that don't accept them."""
+
         def simple() -> str:
             return "fixed"
 
@@ -2095,6 +2101,7 @@ class TestSkillResourceRead:
 
     async def test_read_function_raises_propagates(self) -> None:
         """read() propagates exceptions from the function."""
+
         def failing() -> str:
             raise RuntimeError("boom")
 
@@ -2747,6 +2754,7 @@ class TestSkillsProviderFactories:
 
     async def test_code_script_returns_object(self) -> None:
         """Code-defined scripts can return non-string objects."""
+
         def returns_dict() -> dict:
             return {"status": "ok", "value": 42}
 
@@ -2855,8 +2863,8 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider([skill])
         await _init_provider(provider)
-        result = await provider._run_skill_script(_raw_skills(provider),
-            "my-skill", "process", args={"mode": "llm-value"}, mode="runtime-value"
+        result = await provider._run_skill_script(
+            _raw_skills(provider), "my-skill", "process", args={"mode": "llm-value"}, mode="runtime-value"
         )
         assert "Error" in result
 
@@ -2946,6 +2954,7 @@ class TestSkillsProviderFactories:
 
     async def test_code_script_exception_returns_error(self) -> None:
         """A code script function that raises should return an error string."""
+
         def failing_script() -> str:
             raise RuntimeError("Something went wrong")
 
@@ -3170,6 +3179,7 @@ class TestLoadSkillWithScripts:
 
     async def test_code_skill_scripts_element_contains_parameters(self) -> None:
         """Scripts XML includes parameters schema when the function has typed parameters."""
+
         def analyze(query: str, limit: int = 10) -> str:
             return "result"
 
@@ -3755,9 +3765,7 @@ class TestSourceComposition:
         )
         (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
 
-        source = DeduplicatingSkillsSource(
-            FileSkillsSource(str(tmp_path), script_runner=_noop_script_runner)
-        )
+        source = DeduplicatingSkillsSource(FileSkillsSource(str(tmp_path), script_runner=_noop_script_runner))
         provider = SkillsProvider(source)
         await _init_provider(provider)
         assert "my-skill" in _ctx(provider)[0]
@@ -3798,9 +3806,7 @@ class TestSourceComposition:
             call_log.append("source")
             return "source"
 
-        source = DeduplicatingSkillsSource(
-            FileSkillsSource(str(tmp_path), script_runner=source_runner)
-        )
+        source = DeduplicatingSkillsSource(FileSkillsSource(str(tmp_path), script_runner=source_runner))
         provider = SkillsProvider(source)
         await _init_provider(provider)
 
