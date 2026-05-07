@@ -139,7 +139,15 @@ class RawFoundryChatClient(  # type: ignore[misc]
         except RuntimeError:
             asyncio.run(project_client.close())
         else:
-            loop.create_task(project_client.close())
+            close_task = loop.create_task(project_client.close())
+            close_task.add_done_callback(RawFoundryChatClient._log_project_client_close_failure)
+
+    @staticmethod
+    def _log_project_client_close_failure(close_task: asyncio.Task[None]) -> None:
+        try:
+            close_task.result()
+        except Exception:
+            logger.warning("Failed to close Foundry project client after initialization error.", exc_info=True)
 
     def __init__(
         self,
