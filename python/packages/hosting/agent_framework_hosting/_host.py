@@ -784,18 +784,42 @@ class AgentFrameworkHost:
         # the seam for any per-run customization; nothing flows through here.
         workflow: Workflow = self.target  # type: ignore[assignment]
         storage = self._resolve_checkpoint_storage(request)
-        if storage is not None:
-            latest = await storage.get_latest(workflow_name=workflow.name)
-            if latest is not None:
-                # Restore in-memory state from the most recent checkpoint
-                # before applying the new input.
-                await workflow.run(checkpoint_id=latest.checkpoint_id, checkpoint_storage=storage)
-            result = await workflow.run(request.input, checkpoint_storage=storage)
-        else:
-            result = await workflow.run(request.input)
+        await self._restore_workflow_checkpoint(workflow, storage)
+        result = (
+            await workflow.run(request.input, checkpoint_storage=storage)
+            if storage is not None
+            else await workflow.run(request.input)
+        )
+        # NOTE: blocking workflow output is text-only today. Richer
+        # modalities (image, audio, structured tool results) ride the
+        # streaming path via ``AgentResponseUpdate`` and are forwarded by
+        # the channel as content parts; channels that need full-fidelity
+        # output for blocking calls should drive the workflow through
+        # ``stream=True`` and aggregate via ``get_final_response()``.
         outputs = result.get_outputs()
         text = "\n".join(_workflow_output_to_text(o) for o in outputs) if outputs else ""
         return HostedRunResult(text=text)
+
+    @staticmethod
+    async def _restore_workflow_checkpoint(
+        workflow: Workflow,
+        storage: CheckpointStorage | None,
+    ) -> None:
+        """Rehydrate ``workflow`` from its latest checkpoint, if any.
+
+        Shared between the blocking and streaming workflow paths so the
+        restore step stays in lockstep across both — both must observe
+        the same in-memory state when they apply the new input.
+        """
+        if storage is None:
+            return
+        latest = await storage.get_latest(workflow_name=workflow.name)
+        if latest is None:
+            return
+        # The blocking restore call is a no-op invocation that just
+        # rehydrates state; the streaming path drains the same
+        # restoration stream below to achieve the same effect.
+        await workflow.run(checkpoint_id=latest.checkpoint_id, checkpoint_storage=storage)
 
     def _invoke_workflow_stream(self, request: ChannelRequest) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Bridge ``Workflow.run(stream=True)`` to a channel-facing ``ResponseStream``.
@@ -828,23 +852,12 @@ class AgentFrameworkHost:
         workflow: Workflow = self.target  # type: ignore[assignment]
         storage = self._resolve_checkpoint_storage(request)
 
-        async def _maybe_restore() -> None:
-            if storage is None:
-                return
-            latest = await storage.get_latest(workflow_name=workflow.name)
-            if latest is None:
-                return
-            # Drain the restoration stream so the no-op invocation actually
-            # rehydrates state before the real run starts.
-            async for _ in workflow.run(
-                stream=True,
-                checkpoint_id=latest.checkpoint_id,
-                checkpoint_storage=storage,
-            ):
-                pass
-
         async def _bridge() -> AsyncIterator[AgentResponseUpdate]:
-            await _maybe_restore()
+            # Same restore step the blocking path runs (see
+            # ``_restore_workflow_checkpoint``) — kept inside the bridge
+            # so the in-memory state is rehydrated lazily on first
+            # iteration rather than at stream-construction time.
+            await self._restore_workflow_checkpoint_streaming(workflow, storage)
             workflow_stream = workflow.run(request.input, stream=True, checkpoint_storage=storage)
             try:
                 async for event in workflow_stream:
@@ -859,6 +872,30 @@ class AgentFrameworkHost:
             return AgentResponse.from_updates(updates)
 
         return ResponseStream[AgentResponseUpdate, AgentResponse](_bridge(), finalizer=_finalize)
+
+    @staticmethod
+    async def _restore_workflow_checkpoint_streaming(
+        workflow: Workflow,
+        storage: CheckpointStorage | None,
+    ) -> None:
+        """Streaming-path counterpart to :meth:`_restore_workflow_checkpoint`.
+
+        ``Workflow.run(stream=True, checkpoint_id=...)`` returns a stream
+        whose updates we don't care about — we just need the side-effect
+        of rehydration. Drained inline so the new-input run that follows
+        observes the restored state.
+        """
+        if storage is None:
+            return
+        latest = await storage.get_latest(workflow_name=workflow.name)
+        if latest is None:
+            return
+        async for _ in workflow.run(
+            stream=True,
+            checkpoint_id=latest.checkpoint_id,
+            checkpoint_storage=storage,
+        ):
+            pass
 
     def _wrap_input(self, request: ChannelRequest) -> Message | list[Message]:
         """Promote ``request.input`` to ``Message``(s) carrying channel metadata.
