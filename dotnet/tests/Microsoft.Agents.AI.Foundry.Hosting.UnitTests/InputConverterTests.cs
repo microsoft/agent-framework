@@ -207,9 +207,10 @@ public class InputConverterTests
     [Fact]
     public void ConvertOutputItemsToMessages_FunctionToolCallOutput_ReturnsToolMessage()
     {
+        // Spec-compliant payload: a JSON string literal.
         var funcOutput = new OutputItemFunctionToolCallOutput(
             callId: "call_def",
-            output: BinaryData.FromString("result data"));
+            output: BinaryData.FromString("\"result data\""));
 
         var messages = InputConverter.ConvertOutputItemsToMessages([funcOutput]);
 
@@ -218,6 +219,52 @@ public class InputConverterTests
         var result = messages[0].Contents.OfType<FunctionResultContent>().FirstOrDefault();
         Assert.NotNull(result);
         Assert.Equal("call_def", result.CallId);
+        // Round-trip: the JSON-string wire payload is unwrapped to the original tool result text.
+        Assert.Equal("result data", result.Result as string);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_FunctionToolCallOutput_LegacyRawJsonArray_PassesThrough()
+    {
+        // Legacy/non-conforming producers that emitted a raw JSON value (array/object) in
+        // `output` are tolerated: the raw text is forwarded as the FunctionResultContent.Result
+        // so the model still sees the original tool-output shape on replay.
+        var funcOutput = new OutputItemFunctionToolCallOutput(
+            callId: "call_legacy",
+            output: BinaryData.FromString("[{\"id\":1}]"));
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([funcOutput]);
+
+        var result = messages[0].Contents.OfType<FunctionResultContent>().FirstOrDefault();
+        Assert.NotNull(result);
+        Assert.Equal("[{\"id\":1}]", result.Result as string);
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FunctionCallOutput_JsonStringPayload_Unwraps()
+    {
+        // Spec-compliant inbound payload — a JSON string literal — must be unwrapped so
+        // FunctionResultContent.Result is the original tool result text, not the JSON-encoded form.
+        var input = new[]
+        {
+            new
+            {
+                type = "function_call_output",
+                id = "fc_out_002",
+                call_id = "call_456",
+                output = "sunny"
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        Assert.Single(messages);
+        var funcResult = messages[0].Contents.OfType<FunctionResultContent>().FirstOrDefault();
+        Assert.NotNull(funcResult);
+        Assert.Equal("sunny", funcResult.Result as string);
     }
 
     [Fact]

@@ -616,9 +616,10 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
-    // K-06: FRC string results are emitted as raw text on the wire (not JSON-quoted).
+    // K-06: FRC payloads are wrapped as JSON string literals on the wire so the field is
+    // always a spec-compliant OpenAI Responses `function_call_output.output` string value.
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionResultStringPayload_EmittedAsRawTextAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultStringPayload_EmittedAsJsonStringAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "sunny")] };
@@ -631,8 +632,76 @@ public class OutputConverterTests
 
         var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
         var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
-        // String FRC payloads must not be double-encoded — `sunny`, not `"sunny"`.
-        Assert.Equal("sunny", output.Output.ToString());
+        // The wire payload is a JSON string literal — `"sunny"`, not the bare bytes `sunny`.
+        Assert.Equal("\"sunny\"", output.Output.ToString());
+    }
+
+    // K-06b: List/object FRC payloads must be JSON-stringified into a JSON string value
+    // so the OpenAI .NET client (FunctionCallOutputResponseItem.Output: string) can parse them.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultObjectPayload_EmittedAsJsonStringAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var todoList = new[] { new { id = 1, text = "Buy milk" } };
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", todoList)] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        // The wire payload must be a quoted JSON string containing the JSON-serialized object.
+        var raw = output.Output.ToString();
+        Assert.StartsWith("\"", raw);
+        Assert.EndsWith("\"", raw);
+        // The unwrapped value must round-trip back to the original JSON.
+        var inner = System.Text.Json.JsonSerializer.Deserialize<string>(raw);
+        Assert.Equal("[{\"id\":1,\"text\":\"Buy milk\"}]", inner);
+    }
+
+    // K-06c: A JsonElement of kind String must not be double-encoded.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultJsonElementStringPayload_NotDoubleEncodedAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        using var doc = System.Text.Json.JsonDocument.Parse("\"sunny\"");
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", doc.RootElement.Clone())] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        // Must be `"sunny"`, not `"\"sunny\""`.
+        Assert.Equal("\"sunny\"", output.Output.ToString());
+    }
+
+    // K-06d: A JsonElement of non-string kind (e.g. array) must be JSON-stringified, not
+    // emitted as a raw JSON array on the wire.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultJsonElementArrayPayload_EmittedAsJsonStringAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        using var doc = System.Text.Json.JsonDocument.Parse("[{\"id\":1}]");
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", doc.RootElement.Clone())] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        var raw = output.Output.ToString();
+        var inner = System.Text.Json.JsonSerializer.Deserialize<string>(raw);
+        Assert.Equal("[{\"id\":1}]", inner);
     }
 
     // L-01

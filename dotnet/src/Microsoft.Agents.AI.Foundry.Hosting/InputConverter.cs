@@ -190,7 +190,7 @@ internal static class InputConverter
 
     private static ChatMessage ConvertFunctionCallOutput(FunctionCallOutputItemParam funcOutput)
     {
-        var output = funcOutput.Output?.ToString() ?? string.Empty;
+        var output = DecodeFunctionResultPayload(funcOutput.Output);
         return new ChatMessage(
             ChatRole.Tool,
             [new FunctionResultContent(funcOutput.CallId, output)]);
@@ -482,9 +482,54 @@ internal static class InputConverter
 
     private static ChatMessage ConvertFunctionToolCallOutput(OutputItemFunctionToolCallOutput funcOutput)
     {
+        var output = DecodeFunctionResultPayload(funcOutput.Output);
         return new ChatMessage(
             ChatRole.Tool,
-            [new FunctionResultContent(funcOutput.CallId, funcOutput.Output)]);
+            [new FunctionResultContent(funcOutput.CallId, output)]);
+    }
+
+    /// <summary>
+    /// Decodes the wire payload of a <c>function_call_output.output</c> field back into the
+    /// underlying tool-result text suitable for replay as <see cref="FunctionResultContent.Result"/>.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors <c>OutputConverter.EncodeFunctionResultAsJsonStringPayload</c>. Per the OpenAI
+    /// Responses spec, <c>output</c> is a JSON string; we extract its underlying value. Legacy
+    /// producers that emitted raw JSON values (arrays/objects) are tolerated by passing the raw
+    /// bytes through unchanged.
+    /// </remarks>
+    private static string DecodeFunctionResultPayload(BinaryData? rawOutput)
+    {
+        if (rawOutput is null)
+        {
+            return string.Empty;
+        }
+
+        var raw = rawOutput.ToString();
+        if (string.IsNullOrEmpty(raw))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind == JsonValueKind.String)
+            {
+                return doc.RootElement.GetString() ?? string.Empty;
+            }
+
+            // Legacy/non-conforming producers may have emitted a raw JSON value
+            // (array/object/number/bool/null). Pass the raw text through as the
+            // payload so the replayed FunctionResultContent.Result preserves the
+            // original tool output shape.
+            return raw;
+        }
+        catch (JsonException)
+        {
+            // Not valid JSON — treat the bytes as a literal string payload.
+            return raw;
+        }
     }
 
     private static ChatRole ConvertMessageRole(MessageRole role)
