@@ -643,7 +643,6 @@ class MCPTool:
         except asyncio.CancelledError:
             logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
 
-
     async def _close_and_check_cancelled(self, ex: BaseException) -> bool:
         """Close the exit stack and return True if *ex* is a genuine task cancellation.
 

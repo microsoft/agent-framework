@@ -2424,9 +2424,7 @@ async def test_connect_genuine_cancellation_during_session_creation_propagates()
         patch("asyncio.current_task", return_value=mock_cancelled_task),
         patch("mcp.client.session.ClientSession") as mock_session_class,
     ):
-        mock_session_class.return_value.__aenter__ = AsyncMock(
-            side_effect=asyncio.CancelledError("task cancelled")
-        )
+        mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("task cancelled"))
         mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
         with pytest.raises(asyncio.CancelledError):
@@ -2465,7 +2463,6 @@ async def test_aenter_cancelled_error_during_connect_is_catchable_as_exception()
 
         assert caught is not None, "Expected an exception to be caught by except Exception"
         assert isinstance(caught, ToolException)
-
 
 
 # Tests for _should_propagate_cancelled_error helper
