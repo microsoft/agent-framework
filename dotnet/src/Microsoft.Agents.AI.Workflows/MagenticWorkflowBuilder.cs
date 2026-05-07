@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 
@@ -25,6 +26,7 @@ namespace Microsoft.Agents.AI.Workflows;
 ///   not supported on the ManagerAgent.
 /// </summary>
 /// <param name="managerAgent"></param>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public class MagenticWorkflowBuilder(AIAgent managerAgent)
 {
     private readonly List<AIAgent> _team = new();
