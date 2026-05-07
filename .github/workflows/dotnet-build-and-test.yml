@@ -273,6 +273,8 @@ jobs:
             -c ${{ matrix.configuration }} `
             --no-build -v Normal `
             --report-xunit-trx `
+            --report-junit `
+            --results-directory ../IntegrationTestResults/ `
             --ignore-exit-code 8 `
             --filter-not-trait "Category=IntegrationDisabled" `
             --filter-not-trait "Category=FoundryHostedAgents" `
@@ -294,6 +296,10 @@ jobs:
           AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
           AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
           AZURE_AI_BING_CONNECTION_ID: ${{ vars.AZURE_AI_BING_CONNECTION_ID }}
+          # Anthropic Models
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_CHAT_MODEL_NAME: ${{ vars.ANTHROPIC_CHAT_MODEL_NAME }}
+          ANTHROPIC_REASONING_MODEL_NAME: ${{ vars.ANTHROPIC_REASONING_MODEL_NAME }}
 
       # Generate test reports and check coverage
       - name: Generate test reports
@@ -315,6 +321,14 @@ jobs:
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
         shell: pwsh
         run: ./dotnet/eng/scripts/dotnet-check-coverage.ps1 -JsonReportPath "TestResults/Reports/Summary.json" -CoverageThreshold $env:COVERAGE_THRESHOLD
+
+      - name: Upload integration test results
+        if: always() && github.event_name != 'pull_request' && matrix.integration-tests
+        uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-test-results-${{ matrix.targetFramework }}-${{ matrix.os }}
+          path: IntegrationTestResults/**/*.junit
+          if-no-files-found: ignore
 
   # The Foundry hosted-agent IT is costly (it builds a container, pushes to ACR, and provisions
   # live agents on a separate Foundry project). Running it in its own job keeps the overall
@@ -456,3 +470,64 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: core.setFailed('Integration Tests Cancelled!')
+
+  # Integration test trend report (aggregates JUnit XML results from dotnet test jobs)
+  dotnet-integration-test-report:
+    name: Integration Test Report
+    if: >
+      always() &&
+      github.event_name != 'pull_request' &&
+      (contains(join(needs.*.result, ','), 'success') ||
+       contains(join(needs.*.result, ','), 'failure'))
+    needs: [dotnet-test]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/python-setup
+            python
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.13"
+          os: ${{ runner.os }}
+      - name: Download all test results from current run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dotnet-test-results-*
+          path: dotnet-test-results/
+      - name: Restore report history cache
+        uses: actions/cache/restore@v4
+        with:
+          path: python/dotnet-integration-report-history.json
+          key: dotnet-integration-report-history-${{ github.run_id }}
+          restore-keys: |
+            dotnet-integration-report-history-
+      - name: Generate trend report
+        run: >
+          uv run python scripts/integration_test_report/aggregate.py
+          ../dotnet-test-results/
+          dotnet-integration-report-history.json
+          dotnet-integration-test-report.md
+      - name: Post to Job Summary
+        if: always()
+        run: cat dotnet-integration-test-report.md >> $GITHUB_STEP_SUMMARY
+      - name: Save report history cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: python/dotnet-integration-report-history.json
+          key: dotnet-integration-report-history-${{ github.run_id }}
+      - name: Upload trend report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-integration-test-report
+          path: |
+            python/dotnet-integration-test-report.md
+            python/dotnet-integration-report-history.json
