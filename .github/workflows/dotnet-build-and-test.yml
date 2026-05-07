@@ -379,6 +379,14 @@ jobs:
       # We rebuild and push the test container image on every IT run so framework code changes
       # are picked up; the image tag is content-hashed across the test container source AND its
       # framework project references, so identical content is a no-op push.
+      #
+      # `-UsePrebuiltProjectReferences` opts into the no-rebuild fast path: publish skips
+      # rebuilding ProjectReferences and consumes the DLLs the prior "Build Foundry hosted IT
+      # (and its deps)" step already produced. This avoids MSB3026 ("file is being used by
+      # another process") collisions caused by the previous build's shared-compilation server
+      # still holding file handles to those DLLs. Safe in CI because the prebuild step ran in
+      # the same job against the same source. Do not remove the prebuild step (the subsequent
+      # `dotnet test --no-build` step depends on it too).
       - name: Build and push Foundry Hosted Agents test container
         id: build-foundry-hosted-image
         shell: pwsh
@@ -388,7 +396,7 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($registry)) {
             throw "IT_HOSTED_AGENT_REGISTRY not set in the integration environment."
           }
-          & "${{ github.workspace }}/dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/it-build-image.ps1" -Registry $registry | Tee-Object -FilePath $env:GITHUB_ENV -Append
+          & "${{ github.workspace }}/dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/it-build-image.ps1" -Registry $registry -UsePrebuiltProjectReferences | Tee-Object -FilePath $env:GITHUB_ENV -Append
 
       - name: Run Foundry Hosted Agents Integration Tests
         shell: pwsh
