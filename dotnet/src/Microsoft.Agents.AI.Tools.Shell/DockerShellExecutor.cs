@@ -43,25 +43,25 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// runs each call in a fresh <c>docker run --rm</c>.
 /// </para>
 /// </remarks>
-public sealed class DockerShellExecutor : IAsyncDisposable, IShellExecutor
+public sealed class DockerShellExecutor : IShellExecutor
 {
     /// <summary>Default container image. A small Microsoft-maintained Linux base.</summary>
-    public const string DefaultImage = "mcr.microsoft.com/azurelinux/base/core:3.0";
+    internal const string DefaultImage = "mcr.microsoft.com/azurelinux/base/core:3.0";
 
     /// <summary>Default container user (nobody:nogroup on most distros).</summary>
-    public const string DefaultContainerUser = "65534:65534";
+    internal const string DefaultContainerUser = "65534:65534";
 
     /// <summary>Default Docker network mode (no network).</summary>
-    public const string DefaultNetwork = DockerNetworkMode.None;
+    internal const string DefaultNetwork = DockerNetworkMode.None;
 
     /// <summary>Default container memory limit, in bytes (512 MiB).</summary>
-    public const long DefaultMemoryBytes = 512L * 1024 * 1024;
+    internal const long DefaultMemoryBytes = 512L * 1024 * 1024;
 
     /// <summary>Default pids limit.</summary>
-    public const int DefaultPidsLimit = 256;
+    internal const int DefaultPidsLimit = 256;
 
     /// <summary>Default container working directory.</summary>
-    public const string DefaultContainerWorkdir = "/workspace";
+    internal const string DefaultContainerWorkdir = "/workspace";
 
     private const int DefaultMaxOutputBytes = 64 * 1024;
 
@@ -234,6 +234,7 @@ public sealed class DockerShellExecutor : IAsyncDisposable, IShellExecutor
         {
             throw new ArgumentNullException(nameof(command));
         }
+
         var decision = this._policy.Evaluate(new ShellRequest(command, this._containerWorkdir));
         if (!decision.Allowed)
         {

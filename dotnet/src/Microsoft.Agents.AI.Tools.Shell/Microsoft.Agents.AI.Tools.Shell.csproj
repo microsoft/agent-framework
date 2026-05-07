@@ -6,8 +6,6 @@
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI.Tools.Shell</RootNamespace>
     <VersionSuffix>preview</VersionSuffix>
-    <Title>Microsoft Agent Framework - Shell Tools</Title>
-    <Description>Cross-platform shell tools for the Microsoft Agent Framework. Includes LocalShellTool and DockerShellTool with approval-in-the-loop semantics, plus ShellEnvironmentProvider for environment-aware system prompts.</Description>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -17,6 +15,13 @@
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <!-- These must appear AFTER the nuget-package.props import so they
+       override the shared defaults rather than being overwritten by them. -->
+  <PropertyGroup>
+    <Title>Microsoft Agent Framework - Shell Tools</Title>
+    <Description>Cross-platform shell tools for the Microsoft Agent Framework. Includes LocalShellExecutor and DockerShellExecutor with approval-in-the-loop semantics, plus ShellEnvironmentProvider for environment-aware system prompts.</Description>
+  </PropertyGroup>
 
   <!-- Disable package validation baseline until the first release -->
   <PropertyGroup>

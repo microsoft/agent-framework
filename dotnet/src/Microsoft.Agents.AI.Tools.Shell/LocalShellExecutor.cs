@@ -38,7 +38,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// refuse to return a non-approval-gated function.
 /// </para>
 /// </remarks>
-public sealed class LocalShellExecutor : IAsyncDisposable, IShellExecutor
+public sealed class LocalShellExecutor : IShellExecutor
 {
     private const int DefaultMaxOutputBytes = 64 * 1024;
 
