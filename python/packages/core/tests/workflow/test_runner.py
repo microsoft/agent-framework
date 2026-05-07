@@ -856,7 +856,7 @@ async def test_runner_checkpoint_with_resumed_flag():
     state = State()
 
     runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
-    runner._mark_resumed(5)  # pyright: ignore[reportPrivateUsage]
+    runner._mark_resumed(5, "resume-parent-checkpoint")  # pyright: ignore[reportPrivateUsage]
 
     # Add a message to trigger the checkpoint creation path
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id="START"))
