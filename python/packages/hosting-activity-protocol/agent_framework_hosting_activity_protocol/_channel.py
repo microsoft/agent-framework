@@ -67,8 +67,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from agent_framework import (
@@ -100,6 +101,20 @@ from starlette.routing import Route
 _BOTFRAMEWORK_TENANT = "botframework.com"
 _BOTFRAMEWORK_SCOPE = "https://api.botframework.com/.default"
 
+# Default allow-list of host suffixes the channel will POST a bearer token
+# to. Bot Service surfaces ``serviceUrl`` per-conversation as one of these
+# canonical hosts; a malicious inbound activity claiming a serviceUrl
+# outside this set could otherwise exfiltrate a real Bot Framework access
+# token. Operators with a private deployment (sovereign cloud, Direct Line
+# only, etc.) override this via ``service_url_allowed_hosts``.
+_DEFAULT_SERVICE_URL_HOSTS = (
+    "botframework.com",
+    "smba.trafficmanager.net",
+)
+
+
+InboundAuthValidator = Callable[[Request], Awaitable[bool]]
+
 
 def activity_protocol_isolation_key(conversation_id: Any) -> str:
     """Build the namespaced isolation key the Teams channel writes under.
@@ -109,6 +124,10 @@ def activity_protocol_isolation_key(conversation_id: Any) -> str:
     conversation by passing the conversation id).
     """
     return f"activity:{conversation_id}"
+
+
+class _OutboundError(RuntimeError):
+    """Marker for transient outbound failures that should produce 502/retry."""
 
 
 def _parse_activity(activity: Mapping[str, Any]) -> Message:
@@ -166,6 +185,8 @@ class ActivityProtocolChannel:
         stream: bool = True,
         stream_transform_hook: ChannelStreamTransformHook | None = None,
         stream_edit_min_interval: float = 0.7,
+        inbound_auth_validator: InboundAuthValidator | None = None,
+        service_url_allowed_hosts: tuple[str, ...] = _DEFAULT_SERVICE_URL_HOSTS,
     ) -> None:
         """Configure the Teams channel.
 
@@ -198,6 +219,30 @@ class ActivityProtocolChannel:
             stream_edit_min_interval: Seconds between successive in-place
                 edits. Teams is more rate-sensitive than Telegram, so default
                 is higher.
+            inbound_auth_validator: Optional async callable invoked for each
+                inbound webhook request **before** the activity is parsed.
+                Return ``True`` to allow, ``False`` to reject with HTTP 401.
+                The webhook endpoint accepts unauthenticated requests by
+                default — Bot Framework normally validates inbound calls via
+                the JWT in the ``Authorization`` header (see Microsoft's
+                bot framework auth docs). The prototype intentionally does
+                NOT ship a built-in JWT validator (key rotation, OpenID
+                config caching, etc. are out of scope); plug your own
+                validator here, or terminate auth in front of the channel
+                (e.g. APIM, Application Gateway). When no credentials AND
+                no validator are configured the channel logs a loud
+                warning at startup so the dev-mode bypass cannot
+                accidentally ship.
+            service_url_allowed_hosts: Host (or host suffix) allow-list the
+                channel will POST a bearer token to. Defaults to the public
+                Bot Framework host suffixes (``botframework.com`` and
+                ``smba.trafficmanager.net``). An inbound activity claiming a
+                ``serviceUrl`` outside this set is rejected — without this
+                gate a malicious caller could redirect outbound replies (and
+                the attached bearer token) to an attacker-controlled host.
+                Pass an extended tuple for sovereign clouds or private
+                deployments; pass ``()`` to disable the check entirely
+                (only safe with strong inbound auth).
         """
         if app_password and certificate_path:
             raise ValueError("ActivityProtocolChannel: pass either app_password or certificate_path, not both.")
@@ -210,6 +255,8 @@ class ActivityProtocolChannel:
         self._stream_default = stream
         self._stream_transform_hook = stream_transform_hook
         self._stream_edit_min_interval = stream_edit_min_interval
+        self._inbound_auth_validator = inbound_auth_validator
+        self._service_url_allowed_hosts = tuple(h.lower().lstrip(".") for h in service_url_allowed_hosts)
         self._ctx: ChannelContext | None = None
         self._http: httpx.AsyncClient | None = None
 
@@ -250,6 +297,12 @@ class ActivityProtocolChannel:
         When no Bot Framework credential is configured we log a loud warning —
         outbound replies will not authenticate, which is only acceptable
         against the local Bot Framework Emulator.
+
+        When no inbound auth validator is configured we also log a loud
+        warning so the dev-mode bypass cannot accidentally ship to
+        production: Bot Framework normally validates inbound requests via
+        a JWT in ``Authorization``; without that gate any caller that can
+        reach the webhook can drive the bot.
         """
         if self._http is None:
             self._http = httpx.AsyncClient(timeout=30.0)
@@ -266,6 +319,14 @@ class ActivityProtocolChannel:
                 self.path,
                 cred_kind,
                 self._tenant_id,
+            )
+        if self._inbound_auth_validator is None:
+            logger.warning(
+                "ActivityProtocolChannel %s/messages has no inbound_auth_validator — "
+                "the webhook will accept ANY caller. Plug an inbound_auth_validator "
+                "or terminate auth in front of the channel before exposing this "
+                "endpoint to a public network.",
+                self.path,
             )
 
     async def _on_shutdown(self) -> None:
@@ -303,16 +364,44 @@ class ActivityProtocolChannel:
 
     # -- request handling -------------------------------------------------- #
 
+    def _is_service_url_allowed(self, service_url: str | None) -> bool:
+        """Return ``True`` if ``service_url`` host matches the allow-list."""
+        if not self._service_url_allowed_hosts:
+            return True
+        if not service_url:
+            return False
+        try:
+            host = (urlparse(service_url).hostname or "").lower()
+        except Exception:
+            return False
+        if not host:
+            return False
+        return any(host == allowed or host.endswith(f".{allowed}") for allowed in self._service_url_allowed_hosts)
+
     async def _handle(self, request: Request) -> Response:
         """Bot Framework webhook entry point.
 
         Only ``message`` activities are processed; ``conversationUpdate``,
         ``invoke``, ``typing`` and other activity types are silently
-        acknowledged. The webhook always returns 200 (or 202 for ignored
-        types) so Bot Framework can dequeue the activity even if our
-        downstream processing fails — failures are logged and re-tried by
-        the user, not by Teams.
+        acknowledged. Auth-rejected requests return 401, malformed JSON
+        returns 400, and serviceUrl outside the allow-list returns 400.
+
+        For *transient* outbound failures (network error / non-2xx from
+        Bot Service / token acquisition failure) we surface 502 so Bot
+        Service retries the inbound activity. Non-transient failures
+        (parsing errors, validation errors, deterministic agent crashes)
+        return 200 so Bot Service does not retry the same broken
+        activity in a loop.
         """
+        if self._inbound_auth_validator is not None:
+            try:
+                allowed = await self._inbound_auth_validator(request)
+            except Exception:
+                logger.exception("ActivityProtocolChannel inbound_auth_validator raised; rejecting request")
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+            if not allowed:
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+
         try:
             activity = await request.json()
         except Exception:
@@ -323,10 +412,27 @@ class ActivityProtocolChannel:
         if activity.get("type") != "message":
             return JSONResponse({}, status_code=202)
 
+        service_url = activity.get("serviceUrl")
+        if not self._is_service_url_allowed(service_url if isinstance(service_url, str) else None):
+            logger.warning(
+                "ActivityProtocolChannel rejecting activity with serviceUrl=%r (not in allow-list)",
+                service_url,
+            )
+            return JSONResponse({"error": "serviceUrl not allowed"}, status_code=400)
+
         try:
             await self._process_activity(activity)
+        except (httpx.HTTPError, _OutboundError):
+            # Transient outbound failure (network error, non-2xx from Bot
+            # Service, token acquisition error). Surface 502 so Bot
+            # Service retries the inbound activity rather than dropping it.
+            logger.exception("ActivityProtocolChannel outbound transient failure — signalling Bot Service to retry")
+            return JSONResponse({"error": "upstream failure"}, status_code=502)
         except Exception:
-            logger.exception("Teams activity processing failed")
+            # Deterministic / agent-side failure: 200 so Bot Service does
+            # not retry the same broken activity in a loop. Operator picks
+            # the failure up via logs / telemetry.
+            logger.exception("ActivityProtocolChannel activity processing failed")
         # Bot Framework expects 200 OK to dequeue the activity.
         return JSONResponse({}, status_code=200)
 
@@ -400,28 +506,47 @@ class ActivityProtocolChannel:
         inbound: Mapping[str, Any],
         stream: ResponseStream[AgentResponseUpdate, AgentResponse],
     ) -> None:
-        """Iterate the stream and progressively edit a single Teams activity."""
+        """Iterate the stream and progressively edit a single Teams activity.
+
+        If the initial placeholder POST fails we fall back to buffering
+        the whole stream and POSTing a single final message at the end.
+        Without that fallback the edit-loop's exit condition
+        ``accumulated == last_sent`` is unreachable while ``activity_id``
+        is ``None`` (no PUT possible), and the worker would deadlock
+        forever on ``wake.wait()`` after ``worker_done`` is set.
+        """
         accumulated = ""
         last_sent = ""
         last_edit_at = 0.0
         activity_id: str | None = None
+        placeholder_ok = False
         worker_done = asyncio.Event()
         wake = asyncio.Event()
 
         async def send_initial_placeholder() -> None:
-            nonlocal activity_id, last_edit_at
+            nonlocal activity_id, last_edit_at, placeholder_ok
             try:
                 activity_id = await self._send_message(inbound, "…")
                 last_edit_at = time.monotonic()
-            except Exception:  # pragma: no cover
-                logger.exception("Teams placeholder send failed")
+                placeholder_ok = activity_id is not None
+            except Exception:
+                logger.exception(
+                    "Activity placeholder send failed — falling back to single final POST",
+                )
+                placeholder_ok = False
 
         async def edit_worker() -> None:
             nonlocal last_sent, last_edit_at
+            # When the placeholder failed we have no activity_id to PUT
+            # into; the loop's only useful work is exiting cleanly. Skip
+            # straight to that — the final flush below will POST the
+            # accumulated text in one shot.
+            if not placeholder_ok:
+                return
             while not (worker_done.is_set() and accumulated == last_sent):
                 await wake.wait()
                 wake.clear()
-                if activity_id is None or accumulated == last_sent:
+                if accumulated == last_sent:
                     continue
                 elapsed = time.monotonic() - last_edit_at
                 if elapsed < self._stream_edit_min_interval:
@@ -434,9 +559,9 @@ class ActivityProtocolChannel:
                 if snapshot == last_sent:
                     continue
                 try:
-                    await self._update_activity(inbound, activity_id, snapshot)
+                    await self._update_activity(inbound, activity_id or "", snapshot)
                 except Exception:  # pragma: no cover
-                    logger.exception("Teams interim edit failed")
+                    logger.exception("Activity interim edit failed")
                 last_sent = snapshot
                 last_edit_at = time.monotonic()
 
@@ -457,14 +582,14 @@ class ActivityProtocolChannel:
                     accumulated += chunk
                     wake.set()
         except Exception:
-            logger.exception("Teams streaming consumption failed")
+            logger.exception("Activity streaming consumption failed")
         finally:
             worker_done.set()
             wake.set()
             try:
                 await edit_task
             except Exception:  # pragma: no cover
-                logger.exception("Teams edit worker crashed")
+                logger.exception("Activity edit worker crashed")
 
         try:
             await stream.get_final_response()
@@ -472,19 +597,26 @@ class ActivityProtocolChannel:
             logger.exception("Stream finalize failed")
 
         # Final flush — make sure the user sees everything that arrived after
-        # the worker's last edit.
-        if activity_id is not None and accumulated and accumulated != last_sent:
+        # the worker's last edit. If the placeholder failed we POST a fresh
+        # activity here with whatever accumulated.
+        if not placeholder_ok:
+            text = accumulated or "(no response)"
+            try:
+                await self._send_message(inbound, text)
+            except Exception:  # pragma: no cover
+                logger.exception("Activity fallback final send failed")
+        elif activity_id is not None and accumulated and accumulated != last_sent:
             try:
                 await self._update_activity(inbound, activity_id, accumulated)
             except Exception:  # pragma: no cover
-                logger.exception("Teams final edit failed")
+                logger.exception("Activity final edit failed")
         elif not accumulated and activity_id is not None:
             # No text streamed — replace the placeholder with a stub so the
             # user isn't left staring at "…".
             try:
                 await self._update_activity(inbound, activity_id, "(no response)")
             except Exception:  # pragma: no cover
-                logger.exception("Teams placeholder replace failed")
+                logger.exception("Activity placeholder replace failed")
 
     # -- Bot Framework REST helpers --------------------------------------- #
 
