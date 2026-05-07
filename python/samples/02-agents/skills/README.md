@@ -10,7 +10,8 @@ Start with file-based or code-defined skills, then explore combining them and ad
 |--------|-------------|
 | [**file_based_skill**](file_based_skill/) | Define skills as `SKILL.md` files on disk with reference documents and executable scripts. Uses the unit-converter skill. |
 | [**code_defined_skill**](code_defined_skill/) | Define skills entirely in Python code using `Skill`, `@skill.resource`, and `@skill.script` decorators. Uses a code-defined unit-converter skill. |
-| [**mixed_skills**](mixed_skills/) | Combine code-defined and file-based skills in a single agent. Uses a code-defined volume-converter and a file-based unit-converter. |
+| [**class_based_skill**](class_based_skill/) | Define skills as Python classes using `ClassSkill` with `@ClassSkill.resource` and `@ClassSkill.script` decorators for auto-discovery. Uses a class-based unit-converter skill. |
+| [**mixed_skills**](mixed_skills/) | Combine code-defined, class-based, and file-based skills in a single agent. Uses a code-defined volume-converter, a class-based temperature-converter, and a file-based unit-converter. |
 | [**script_approval**](script_approval/) | Require human-in-the-loop approval before executing skill scripts |
 
 ## Key Concepts
@@ -23,17 +24,18 @@ Skills use a three-step interaction model to minimize token usage:
 2. **Load** — Full instructions are loaded on-demand via the `load_skill` tool
 3. **Access** — Resources are read via `read_skill_resource`; scripts are executed via `run_skill_script`
 
-### File-Based vs Code-Defined Skills
+### File-Based vs Code-Defined vs Class-Based Skills
 
-| Aspect | File-Based | Code-Defined |
-|--------|-----------|--------------|
-| Definition | `SKILL.md` files on disk | `Skill` instances in Python |
-| Resources | Static files in `references/` and `assets/` directories | Callable functions via `@skill.resource` decorator |
-| Scripts | Python files in `scripts/` directory (executed via subprocess) | Callable functions via `@skill.script` decorator (executed in-process) |
-| Discovery | Automatic via `skill_paths` parameter | Explicit via `skills` parameter |
-| Dynamic content | No (static files only) | Yes (functions can generate content at runtime) |
+| Aspect | File-Based | Code-Defined | Class-Based |
+|--------|-----------|--------------|-------------|
+| Definition | `SKILL.md` files on disk | `Skill` instances in Python | Classes extending `ClassSkill` |
+| Resources | Static files in `references/` and `assets/` directories | Callable functions via `@skill.resource` decorator | `@ClassSkill.resource` decorator (auto-discovered) |
+| Scripts | Python files in `scripts/` directory (executed via subprocess) | Callable functions via `@skill.script` decorator (executed in-process) | `@ClassSkill.script` decorator (executed in-process) |
+| Discovery | Automatic via `skill_paths` parameter | Explicit via `skills` parameter | Explicit via `skills` parameter |
+| Dynamic content | No (static files only) | Yes (functions can generate content at runtime) | Yes (functions can generate content at runtime) |
+| Sharing pattern | Copy skill directory | Inline or shared instances | Package in shared libraries/PyPI |
 
-Both types can be combined in a single `SkillsProvider` — see the [mixed_skills](mixed_skills/) sample.
+All three types can be combined in a single `SkillsProvider` — see the [mixed_skills](mixed_skills/) sample.
 
 ### Script Execution
 
