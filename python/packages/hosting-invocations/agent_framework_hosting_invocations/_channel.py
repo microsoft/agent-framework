@@ -126,7 +126,21 @@ class InvocationsChannel:
         return JSONResponse({"response": result.text, "session_id": session_id})
 
     async def _stream(self, request: ChannelRequest) -> AsyncIterator[str]:
-        """Yield bare ``data:`` SSE lines for each text chunk + a final ``[DONE]``."""
+        r"""Yield bare ``data:`` SSE lines for each text chunk + a final ``[DONE]``.
+
+        SSE protocol notes:
+
+        * The HTTP status is committed when ASGI sends headers, before the
+          generator runs. Emitting a stream-opening 200 + ``text/event-stream``
+          and signalling errors via ``event: error`` SSE frames is the
+          conventional contract — ``EventSource`` and OpenAI-style SSE
+          consumers treat ``event: error`` as a terminal error condition.
+          Hard run-acquisition failures (e.g. target rejected) therefore
+          surface as the first frame, not as an HTTP error code.
+        * The SSE spec treats ``\r``, ``\n``, and ``\r\n`` as line
+          terminators. Per-chunk text is split on all three so embedded
+          carriage returns don't corrupt ``data:`` framing on the wire.
+        """
         if self._ctx is None:  # pragma: no cover - guarded by Channel lifecycle
             yield "event: error\ndata: channel not initialized\n\n"
             return
@@ -145,19 +159,33 @@ class InvocationsChannel:
                     # Each text chunk is its own SSE event so curl-friendly
                     # consumers can read it directly. Newlines inside the
                     # chunk are escaped per SSE spec by emitting one
-                    # ``data:`` line per source line.
-                    for line in str(chunk).split("\n"):
+                    # ``data:`` line per source line. ``splitlines()`` is
+                    # used over ``split('\n')`` so embedded ``\r`` /
+                    # ``\r\n`` don't bleed into the framing.
+                    for line in str(chunk).splitlines() or [""]:
                         yield f"data: {line}\n"
                     yield "\n"
             try:
                 # Finalize so context-provider / history hooks on the agent
                 # still run even though we are emitting our own SSE.
+                # If finalization fails, the agent's persistence side
+                # effects (history-provider write, context-provider hooks)
+                # are unreliable — surface that to the client as an
+                # ``event: error`` frame so it isn't a silent drop.
                 await stream.get_final_response()
-            except Exception:  # pragma: no cover - finalize is best-effort
+            except Exception as finalize_exc:
                 logger.exception("Invocations stream finalize failed")
+                yield "event: error\n"
+                for line in f"finalize failed: {finalize_exc!s}".splitlines() or [""]:
+                    yield f"data: {line}\n"
+                yield "\n"
+                return
         except Exception as exc:
             logger.exception("Invocations stream consumption failed")
-            yield f"event: error\ndata: {exc!s}\n\n"
+            yield "event: error\n"
+            for line in str(exc).splitlines() or [""]:
+                yield f"data: {line}\n"
+            yield "\n"
             return
         yield "data: [DONE]\n\n"
 
