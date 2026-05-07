@@ -655,14 +655,14 @@ class MCPTool:
         if not self.session:
             try:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
-            except Exception as ex:
+            except (Exception, asyncio.CancelledError) as ex:
                 await self._safe_close_exit_stack()
                 command = getattr(self, "command", None)
                 if command:
                     error_msg = f"Failed to start MCP server '{command}': {ex}"
                 else:
                     error_msg = f"Failed to connect to MCP server: {ex}"
-                raise ToolException(error_msg, inner_exception=ex) from ex
+                raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             try:
                 try:
                     from mcp import types
@@ -692,15 +692,15 @@ class MCPTool:
                         sampling_capabilities=sampling_capabilities,
                     )
                 )
-            except Exception as ex:
+            except (Exception, asyncio.CancelledError) as ex:
                 await self._safe_close_exit_stack()
                 raise ToolException(
                     message="Failed to create MCP session. Please check your configuration.",
-                    inner_exception=ex,
+                    inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
             try:
                 await session.initialize()
-            except Exception as ex:
+            except (Exception, asyncio.CancelledError) as ex:
                 await self._safe_close_exit_stack()
                 # Provide context about initialization failure
                 command = getattr(self, "command", None)
@@ -710,7 +710,7 @@ class MCPTool:
                     error_msg = f"MCP server '{full_command}' failed to initialize: {ex}"
                 else:
                     error_msg = f"MCP server failed to initialize: {ex}"
-                raise ToolException(error_msg, inner_exception=ex) from ex
+                raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             self.session = session
         elif self.session._request_id == 0:  # type: ignore[attr-defined]
             # If the session is not initialized, we need to reinitialize it

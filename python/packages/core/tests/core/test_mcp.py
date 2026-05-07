@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 # type: ignore[reportPrivateUsage]
+import asyncio
 import json
 import logging
 import os
@@ -2262,6 +2263,92 @@ async def test_connect_cleanup_on_initialization_failure():
 
         # Verify cleanup was called
         tool._exit_stack.aclose.assert_called_once()
+
+
+
+async def test_connect_cancelled_error_during_transport_creation_raises_tool_exception():
+    """Test that CancelledError from transport creation is wrapped in ToolException."""
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+    tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))
+
+    with pytest.raises(ToolException, match="Failed to connect to MCP server"):
+        await tool.connect()
+
+
+async def test_connect_cancelled_error_during_session_creation_raises_tool_exception():
+    """Test that CancelledError from session creation is wrapped in ToolException."""
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    with patch("mcp.client.session.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("cancel scope"))
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with pytest.raises(ToolException, match="Failed to create MCP session"):
+            await tool.connect()
+
+
+async def test_connect_cancelled_error_during_initialize_raises_tool_exception():
+    """Test that CancelledError from session.initialize() is wrapped in ToolException.
+
+    This is the primary regression test for the bug: when an MCP server is unreachable,
+    the MCP library raises asyncio.CancelledError internally, which previously escaped
+    all except Exception handlers and could not be caught by user code.
+    """
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    mock_session = Mock()
+    mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
+
+    with patch("mcp.client.session.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with pytest.raises(ToolException, match="MCP server failed to initialize"):
+            await tool.connect()
+
+
+async def test_aenter_cancelled_error_during_connect_is_catchable_as_exception():
+    """Test that CancelledError during __aenter__ is catchable as Exception.
+
+    Verifies the end-to-end fix: async with MCPStreamableHTTPTool(...) raises an
+    exception that can be caught by a normal `except Exception` block.
+    """
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+
+    mock_session = Mock()
+    mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
+
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    with patch("mcp.client.session.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        caught = None
+        try:
+            async with tool:
+                pass
+        except Exception as e:
+            caught = e
+
+        assert caught is not None, "Expected an exception to be caught by except Exception"
+        assert isinstance(caught, ToolException)
 
 
 def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
