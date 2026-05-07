@@ -19,5 +19,5 @@ internal sealed class ReasoningMessageStartEvent : BaseEvent
     public string MessageId { get; set; } = string.Empty;
 
     [JsonPropertyName("role")]
-    public string Role { get; set; } = "reasoning";
+    public string Role { get; set; } = AGUIRoles.Reasoning;
 }
