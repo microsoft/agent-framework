@@ -641,8 +641,8 @@ def test_prepare_tools_for_openai_strips_extraneous_name_from_foundry_mcp_tool()
     assert "name" not in prepared
 
 
-def test_prepare_tools_for_openai_strips_read_model_fields_from_toolbox_code_interpreter() -> None:
-    """Toolbox-returned code interpreter tools may carry read-model-only name/description."""
+def test_prepare_tools_for_openai_strips_read_model_fields_from_hosted_code_interpreter() -> None:
+    """Hosted code interpreter tools may carry read-model-only name/description."""
     project_client = MagicMock()
     project_client.get_openai_client.return_value = _make_mock_openai_client()
     client = FoundryChatClient(project_client=project_client, model="test-model")
@@ -650,7 +650,7 @@ def test_prepare_tools_for_openai_strips_read_model_fields_from_toolbox_code_int
     tool = {
         "type": "code_interpreter",
         "name": "code_interpreter_t6bbtm",
-        "description": "Toolbox read model description",
+        "description": "Hosted tool read model description",
         "container": {"file_ids": [], "type": "auto"},
     }
 
@@ -665,7 +665,7 @@ def test_prepare_tools_for_openai_strips_read_model_fields_from_toolbox_code_int
 
 
 def test_prepare_tools_for_openai_injects_default_container_for_code_interpreter_dict() -> None:
-    """Toolbox-returned code_interpreter without a container must get a default injected.
+    """Hosted code_interpreter without a container must get a default injected.
 
     The Azure SDK treats ``container`` as optional, but the Responses API rejects
     ``code_interpreter`` entries without one. The sanitizer backfills ``{"type": "auto"}``.
@@ -691,7 +691,7 @@ def test_prepare_tools_for_openai_injects_default_container_for_code_interpreter
 def test_prepare_tools_for_openai_injects_default_container_for_code_interpreter_sdk_instance() -> None:
     """SDK ``CodeInterpreterTool`` instances without a container must also be backfilled.
 
-    Reproduces the toolbox creation path that calls
+    Reproduces the hosted tool creation path that calls
     ``CodeInterpreterTool(name="code_interpreter")`` without a container.
     """
     from azure.ai.projects.models import CodeInterpreterTool
@@ -771,13 +771,13 @@ def test_prepare_tools_for_openai_strips_name_from_non_function_hosted_tool_dict
         {
             "type": "file_search",
             "name": "file_search_tool_123",
-            "description": "toolbox decoration",
+            "description": "hosted tool decoration",
             "vector_store_ids": ["vs_123"],
         },
         {
             "type": "web_search",
             "name": "web_search_tool_456",
-            "description": "toolbox decoration",
+            "description": "hosted tool decoration",
         },
     ])
 

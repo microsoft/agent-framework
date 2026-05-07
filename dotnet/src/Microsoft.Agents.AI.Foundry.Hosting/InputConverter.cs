@@ -233,18 +233,28 @@ internal static class InputConverter
 
     /// <summary>
     /// Converts an inbound <c>mcp_approval_response</c> wire item to a
-    /// <see cref="ToolApprovalResponseContent"/>. Looks up the original AF request id
-    /// via <see cref="ToolApprovalIdMap"/>; falls back to the wire id when the mapping
-    /// is unavailable. Carries a placeholder <see cref="FunctionCallContent"/> because
-    /// the original tool-call details are not echoed by clients in the response item.
+    /// <see cref="ToolApprovalResponseContent"/>. Looks up the original
+    /// <see cref="FunctionCallContent"/> via <see cref="ToolApprovalIdMap"/> so the
+    /// reconstructed response carries the original tool name, call id, and arguments.
     /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when no mapping is recorded for <paramref name="approvalRequestId"/>.
+    /// Without the mapping the original call cannot be reconstructed, so we fail the request.
+    /// </exception>
     private static ChatMessage ConvertMcpApprovalResponse(string approvalRequestId, bool approve, AgentSessionStateBag? stateBag)
     {
-        var afRequestId = ToolApprovalIdMap.Resolve(stateBag, approvalRequestId);
-        var placeholderFunctionCall = new FunctionCallContent(afRequestId, "mcp_approval");
+        var entry = ToolApprovalIdMap.ResolveEntry(stateBag, approvalRequestId)
+            ?? throw new InvalidOperationException(
+                $"No approval mapping recorded for wire id '{approvalRequestId}'.");
+
+        var functionCall = new FunctionCallContent(
+            entry.CallId,
+            entry.Name,
+            ParseFunctionArgumentsObject(entry.Arguments));
+
         return new ChatMessage(
             ChatRole.User,
-            [new ToolApprovalResponseContent(afRequestId, approve, placeholderFunctionCall)]);
+            [new ToolApprovalResponseContent(entry.AfRequestId, approve, functionCall)]);
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing tool-call arguments from SDK input.")]

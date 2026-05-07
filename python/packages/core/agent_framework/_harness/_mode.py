@@ -9,6 +9,7 @@ from typing import Any, cast
 from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._tools import tool
+from .._types import Message
 
 DEFAULT_MODE_SOURCE_ID = "agent_mode"
 DEFAULT_MODE_INSTRUCTIONS = (
@@ -21,6 +22,10 @@ DEFAULT_MODE_INSTRUCTIONS = (
     "{available_modes}\n"
     "\n"
     "You are currently operating in the {current_mode} mode.\n"
+)
+DEFAULT_MODE_CHANGE_NOTIFICATION = (
+    '[Mode changed: The operating mode has been switched from "{previous_mode}" to "{current_mode}". '
+    'You must now adjust your behavior to match the "{current_mode}" mode.]'
 )
 DEFAULT_MODE_DESCRIPTIONS: dict[str, str] = {
     "plan": (
@@ -35,6 +40,8 @@ DEFAULT_MODE_DESCRIPTIONS: dict[str, str] = {
         "your choice."
     ),
 }
+
+_PREVIOUS_MODE_STATE_KEY = "previous_mode_for_notification"
 
 
 def _get_mode_state(session: AgentSession, *, source_id: str) -> dict[str, Any]:
@@ -126,6 +133,12 @@ def set_agent_mode(
 ) -> str:
     """Set the current operating mode in session state.
 
+    External callers (e.g., a slash-command handler) should use this helper rather than mutating
+    session state directly. When the mode actually changes, the prior mode is recorded so that the
+    next :meth:`AgentModeProvider.before_run` invocation injects a user message announcing the
+    switch — system instructions alone are insufficient to redirect a model that has already seen
+    its own ``set_mode`` tool call earlier in the chat history.
+
     Args:
         session: The agent session to update the mode in.
         mode: The new mode to set.
@@ -143,7 +156,14 @@ def set_agent_mode(
     normalized_modes = _normalize_available_modes(tuple(available_modes or DEFAULT_MODE_DESCRIPTIONS))
     normalized_mode = _normalize_mode(mode, available_modes=normalized_modes)
     provider_state = _get_mode_state(session, source_id=source_id)
+    previous_mode = provider_state.get("current_mode")
     provider_state["current_mode"] = normalized_mode
+    # When the mode is changed externally (i.e. not via the agent's own ``set_mode`` tool), record the
+    # prior mode so the next ``before_run`` can inject a user message announcing the switch. Without
+    # that injection, the model often anchors on the earlier ``set_mode`` tool call in the chat history
+    # and keeps behaving as if it were still in that mode — system instructions alone are insufficient.
+    if isinstance(previous_mode, str) and previous_mode != normalized_mode:
+        provider_state[_PREVIOUS_MODE_STATE_KEY] = previous_mode
     return normalized_mode
 
 
@@ -232,16 +252,19 @@ class AgentModeProvider(ContextProvider):
             default_mode=self.default_mode,
             available_modes=self.available_modes,
         )
+        # Pop the external-mode-change marker (set by ``set_agent_mode``) before injecting tools so
+        # the agent only sees the notification once.
+        provider_state = _get_mode_state(session, source_id=self.source_id)
+        previous_mode = provider_state.pop(_PREVIOUS_MODE_STATE_KEY, None)
 
         @tool(name="set_mode", approval_mode="never_require")
         def set_mode(mode: str) -> str:
             """Switch the agent's operating mode."""
-            normalized_mode = set_agent_mode(
-                session,
-                mode,
-                source_id=self.source_id,
-                available_modes=self.available_modes,
-            )
+            # The agent invoked the tool itself, so it knows the mode just changed — bypass
+            # ``set_agent_mode`` to avoid triggering a notification message on the next turn.
+            normalized_mode = _normalize_mode(mode, available_modes=self._mode_display_names)
+            tool_state = _get_mode_state(session, source_id=self.source_id)
+            tool_state["current_mode"] = normalized_mode
             return json.dumps({"mode": normalized_mode, "message": f"Mode changed to '{normalized_mode}'."})
 
         @tool(name="get_mode", approval_mode="never_require")
@@ -260,3 +283,14 @@ class AgentModeProvider(ContextProvider):
             [self._build_instructions(current_mode)],
         )
         context.extend_tools(self.source_id, [set_mode, get_mode])
+        if isinstance(previous_mode, str) and previous_mode != current_mode:
+            # Inject a user-role message announcing the external mode change. System instructions
+            # always render first in the chat history, so the agent can otherwise stay anchored to
+            # the most recent ``set_mode`` tool call rather than the new mode.
+            previous_display = self._mode_display_names.get(previous_mode, previous_mode)
+            current_display = self._mode_display_names.get(current_mode, current_mode)
+            notification = DEFAULT_MODE_CHANGE_NOTIFICATION.format(
+                previous_mode=previous_display,
+                current_mode=current_display,
+            )
+            context.extend_messages(self, [Message(role="user", contents=[notification])])

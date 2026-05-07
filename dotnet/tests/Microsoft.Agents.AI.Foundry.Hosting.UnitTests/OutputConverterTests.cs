@@ -84,7 +84,7 @@ public class OutputConverterTests
     }
 
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCall_EmitsFunctionCallEventsAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithoutResult_EmitsFunctionCallWireItemAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -99,10 +99,12 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Should have: FuncAdded, ArgsDelta, ArgsDone, FuncDone, Completed
-        Assert.IsType<ResponseOutputItemAddedEvent>(events[0]);
+        // A lone FunctionCallContent (no paired FunctionResultContent) is the
+        // OpenAI Responses encoding of a HITL request: the caller is expected to
+        // resume with a function_call_output for this call_id.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
-        Assert.True(events.Count >= 4, $"Expected at least 4 events for function call, got {events.Count}");
     }
 
     [Fact]
@@ -302,6 +304,8 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
+        // FCC closes any in-flight assistant message, then emits its own function_call
+        // wire item. Result: 2 output items (text message + function_call).
         Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
         Assert.Equal(2, events.OfType<ResponseOutputItemDoneEvent>().Count());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
@@ -328,7 +332,7 @@ public class OutputConverterTests
 
     // G-04
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_GeneratesCallIdAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallWithEmptyCallId_DoesNotEmitWireItemAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
@@ -342,12 +346,14 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        Assert.Contains(events, e => e is ResponseOutputItemAddedEvent);
+        // Empty CallId is invalid for the wire format; emission is skipped.
+        Assert.DoesNotContain(events, e => e is ResponseOutputItemAddedEvent);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
     // G-05
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_MultipleFunctionCalls_EmitsSeparateBuildersAsync()
+    public async Task ConvertUpdatesToEventsAsync_MultipleFunctionCallsWithoutResults_EachEmitsWireItemAsync()
     {
         var (stream, _) = CreateTestStream();
         var updates = new[]
@@ -362,7 +368,10 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
+        // Each lone FCC surfaces as its own function_call wire item (HITL request shape).
         Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.Equal(2, events.OfType<ResponseFunctionCallArgumentsDoneEvent>().Count());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
     // H-02
@@ -537,7 +546,7 @@ public class OutputConverterTests
 
     // K-03
     [Fact]
-    public async Task ConvertUpdatesToEventsAsync_FunctionResultContent_IsSkippedWithNoEventsAsync()
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultWithoutMatchingCall_EmitsFunctionCallOutputAsync()
     {
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "result data")] };
@@ -548,8 +557,82 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        Assert.Single(events);
-        Assert.IsType<ResponseCompletedEvent>(events[0]);
+        // A FunctionResultContent always emits a function_call_output wire item; pairing
+        // with a function_call (if any) is established by call_id at the wire layer.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.Single(events.OfType<ResponseOutputItemDoneEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    // K-04
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallThenResult_EmitsPairedItemsAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var updates = new[]
+        {
+            new AgentResponseUpdate { Contents = [new FunctionCallContent("call_1", "search", new Dictionary<string, object?> { ["q"] = "weather" })] },
+            new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "sunny")] },
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Issue #5662: function_call and function_call_output must both surface as
+        // wire items so Azure's stored conversation has a paired call+output and
+        // resume via previous_response_id works.
+        Assert.Equal(2, events.OfType<ResponseOutputItemAddedEvent>().Count());
+        Assert.Equal(2, events.OfType<ResponseOutputItemDoneEvent>().Count());
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    // K-05: An FCC with an empty CallId is dropped without disturbing in-flight text.
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallEmptyCallIdMidText_PreservesTextBoundaryAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var updates = new[]
+        {
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent("Hello, ")] },
+            new AgentResponseUpdate { Contents = [new FunctionCallContent(string.Empty, "skipped", new Dictionary<string, object?>())] },
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent("world!")] },
+        };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // The FCC is skipped (no CallId), and because we now validate CallId before
+        // closing the in-flight assistant message, both text deltas land in the same
+        // output item — only one message-added event is emitted.
+        Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        Assert.Equal(2, events.OfType<ResponseTextDeltaEvent>().Count());
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    // K-06: FRC string results are emitted as raw text on the wire (not JSON-quoted).
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionResultStringPayload_EmittedAsRawTextAsync()
+    {
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate { Contents = [new FunctionResultContent("call_1", "sunny")] };
+
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var output = Assert.IsType<OutputItemFunctionToolCallOutput>(added.Item);
+        // String FRC payloads must not be double-encoded — `sunny`, not `"sunny"`.
+        Assert.Equal("sunny", output.Output.ToString());
     }
 
     // L-01
@@ -666,6 +749,7 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
+        // text(msg_1) → function_call(call_1) → text(msg_2): three output items.
         Assert.Equal(3, events.OfType<ResponseOutputItemAddedEvent>().Count());
     }
 
@@ -729,6 +813,7 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
+        // Three output items: function_call(call_1), text(msg_1), function_call(call_2).
         Assert.Equal(3, events.OfType<ResponseOutputItemAddedEvent>().Count());
     }
 
@@ -821,9 +906,10 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Should have: 4 workflow actions + 1 function call + 1 text message = 6 output items
+        // Workflow actions: 4. Lone FCC: 1 (function_call wire item).
+        // Text message: 1. Total output items: 6.
         Assert.Equal(6, events.OfType<ResponseOutputItemAddedEvent>().Count());
-        Assert.Contains(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
         Assert.Contains(events, e => e is ResponseTextDeltaEvent);
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
@@ -960,11 +1046,10 @@ public class OutputConverterTests
             events.Add(evt);
         }
 
-        // Workflow actions: invoked triage, completed triage, invoked expert, completed expert = 4
-        // Content items: 1 function call, 1 text message = 2
-        // Total output items: 6
+        // Workflow actions: 4. Lone FCC: 1 (function_call wire item).
+        // Text message: 1. Total output items: 6.
         Assert.Equal(6, events.OfType<ResponseOutputItemAddedEvent>().Count());
-        Assert.Contains(events, e => e is ResponseFunctionCallArgumentsDoneEvent);
+        Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
         // Two text deltas for the two streaming chunks
         Assert.Equal(2, events.OfType<ResponseTextDeltaEvent>().Count());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);

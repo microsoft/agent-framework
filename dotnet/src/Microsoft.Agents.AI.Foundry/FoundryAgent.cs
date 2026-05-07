@@ -102,7 +102,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// Internal constructor used by <c>AsAIAgent</c> extension methods that already have an <see cref="AIProjectClient"/> and a configured <see cref="ChatClientAgent"/>.
     /// </summary>
     internal FoundryAgent(AIProjectClient aiProjectClient, ChatClientAgent innerAgent)
-        : base(Throw.IfNull(innerAgent))
+        : base(WireClientHeaders(Throw.IfNull(innerAgent)))
     {
         this._aiProjectClient = Throw.IfNull(aiProjectClient);
     }
@@ -128,7 +128,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// </para>
     /// </remarks>
     public ValueTask<AgentSession> CreateSessionAsync(string conversationId, CancellationToken cancellationToken = default)
-        => ((ChatClientAgent)this.InnerAgent).CreateSessionAsync(conversationId, cancellationToken);
+        => this.GetInnerChatClientAgent().CreateSessionAsync(conversationId, cancellationToken);
 
     /// <summary>
     /// Creates a server-side conversation session that appears in the Foundry Project UI.
@@ -143,8 +143,13 @@ public sealed class FoundryAgent : DelegatingAIAgent
 
         var conversation = (await conversationsClient.CreateProjectConversationAsync(options: null, cancellationToken).ConfigureAwait(false)).Value;
 
-        return (ChatClientAgentSession)await ((ChatClientAgent)this.InnerAgent).CreateSessionAsync(conversation.Id, cancellationToken).ConfigureAwait(false);
+        return (ChatClientAgentSession)await this.GetInnerChatClientAgent().CreateSessionAsync(conversation.Id, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>Walks the delegating chain to find the inner <see cref="ChatClientAgent"/>.</summary>
+    private ChatClientAgent GetInnerChatClientAgent() =>
+        this.GetService<ChatClientAgent>()
+        ?? throw new InvalidOperationException("FoundryAgent inner chain does not contain a ChatClientAgent.");
 
     #endregion
 
@@ -161,7 +166,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
 
     #region Private helpers
 
-    private static ChatClientAgent CreateInnerAgent(
+    private static AIAgent CreateInnerAgent(
         AIProjectClient aiProjectClient,
         string model, string instructions,
         string? name, string? description,
@@ -191,7 +196,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
         return CreateResponsesChatClientAgent(aiProjectClient, options, clientFactory, loggerFactory, services);
     }
 
-    private static ChatClientAgent CreateResponsesChatClientAgent(
+    private static AIAgent CreateResponsesChatClientAgent(
         AIProjectClient aiProjectClient,
         ChatClientAgentOptions agentOptions,
         Func<IChatClient, IChatClient>? clientFactory,
@@ -210,10 +215,36 @@ public sealed class FoundryAgent : DelegatingAIAgent
             chatClient = clientFactory(chatClient);
         }
 
-        return new ChatClientAgent(chatClient, agentOptions, loggerFactory, services);
+        return WireClientHeaders(new ChatClientAgent(chatClient, agentOptions, loggerFactory, services));
     }
 
-    private static ChatClientAgent CreateInnerAgentFromEndpoint(
+    /// <summary>
+    /// Registers <see cref="ClientHeadersPolicy"/> on the agent's underlying chat client (if it
+    /// exposes <see cref="OpenAIRequestPolicies"/>) and wraps the agent in a
+    /// <see cref="ClientHeadersAgent"/> so per-call <c>x-client-*</c> headers stamped via
+    /// <see cref="ClientHeadersExtensions.WithClientHeader(ChatOptions, string, string)"/> reach
+    /// the wire. Idempotent: if the chain already contains a <see cref="ClientHeadersAgent"/>,
+    /// the original instance is returned unchanged.
+    /// </summary>
+    private static AIAgent WireClientHeaders(ChatClientAgent innerAgent)
+    {
+        if (innerAgent.GetService<ClientHeadersAgent>() is not null)
+        {
+            return innerAgent;
+        }
+
+        if (innerAgent.ChatClient.GetService<OpenAIRequestPolicies>() is { } policies)
+        {
+            OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
+                policies,
+                ClientHeadersPolicy.Instance,
+                System.ClientModel.Primitives.PipelinePosition.PerCall);
+        }
+
+        return new ClientHeadersAgent(innerAgent);
+    }
+
+    private static AIAgent CreateInnerAgentFromEndpoint(
         AIProjectClient aiProjectClient,
         Uri agentEndpoint,
         IList<AITool>? tools,
@@ -238,7 +269,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
             chatClient = clientFactory(chatClient);
         }
 
-        return new ChatClientAgent(chatClient, agentOptions, services: services);
+        return WireClientHeaders(new ChatClientAgent(chatClient, agentOptions, services: services));
     }
 
     private static AIProjectClient CreateProjectClient(Uri endpoint, AuthenticationTokenProvider credential, AIProjectClientOptions? clientOptions = null)
