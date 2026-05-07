@@ -127,15 +127,21 @@ async def _suppress_already_consumed() -> AsyncIterator[None]:  # noqa: RUF029
     """
     try:
         yield
-    except RuntimeError:
-        # Documented benign cases: ``ResponseStream`` raises
-        # ``RuntimeError("Inner stream not available")`` on certain
-        # double-finalize paths, and async-iteration teardown of a
-        # workflow whose tasks were already cancelled can surface
-        # ``RuntimeError("Event loop is closed")`` here. Promoted from
-        # ``debug`` to ``warning`` so production deploys see the
-        # signal and a real bug doesn't masquerade as benign noise.
-        logger.warning("workflow stream finalize raised RuntimeError; cleanup skipped", exc_info=True)
+    except RuntimeError as exc:
+        # Narrow match: only the two documented benign messages produced
+        # by ``ResponseStream`` / async-iteration teardown should be
+        # swallowed. Anything else (executor-side ``RuntimeError`` from a
+        # ``raise RuntimeError(...)`` in user code, runner-context state
+        # error, checkpoint-store ``RuntimeError`` during the post-run
+        # flush, …) is a real bug and is escalated to the unexpected-error
+        # branch so it's logged with a full stack trace at ERROR. We
+        # still don't propagate (we're in an async-generator ``finally``
+        # during teardown) — see the docstring.
+        message = str(exc)
+        if "Inner stream not available" in message or "Event loop is closed" in message:
+            logger.warning("workflow stream finalize raised RuntimeError; cleanup skipped", exc_info=True)
+        else:
+            logger.exception("workflow stream finalize raised an unexpected RuntimeError; cleanup skipped")
     except Exception:
         # Anything else (checkpoint write failure, context-provider
         # error in a cleanup hook, executor-side bug, …) is a real
@@ -810,6 +816,12 @@ class AgentFrameworkHost:
         Shared between the blocking and streaming workflow paths so the
         restore step stays in lockstep across both — both must observe
         the same in-memory state when they apply the new input.
+
+        If ``storage.get_latest`` returns ``None`` (no prior checkpoint
+        recorded) the call is a benign no-op. A non-``None`` checkpoint
+        whose stored events are empty (stale or partially-written
+        ``checkpoint_id``) is logged at WARNING so operators can detect
+        the silent-state-loss case without sifting through INFO logs.
         """
         if storage is None:
             return
@@ -819,7 +831,15 @@ class AgentFrameworkHost:
         # The blocking restore call is a no-op invocation that just
         # rehydrates state; the streaming path drains the same
         # restoration stream below to achieve the same effect.
-        await workflow.run(checkpoint_id=latest.checkpoint_id, checkpoint_storage=storage)
+        result = await workflow.run(checkpoint_id=latest.checkpoint_id, checkpoint_storage=storage)
+        events = getattr(result, "events", None)
+        if events is not None and not events:
+            logger.warning(
+                "workflow checkpoint restore produced zero events "
+                "(workflow=%s checkpoint_id=%s) — state may not be rehydrated",
+                workflow.name,
+                latest.checkpoint_id,
+            )
 
     def _invoke_workflow_stream(self, request: ChannelRequest) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Bridge ``Workflow.run(stream=True)`` to a channel-facing ``ResponseStream``.
@@ -884,18 +904,31 @@ class AgentFrameworkHost:
         whose updates we don't care about — we just need the side-effect
         of rehydration. Drained inline so the new-input run that follows
         observes the restored state.
+
+        A latest checkpoint that drains to zero events (stale or
+        partially-written ``checkpoint_id``) is logged at WARNING so
+        operators can detect the silent-state-loss case, mirroring the
+        blocking helper.
         """
         if storage is None:
             return
         latest = await storage.get_latest(workflow_name=workflow.name)
         if latest is None:
             return
+        drained = 0
         async for _ in workflow.run(
             stream=True,
             checkpoint_id=latest.checkpoint_id,
             checkpoint_storage=storage,
         ):
-            pass
+            drained += 1
+        if drained == 0:
+            logger.warning(
+                "workflow checkpoint restore stream produced zero events "
+                "(workflow=%s checkpoint_id=%s) — state may not be rehydrated",
+                workflow.name,
+                latest.checkpoint_id,
+            )
 
     def _wrap_input(self, request: ChannelRequest) -> Message | list[Message]:
         """Promote ``request.input`` to ``Message``(s) carrying channel metadata.
