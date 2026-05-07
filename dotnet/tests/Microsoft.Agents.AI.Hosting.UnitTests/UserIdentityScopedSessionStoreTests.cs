@@ -65,6 +65,27 @@ public class UserIdentityScopedSessionStoreTests
         Assert.NotNull(store);
     }
 
+    /// <summary>
+    /// Verify that constructor throws ArgumentException when claimType is null.
+    /// </summary>
+    [Fact]
+    public void RequiresClaimType_NotNull() =>
+        Assert.Throws<ArgumentNullException>("claimType", () => new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, claimType: null!));
+
+    /// <summary>
+    /// Verify that constructor throws ArgumentException when claimType is empty.
+    /// </summary>
+    [Fact]
+    public void RequiresClaimType_NotEmpty() =>
+        Assert.Throws<ArgumentException>("claimType", () => new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, claimType: string.Empty));
+
+    /// <summary>
+    /// Verify that constructor throws ArgumentException when claimType is whitespace.
+    /// </summary>
+    [Fact]
+    public void RequiresClaimType_NotWhitespace() =>
+        Assert.Throws<ArgumentException>("claimType", () => new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object, claimType: "   "));
+
     #endregion
 
     #region GetSessionAsync Tests
@@ -86,7 +107,7 @@ public class UserIdentityScopedSessionStoreTests
         this._innerStoreMock.Verify(
             x => x.GetSessionAsync(
                 this._agentMock.Object,
-                $"{TestUserId}:{TestConversationId}",
+                $"{TestUserId}::{TestConversationId}",
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -111,7 +132,7 @@ public class UserIdentityScopedSessionStoreTests
         this._innerStoreMock.Verify(
             x => x.GetSessionAsync(
                 this._agentMock.Object,
-                $"{CustomClaimValue}:{TestConversationId}",
+                $"{CustomClaimValue}::{TestConversationId}",
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -152,11 +173,11 @@ public class UserIdentityScopedSessionStoreTests
         // Act - should not throw
         await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
 
-        // Assert - conversation ID should use null scope
+        // Assert - conversation ID should be passed through unmodified
         this._innerStoreMock.Verify(
             x => x.GetSessionAsync(
                 this._agentMock.Object,
-                $":{TestConversationId}",
+                TestConversationId,
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -200,7 +221,7 @@ public class UserIdentityScopedSessionStoreTests
         this._innerStoreMock.Verify(
             x => x.SaveSessionAsync(
                 this._agentMock.Object,
-                $"{TestUserId}:{TestConversationId}",
+                $"{TestUserId}::{TestConversationId}",
                 sessionToSave,
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -227,7 +248,7 @@ public class UserIdentityScopedSessionStoreTests
         this._innerStoreMock.Verify(
             x => x.SaveSessionAsync(
                 this._agentMock.Object,
-                $"{CustomClaimValue}:{TestConversationId}",
+                $"{CustomClaimValue}::{TestConversationId}",
                 sessionToSave,
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -271,11 +292,11 @@ public class UserIdentityScopedSessionStoreTests
         // Act - should not throw
         await store.SaveSessionAsync(this._agentMock.Object, TestConversationId, sessionToSave);
 
-        // Assert - conversation ID should use null scope
+        // Assert - conversation ID should be passed through unmodified
         this._innerStoreMock.Verify(
             x => x.SaveSessionAsync(
                 this._agentMock.Object,
-                $":{TestConversationId}",
+                TestConversationId,
                 sessionToSave,
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -319,11 +340,11 @@ public class UserIdentityScopedSessionStoreTests
         // Act - should not throw
         await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
 
-        // Assert
+        // Assert - conversation ID should be passed through unmodified
         this._innerStoreMock.Verify(
             x => x.GetSessionAsync(
                 this._agentMock.Object,
-                $":{TestConversationId}",
+                TestConversationId,
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -364,9 +385,78 @@ public class UserIdentityScopedSessionStoreTests
         await store2.GetSessionAsync(this._agentMock.Object, TestConversationId);
 
         // Assert
-        Assert.Equal($"{User1}:{TestConversationId}", capturedConversationId1);
-        Assert.Equal($"{User2}:{TestConversationId}", capturedConversationId2);
+        Assert.Equal($"{User1}::{TestConversationId}", capturedConversationId1);
+        Assert.Equal($"{User2}::{TestConversationId}", capturedConversationId2);
         Assert.NotEqual(capturedConversationId1, capturedConversationId2);
+    }
+
+    /// <summary>
+    /// Verify that colons in user claim values are escaped.
+    /// </summary>
+    [Fact]
+    public async Task EscapesColonsInUserClaimValueAsync()
+    {
+        // Arrange
+        const string UserIdWithColon = "user:with:colons";
+        this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, UserIdWithColon);
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+
+        // Act
+        await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
+
+        // Assert - colons should be escaped as \:
+        this._innerStoreMock.Verify(
+            x => x.GetSessionAsync(
+                this._agentMock.Object,
+                $"user\\:with\\:colons::{TestConversationId}",
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that backslashes in user claim values are escaped.
+    /// </summary>
+    [Fact]
+    public async Task EscapesBackslashesInUserClaimValueAsync()
+    {
+        // Arrange
+        const string UserIdWithBackslash = @"domain\user";
+        this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, UserIdWithBackslash);
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+
+        // Act
+        await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
+
+        // Assert - backslashes should be escaped as \\
+        this._innerStoreMock.Verify(
+            x => x.GetSessionAsync(
+                this._agentMock.Object,
+                $"domain\\\\user::{TestConversationId}",
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that both backslashes and colons in user claim values are escaped correctly.
+    /// </summary>
+    [Fact]
+    public async Task EscapesBothBackslashesAndColonsInUserClaimValueAsync()
+    {
+        // Arrange
+        const string UserIdWithBoth = @"domain\user:role";
+        this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, UserIdWithBoth);
+        var store = new UserIdentityScopedSessionStore(this._innerStoreMock.Object, this._httpContextAccessorMock.Object);
+
+        // Act
+        await store.GetSessionAsync(this._agentMock.Object, TestConversationId);
+
+        // Assert - backslashes escaped first, then colons
+        this._innerStoreMock.Verify(
+            x => x.GetSessionAsync(
+                this._agentMock.Object,
+                $"domain\\\\user\\:role::{TestConversationId}",
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     #endregion

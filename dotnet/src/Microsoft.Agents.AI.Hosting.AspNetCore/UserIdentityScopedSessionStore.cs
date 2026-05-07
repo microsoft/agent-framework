@@ -6,6 +6,7 @@ using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting;
 
@@ -36,7 +37,7 @@ public class UserIdentityScopedSessionStore : DelegatingAgentSessionStore
     /// </param>
     /// <param name="strict">
     /// If <see langword="true"/>, an exception is thrown when the specified claim is not found.
-    /// If <see langword="false"/>, operations proceed without scoping when the claim is absent.
+    /// If <see langword="false"/>, the conversation ID is passed through unmodified when the claim is absent.
     /// </param>
     public UserIdentityScopedSessionStore(AgentSessionStore innerStore,
                                           IHttpContextAccessor? contextAccessor,
@@ -44,7 +45,7 @@ public class UserIdentityScopedSessionStore : DelegatingAgentSessionStore
                                           bool strict = true) : base(innerStore)
     {
         this._httpContextAccessor = contextAccessor;
-        this._claimType = claimType;
+        this._claimType = Throw.IfNullOrWhitespace(claimType);
         this._strict = strict;
     }
 
@@ -64,7 +65,18 @@ public class UserIdentityScopedSessionStore : DelegatingAgentSessionStore
 
     private string? ScopeId => this.GetScopeFromIdentity();
 
-    private string GetScopedConversationId(string bareConversationId) => $"{this.ScopeId}:{bareConversationId}";
+    private static string EscapeScopeId(string scopeId) => scopeId.Replace("\\", "\\\\").Replace(":", "\\:");
+
+    private string GetScopedConversationId(string bareConversationId)
+    {
+        string? scopeId = this.ScopeId;
+        if (scopeId == null)
+        {
+            return bareConversationId;
+        }
+
+        return $"{EscapeScopeId(scopeId)}::{bareConversationId}";
+    }
 
     /// <inheritdoc />
     public override ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
