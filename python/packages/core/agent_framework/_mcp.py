@@ -661,8 +661,8 @@ class MCPTool:
                 # is unavailable so MCP-internal CancelledErrors cannot be distinguished from
                 # caller-driven cancellation; they are wrapped as ToolException in that case.
                 if isinstance(ex, asyncio.CancelledError) and sys.version_info >= (3, 11):
-                    _task = asyncio.current_task()
-                    if _task is not None and _task.cancelling() > 0:
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling() > 0:
                         await self._safe_close_exit_stack()
                         raise
                 await self._safe_close_exit_stack()
@@ -707,8 +707,8 @@ class MCPTool:
                 )
             except (Exception, asyncio.CancelledError) as ex:
                 if isinstance(ex, asyncio.CancelledError) and sys.version_info >= (3, 11):
-                    _task = asyncio.current_task()
-                    if _task is not None and _task.cancelling() > 0:
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling() > 0:
                         await self._safe_close_exit_stack()
                         raise
                 await self._safe_close_exit_stack()
@@ -723,8 +723,8 @@ class MCPTool:
                 await session.initialize()
             except (Exception, asyncio.CancelledError) as ex:
                 if isinstance(ex, asyncio.CancelledError) and sys.version_info >= (3, 11):
-                    _task = asyncio.current_task()
-                    if _task is not None and _task.cancelling() > 0:
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling() > 0:
                         await self._safe_close_exit_stack()
                         raise
                 await self._safe_close_exit_stack()

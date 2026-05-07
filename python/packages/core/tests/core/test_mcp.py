@@ -2,9 +2,9 @@
 # type: ignore[reportPrivateUsage]
 import asyncio
 import json
-import sys
 import logging
 import os
+import sys
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -2266,7 +2266,6 @@ async def test_connect_cleanup_on_initialization_failure():
         tool._exit_stack.aclose.assert_called_once()
 
 
-
 async def test_connect_cancelled_error_during_transport_creation_raises_tool_exception():
     """Test that CancelledError from transport creation is wrapped in ToolException."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
@@ -2391,13 +2390,15 @@ async def test_connect_genuine_cancellation_during_initialize_propagates():
     mock_cancelled_task = Mock()
     mock_cancelled_task.cancelling.return_value = 1
 
-    with patch("asyncio.current_task", return_value=mock_cancelled_task):
-        with patch("mcp.client.session.ClientSession") as mock_session_class:
-            mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+    with (
+        patch("asyncio.current_task", return_value=mock_cancelled_task),
+        patch("mcp.client.session.ClientSession") as mock_session_class,
+    ):
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            with pytest.raises(asyncio.CancelledError):
-                await tool.connect()
+        with pytest.raises(asyncio.CancelledError):
+            await tool.connect()
 
     tool._exit_stack.aclose.assert_called_once()
 
