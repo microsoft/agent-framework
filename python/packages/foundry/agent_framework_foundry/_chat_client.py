@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -46,9 +47,9 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import ChatAndFunctionMiddlewareTypes, ToolTypes
@@ -131,6 +132,23 @@ class RawFoundryChatClient(  # type: ignore[misc]
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = False  # type: ignore[reportIncompatibleVariableOverride, misc]
 
+    @staticmethod
+    def _close_project_client_after_init_error(project_client: AIProjectClient) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(project_client.close())
+        else:
+            close_task = loop.create_task(project_client.close())
+            close_task.add_done_callback(RawFoundryChatClient._log_project_client_close_failure)
+
+    @staticmethod
+    def _log_project_client_close_failure(close_task: asyncio.Task[None]) -> None:
+        try:
+            close_task.result()
+        except Exception:
+            logger.warning("Failed to close Foundry project client after initialization error.", exc_info=True)
+
     def __init__(
         self,
         *,
@@ -187,7 +205,9 @@ class RawFoundryChatClient(  # type: ignore[misc]
                 "Either 'project_endpoint' or 'project_client' is required. "
                 "Set project_endpoint via parameter or 'FOUNDRY_PROJECT_ENDPOINT' environment variable."
             )
-        if not project_client:
+        self._should_close_client = False
+        project_client_created = False
+        if project_client is None:
             if not project_endpoint:
                 raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
@@ -204,21 +224,49 @@ class RawFoundryChatClient(  # type: ignore[misc]
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             project_client = AIProjectClient(**project_client_kwargs)
+            project_client_created = True
 
         openai_kwargs: dict[str, Any] = {}
         if default_headers:
             openai_kwargs["default_headers"] = default_headers
 
-        super().__init__(
-            model=resolved_model,
-            async_client=project_client.get_openai_client(**openai_kwargs),
-            default_headers=default_headers,
-            instruction_role=instruction_role,
-            compaction_strategy=compaction_strategy,
-            tokenizer=tokenizer,
-            additional_properties=additional_properties,
-        )
+        try:
+            super().__init__(
+                model=resolved_model,
+                async_client=project_client.get_openai_client(**openai_kwargs),
+                default_headers=default_headers,
+                instruction_role=instruction_role,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                additional_properties=additional_properties,
+            )
+        except Exception:
+            if project_client_created:
+                try:
+                    self._close_project_client_after_init_error(project_client)
+                except Exception:
+                    logger.warning("Failed to close Foundry project client after initialization error.", exc_info=True)
+            raise
+        self._should_close_client = project_client_created
         self.project_client = project_client
+
+    async def close(self) -> None:
+        """Close the project client if we created it."""
+        if self._should_close_client:
+            await self.project_client.close()
+
+    async def __aenter__(self) -> Self:
+        """Enter the async context manager."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """Close the project client on exit (only when owned)."""
+        await self.close()
 
     @override
     def _check_model_presence(self, options: dict[str, Any]) -> None:
