@@ -136,8 +136,9 @@ class TemperatureConverterSkill(ClassSkill):
         return dedent("""\
             Use this skill when the user asks to convert temperatures.
 
-            1. Review the temperature-conversion-formulas resource for the correct formula.
-            2. Use the convert-temperature script, passing the value, source scale, and target scale.
+            1. Read the temperature-conversion-formulas resource to find the factor and offset
+               for the requested conversion.
+            2. Use the convert-temperature script, passing value, factor, and offset.
             3. Present the result clearly with both temperature scales.
         """)
 
@@ -147,38 +148,30 @@ class TemperatureConverterSkill(ClassSkill):
         return dedent("""\
             # Temperature Conversion Formulas
 
-            | From        | To          | Formula                   |
-            |-------------|-------------|---------------------------|
-            | Fahrenheit  | Celsius     | °C = (°F − 32) × 5/9     |
-            | Celsius     | Fahrenheit  | °F = (°C × 9/5) + 32     |
-            | Celsius     | Kelvin      | K = °C + 273.15           |
-            | Kelvin      | Celsius     | °C = K − 273.15           |
+            Formula: **result = value × factor + offset**
+
+            | From        | To          | Factor   | Offset    |
+            |-------------|-------------|----------|-----------|
+            | Fahrenheit  | Celsius     | 0.555556 | -17.7778  |
+            | Celsius     | Fahrenheit  | 1.8      | 32        |
+            | Celsius     | Kelvin      | 1        | 273.15    |
+            | Kelvin      | Celsius     | 1        | -273.15   |
         """)
 
     @ClassSkill.script(name="convert-temperature")
-    def convert_temperature(self, value: float, source: str, target: str) -> str:
-        """Convert a temperature value between scales.
+    def convert_temperature(self, value: float, factor: float, offset: float = 0) -> str:
+        """Convert a temperature value using factor and offset from the formulas resource.
 
         Args:
             value: The numeric temperature value to convert.
-            source: Source temperature scale (fahrenheit, celsius, kelvin).
-            target: Target temperature scale (fahrenheit, celsius, kelvin).
+            factor: Conversion factor from the formulas resource.
+            offset: Offset to add after multiplying (default 0).
 
         Returns:
             JSON string with the conversion result.
         """
-        src, tgt = source.lower(), target.lower()
-        if (src, tgt) == ("fahrenheit", "celsius"):
-            result = round((value - 32) * 5.0 / 9.0, 2)
-        elif (src, tgt) == ("celsius", "fahrenheit"):
-            result = round(value * 9.0 / 5.0 + 32, 2)
-        elif (src, tgt) == ("celsius", "kelvin"):
-            result = round(value + 273.15, 2)
-        elif (src, tgt) == ("kelvin", "celsius"):
-            result = round(value - 273.15, 2)
-        else:
-            raise ValueError(f"Unsupported conversion: {source} → {target}")
-        return json.dumps({"value": value, "from": source, "to": target, "result": result})
+        result = round(value * factor + offset, 4)
+        return json.dumps({"value": value, "factor": factor, "offset": offset, "result": result})
 
 
 # ---------------------------------------------------------------------------
