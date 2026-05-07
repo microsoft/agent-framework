@@ -1107,9 +1107,7 @@ class ClassSkill(Skill, ABC):
 
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
             if isinstance(f, (property, classmethod, staticmethod)):
-                raise TypeError(
-                    "@ClassSkill.script must be applied before @property, @classmethod, or @staticmethod."
-                )
+                raise TypeError("@ClassSkill.script must be applied before @property, @classmethod, or @staticmethod.")
             if name is not None:
                 _validate_member_name(name, "script")
             f._skill_script_marker = {  # type: ignore[attr-defined]
