@@ -83,6 +83,7 @@ python/
 ### Storage & Memory
 - [mem0](packages/mem0/AGENTS.md) - Mem0 memory integration
 - [redis](packages/redis/AGENTS.md) - Redis storage
+- [valkey](packages/valkey/AGENTS.md) - Valkey storage and vector search
 
 ### Infrastructure
 - [copilotstudio](packages/copilotstudio/AGENTS.md) - Microsoft Copilot Studio
