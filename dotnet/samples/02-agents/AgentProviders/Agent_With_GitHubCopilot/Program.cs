@@ -12,8 +12,8 @@ static Task<PermissionRequestResult> PromptPermission(PermissionRequest request,
     Console.Write("Approve? (y/n): ");
 
     string? input = Console.ReadLine()?.Trim().ToUpperInvariant();
-    PermissionRequestResultKind kind = input is "Y" or "YES" 
-                                     ? PermissionRequestResultKind.Approved 
+    PermissionRequestResultKind kind = input is "Y" or "YES"
+                                     ? PermissionRequestResultKind.Approved
                                      : PermissionRequestResultKind.Rejected;
 
     return Task.FromResult(new PermissionRequestResult { Kind = kind });
