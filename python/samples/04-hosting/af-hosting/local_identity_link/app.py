@@ -56,7 +56,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Annotated, Any, Sequence
+from typing import Annotated, Any
 
 from agent_framework import Agent, FileHistoryProvider, tool
 from agent_framework_foundry import FoundryChatClient
@@ -68,12 +68,12 @@ from agent_framework_hosting import (
     ChannelRequest,
     ChannelSession,
 )
+from agent_framework_hosting_activity_protocol import ActivityProtocolChannel
 from agent_framework_hosting_entra import (
     EntraIdentityLinkChannel,
     EntraIdentityStore,
     entra_isolation_key,
 )
-from agent_framework_hosting_activity_protocol import ActivityProtocolChannel
 from agent_framework_hosting_invocations import InvocationsChannel
 from agent_framework_hosting_responses import ResponsesChannel
 from agent_framework_hosting_telegram import TelegramChannel
@@ -140,15 +140,23 @@ def make_activity_hook() -> Any:
 
 
 def make_telegram_hook(store: EntraIdentityStore) -> Any:
-    """If the Telegram chat id is linked, swap to ``entra:<oid>`` for history."""
+    """Resolve identity then bump reasoning effort.
+
+    The reasoning bump applies to **every** Telegram request — linked or
+    not — so the high-effort preset isn't silently lost the moment a
+    user runs ``/link`` (which is the headline feature of this sample).
+    Identity resolution and option mutation are separate concerns: we
+    swap the session if a link exists, then upgrade the options on the
+    way out either way.
+    """
 
     def _hook(request: ChannelRequest, **_: object) -> ChannelRequest:
         chat_id = request.attributes.get("chat_id")
         if chat_id is not None:
             linked = store.lookup(f"telegram:{chat_id}")
             if linked is not None:
-                return _replace_session(request, linked)
-        # Bump reasoning effort regardless of identity.
+                request = _replace_session(request, linked)
+        # Bump reasoning effort regardless of identity (linked or not).
         options = dict(request.options or {})
         options["reasoning"] = {"effort": "high", "summary": "detailed"}
         return replace(request, options=options)
@@ -165,6 +173,23 @@ def make_responses_hook(store: EntraIdentityStore) -> Any:
       2. ``safety_identifier`` (or legacy ``user``) looked up in the link
          store as ``responses:<id>``.
       3. Fallback ``responses:<safety_id>``.
+
+    .. WARNING::
+        DEV ONLY. The ``entra_oid`` shortcut treats a client-supplied
+        identity claim as authoritative with **no token verification**:
+        any Responses caller can claim to be any user and read that
+        user's history bucket. Production deployments must either:
+
+        - Drop this shortcut entirely and rely on ``safety_identifier``
+          + the link store (i.e. force every caller through the OAuth
+          identity-link flow), or
+        - Add a JWT validator that verifies an inbound Authorization
+          header, extracts the verified ``oid`` claim, and feeds *that*
+          into ``entra_isolation_key`` — never trust a body field for
+          identity in a multi-tenant deployment.
+
+        This shortcut exists only so the sample's smoke tests can pin
+        an isolation key without spinning up an Entra app registration.
     """
 
     def _hook(
@@ -180,6 +205,8 @@ def make_responses_hook(store: EntraIdentityStore) -> Any:
         body = protocol_request or {}
         metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
 
+        # WARNING (DEV ONLY): client-supplied entra_oid is trusted with
+        # NO verification. Production code must verify a JWT instead.
         explicit_oid = body.get("entra_oid") or metadata.get("entra_oid")
         safety_id = body.get("safety_identifier") or body.get("user") or "anonymous"
 
@@ -236,10 +263,20 @@ def make_commands(
             await ctx.reply(
                 "Identity linking is not configured on this host. "
                 "Set ENTRA_TENANT_ID, ENTRA_CLIENT_ID, and either "
-                "ENTRA_CLIENT_SECRET or ENTRA_CERT_PATH."
+                "ENTRA_CLIENT_SECRET or ENTRA_CERTIFICATE_PATH."
             )
             return
         chat_id = ctx.request.attributes.get("chat_id")
+        if chat_id is None:
+            # Without a chat_id we'd format "telegram:None" into the
+            # authorize URL, OAuth would complete, and the store would
+            # gain a poisoned `telegram:None` entry that any later
+            # chat_id-less message would collapse onto. Refuse instead.
+            await ctx.reply(
+                "Couldn't determine your Telegram chat id; please retry "
+                "from a 1:1 chat with the bot."
+            )
+            return
         url = linker.authorize_url_for("telegram", str(chat_id))
         await ctx.reply("Open this link to bind this chat to your Microsoft account:\n" + url)
 
@@ -301,8 +338,8 @@ def build_host() -> AgentFrameworkHost:
     tenant_id = os.environ.get("ENTRA_TENANT_ID")
     client_id = os.environ.get("ENTRA_CLIENT_ID")
     client_secret = os.environ.get("ENTRA_CLIENT_SECRET")
-    cert_path = os.environ.get("ENTRA_CERT_PATH")
-    cert_password_env = os.environ.get("ENTRA_CERT_PASSWORD")
+    cert_path = os.environ.get("ENTRA_CERTIFICATE_PATH")
+    cert_password_env = os.environ.get("ENTRA_CERTIFICATE_PASSWORD")
     public_base_url = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000")
 
     linker: EntraIdentityLinkChannel | None = None
@@ -320,7 +357,7 @@ def build_host() -> AgentFrameworkHost:
     host_ref: dict[str, AgentFrameworkHost] = {}
     linker_ref: dict[str, EntraIdentityLinkChannel | None] = {"linker": linker}
 
-    channels: Sequence[Channel] = [
+    channels: list[Channel] = [
         ResponsesChannel(run_hook=make_responses_hook(store)),
         InvocationsChannel(),
         ActivityProtocolChannel(
