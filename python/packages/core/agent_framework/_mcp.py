@@ -643,6 +643,18 @@ class MCPTool:
         except asyncio.CancelledError:
             logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
 
+
+    async def _close_and_check_cancelled(self, ex: BaseException) -> bool:
+        """Close the exit stack and return True if *ex* is a genuine task cancellation.
+
+        Callers should immediately re-raise when this returns True::
+
+            if await self._close_and_check_cancelled(ex):
+                raise
+        """
+        await self._safe_close_exit_stack()
+        return _should_propagate_cancelled_error(ex)
+
     async def connect(self, *, reset: bool = False) -> None:
         if self._is_lifecycle_owner_task():
             await self._connect_on_owner(reset=reset)
@@ -676,10 +688,8 @@ class MCPTool:
                 # instead of wrapping it in ToolException. On Python < 3.11, task.cancelling()
                 # is unavailable so MCP-internal CancelledErrors cannot be distinguished from
                 # caller-driven cancellation; they are wrapped as ToolException in that case.
-                if _should_propagate_cancelled_error(ex):
-                    await self._safe_close_exit_stack()
+                if await self._close_and_check_cancelled(ex):
                     raise
-                await self._safe_close_exit_stack()
                 command = getattr(self, "command", None)
                 if command:
                     error_msg = f"Failed to start MCP server '{command}': {ex}"
@@ -720,10 +730,8 @@ class MCPTool:
                     )
                 )
             except (Exception, asyncio.CancelledError) as ex:
-                if _should_propagate_cancelled_error(ex):
-                    await self._safe_close_exit_stack()
+                if await self._close_and_check_cancelled(ex):
                     raise
-                await self._safe_close_exit_stack()
                 session_error_msg = f"Failed to create MCP session: {ex}"
                 if isinstance(ex, asyncio.CancelledError):
                     logger.debug(session_error_msg, exc_info=True)
@@ -734,10 +742,8 @@ class MCPTool:
             try:
                 await session.initialize()
             except (Exception, asyncio.CancelledError) as ex:
-                if _should_propagate_cancelled_error(ex):
-                    await self._safe_close_exit_stack()
+                if await self._close_and_check_cancelled(ex):
                     raise
-                await self._safe_close_exit_stack()
                 # Provide context about initialization failure
                 command = getattr(self, "command", None)
                 if command:
