@@ -9,6 +9,9 @@ helpers are excluded from coverage because they require a live bot token.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -207,3 +210,147 @@ class TestPushAndCommand:
             )
         assert r.status_code == 200
         assert captured and captured[0].request.operation == "command.invoke"
+
+
+# --------------------------------------------------------------------------- #
+# Per-chat serial ordering                                                    #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+class TestPerChatOrdering:
+    async def test_updates_for_same_chat_run_serially(self) -> None:
+        """Two updates for the same chat must process in arrival order."""
+        ch, _ = _make_telegram()
+        order: list[int] = []
+        slow_event = asyncio.Event()
+
+        async def fake_process(update: Mapping[str, Any]) -> None:
+            uid = update.get("update_id")
+            assert isinstance(uid, int)
+            if uid == 1:
+                # Block the first update so the second is queued behind it.
+                await slow_event.wait()
+            order.append(uid)
+
+        ch._process_update = fake_process  # type: ignore[method-assign]
+
+        ch._enqueue_update({"update_id": 1, "message": {"chat": {"id": 100}, "text": "first"}})
+        ch._enqueue_update({"update_id": 2, "message": {"chat": {"id": 100}, "text": "second"}})
+
+        # Let the worker start the first update.
+        await asyncio.sleep(0)
+        assert order == []  # blocked on slow_event
+        slow_event.set()
+        # Drain.
+        worker = ch._chat_workers[100]
+        # Wait for the queue to empty.
+        await ch._chat_queues[100].join()
+        # Cleanup
+        worker.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker
+
+        assert order == [1, 2]
+
+    async def test_updates_for_different_chats_run_in_parallel(self) -> None:
+        """Different chats get separate workers and can interleave freely."""
+        ch, _ = _make_telegram()
+        started: list[int] = []
+        gate_a = asyncio.Event()
+
+        async def fake_process(update: Mapping[str, Any]) -> None:
+            uid = update.get("update_id")
+            assert isinstance(uid, int)
+            started.append(uid)
+            if uid == 1:
+                await gate_a.wait()
+
+        ch._process_update = fake_process  # type: ignore[method-assign]
+
+        ch._enqueue_update({"update_id": 1, "message": {"chat": {"id": 1}, "text": "a"}})
+        ch._enqueue_update({"update_id": 2, "message": {"chat": {"id": 2}, "text": "b"}})
+
+        # Both should be admitted into their respective workers despite
+        # update 1 being blocked.
+        await asyncio.sleep(0)
+        # Update 2 finishes; update 1 still blocked.
+        assert 2 in started
+        gate_a.set()
+        for cid in (1, 2):
+            await ch._chat_queues[cid].join()
+        for w in ch._chat_workers.values():
+            w.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await w
+
+
+# --------------------------------------------------------------------------- #
+# Webhook ack-before-run + shutdown drains workers                            #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+class TestWebhookAckBeforeRun:
+    async def test_webhook_returns_200_before_agent_completes(self) -> None:
+        """The webhook must ack before the agent runs, to dodge Telegram's 60s redelivery."""
+        ch, _ = _make_telegram()
+        from starlette.requests import Request
+
+        agent_started = asyncio.Event()
+        agent_release = asyncio.Event()
+
+        async def fake_process(update: Mapping[str, Any]) -> None:
+            agent_started.set()
+            await agent_release.wait()
+
+        ch._process_update = fake_process  # type: ignore[method-assign]
+
+        async def receive() -> Any:
+            payload = b'{"update_id":1,"message":{"chat":{"id":42},"text":"hi"}}'
+            return {"type": "http.request", "body": payload, "more_body": False}
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/telegram/webhook",
+            "headers": [(b"x-telegram-bot-api-secret-token", b"s3cr3t")],
+            "query_string": b"",
+        }
+        request = Request(scope, receive=receive)
+
+        # Drive the webhook handler. Even though the agent won't complete
+        # (gate_a still cleared) the webhook must still 200 promptly.
+        resp = await ch._handle(request)
+        assert resp.status_code == 200
+        # The agent task is in flight but not finished — proves ack came first.
+        await asyncio.wait_for(agent_started.wait(), timeout=1.0)
+        assert not agent_release.is_set()
+
+        # Cleanup: release the agent and drain.
+        agent_release.set()
+        await ch._chat_queues[42].join()
+        for w in list(ch._chat_workers.values()):
+            w.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await w
+
+
+@pytest.mark.asyncio
+class TestShutdownDrainsWorkers:
+    async def test_shutdown_cancels_in_flight_chat_workers(self) -> None:
+        """`_on_shutdown` must drain per-chat workers, not leak them."""
+        ch, _ = _make_telegram()
+        forever = asyncio.Event()
+
+        async def stuck(update: Mapping[str, Any]) -> None:
+            await forever.wait()
+
+        ch._process_update = stuck  # type: ignore[method-assign]
+        ch._enqueue_update({"update_id": 9, "message": {"chat": {"id": 1}, "text": "a"}})
+        await asyncio.sleep(0)
+        assert ch._chat_workers and ch._update_tasks
+
+        await ch._on_shutdown()
+        assert not ch._chat_workers
+        assert not ch._update_tasks

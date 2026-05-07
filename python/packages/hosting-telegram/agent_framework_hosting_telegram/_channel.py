@@ -180,7 +180,15 @@ class TelegramChannel:
         self._ctx: ChannelContext | None = None
         self._http: httpx.AsyncClient | None = None
         self._poll_task: asyncio.Task[None] | None = None
+        # Tracks all in-flight tasks (per-chat workers + webhook-spawned
+        # dispatcher tasks). Drained on shutdown.
         self._update_tasks: set[asyncio.Task[None]] = set()
+        # Per-chat serial workers preserve in-chat ordering: each
+        # chat_id has its own asyncio.Queue + worker task. Updates for
+        # different chats run in parallel; updates for the same chat
+        # run strictly in arrival order.
+        self._chat_queues: dict[int, asyncio.Queue[Mapping[str, Any]]] = {}
+        self._chat_workers: dict[int, asyncio.Task[None]] = {}
 
     def contribute(self, context: ChannelContext) -> ChannelContribution:
         """Register the webhook route (only in ``webhook`` transport) plus lifecycle hooks.
@@ -240,7 +248,18 @@ class TelegramChannel:
             logger.info("Telegram polling started (long-poll timeout=%ss)", self._polling_timeout)
 
     async def _on_shutdown(self) -> None:
-        """Stop the polling task, drop the webhook registration, close the HTTP client.
+        """Stop the polling task, drain in-flight workers, drop the webhook, close HTTP.
+
+        Drain order:
+        1. Cancel the poll task so no new updates are admitted.
+        2. Cancel + await per-chat worker tasks so any currently-running
+           agent invocations can finish before we yank the HTTP client
+           out from under them.
+        3. Cancel + await any webhook-dispatched tasks tracked in
+           ``_update_tasks`` (the webhook handler returns 200 immediately
+           and runs the agent in a background task, which the previous
+           shutdown ignored entirely).
+        4. Best-effort `deleteWebhook` and HTTP client close.
 
         Webhook teardown is best-effort — failures (e.g. revoked token at
         shutdown) are logged but never raised so app shutdown can complete.
@@ -250,6 +269,22 @@ class TelegramChannel:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._poll_task
             self._poll_task = None
+        # Cancel per-chat workers; their queues are no longer being fed.
+        for worker in list(self._chat_workers.values()):
+            worker.cancel()
+        for worker in list(self._chat_workers.values()):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await worker
+        self._chat_workers.clear()
+        self._chat_queues.clear()
+        # Webhook-spawned dispatcher tasks (the ack-before-run path) live
+        # in _update_tasks alongside any leftover poll-spawned tasks.
+        for task in list(self._update_tasks):
+            task.cancel()
+        for task in list(self._update_tasks):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        self._update_tasks.clear()
         if self._http is not None:
             if self._transport == "webhook":
                 try:
@@ -264,11 +299,14 @@ class TelegramChannel:
         """Long-poll ``getUpdates`` until cancelled.
 
         Each batch advances the ``offset`` by the highest seen
-        ``update_id`` so processed updates aren't redelivered. Updates are
-        dispatched to per-update tasks so a slow agent invocation cannot
-        block the next poll iteration; ordering inside a chat is still
-        preserved by Telegram-side queueing. Transient errors back off for
-        2 seconds before retrying.
+        ``update_id`` so processed updates aren't redelivered. Updates
+        are routed to per-chat serial workers via :meth:`_enqueue_update`
+        — this preserves in-chat ordering (Telegram only guarantees
+        ordering up to ``getUpdates``; the previous fan-out into one
+        task per update broke that guarantee for adjacent updates).
+        Different chats still process in parallel because each has its
+        own worker. Transient errors back off for 2 seconds before
+        retrying.
         """
         if self._http is None:  # pragma: no cover - guarded by lifecycle
             raise RuntimeError("telegram channel not started")
@@ -292,17 +330,79 @@ class TelegramChannel:
                     update_id = update.get("update_id")
                     if isinstance(update_id, int):
                         offset = update_id + 1
-                    # Each update is processed in its own task so a slow agent
-                    # call doesn't stall the next poll. Order within a chat is
-                    # still preserved by Telegram-side queueing.
-                    task = asyncio.create_task(self._safe_process_update(update))
-                    self._update_tasks.add(task)
-                    task.add_done_callback(self._update_tasks.discard)
+                    self._enqueue_update(update)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("Telegram polling iteration failed; retrying in 2s")
                 await asyncio.sleep(2.0)
+
+    def _chat_id_for_update(self, update: Mapping[str, Any]) -> int | None:
+        """Best-effort extraction of the chat id from any supported update shape."""
+        message = update.get("message") or update.get("edited_message")
+        if isinstance(message, Mapping):
+            chat = message.get("chat")
+            if isinstance(chat, Mapping):
+                cid = chat.get("id")
+                if isinstance(cid, int):
+                    return cid
+        callback = update.get("callback_query")
+        if isinstance(callback, Mapping):
+            inner = callback.get("message")
+            if isinstance(inner, Mapping):
+                chat = inner.get("chat")
+                if isinstance(chat, Mapping):
+                    cid = chat.get("id")
+                    if isinstance(cid, int):
+                        return cid
+        return None
+
+    def _enqueue_update(self, update: Mapping[str, Any]) -> None:
+        """Route an update to its per-chat serial worker.
+
+        Updates with no resolvable chat_id (malformed payloads, unknown
+        update types) fall back to a one-shot dispatcher task so they
+        can't deadlock the main loop.
+        """
+        chat_id = self._chat_id_for_update(update)
+        if chat_id is None:
+            # No chat to serialise on — fire and forget, but still track
+            # so shutdown can drain.
+            task = asyncio.create_task(self._safe_process_update(update))
+            self._update_tasks.add(task)
+            task.add_done_callback(self._update_tasks.discard)
+            return
+        queue = self._chat_queues.get(chat_id)
+        if queue is None:
+            queue = asyncio.Queue()
+            self._chat_queues[chat_id] = queue
+            worker = asyncio.create_task(
+                self._chat_worker(chat_id, queue),
+                name=f"telegram-chat-worker-{chat_id}",
+            )
+            self._chat_workers[chat_id] = worker
+            # Ensure shutdown can drain this worker too.
+            self._update_tasks.add(worker)
+            worker.add_done_callback(self._update_tasks.discard)
+        queue.put_nowait(update)
+
+    async def _chat_worker(self, chat_id: int, queue: asyncio.Queue[Mapping[str, Any]]) -> None:
+        """Drain a single chat's queue serially.
+
+        Per-chat ordering is preserved by processing one update at a
+        time. Exceptions in :meth:`_safe_process_update` are already
+        swallowed, so the worker keeps running. The worker is cancelled
+        on channel shutdown.
+        """
+        try:
+            while True:
+                update = await queue.get()
+                try:
+                    await self._safe_process_update(update)
+                finally:
+                    queue.task_done()
+        except asyncio.CancelledError:
+            raise
 
     async def _safe_process_update(self, update: Mapping[str, Any]) -> None:
         """Wrap :meth:`_process_update` so a failure on one update never escapes a task."""
@@ -320,6 +420,15 @@ class TelegramChannel:
         ``X-Telegram-Bot-Api-Secret-Token`` header on every webhook delivery;
         we reject mismatches so leaked URLs alone aren't enough to inject
         traffic.
+
+        **Acks before running the agent.** Telegram redelivers any update
+        the webhook doesn't 200 within ~60 seconds, so a streamed agent
+        reply that runs longer than that would otherwise trigger a
+        retry storm and duplicate replies. We enqueue onto the
+        per-chat serial worker (preserving ordering with polling-mode)
+        and immediately return 200; the actual processing happens in
+        the worker task tracked by ``_update_tasks`` and drained on
+        shutdown.
         """
         if self._secret_token is not None:
             received = request.headers.get("x-telegram-bot-api-secret-token")
@@ -327,8 +436,17 @@ class TelegramChannel:
                 logger.warning("Telegram webhook secret token mismatch — rejecting update")
                 return JSONResponse({"ok": False, "error": "invalid secret"}, status_code=401)
 
-        update = await request.json()
-        await self._safe_process_update(update)
+        try:
+            update = await request.json()
+        except Exception:
+            logger.warning("Telegram webhook received malformed JSON; returning 400")
+            return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+        if not isinstance(update, Mapping):
+            logger.warning("Telegram webhook received non-object payload; returning 400")
+            return JSONResponse({"ok": False, "error": "invalid payload"}, status_code=400)
+        # Ack immediately, route through per-chat worker so ordering with
+        # polling-mode is identical and shutdown drains all in-flight work.
+        self._enqueue_update(update)
         return JSONResponse({"ok": True})
 
     async def _process_update(self, update: Mapping[str, Any]) -> None:
