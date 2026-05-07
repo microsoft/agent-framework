@@ -1477,6 +1477,11 @@ async def _to_outputs(
                     await approval_storage.save_approval_request(approval_request_id, content)
                     request_saved = True
             yield event
+        if approval_storage is not None and not request_saved:
+            logger.warning(
+                "Approval request was not saved to approval storage because the approval request ID "
+                "could not be extracted from the stream event."
+            )
     else:
         # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
         logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
