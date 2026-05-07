@@ -149,6 +149,34 @@ def test_anthropic_client_init_auto_create_client(
     assert client.model == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
+def test_anthropic_client_init_with_base_url(
+    anthropic_unit_test_env: dict[str, str],
+) -> None:
+    """Test AnthropicClient accepts a base_url and passes it to the underlying AsyncAnthropic client."""
+    custom_url = "https://custom-anthropic-endpoint.com"
+    client = AnthropicClient(
+        api_key=anthropic_unit_test_env["ANTHROPIC_API_KEY"],
+        model=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"],
+        base_url=custom_url,
+    )
+
+    assert custom_url in str(client.anthropic_client.base_url)
+
+
+def test_raw_anthropic_client_init_with_base_url(
+    anthropic_unit_test_env: dict[str, str],
+) -> None:
+    """Test RawAnthropicClient accepts a base_url and passes it to the underlying AsyncAnthropic client."""
+    custom_url = "https://custom-anthropic-endpoint.com"
+    client = RawAnthropicClient(
+        api_key=anthropic_unit_test_env["ANTHROPIC_API_KEY"],
+        model=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"],
+        base_url=custom_url,
+    )
+
+    assert custom_url in str(client.anthropic_client.base_url)
+
+
 def test_anthropic_client_init_missing_api_key() -> None:
     """Test AnthropicClient initialization when API key is missing."""
     with patch("agent_framework_anthropic._chat_client.load_settings") as mock_load:
