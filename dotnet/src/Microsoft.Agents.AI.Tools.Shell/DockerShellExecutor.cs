@@ -20,20 +20,19 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <para>
 /// Exposes the same public surface as <see cref="LocalShellExecutor"/> but executes
 /// commands inside a container. The container is intended to be the
-/// security boundary, and the defaults set up a hardened-looking
-/// configuration (<c>--network none</c>, non-root user,
-/// <c>--read-only</c> root filesystem, <c>--cap-drop=ALL</c>,
-/// <c>--security-opt=no-new-privileges</c>, memory and pids limits,
-/// <c>--tmpfs /tmp</c>). These defaults are a best-effort baseline, NOT
-/// a guarantee: the actual isolation you get depends on the host kernel,
+/// security boundary, and the defaults bias toward a restrictive baseline
+/// (<c>--network none</c>, non-root user, <c>--read-only</c> root filesystem,
+/// <c>--cap-drop=ALL</c>, <c>--security-opt=no-new-privileges</c>, memory and
+/// pids limits, <c>--tmpfs /tmp</c>). These are a best-effort starting point,
+/// NOT a guarantee: the actual isolation you get depends on the host kernel,
 /// the container runtime, the image, and any caller-supplied
-/// <c>extraRunArgs</c>. Do not rely on this tool as your sole defense
-/// against untrusted input. Pair it with the precautions you would
-/// normally apply when running adversarial code: review the model's
-/// output before acting on it, run on a host you can afford to lose,
-/// keep approval gating on, monitor for resource exhaustion, and
-/// consider stronger isolation (a dedicated VM, gVisor/Kata, network
-/// segmentation) when stakes are high.
+/// <c>ExtraRunArgs</c>. Do not rely on this tool as your sole defense against
+/// untrusted input. Approval gating via <see cref="AsAIFunction"/> is the
+/// primary safety control; pair it with the precautions you would normally
+/// apply when running adversarial code: review the model's output before
+/// acting on it, run on a host you can afford to lose, monitor for resource
+/// exhaustion, and consider stronger isolation (a dedicated VM, gVisor/Kata,
+/// network segmentation) when stakes are high.
 /// </para>
 /// <para>
 /// Persistent mode reuses <see cref="ShellSession"/> by launching
@@ -226,26 +225,6 @@ public sealed class DockerShellExecutor : ShellExecutor
         return await this.RunStatelessAsync(command, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Returns <see langword="true"/> when this tool's effective
-    /// configuration matches the recommended hardening defaults — no
-    /// network, non-root user, read-only root filesystem, the host mount
-    /// (if any) is read-only, and no caller-supplied <c>extraRunArgs</c>
-    /// have been added. This is a configuration-shape check, not a
-    /// security guarantee; isolation still depends on the host kernel,
-    /// the container runtime, and the image. <see cref="AsAIFunction"/>
-    /// uses this signal to choose a default for <c>requireApproval</c>:
-    /// when the configuration has been relaxed it leaves approval
-    /// gating on, but you should always make the approval/policy
-    /// decision deliberately rather than relying on this default.
-    /// </summary>
-    public bool IsHardenedConfiguration =>
-        StringComparer.Ordinal.Equals(this._network, "none")
-        && !this._user.IsRoot
-        && this._readOnlyRoot
-        && (this._hostWorkdir is null || this._mountReadonly)
-        && this._extraRunArgs.Count == 0;
-
     /// <summary>Format a byte count into the value passed to <c>docker --memory</c> (e.g. <c>536870912b</c>).</summary>
     internal static string FormatMemoryBytes(long memoryBytes) =>
         memoryBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) + "b";
@@ -255,29 +234,23 @@ public sealed class DockerShellExecutor : ShellExecutor
     /// </summary>
     /// <remarks>
     /// When <paramref name="requireApproval"/> is <see langword="null"/>
-    /// (the default), approval is enabled iff
-    /// <see cref="IsHardenedConfiguration"/> is <see langword="false"/>.
-    /// In other words: if the caller relaxed any hardening knob (for
-    /// example by setting <c>network: "host"</c>, running as
-    /// <c>0:0</c>, disabling <c>readOnlyRoot</c>, granting a writable
-    /// host mount, or supplying <c>extraRunArgs</c>), the tool falls
-    /// back to requiring approval. This is a convenience default, not
-    /// a security recommendation — you should treat the
-    /// approval/policy decision as a deliberate choice for the agent
-    /// you are building, not as something this method picks correctly
-    /// for you.
+    /// (the default), the returned function is wrapped in
+    /// <see cref="ApprovalRequiredAIFunction"/>. The caller must
+    /// explicitly pass <see langword="false"/> to opt out of approval
+    /// gating. Container configuration alone is not a sufficient signal
+    /// to safely auto-execute model-generated commands — the
+    /// approval/policy decision belongs to the agent author.
     /// </remarks>
     /// <param name="name">Function name surfaced to the model.</param>
     /// <param name="description">Function description for the model.</param>
     /// <param name="requireApproval">
-    /// <see langword="true"/> always wraps in
-    /// <see cref="ApprovalRequiredAIFunction"/>; <see langword="false"/>
-    /// never does; <see langword="null"/> (the default) wraps iff
-    /// <see cref="IsHardenedConfiguration"/> is <see langword="false"/>.
+    /// <see langword="true"/> or <see langword="null"/> (the default)
+    /// wraps the function in <see cref="ApprovalRequiredAIFunction"/>;
+    /// <see langword="false"/> opts out and returns the raw function.
     /// </param>
     public AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool? requireApproval = null)
     {
-        var effectiveRequireApproval = requireApproval ?? !this.IsHardenedConfiguration;
+        var effectiveRequireApproval = requireApproval ?? true;
 
         description ??=
             "Execute a single shell command inside an isolated Docker container and return its " +

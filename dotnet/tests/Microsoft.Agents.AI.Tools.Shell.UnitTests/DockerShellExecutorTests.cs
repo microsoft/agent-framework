@@ -14,10 +14,8 @@ namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 /// </summary>
 public sealed class DockerShellExecutorTests
 {
-    private static readonly string[] s_privilegedExtraRunArgs = new[] { "--privileged" };
-
     [Fact]
-    public void BuildRunArgv_EmitsHardenedDefaults()
+    public void BuildRunArgv_EmitsRestrictiveDefaults()
     {
         var argv = DockerShellExecutor.BuildRunArgv(
             binary: "docker",
@@ -161,15 +159,15 @@ public sealed class DockerShellExecutorTests
     }
 
     [Fact]
-    public async Task AsAIFunction_HardenedDefaults_AreNotApprovalGatedAsync()
+    public async Task AsAIFunction_DefaultRequireApproval_IsApprovalGatedAsync()
     {
-        // With the default hardened config (network=none, non-root user,
-        // read-only root, no extra args, no host mount) approval should
-        // remain opt-in.
+        // requireApproval defaults to null, which now always wraps in
+        // ApprovalRequiredAIFunction — container configuration alone is
+        // not a sufficient signal to safely auto-execute model-generated
+        // commands, so the caller must explicitly opt out.
         await using var t = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
-        Assert.True(t.IsHardenedConfiguration);
         var fn = t.AsAIFunction();
-        Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
+        Assert.IsType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
     }
 
@@ -181,45 +179,8 @@ public sealed class DockerShellExecutorTests
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
     }
 
-    [Theory]
-    [InlineData("host", "65534:65534", true, true)]   // network=host => relaxed
-    [InlineData("none", "0:0", true, true)]            // root user => relaxed
-    [InlineData("none", "root:root", true, true)]      // root by name => relaxed
-    [InlineData("none", "65534:65534", false, true)]   // writable root => relaxed
-    public async Task AsAIFunction_RelaxedConfig_DefaultsToApprovalGatedAsync(
-        string network, string user, bool readOnlyRoot, bool mountReadonly)
-    {
-        var parts = user.Split(':');
-        await using var t = new DockerShellExecutor(new()
-        {
-            Mode = ShellMode.Stateless,
-            Network = network,
-            User = new ContainerUser(parts[0], parts.Length > 1 ? parts[1] : parts[0]),
-            ReadOnlyRoot = readOnlyRoot,
-            MountReadonly = mountReadonly,
-        });
-        Assert.False(t.IsHardenedConfiguration);
-
-        var fn = t.AsAIFunction();
-        Assert.IsType<ApprovalRequiredAIFunction>(fn);
-    }
-
     [Fact]
-    public async Task AsAIFunction_ExtraRunArgs_DefaultsToApprovalGatedAsync()
-    {
-        await using var t = new DockerShellExecutor(new()
-        {
-            Mode = ShellMode.Stateless,
-            ExtraRunArgs = s_privilegedExtraRunArgs,
-        });
-        Assert.False(t.IsHardenedConfiguration);
-
-        var fn = t.AsAIFunction();
-        Assert.IsType<ApprovalRequiredAIFunction>(fn);
-    }
-
-    [Fact]
-    public async Task AsAIFunction_RelaxedButExplicitOptOut_IsNotApprovalGatedAsync()
+    public async Task AsAIFunction_ExplicitOptOut_IsNotApprovalGatedAsync()
     {
         await using var t = new DockerShellExecutor(new()
         {

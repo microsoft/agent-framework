@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </summary>
 public static class DockerNetworkMode
 {
-    /// <summary>No network — the container has no network interfaces. The hardened default.</summary>
+    /// <summary>No network — the container has no network interfaces. The default.</summary>
     public const string None = "none";
 
     /// <summary>Docker's default bridge network — egress to the host network.</summary>
