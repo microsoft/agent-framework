@@ -118,8 +118,13 @@ internal static class OutputConverter
                         break;
                     }
 
-                    case FunctionCallContent funcCall:
+                    case FunctionCallContent functionCall:
                     {
+                        if (functionCall.CallId is not { Length: > 0 })
+                        {
+                            break;
+                        }
+
                         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
                         {
                             yield return evt;
@@ -130,17 +135,15 @@ internal static class OutputConverter
                         accumulatedText = null;
                         previousMessageId = null;
 
-                        var callId = funcCall.CallId ?? Guid.NewGuid().ToString("N");
-                        var funcBuilder = stream.AddOutputItemFunctionCall(funcCall.Name, callId);
-                        yield return funcBuilder.EmitAdded();
-
-                        var arguments = funcCall.Arguments is not null
-                            ? JsonSerializer.Serialize(funcCall.Arguments)
+                        var arguments = functionCall.Arguments is not null
+                            ? JsonSerializer.Serialize(functionCall.Arguments)
                             : "{}";
 
-                        yield return funcBuilder.EmitArgumentsDelta(arguments);
-                        yield return funcBuilder.EmitArgumentsDone(arguments);
-                        yield return funcBuilder.EmitDone();
+                        var fcBuilder = stream.AddOutputItemFunctionCall(functionCall.Name, functionCall.CallId);
+                        yield return fcBuilder.EmitAdded();
+                        yield return fcBuilder.EmitArgumentsDelta(arguments);
+                        yield return fcBuilder.EmitArgumentsDone(arguments);
+                        yield return fcBuilder.EmitDone();
                         break;
                     }
 
@@ -191,11 +194,18 @@ internal static class OutputConverter
                         // wireId↔afRequestId mapping in the session state bag for later lookup
                         // when the matching `mcp_approval_response` arrives on a subsequent turn.
                         var wireId = ToolApprovalIdMap.ComputeWireId(approvalRequest.RequestId);
-                        ToolApprovalIdMap.Record(stateBag, wireId, approvalRequest.RequestId);
 
                         var approvalArguments = approvalFunctionCall.Arguments is not null
                             ? JsonSerializer.Serialize(approvalFunctionCall.Arguments)
                             : "{}";
+
+                        ToolApprovalIdMap.Record(
+                            stateBag,
+                            wireId,
+                            approvalRequest.RequestId,
+                            approvalFunctionCall.CallId,
+                            approvalFunctionCall.Name,
+                            approvalArguments);
 
                         var approvalItem = new OutputItemMcpApprovalRequest(
                             wireId,
@@ -252,10 +262,40 @@ internal static class OutputConverter
                         // These would need to be serialized as base64 or URL references.
                         break;
 
-                    case FunctionResultContent:
-                        // Function results are internal to the agent's tool-calling loop
-                        // and are not emitted as output items in the response stream.
+                    case FunctionResultContent functionResult:
+                    {
+                        if (functionResult.CallId is not { Length: > 0 })
+                        {
+                            break;
+                        }
+
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        {
+                            yield return evt;
+                        }
+
+                        currentTextBuilder = null;
+                        currentMessageBuilder = null;
+                        accumulatedText = null;
+                        previousMessageId = null;
+
+                        var outputText = functionResult.Result switch
+                        {
+                            null => string.Empty,
+                            string s => s,
+                            _ => JsonSerializer.Serialize(functionResult.Result),
+                        };
+
+                        var itemId = GenerateItemId("fc");
+                        var outputItem = new OutputItemFunctionToolCallOutput(
+                            functionResult.CallId,
+                            BinaryData.FromString(outputText));
+
+                        var outputBuilder = stream.AddOutputItem<OutputItemFunctionToolCallOutput>(itemId);
+                        yield return outputBuilder.EmitAdded(outputItem);
+                        yield return outputBuilder.EmitDone(outputItem);
                         break;
+                    }
 
                     default:
                         break;

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Net;
@@ -14,6 +15,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using OpenAI;
 
 #pragma warning disable OPENAI001, SCME0001, SCME0002, MEAI001
 
@@ -133,6 +135,72 @@ public sealed class HostedOutboundUserAgentTests : IAsyncDisposable
           "model":"fake","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}
         }
         """;
+
+    [Fact]
+    public void TryApplyUserAgent_RepeatedCalls_OnSameAgent_RegistersPolicyOnce()
+    {
+        // Arrange: hosted resolution calls TryApplyUserAgent on every request. Without per-instance
+        // dedup, each call would append another policy entry to the shared OpenAIRequestPolicies,
+        // producing unbounded growth on singleton agents (one chat client reused across requests).
+        using var http = new HttpClient(new NoopHandler());
+        var openAIClient = new OpenAIClient(new ApiKeyCredential("fake"),
+            new OpenAIClientOptions { Transport = new HttpClientPipelineTransport(http) });
+        IChatClient chatClient = openAIClient.GetResponsesClient().AsIChatClient();
+        AIAgent agent = new ChatClientAgent(chatClient);
+
+        // Act
+        for (int i = 0; i < 50; i++)
+        {
+            FoundryHostingExtensions.TryApplyUserAgent(agent);
+        }
+
+        // Assert: exactly one HostedAgentUserAgentPolicy entry on the shared OpenAIRequestPolicies.
+        var policies = chatClient.GetService<OpenAIRequestPolicies>();
+        Assert.NotNull(policies);
+        Assert.Equal(1, EntriesCount(policies!));
+    }
+
+    [Fact]
+    public void TryApplyUserAgent_AcrossDistinctAgents_RegistersPolicyOncePerChatClient()
+    {
+        // Arrange: dedup is per-OpenAIRequestPolicies-instance, not global, so two agents on
+        // different chat clients each get exactly one registration.
+        using var http1 = new HttpClient(new NoopHandler());
+        using var http2 = new HttpClient(new NoopHandler());
+        var client1 = new OpenAIClient(new ApiKeyCredential("k1"),
+            new OpenAIClientOptions { Transport = new HttpClientPipelineTransport(http1) });
+        var client2 = new OpenAIClient(new ApiKeyCredential("k2"),
+            new OpenAIClientOptions { Transport = new HttpClientPipelineTransport(http2) });
+
+        IChatClient cc1 = client1.GetResponsesClient().AsIChatClient();
+        IChatClient cc2 = client2.GetResponsesClient().AsIChatClient();
+        AIAgent a1 = new ChatClientAgent(cc1);
+        AIAgent a2 = new ChatClientAgent(cc2);
+
+        // Act
+        for (int i = 0; i < 10; i++)
+        {
+            FoundryHostingExtensions.TryApplyUserAgent(a1);
+            FoundryHostingExtensions.TryApplyUserAgent(a2);
+        }
+
+        // Assert
+        Assert.Equal(1, EntriesCount(cc1.GetService<OpenAIRequestPolicies>()!));
+        Assert.Equal(1, EntriesCount(cc2.GetService<OpenAIRequestPolicies>()!));
+    }
+
+    private static int EntriesCount(OpenAIRequestPolicies policies)
+    {
+        var field = typeof(OpenAIRequestPolicies).GetField("_entries", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var array = (Array?)field?.GetValue(policies);
+        return array?.Length ?? -1;
+    }
+
+    private sealed class NoopHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+    }
 
     private sealed class RecordingHandler : HttpClientHandler
     {

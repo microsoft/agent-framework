@@ -52,7 +52,6 @@ class ExperimentalFeature(str, Enum):
     FUNCTIONAL_WORKFLOWS = "FUNCTIONAL_WORKFLOWS"
     HARNESS = "HARNESS"
     SKILLS = "SKILLS"
-    TOOLBOXES = "TOOLBOXES"
 
 
 class ReleaseCandidateFeature(str, Enum):

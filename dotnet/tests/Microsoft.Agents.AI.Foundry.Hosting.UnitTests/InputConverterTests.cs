@@ -780,25 +780,33 @@ public class InputConverterTests
     }
 
     [Fact]
-    public void ConvertItemsToMessages_McpApprovalResponse_ProducesToolApprovalResponse_FallsBackToWireIdWhenNoMapping()
+    public void ConvertItemsToMessages_McpApprovalResponse_ThrowsWhenNoMapping()
     {
+        // Without a recorded ApprovalEntry the converter cannot reconstruct the original
+        // function call faithfully — any placeholder it produced would still fail downstream
+        // (FICC has no tool to invoke; Azure's stored function_call can't pair with the
+        // synthetic id). Fail fast with a clear error instead of continuing into a confusing
+        // HTTP 400 deep inside the agent loop.
         var wireId = "mcpr_" + new string('a', 50);
         var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: true);
 
-        var messages = InputConverter.ConvertItemsToMessages([item]);
-
-        var content = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
-        Assert.Equal(wireId, content.RequestId);
-        Assert.True(content.Approved);
+        var ex = Assert.Throws<InvalidOperationException>(() => InputConverter.ConvertItemsToMessages([item]));
+        Assert.Contains(wireId, ex.Message);
     }
 
     [Fact]
     public void ConvertItemsToMessages_McpApprovalResponse_ResolvesAfRequestIdFromStateBag()
     {
-        const string AfRequestId = "af_request_xyz";
+        const string AfRequestId = "ficc_call_xyz";
         var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
         var stateBag = new AgentSessionStateBag();
-        ToolApprovalIdMap.Record(stateBag, wireId, AfRequestId);
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_xyz",
+            "issue_refund",
+            "{\"order_id\":123}");
 
         var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: false);
 
@@ -807,6 +815,17 @@ public class InputConverterTests
         var content = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
         Assert.Equal(AfRequestId, content.RequestId);
         Assert.False(content.Approved);
+
+        // Verify the original FunctionCallContent is reconstructed losslessly:
+        // - CallId matches the model-issued id (without FICC's "ficc_" prefix), so the
+        //   resulting function_call_output pairs with Azure's stored function_call.
+        // - Name matches the original tool, so FICC can invoke the right function on resume.
+        // - Arguments are preserved.
+        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_xyz", fcc.CallId);
+        Assert.Equal("issue_refund", fcc.Name);
+        Assert.NotNull(fcc.Arguments);
+        Assert.Equal(123, ((System.Text.Json.JsonElement)fcc.Arguments!["order_id"]!).GetInt32());
     }
 
     [Fact]
@@ -828,10 +847,16 @@ public class InputConverterTests
     [Fact]
     public void ConvertOutputItemsToMessages_McpApprovalResponse_ProducesToolApprovalResponse()
     {
-        const string AfRequestId = "af_request_history";
+        const string AfRequestId = "ficc_call_history";
         var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
         var stateBag = new AgentSessionStateBag();
-        ToolApprovalIdMap.Record(stateBag, wireId, AfRequestId);
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_history",
+            "delete_file",
+            "{\"path\":\"/tmp/x\"}");
 
         var item = new OutputItemMcpApprovalResponseResource(
             id: "ar_history_id",
@@ -843,6 +868,10 @@ public class InputConverterTests
         var content = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
         Assert.Equal(AfRequestId, content.RequestId);
         Assert.True(content.Approved);
+
+        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_history", fcc.CallId);
+        Assert.Equal("delete_file", fcc.Name);
     }
 
     [Fact]
@@ -860,6 +889,28 @@ public class InputConverterTests
         var fc = Assert.IsType<FunctionCallContent>(content.ToolCall);
         Assert.NotNull(fc.Arguments);
         Assert.Equal("not valid json", fc.Arguments!["_raw"]?.ToString());
+    }
+
+    [Fact]
+    public void ToolApprovalIdMap_Record_EmptyCallId_IsNoOp()
+    {
+        var stateBag = new AgentSessionStateBag();
+        var wireId = "mcpr_" + new string('d', 50);
+
+        ToolApprovalIdMap.Record(stateBag, wireId, "ficc_x", callId: string.Empty, name: "tool", argumentsJson: "{}");
+
+        Assert.Null(ToolApprovalIdMap.ResolveEntry(stateBag, wireId));
+    }
+
+    [Fact]
+    public void ToolApprovalIdMap_Record_EmptyName_IsNoOp()
+    {
+        var stateBag = new AgentSessionStateBag();
+        var wireId = "mcpr_" + new string('e', 50);
+
+        ToolApprovalIdMap.Record(stateBag, wireId, "ficc_x", callId: "call_xyz", name: string.Empty, argumentsJson: "{}");
+
+        Assert.Null(ToolApprovalIdMap.ResolveEntry(stateBag, wireId));
     }
 
     // ── input_file data-URI decoding (TryDecodeTextDataUri) ──

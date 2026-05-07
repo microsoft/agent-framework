@@ -284,7 +284,9 @@ async def run_scenarios(agent, config):
     # attempt to call send_email, so the policy enforcer would never trigger.
     session = agent.create_session()
 
-    response = await agent.run("Please fetch my recent emails and give me a brief summary of each one.", session=session)
+    response = await agent.run(
+        "Please fetch my recent emails and give me a brief summary of each one.", session=session
+    )
     print(f"\n📋 Agent Response:\n{'-' * 40}")
     print(response.text)
 
