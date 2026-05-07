@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 
 from agent_framework import Agent
 from agent_framework_foundry import FoundryAgent
@@ -76,15 +77,27 @@ async def call_via_foundry_hosted_agent(prompt: str) -> None:
     # Once foundry_hosted_agent's image is deployed as a Foundry Hosted Agent, FoundryAgent
     # keyed on ``agent_name`` is the AF-native client. The agent's runtime is
     # the very same Responses + Invocations contract — Foundry just hosts it.
+    project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
+    if not project_endpoint:
+        raise SystemExit(
+            "FOUNDRY_PROJECT_ENDPOINT must be set; e.g. "
+            "https://<project>.services.ai.azure.com/api/projects/agents"
+        )
+    agent_name = os.environ.get("FOUNDRY_HOSTED_AGENT_NAME", "agent-framework-hosting-sample")
+    # Optional: continue a prior conversation by passing FOUNDRY_HOSTED_SESSION_ID.
+    session_id = os.environ.get("FOUNDRY_HOSTED_SESSION_ID")
     async with AzureCliCredential() as credential:
         agent = FoundryAgent(
-            project_endpoint="https://edvan-foundry-sw.services.ai.azure.com/api/projects/agents",
-            agent_name="agent-framework-hosting-sample",
+            project_endpoint=project_endpoint,
+            agent_name=agent_name,
             credential=credential,
             allow_preview=True,
         )
-        session = agent.get_session(service_session_id="resp_7c86d98980df4f409045e71609c50ce4")
-        result = await agent.run(prompt, session=session)
+        if session_id:
+            session = agent.get_session(service_session_id=session_id)
+            result = await agent.run(prompt, session=session)
+        else:
+            result = await agent.run(prompt)
     print(f"User:  {prompt}")
     print(f"Agent: {result.text}")
     print(f"Session ID (for history continuity): {result.response_id}")
