@@ -99,9 +99,11 @@ public class MagenticWorkflowBuilder(AIAgent managerAgent)
 
     private WorkflowBuilder ReduceToWorkflowBuilder()
     {
-        ExecutorFactoryFunc factory = this.CreateOrchestratorAsync;
-        ExecutorBinding orchestrator = factory.BindExecutor(nameof(MagenticOrchestrator));
+        // Create a copy of the team so that improper modifications by using the builder after .Build() do not affect the
+        // workflow in unexpected ways.
+        List<AIAgent> team = [.. this._team];
 
+        ExecutorBinding orchestrator = CreateOrchestratorBinding(managerAgent, team, this.Limits, this._requirePlanSignoff);
         WorkflowBuilder result = new(orchestrator);
 
         AIAgentHostOptions options = new()
@@ -111,7 +113,7 @@ public class MagenticWorkflowBuilder(AIAgent managerAgent)
         };
 
         List<ExecutorBinding> teamBindings = [];
-        foreach (AIAgent agent in this._team)
+        foreach (AIAgent agent in team)
         {
             ExecutorBinding binding = agent.BindAsExecutor(options);
             teamBindings.Add(binding);
@@ -143,8 +145,14 @@ public class MagenticWorkflowBuilder(AIAgent managerAgent)
         MaxResetCount: this._maxResets,
         MaxStallCount: this._maxStalls);
 
-    private ValueTask<MagenticOrchestrator> CreateOrchestratorAsync(ExecutorConfig<ExecutorOptions> options, string sessionId)
+    private static ExecutorBinding CreateOrchestratorBinding(AIAgent managerAgent, List<AIAgent> team, TaskLimits limits, bool requirePlanSignoff)
     {
-        return new(new MagenticOrchestrator(managerAgent, this._team, this.Limits, this._requirePlanSignoff));
+        ExecutorFactoryFunc factory = CreateOrchestratorAsync;
+        return factory.BindExecutor(nameof(MagenticOrchestrator));
+
+        ValueTask<MagenticOrchestrator> CreateOrchestratorAsync(ExecutorConfig<ExecutorOptions> options, string sessionId)
+        {
+            return new(new MagenticOrchestrator(managerAgent, team, limits, requirePlanSignoff));
+        }
     }
 }

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -112,9 +113,8 @@ internal static partial class ChatMessageExtensions
         new(FencedJsonRegexPattern, RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture);
 #endif
 
-    public static JsonElement ExtractJson(this ChatMessage message)
+    internal static JsonElement ExtractJson(string messageText)
     {
-        string messageText = message.Text;
         Match match = FencedJsonRegex().Match(messageText);
         if (match.Success)
         {
@@ -130,20 +130,35 @@ internal static partial class ChatMessageExtensions
         }
 
         int depth = 0;
+        bool inQuotes = false, inEscape = false;
         for (; scanHead < messageText.Length && end is null; scanHead++)
         {
+            if (inEscape)
+            {
+                inEscape = false;
+                continue;
+            }
+
             switch (messageText[scanHead])
             {
-                case '{':
+                case '{' when !inQuotes:
                     depth++;
                     break;
-                case '}':
+                case '}' when !inQuotes:
                     depth--;
                     if (depth == 0)
                     {
                         end = scanHead;
                     }
 
+                    break;
+                case '\"':
+                    // We already handled inEscape, so we can always flip inQuotes here
+                    inQuotes = !inQuotes;
+                    break;
+                case '\\':
+                    Debug.Assert(!inEscape);
+                    inEscape = true;
                     break;
             }
         }
@@ -155,4 +170,6 @@ internal static partial class ChatMessageExtensions
 
         return JsonElement.Parse(messageText.Substring(start, end.Value - start + 1));
     }
+
+    public static JsonElement ExtractJson(this ChatMessage message) => ExtractJson(message.Text);
 }

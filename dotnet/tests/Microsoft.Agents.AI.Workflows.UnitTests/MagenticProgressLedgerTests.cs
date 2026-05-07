@@ -11,6 +11,7 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 public class MagenticProgressLedgerTests
 {
     public record KVPair(string key);
+    public record AnswerReasonPair(bool answer, string reason);
 
     [Theory]
     [InlineData(false)]
@@ -90,6 +91,26 @@ public class MagenticProgressLedgerTests
 
         // Assert
         action.Should().Throw();
+    }
+
+    [Fact]
+    public void Test_ExtractJson_SuceedsWithQuotesBrackets()
+    {
+        // Arrange
+        ChatMessage message = new(ChatRole.Assistant,
+"""
+    {"reason":"the output contained }", "answer": false}
+""");
+
+        // Act
+        JsonElement element = message.ExtractJson();
+
+        // Assert
+        AnswerReasonPair? result = element.Deserialize<AnswerReasonPair>();
+
+        result.Should().NotBeNull();
+        result.reason.Should().Be("the output contained }");
+        result.answer.Should().BeFalse();
     }
 
     public static readonly string TestTeamNames = string.Join(", ", ["CodingAgent", "CodeExecutor", "WebSurferAgent", "FileSurferAgent"]);
