@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Hosting;
 /// <remarks>
 /// <para>
 /// <see cref="DelegatingAgentSessionStore"/> implements the decorator pattern for <see cref="AgentSessionStore"/>s,
-/// enabling the creation of pipeliens where each layer can add functionality while delegating core operations to an
+/// enabling the creation of pipelines where each layer can add functionality while delegating core operations to an
 /// underlying store.
 /// </para>
 /// <para>
@@ -23,7 +23,7 @@ namespace Microsoft.Agents.AI.Hosting;
 /// interface.
 /// </para>
 /// </remarks>
-public class DelegatingAgentSessionStore : AgentSessionStore
+public abstract class DelegatingAgentSessionStore : AgentSessionStore
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="DelegatingAgentSessionStore"/> class with the specified inner
