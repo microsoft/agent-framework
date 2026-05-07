@@ -34,7 +34,7 @@ classifiers = [
 dev = [
     "pytest==9.0.3",
     "watchdog==6.0.0",
-    "agent-framework-orchestrations==1.0.0b260507",
+    "agent-framework-orchestrations==1.0.0b260402",
 ]
 all = [
     "pytest==9.0.3",
