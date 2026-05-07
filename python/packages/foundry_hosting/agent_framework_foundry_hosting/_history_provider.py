@@ -27,15 +27,23 @@ import time. (The host's isolation contextvar is consulted lazily via an
 Environment variables read:
 
 * ``FOUNDRY_HOSTING_ENVIRONMENT`` — non-empty marks "running inside Foundry"
-  and selects the SDK-backed storage transport.
+  and selects the SDK-backed storage transport. Detection is delegated to
+  :class:`azure.ai.agentserver.core.AgentConfig` so a future SDK rename
+  propagates without touching this module.
 * ``FOUNDRY_PROJECT_ENDPOINT`` — base URL of the Foundry project; required
   when running hosted unless an explicit ``endpoint=`` is supplied.
 * ``FOUNDRY_AGENT_NAME`` / ``FOUNDRY_AGENT_VERSION`` — stamped onto the
   ``agent_reference`` field of every persisted response envelope.
-* ``FOUNDRY_AGENT_SESSION_ID`` — used as a chain anchor when the channel
-  did not bind a per-request ``previous_response_id``.
 * ``MODEL_DEPLOYMENT_NAME`` / ``AZURE_AI_MODEL_DEPLOYMENT_NAME`` — model
   field stamped on the persisted envelope (must match a real deployment).
+
+Note on ``FOUNDRY_AGENT_SESSION_ID``: this env var identifies the
+*container instance*, not the conversation, so it is **not** consulted as
+a fallback ``previous_response_id``. The host-bound
+``previous_response_id`` (set by :class:`ResponsesChannel` from the
+request envelope) is the authoritative anchor. The value is still
+persisted into the ``agent_session_id`` envelope field for operator
+correlation only.
 
 Local fallback: when ``FOUNDRY_HOSTING_ENVIRONMENT`` is unset, the provider
 transparently falls back to :class:`InMemoryResponseProvider` so the same
@@ -58,6 +66,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework import FileHistoryProvider, HistoryProvider, Message
+from azure.ai.agentserver.core import AgentConfig
 from azure.ai.agentserver.responses import (
     FoundryStorageProvider,
     FoundryStorageSettings,
@@ -84,10 +93,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Environment variable names — re-declared (not imported) so this module
+# Environment variable name — re-declared (not imported) so this module
 # stays decoupled from the private ``azure.ai.agentserver.core._config``
-# constants while still matching them exactly.
-_ENV_FOUNDRY_HOSTING_ENVIRONMENT = "FOUNDRY_HOSTING_ENVIRONMENT"
+# constants while still matching exactly. Hosted-vs-local detection is
+# delegated to :class:`AgentConfig` so a future SDK rename propagates.
 _ENV_FOUNDRY_PROJECT_ENDPOINT = "FOUNDRY_PROJECT_ENDPOINT"
 
 # Per-request isolation context.  The owning Channel is expected to set this
@@ -429,11 +438,13 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
     def is_hosted_environment() -> bool:
         """Return ``True`` when running inside a Foundry Hosted Agent container.
 
-        Detection uses the ``FOUNDRY_HOSTING_ENVIRONMENT`` environment
-        variable, the same signal :class:`ResponsesAgentServerHost` uses to
-        switch between hosted and local storage backends.
+        Delegates to :meth:`azure.ai.agentserver.core.AgentConfig.from_env`
+        so the detection rule stays in lockstep with the Foundry SDK; if
+        the platform ever renames the underlying signal (today
+        ``FOUNDRY_HOSTING_ENVIRONMENT``) the SDK update is picked up
+        automatically without a code change here.
         """
-        return bool(os.environ.get(_ENV_FOUNDRY_HOSTING_ENVIRONMENT))
+        return AgentConfig.from_env().is_hosted
 
     def _resolve_backend(self) -> FoundryStorageProvider | InMemoryResponseProvider:
         """Return the storage backend, constructing it lazily on first use.
@@ -615,15 +626,14 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
         if anchor is None and session_id and session_id.startswith(("caresp_", "resp_")):
             anchor = session_id
         if anchor is None:
-            # The Foundry Hosted Agent runtime stamps the previous turn's
-            # response id into ``FOUNDRY_AGENT_SESSION_ID`` for the
-            # following turn's container, so we can walk back from it
-            # directly without keeping any cross-request state ourselves.
-            env_session = os.environ.get("FOUNDRY_AGENT_SESSION_ID") or None
-            if env_session and env_session.startswith(("caresp_", "resp_")):
-                anchor = env_session
-        if anchor is None:
             # No walkable anchor → fresh conversation, nothing to load.
+            # Note: we intentionally do NOT fall back to
+            # ``FOUNDRY_AGENT_SESSION_ID`` — per the Foundry SDK that env
+            # var identifies the *container instance*, not the
+            # conversation, so it doesn't yield a walkable response-id
+            # chain. The host-bound ``previous_response_id`` (set by
+            # ``ResponsesChannel`` from the request envelope) is the
+            # authoritative anchor.
             return []
 
         backend = self._resolve_backend()
@@ -728,13 +738,14 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
             response_id = IdGenerator.new_response_id()
             previous_response_id = session_id if session_id.startswith(("caresp_", "resp_")) else None
 
-        # Foundry session-bound containers: when ``FOUNDRY_AGENT_SESSION_ID``
-        # is set the runtime stamps it to the previous turn's response id
-        # so each new container can chain back to it directly. We don't
-        # need to maintain any cross-request map ourselves.
-        env_session = os.environ.get("FOUNDRY_AGENT_SESSION_ID") or None
-        if previous_response_id is None and env_session and env_session.startswith(("caresp_", "resp_")):
-            previous_response_id = env_session
+        # Note: we intentionally do NOT consult ``FOUNDRY_AGENT_SESSION_ID``
+        # as a fallback ``previous_response_id`` here. Per the Foundry SDK
+        # that env var identifies the *container instance*, not the
+        # conversation, so chaining off it produces an unwalkable history.
+        # The host-bound ``previous_response_id`` (set by
+        # ``ResponsesChannel`` from the request envelope) is the only
+        # authoritative anchor; if it's missing the new turn is the start
+        # of a fresh chain.
 
         logger.debug(
             "save_messages: response_id=%r previous_response_id=%r isolation=%s",
