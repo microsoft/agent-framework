@@ -1,0 +1,12 @@
+# Azure Developer CLI (azd) configuration
+# Run `azd up` to provision infrastructure and deploy the application
+
+name: enterprise-chat-agent
+metadata:
+  template: enterprise-chat-agent@0.0.1
+
+services:
+  api:
+    project: .
+    language: python
+    host: function

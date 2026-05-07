@@ -1,0 +1,164 @@
+### Enterprise Chat Agent - Demo Requests
+### Use with VS Code REST Client extension or similar
+
+@baseUrl = http://localhost:7071/api
+
+### ============================================================
+### Health Check
+### ============================================================
+
+### Check API health
+GET {{baseUrl}}/health
+
+### ============================================================
+### Thread Management
+### ============================================================
+
+### Create a new thread
+# @name createThread
+POST {{baseUrl}}/threads
+Content-Type: application/json
+
+{
+  "user_id": "user_1234",
+  "title": "Customer Support Chat",
+  "metadata": {
+    "session_type": "support",
+    "department": "technical"
+  }
+}
+
+### Get thread ID from response
+@threadId = {{createThread.response.body.id}}
+
+### Get thread details
+GET {{baseUrl}}/threads/{{threadId}}
+
+### List all threads
+GET {{baseUrl}}/threads
+
+### List threads for a specific user
+GET {{baseUrl}}/threads?user_id=user_1234
+
+### List active threads only
+GET {{baseUrl}}/threads?status=active
+
+### List threads with pagination
+GET {{baseUrl}}/threads?limit=10&offset=0
+
+### List threads with all filters
+GET {{baseUrl}}/threads?user_id=user_1234&status=active&limit=20
+
+### ============================================================
+### Tool Selection Examples
+### ============================================================
+
+### Example 1: Single Tool - Weather
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "What's the weather in New York?"
+}
+
+### Example 2: Single Tool - Calculator
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "Calculate 15% tip on $85"
+}
+
+### Example 3: Multiple Tools - Weather + Calculator
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "What's the weather in Tokyo and what's 20% of 150?"
+}
+
+### Example 4: Knowledge Base Search
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "What's your return policy?"
+}
+
+### Example 5: Microsoft Docs - Azure Service
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "How do I configure partition keys in Azure Cosmos DB?"
+}
+
+### Example 6: Microsoft Docs - Best Practices
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "What are the best practices for Azure Functions error handling?"
+}
+
+### Example 7: Microsoft Code Samples - Python
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "Show me Python code for Azure OpenAI chat completion"
+}
+
+### Example 8: Microsoft Code Samples - General
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "How do I authenticate to Azure using DefaultAzureCredential? Show me code examples."
+}
+
+### Example 9: Complex Query - Multiple Tools
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "What's the weather in Seattle? Also, explain how Azure Functions scales and show me example code for HTTP triggers."
+}
+
+### Example 10: Azure Architecture Question
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "What's the difference between Azure App Service and Azure Container Apps?"
+}
+
+### Example 11: Deployment Question
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "How do I deploy a Python application to Azure using azd?"
+}
+
+### Example 12: No Tools Needed
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "Hello! How are you today?"
+}
+
+### ============================================================
+### Conversation History
+### ============================================================
+
+### Get all messages in thread
+GET {{baseUrl}}/threads/{{threadId}}/messages
+
+### ============================================================
+### Cleanup
+### ============================================================
+
+### Delete thread
+DELETE {{baseUrl}}/threads/{{threadId}}
