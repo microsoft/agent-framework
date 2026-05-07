@@ -14,7 +14,7 @@ public class GitHubCopilotAgentTests
     private const string SkipReason = "Integration tests require GitHub Copilot CLI installed. For local execution only.";
 
     private static Task<PermissionRequestResult> OnPermissionRequestAsync(PermissionRequest request, PermissionInvocation invocation)
-        => Task.FromResult(new PermissionRequestResult { Kind = "approved" });
+        => Task.FromResult(new PermissionRequestResult { Kind = PermissionRequestResultKind.Approved });
 
     [Fact(Skip = SkipReason)]
     public async Task RunAsync_WithSimplePrompt_ReturnsResponseAsync()
@@ -23,7 +23,7 @@ public class GitHubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig: new() { OnPermissionRequest = OnPermissionRequestAsync });
 
         // Act
         AgentResponse response = await agent.RunAsync("What is 2 + 2? Answer with just the number.");
@@ -41,7 +41,7 @@ public class GitHubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig: new() { OnPermissionRequest = OnPermissionRequestAsync });
 
         // Act
         List<AgentResponseUpdate> updates = [];
@@ -73,8 +73,12 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent = new(
             client,
-            tools: [weatherTool],
-            instructions: "You are a helpful weather agent. Use the GetWeather tool to answer weather questions.");
+            sessionConfig: new()
+            {
+                OnPermissionRequest = OnPermissionRequestAsync,
+                Tools = [weatherTool],
+                SystemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "You are a helpful weather agent. Use the GetWeather tool to answer weather questions." },
+            });
 
         // Act
         AgentResponse response = await agent.RunAsync("What's the weather like in Seattle?");
@@ -94,7 +98,11 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent = new(
             client,
-            instructions: "You are a helpful assistant. Keep your answers short.");
+            sessionConfig: new()
+            {
+                OnPermissionRequest = OnPermissionRequestAsync,
+                SystemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "You are a helpful assistant. Keep your answers short." },
+            });
 
         AgentSession session = await agent.CreateSessionAsync();
 
@@ -121,7 +129,11 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent1 = new(
             client1,
-            instructions: "You are a helpful assistant. Keep your answers short.");
+            sessionConfig: new()
+            {
+                OnPermissionRequest = OnPermissionRequestAsync,
+                SystemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "You are a helpful assistant. Keep your answers short." },
+            });
 
         AgentSession session1 = await agent1.CreateSessionAsync();
         await agent1.RunAsync("Remember this number: 42.", session1);
@@ -135,7 +147,11 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent2 = new(
             client2,
-            instructions: "You are a helpful assistant. Keep your answers short.");
+            sessionConfig: new()
+            {
+                OnPermissionRequest = OnPermissionRequestAsync,
+                SystemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "You are a helpful assistant. Keep your answers short." },
+            });
 
         AgentSession session2 = await agent2.CreateSessionAsync(sessionId);
         AgentResponse response = await agent2.RunAsync("What number did I ask you to remember?", session2);
@@ -201,11 +217,10 @@ public class GitHubCopilotAgentTests
         SessionConfig sessionConfig = new()
         {
             OnPermissionRequest = OnPermissionRequestAsync,
-            McpServers = new Dictionary<string, object>
+            McpServers = new Dictionary<string, McpServerConfig>
             {
-                ["filesystem"] = new McpLocalServerConfig
+                ["filesystem"] = new McpStdioServerConfig
                 {
-                    Type = "stdio",
                     Command = "npx",
                     Args = ["-y", "@modelcontextprotocol/server-filesystem", "."],
                     Tools = ["*"],
@@ -234,11 +249,10 @@ public class GitHubCopilotAgentTests
         SessionConfig sessionConfig = new()
         {
             OnPermissionRequest = OnPermissionRequestAsync,
-            McpServers = new Dictionary<string, object>
+            McpServers = new Dictionary<string, McpServerConfig>
             {
-                ["microsoft-learn"] = new McpRemoteServerConfig
+                ["microsoft-learn"] = new McpHttpServerConfig
                 {
-                    Type = "http",
                     Url = "https://learn.microsoft.com/api/mcp",
                     Tools = ["*"],
                 },

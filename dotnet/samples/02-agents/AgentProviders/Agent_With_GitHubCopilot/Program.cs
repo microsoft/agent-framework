@@ -12,7 +12,7 @@ static Task<PermissionRequestResult> PromptPermission(PermissionRequest request,
     Console.Write("Approve? (y/n): ");
 
     string? input = Console.ReadLine()?.Trim().ToUpperInvariant();
-    string kind = input is "Y" or "YES" ? "approved" : "denied-interactively-by-user";
+    var kind = input is "Y" or "YES" ? PermissionRequestResultKind.Approved : PermissionRequestResultKind.Rejected;
 
     return Task.FromResult(new PermissionRequestResult { Kind = kind });
 }
