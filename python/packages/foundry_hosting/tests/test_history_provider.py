@@ -813,20 +813,21 @@ class TestSaveMessagesWirePayload:
 
 
 class TestFoundryAgentSessionIdAnchor:
-    """The Foundry runtime stamps the previous turn's response id into
-    ``FOUNDRY_AGENT_SESSION_ID`` for the next turn's container so each
-    new container can chain back without us keeping any cross-request
-    state. A regression that moves the lookup, mistypes the prefix
-    check, or stops gating on ``caresp_*``/``resp_*`` would silently
-    make hosted multi-turn conversations forget every prior turn."""
+    """``FOUNDRY_AGENT_SESSION_ID`` identifies the *container instance*,
+    not the conversation (per the Foundry SDK), so it MUST NOT be used
+    as a fallback ``previous_response_id`` for chain walking. The host-
+    bound ``previous_response_id`` (set by ``ResponsesChannel`` from the
+    request envelope) is the only authoritative anchor; any code that
+    re-introduces an env-based fallback would silently merge unrelated
+    conversations across container restarts."""
 
-    async def test_get_messages_uses_env_anchor_when_unbound(
+    async def test_get_messages_ignores_env_session_anchor_when_unbound(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """No host binding, ``session_id`` is opaque (not ``caresp_*``):
-        ``get_messages`` must fall back to ``FOUNDRY_AGENT_SESSION_ID``
-        and walk from there."""
+        """No host binding, opaque ``session_id`` and a populated
+        ``FOUNDRY_AGENT_SESSION_ID``: ``get_messages`` must return ``[]``
+        and never call the backend (no walkable conversation anchor)."""
         for var in ("MODEL_DEPLOYMENT_NAME", "AZURE_AI_MODEL_DEPLOYMENT_NAME"):
             monkeypatch.delenv(var, raising=False)
         monkeypatch.setenv("FOUNDRY_AGENT_SESSION_ID", "caresp_envanchor1")
@@ -837,36 +838,18 @@ class TestFoundryAgentSessionIdAnchor:
         )
         prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
 
-        # Opaque session_id — no host binding either. Without the env
-        # fallback this would return [] without making any backend call.
-        messages = await prov.get_messages("opaque-session")
-
-        assert [m.text for m in messages] == ["from-env-anchor"]
-        assert backend.get_history_item_ids.await_args.args[0] == "caresp_envanchor1"
-
-    async def test_get_messages_ignores_non_caresp_env_anchor(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Defence in depth: if the runtime ever stamps a non-``caresp_*``
-        value into the env var (or it leaks from another source), we
-        must NOT pass it to storage — the partition-key extractor
-        would reject it with HTTP 500."""
-        monkeypatch.setenv("FOUNDRY_AGENT_SESSION_ID", "garbage-not-an-id")
-
-        backend = _make_fake_backend()
-        prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
         messages = await prov.get_messages("opaque-session")
 
         assert messages == []
         backend.get_history_item_ids.assert_not_called()
 
-    async def test_save_messages_uses_env_anchor_when_unbound(
+    async def test_save_messages_ignores_env_session_anchor_when_unbound(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When no host binding supplies a previous_response_id, the
-        env anchor must be used so the new write chains correctly."""
+        """When no host binding supplies a ``previous_response_id`` and
+        ``session_id`` is opaque, the env var must NOT be consulted as a
+        fallback; the new turn writes without a prior chain seed."""
         for var in (
             "FOUNDRY_AGENT_NAME",
             "FOUNDRY_AGENT_VERSION",
@@ -878,21 +861,26 @@ class TestFoundryAgentSessionIdAnchor:
 
         backend = _make_fake_backend()
         prov = _with_backend(FoundryHostedAgentHistoryProvider(), backend)
-        # Opaque session_id, no host binding → without the env anchor
-        # the prior chain wouldn't be walked.
+        # Opaque session_id, no host binding → save proceeds without
+        # walking any chain (no get_history_item_ids call).
         await prov.save_messages(
             "opaque-session",
             [Message(role="assistant", contents=[Content.from_text("hi")])],
         )
 
-        # Provider walked the prior chain via the env anchor.
-        assert backend.get_history_item_ids.await_args.args[0] == "caresp_envchain1"
+        backend.get_history_item_ids.assert_not_called()
+        # The persisted envelope still stamps the env value into
+        # ``agent_session_id`` for operator correlation (see the
+        # docstring on the module): only the chain anchor is gated.
+        backend.create_response.assert_awaited_once()
+        wire_payload = backend.create_response.await_args.args[0].as_dict()
+        assert wire_payload["agent_session_id"] == "caresp_envchain1"
 
     async def test_save_messages_env_anchor_skipped_when_host_bound(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A host-bound previous_response_id wins over the env anchor;
+        """A host-bound ``previous_response_id`` wins over any env value;
         the binding is the authoritative chain seed for the request."""
         from agent_framework_foundry_hosting import bind_request_context
 
@@ -913,7 +901,7 @@ class TestFoundryAgentSessionIdAnchor:
                 [Message(role="assistant", contents=[Content.from_text("hi")])],
             )
 
-        # Host binding wins; the env anchor is ignored.
+        # Host binding wins; the env anchor is ignored for chaining.
         assert backend.get_history_item_ids.await_args.args[0] == "caresp_boundprev"
 
 
