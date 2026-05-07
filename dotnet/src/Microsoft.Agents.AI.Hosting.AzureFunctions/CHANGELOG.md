@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Support returning workflow results from HTTP trigger endpoint ([#5321](https://github.com/microsoft/agent-framework/pull/5321))
 - Added MCP tool trigger support for durable workflows ([#4768](https://github.com/microsoft/agent-framework/pull/4768))
 - Added Azure Functions hosting support for durable workflows ([#4436](https://github.com/microsoft/agent-framework/pull/4436))
 

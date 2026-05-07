@@ -47,7 +47,7 @@ public sealed class ChatForwardingExecutor(string id, ChatForwardingExecutorOpti
             if (this._stringMessageChatRole.HasValue)
             {
                 routeBuilder = routeBuilder.AddHandler<string>(
-                    (message, context) => context.SendMessageAsync(new ChatMessage(ChatRole.User, message)));
+                    (message, context) => context.SendMessageAsync(new ChatMessage(this._stringMessageChatRole.Value, message)));
             }
 
             routeBuilder.AddHandler<ChatMessage>(ForwardMessageAsync)

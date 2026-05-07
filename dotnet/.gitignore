@@ -403,3 +403,10 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# Foundry agent CLI config (contains secrets, auto-generated)
+.foundry-agent.json
+.foundry-agent-build.log
+
+# Pre-published output for Docker builds
+out/

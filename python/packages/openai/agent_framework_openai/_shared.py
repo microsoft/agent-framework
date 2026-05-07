@@ -282,7 +282,44 @@ def load_openai_service_settings(
             "Azure OpenAI client requires either an API key or an Azure AD token provider."
             " This can be provided either as a callable api_key or via the credential parameter."
         )
+
+    # The /openai/v1 endpoint exposes an OpenAI-compatible API surface.
+    # AsyncAzureOpenAI rewrites certain request paths (e.g. /embeddings,
+    # /chat/completions) by inserting /deployments/{model}/, which produces
+    # 404s on this endpoint.  Use AsyncOpenAI instead so request URLs are
+    # sent as-is.  responses_mode is excluded because the Responses API path
+    # (/responses) is not rewritten by the Azure SDK.
+    resolved_base_url = client_args.get("base_url", "")
+    if not responses_mode and resolved_base_url and resolved_base_url.rstrip("/").endswith("/openai/v1"):
+        openai_args: dict[str, Any] = {
+            "base_url": resolved_base_url,
+            "default_headers": client_args.get("default_headers"),
+        }
+        if "azure_ad_token_provider" in client_args:
+            openai_args["api_key"] = _ensure_async_token_provider(client_args["azure_ad_token_provider"])
+        elif "api_key" in client_args:
+            openai_args["api_key"] = client_args["api_key"]
+        return azure_settings, AsyncOpenAI(**openai_args), True  # type: ignore[return-value]
+
     return azure_settings, AsyncAzureOpenAI(**client_args), True  # type: ignore[return-value]
+
+
+def _ensure_async_token_provider(
+    provider: AzureTokenProvider,
+) -> Callable[[], Awaitable[str]]:
+    """Wrap a (possibly synchronous) token provider so it always returns an awaitable.
+
+    ``AsyncOpenAI`` requires callable ``api_key`` values to return ``Awaitable[str]``.
+    Azure token providers may return a plain ``str``, so this normalises them.
+    """
+
+    async def _wrapper() -> str:
+        result = provider()
+        if isinstance(result, str):
+            return result
+        return await result
+
+    return _wrapper
 
 
 def _resolve_azure_credential_to_token_provider(

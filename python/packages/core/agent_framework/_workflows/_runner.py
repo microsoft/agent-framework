@@ -278,7 +278,12 @@ class Runner:
                     "Please rebuild the original workflow before resuming."
                 )
 
-            # Restore state
+            # Restore state. Clear first so import_state (which merges) does
+            # not leak stale keys from a prior run on this Workflow instance.
+            # This matters more now that Workflow.run() no longer wipes state
+            # per call - the only reset point for shared state on a reused
+            # instance is at restore time.
+            self._state.clear()
             self._state.import_state(checkpoint.state)
             # Restore executor states using the restored state
             await self._restore_executor_states()

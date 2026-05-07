@@ -34,14 +34,18 @@ public static class A2ACardResolverExtensions
     /// </remarks>
     /// <param name="resolver">The <see cref="A2ACardResolver" /> to use for the agent creation.</param>
     /// <param name="httpClient">The <see cref="HttpClient"/> to use for HTTP requests.</param>
+    /// <param name="options">
+    /// Optional <see cref="A2AClientOptions"/> controlling protocol binding preference.
+    /// When not provided, defaults to preferring HTTP+JSON first, with JSON-RPC as fallback.
+    /// </param>
     /// <param name="loggerFactory">The logger factory for enabling logging within the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static async Task<AIAgent> GetAIAgentAsync(this A2ACardResolver resolver, HttpClient? httpClient = null, ILoggerFactory? loggerFactory = null, CancellationToken cancellationToken = default)
+    public static async Task<AIAgent> GetAIAgentAsync(this A2ACardResolver resolver, HttpClient? httpClient = null, A2AClientOptions? options = null, ILoggerFactory? loggerFactory = null, CancellationToken cancellationToken = default)
     {
         // Obtain the agent card from the resolver.
         var agentCard = await resolver.GetAgentCardAsync(cancellationToken).ConfigureAwait(false);
 
-        return agentCard.AsAIAgent(httpClient, loggerFactory);
+        return agentCard.AsAIAgent(httpClient, options, loggerFactory);
     }
 }

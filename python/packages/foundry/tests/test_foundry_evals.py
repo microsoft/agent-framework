@@ -769,6 +769,10 @@ class TestBuildTestingCriteria:
             assert c["data_mapping"]["query"] == "{{item.query}}", f"{c['name']}"
             assert c["data_mapping"]["response"] == "{{item.response}}", f"{c['name']}"
 
+    def test_similarity_includes_ground_truth(self) -> None:
+        criteria = _build_testing_criteria(["similarity"], "gpt-4o", include_data_mapping=True)
+        assert criteria[0]["data_mapping"]["ground_truth"] == "{{item.ground_truth}}"
+
     def test_all_tool_evaluators_include_tool_definitions(self) -> None:
         tool_evals = [
             "tool_call_accuracy",
@@ -800,6 +804,10 @@ class TestBuildItemSchema:
     def test_with_tools(self) -> None:
         schema = _build_item_schema(has_tools=True)
         assert "tool_definitions" in schema["properties"]
+
+    def test_with_ground_truth(self) -> None:
+        schema = _build_item_schema(has_ground_truth=True)
+        assert "ground_truth" in schema["properties"]
 
     def test_with_context_and_tools(self) -> None:
         schema = _build_item_schema(has_context=True, has_tools=True)
@@ -1014,6 +1022,50 @@ class TestFoundryEvals:
         ds = run_call.kwargs["data_source"]
         assert ds["type"] == "jsonl"
         assert "tool_definitions" in ds["source"]["content"][0]["item"]
+
+    async def test_evaluate_ground_truth_in_dataset(self) -> None:
+        """Items with expected_output include ground_truth in the JSONL payload."""
+        mock_client = MagicMock()
+
+        mock_eval = MagicMock()
+        mock_eval.id = "eval_gt"
+        mock_client.evals.create = AsyncMock(return_value=mock_eval)
+
+        mock_run = MagicMock()
+        mock_run.id = "run_gt"
+        mock_client.evals.runs.create = AsyncMock(return_value=mock_run)
+
+        mock_completed = MagicMock()
+        mock_completed.status = "completed"
+        mock_completed.result_counts = _rc(passed=1)
+        mock_completed.report_url = None
+        mock_completed.per_testing_criteria_results = None
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
+
+        items = [
+            EvalItem(
+                conversation=[Message("user", ["What is 2+2?"]), Message("assistant", ["4"])],
+                expected_output="4",
+            ),
+        ]
+
+        fe = FoundryEvals(
+            client=mock_client,
+            model="gpt-4o",
+            evaluators=[FoundryEvals.SIMILARITY],
+        )
+        await fe.evaluate(items)
+
+        # Verify ground_truth appears in JSONL data
+        run_call = mock_client.evals.runs.create.call_args
+        ds = run_call.kwargs["data_source"]
+        assert ds["type"] == "jsonl"
+        assert ds["source"]["content"][0]["item"]["ground_truth"] == "4"
+
+        # Verify item_schema includes ground_truth
+        create_call = mock_client.evals.create.call_args
+        schema = create_call.kwargs["data_source_config"]["item_schema"]
+        assert "ground_truth" in schema["properties"]
 
     async def test_evaluate_image_content_in_dataset(self) -> None:
         """Image content in conversations is preserved in the JSONL payload."""
@@ -1987,6 +2039,102 @@ class TestEvaluateWorkflow:
                 assert "builtin.tool_call_accuracy" in eval_names, (
                     "researcher has tools — should get tool_call_accuracy"
                 )
+
+    async def test_expected_output_stamps_overall_items(self) -> None:
+        """expected_output is stamped on overall items as ground_truth in the dataset."""
+        mock_oai = self._mock_oai_client()
+
+        aer = _make_agent_exec_response("agent", "Response", ["Query"])
+        final_output = [Message("assistant", ["Final answer"])]
+
+        events = [
+            WorkflowEvent.executor_invoked("agent", "Test query"),
+            WorkflowEvent.executor_completed("agent", [aer]),
+            WorkflowEvent.output("end", final_output),
+        ]
+        wf_result = WorkflowRunResult(events, [])
+
+        mock_workflow = MagicMock()
+        mock_workflow.executors = {}
+        mock_workflow.run = AsyncMock(return_value=wf_result)
+
+        results = await evaluate_workflow(
+            workflow=mock_workflow,
+            queries=["Test query"],
+            expected_output=["Expected answer"],
+            evaluators=FoundryEvals(
+                client=mock_oai,
+                model="gpt-4o",
+                evaluators=[FoundryEvals.SIMILARITY],
+            ),
+        )
+
+        assert results[0].status == "completed"
+
+        # Verify overall eval's dataset includes ground_truth
+        # The overall eval is the last evals.runs.create call
+        calls = mock_oai.evals.runs.create.call_args_list
+        overall_call = calls[-1]
+        ds = overall_call.kwargs["data_source"]
+        overall_item = ds["source"]["content"][0]["item"]
+        assert overall_item["ground_truth"] == "Expected answer"
+
+    async def test_expected_output_with_num_repetitions(self) -> None:
+        """expected_output is correctly stamped on overall items across multiple repetitions."""
+        mock_oai = self._mock_oai_client()
+
+        aer = _make_agent_exec_response("agent", "Response", ["Query"])
+        final_output = [Message("assistant", ["Final answer"])]
+
+        events = [
+            WorkflowEvent.executor_invoked("agent", "Test query"),
+            WorkflowEvent.executor_completed("agent", [aer]),
+            WorkflowEvent.output("end", final_output),
+        ]
+        wf_result = WorkflowRunResult(events, [])
+
+        mock_workflow = MagicMock()
+        mock_workflow.executors = {}
+        mock_workflow.run = AsyncMock(return_value=wf_result)
+
+        results = await evaluate_workflow(
+            workflow=mock_workflow,
+            queries=["Test query"],
+            expected_output=["Expected answer"],
+            evaluators=FoundryEvals(
+                client=mock_oai,
+                model="gpt-4o",
+                evaluators=[FoundryEvals.SIMILARITY],
+            ),
+            num_repetitions=2,
+        )
+
+        assert results[0].status == "completed"
+
+        # workflow.run should be called twice (once per repetition)
+        assert mock_workflow.run.call_count == 2
+
+        # Verify all overall items have ground_truth stamped
+        calls = mock_oai.evals.runs.create.call_args_list
+        overall_call = calls[-1]
+        ds = overall_call.kwargs["data_source"]
+        items = ds["source"]["content"]
+        assert len(items) == 2
+        for item in items:
+            assert item["item"]["ground_truth"] == "Expected answer"
+
+    async def test_expected_output_length_mismatch_raises(self) -> None:
+        """Mismatched queries and expected_output lengths raise ValueError."""
+        mock_oai = MagicMock()
+        mock_workflow = MagicMock()
+
+        with pytest.raises(ValueError, match="expected_output"):
+            await evaluate_workflow(
+                workflow=mock_workflow,
+                queries=["q1", "q2"],
+                expected_output=["e1"],
+                evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
+            )
 
 
 # ---------------------------------------------------------------------------

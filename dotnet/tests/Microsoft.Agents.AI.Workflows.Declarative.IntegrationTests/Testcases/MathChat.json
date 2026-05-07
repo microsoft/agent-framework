@@ -11,7 +11,7 @@
     "min_action_count": 6,
     "max_action_count": -1,
     "min_response_count": 2,
-    "max_response_count": 8,
+    "max_response_count": 9,
     "min_message_count": 4,
     "max_message_count": -1,
     "actions": {

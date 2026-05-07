@@ -73,6 +73,7 @@ internal static class Step12EntryPoint
         foreach (string input in inputs)
         {
             AgentResponse response;
+
             ResponseContinuationToken? continuationToken = null;
             do
             {

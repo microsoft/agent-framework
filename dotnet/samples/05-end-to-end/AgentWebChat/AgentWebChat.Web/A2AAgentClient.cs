@@ -43,20 +43,21 @@ internal sealed class A2AAgentClient : AgentClientBase
         {
             // Convert all messages to A2A parts and create a single message
             var parts = messages.ToParts();
-            var a2aMessage = new AgentMessage
+            var a2aMessage = new Message
             {
                 MessageId = Guid.NewGuid().ToString("N"),
                 ContextId = contextId,
-                Role = MessageRole.User,
+                Role = Role.User,
                 Parts = parts
             };
 
-            var messageSendParams = new MessageSendParams { Message = a2aMessage };
+            var messageSendParams = new SendMessageRequest { Message = a2aMessage };
             var a2aResponse = await a2aClient.SendMessageAsync(messageSendParams, cancellationToken);
 
             // Handle different response types
-            if (a2aResponse is AgentMessage message)
+            if (a2aResponse.PayloadCase == SendMessageResponseCase.Message)
             {
+                var message = a2aResponse.Message!;
                 var responseMessage = message.ToChatMessage();
                 if (responseMessage is { Contents.Count: > 0 })
                 {
@@ -67,9 +68,10 @@ internal sealed class A2AAgentClient : AgentClientBase
                     });
                 }
             }
-            else if (a2aResponse is AgentTask agentTask)
+            else if (a2aResponse.PayloadCase == SendMessageResponseCase.Task)
             {
                 // Manually convert AgentTask artifacts to ChatMessages since the extension method is internal
+                var agentTask = a2aResponse.Task!;
                 if (agentTask.Artifacts is not null)
                 {
                     foreach (var artifact in agentTask.Artifacts)

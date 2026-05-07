@@ -1,0 +1,857 @@
+{
+  "analyzerId": "prebuilt-documentSearch",
+  "apiVersion": "2025-11-01",
+  "createdAt": "2026-03-21T22:44:21Z",
+  "stringEncoding": "codePoint",
+  "warnings": [],
+  "contents": [
+    {
+      "path": "input1",
+      "markdown": "# Contoso Q1 2025 Financial Summary\n\nTotal revenue for Q1 2025 was $42.7 million, an increase of 18% over Q1 2024.\nOperating expenses were $31.2 million. Net profit was $11.5 million. The largest\nrevenue segment was Cloud Services at $19.3 million, followed by Professional\nServices at $14.8 million and Product Licensing at $8.6 million. Headcount at end of\nQ1 was 1,247 employees across 8 offices worldwide.\n",
+      "fields": {
+        "Summary": {
+          "type": "string",
+          "valueString": "The document provides a financial summary for Contoso in Q1 2025, reporting total revenue of $42.7 million, an 18% increase from Q1 2024. Operating expenses were $31.2 million, resulting in a net profit of $11.5 million. The largest revenue segment was Cloud Services with $19.3 million, followed by Professional Services at $14.8 million and Product Licensing at $8.6 million. The company had 1,247 employees across 8 offices worldwide at the end of Q1.",
+          "spans": [
+            {
+              "offset": 37,
+              "length": 77
+            },
+            {
+              "offset": 115,
+              "length": 80
+            },
+            {
+              "offset": 196,
+              "length": 77
+            },
+            {
+              "offset": 274,
+              "length": 84
+            },
+            {
+              "offset": 359,
+              "length": 50
+            }
+          ],
+          "confidence": 0.592,
+          "source": "D(1,212.0000,334.0000,1394.0000,334.0000,1394.0000,374.0000,212.0000,374.0000);D(1,213.0000,379.0000,1398.0000,379.0000,1398.0000,422.0000,213.0000,422.0000);D(1,212.0000,423.0000,1389.0000,423.0000,1389.0000,464.0000,212.0000,464.0000);D(1,213.0000,468.0000,1453.0000,468.0000,1453.0000,510.0000,213.0000,510.0000);D(1,213.0000,512.0000,1000.0000,512.0000,1000.0000,554.0000,213.0000,554.0000)"
+        }
+      },
+      "kind": "document",
+      "startPageNumber": 1,
+      "endPageNumber": 1,
+      "unit": "pixel",
+      "pages": [
+        {
+          "pageNumber": 1,
+          "angle": -0.0242,
+          "width": 1700,
+          "height": 2200,
+          "spans": [
+            {
+              "offset": 0,
+              "length": 410
+            }
+          ],
+          "words": [
+            {
+              "content": "Contoso",
+              "span": {
+                "offset": 2,
+                "length": 7
+              },
+              "confidence": 0.99,
+              "source": "D(1,214,222,401,222,401,274,214,273)"
+            },
+            {
+              "content": "Q1",
+              "span": {
+                "offset": 10,
+                "length": 2
+              },
+              "confidence": 0.957,
+              "source": "D(1,414,222,473,222,473,275,414,274)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 13,
+                "length": 4
+              },
+              "confidence": 0.929,
+              "source": "D(1,494,222,607,222,607,276,494,275)"
+            },
+            {
+              "content": "Financial",
+              "span": {
+                "offset": 18,
+                "length": 9
+              },
+              "confidence": 0.975,
+              "source": "D(1,624,222,819,223,819,277,624,276)"
+            },
+            {
+              "content": "Summary",
+              "span": {
+                "offset": 28,
+                "length": 7
+              },
+              "confidence": 0.991,
+              "source": "D(1,836,223,1050,225,1050,279,836,277)"
+            },
+            {
+              "content": "Total",
+              "span": {
+                "offset": 37,
+                "length": 5
+              },
+              "confidence": 0.996,
+              "source": "D(1,212,335,287,334,288,374,212,373)"
+            },
+            {
+              "content": "revenue",
+              "span": {
+                "offset": 43,
+                "length": 7
+              },
+              "confidence": 0.994,
+              "source": "D(1,299,334,417,334,418,374,299,374)"
+            },
+            {
+              "content": "for",
+              "span": {
+                "offset": 51,
+                "length": 3
+              },
+              "confidence": 0.994,
+              "source": "D(1,427,334,467,334,467,374,427,374)"
+            },
+            {
+              "content": "Q1",
+              "span": {
+                "offset": 55,
+                "length": 2
+              },
+              "confidence": 0.944,
+              "source": "D(1,475,334,515,334,515,374,475,374)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 58,
+                "length": 4
+              },
+              "confidence": 0.876,
+              "source": "D(1,528,334,604,334,604,374,529,374)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 63,
+                "length": 3
+              },
+              "confidence": 0.991,
+              "source": "D(1,613,334,672,334,672,374,613,374)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 67,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(1,681,334,698,334,698,374,681,374)"
+            },
+            {
+              "content": "42.7",
+              "span": {
+                "offset": 68,
+                "length": 4
+              },
+              "confidence": 0.946,
+              "source": "D(1,700,334,765,334,765,374,700,374)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 73,
+                "length": 7
+              },
+              "confidence": 0.977,
+              "source": "D(1,775,334,867,334,867,374,776,374)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 80,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,870,334,877,334,877,374,870,374)"
+            },
+            {
+              "content": "an",
+              "span": {
+                "offset": 82,
+                "length": 2
+              },
+              "confidence": 0.998,
+              "source": "D(1,888,334,922,334,922,374,888,374)"
+            },
+            {
+              "content": "increase",
+              "span": {
+                "offset": 85,
+                "length": 8
+              },
+              "confidence": 0.991,
+              "source": "D(1,934,334,1058,335,1059,374,934,374)"
+            },
+            {
+              "content": "of",
+              "span": {
+                "offset": 94,
+                "length": 2
+              },
+              "confidence": 0.982,
+              "source": "D(1,1069,335,1098,335,1098,374,1069,374)"
+            },
+            {
+              "content": "18",
+              "span": {
+                "offset": 97,
+                "length": 2
+              },
+              "confidence": 0.963,
+              "source": "D(1,1108,335,1142,335,1142,374,1108,374)"
+            },
+            {
+              "content": "%",
+              "span": {
+                "offset": 99,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,1143,335,1171,335,1171,374,1143,374)"
+            },
+            {
+              "content": "over",
+              "span": {
+                "offset": 101,
+                "length": 4
+              },
+              "confidence": 0.946,
+              "source": "D(1,1181,335,1248,335,1248,374,1181,374)"
+            },
+            {
+              "content": "Q1",
+              "span": {
+                "offset": 106,
+                "length": 2
+              },
+              "confidence": 0.875,
+              "source": "D(1,1256,335,1295,335,1295,374,1256,374)"
+            },
+            {
+              "content": "2024",
+              "span": {
+                "offset": 109,
+                "length": 4
+              },
+              "confidence": 0.683,
+              "source": "D(1,1310,335,1384,335,1384,374,1310,374)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 113,
+                "length": 1
+              },
+              "confidence": 0.991,
+              "source": "D(1,1385,335,1394,335,1394,374,1385,374)"
+            },
+            {
+              "content": "Operating",
+              "span": {
+                "offset": 115,
+                "length": 9
+              },
+              "confidence": 0.996,
+              "source": "D(1,213,380,358,380,358,422,213,422)"
+            },
+            {
+              "content": "expenses",
+              "span": {
+                "offset": 125,
+                "length": 8
+              },
+              "confidence": 0.997,
+              "source": "D(1,369,380,513,379,513,421,369,421)"
+            },
+            {
+              "content": "were",
+              "span": {
+                "offset": 134,
+                "length": 4
+              },
+              "confidence": 0.998,
+              "source": "D(1,521,379,595,379,595,421,521,421)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 139,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(1,603,379,620,379,620,421,603,421)"
+            },
+            {
+              "content": "31.2",
+              "span": {
+                "offset": 140,
+                "length": 4
+              },
+              "confidence": 0.938,
+              "source": "D(1,623,379,686,379,686,421,623,421)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 145,
+                "length": 7
+              },
+              "confidence": 0.913,
+              "source": "D(1,696,379,790,379,790,421,696,421)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 152,
+                "length": 1
+              },
+              "confidence": 0.975,
+              "source": "D(1,793,379,800,379,800,421,793,421)"
+            },
+            {
+              "content": "Net",
+              "span": {
+                "offset": 154,
+                "length": 3
+              },
+              "confidence": 0.976,
+              "source": "D(1,811,379,862,379,862,420,811,421)"
+            },
+            {
+              "content": "profit",
+              "span": {
+                "offset": 158,
+                "length": 6
+              },
+              "confidence": 0.993,
+              "source": "D(1,871,379,947,379,947,420,871,420)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 165,
+                "length": 3
+              },
+              "confidence": 0.997,
+              "source": "D(1,954,379,1012,379,1012,420,953,420)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 169,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,1021,379,1039,379,1039,420,1021,420)"
+            },
+            {
+              "content": "11.5",
+              "span": {
+                "offset": 170,
+                "length": 4
+              },
+              "confidence": 0.954,
+              "source": "D(1,1043,379,1106,379,1106,421,1043,420)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 175,
+                "length": 7
+              },
+              "confidence": 0.837,
+              "source": "D(1,1118,379,1208,379,1208,421,1118,421)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 182,
+                "length": 1
+              },
+              "confidence": 0.978,
+              "source": "D(1,1210,379,1217,379,1217,421,1210,421)"
+            },
+            {
+              "content": "The",
+              "span": {
+                "offset": 184,
+                "length": 3
+              },
+              "confidence": 0.949,
+              "source": "D(1,1228,379,1285,379,1285,421,1228,421)"
+            },
+            {
+              "content": "largest",
+              "span": {
+                "offset": 188,
+                "length": 7
+              },
+              "confidence": 0.978,
+              "source": "D(1,1295,379,1398,379,1398,421,1295,421)"
+            },
+            {
+              "content": "revenue",
+              "span": {
+                "offset": 196,
+                "length": 7
+              },
+              "confidence": 0.995,
+              "source": "D(1,212,425,334,425,334,464,212,464)"
+            },
+            {
+              "content": "segment",
+              "span": {
+                "offset": 204,
+                "length": 7
+              },
+              "confidence": 0.996,
+              "source": "D(1,344,425,472,424,472,464,344,464)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 212,
+                "length": 3
+              },
+              "confidence": 0.998,
+              "source": "D(1,480,424,541,424,541,464,480,464)"
+            },
+            {
+              "content": "Cloud",
+              "span": {
+                "offset": 216,
+                "length": 5
+              },
+              "confidence": 0.997,
+              "source": "D(1,550,424,636,424,637,464,551,464)"
+            },
+            {
+              "content": "Services",
+              "span": {
+                "offset": 222,
+                "length": 8
+              },
+              "confidence": 0.995,
+              "source": "D(1,647,424,774,424,774,464,647,464)"
+            },
+            {
+              "content": "at",
+              "span": {
+                "offset": 231,
+                "length": 2
+              },
+              "confidence": 0.996,
+              "source": "D(1,784,424,812,424,812,464,784,464)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 234,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,820,424,837,424,837,464,820,464)"
+            },
+            {
+              "content": "19.3",
+              "span": {
+                "offset": 235,
+                "length": 4
+              },
+              "confidence": 0.879,
+              "source": "D(1,840,424,903,423,903,463,840,464)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 240,
+                "length": 7
+              },
+              "confidence": 0.876,
+              "source": "D(1,915,423,1006,423,1006,463,915,463)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 247,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(1,1008,423,1015,423,1015,463,1008,463)"
+            },
+            {
+              "content": "followed",
+              "span": {
+                "offset": 249,
+                "length": 8
+              },
+              "confidence": 0.978,
+              "source": "D(1,1026,423,1148,424,1148,463,1026,463)"
+            },
+            {
+              "content": "by",
+              "span": {
+                "offset": 258,
+                "length": 2
+              },
+              "confidence": 0.986,
+              "source": "D(1,1160,424,1194,424,1194,463,1160,463)"
+            },
+            {
+              "content": "Professional",
+              "span": {
+                "offset": 261,
+                "length": 12
+              },
+              "confidence": 0.965,
+              "source": "D(1,1204,424,1389,424,1389,463,1204,463)"
+            },
+            {
+              "content": "Services",
+              "span": {
+                "offset": 274,
+                "length": 8
+              },
+              "confidence": 0.991,
+              "source": "D(1,213,469,341,469,341,510,213,510)"
+            },
+            {
+              "content": "at",
+              "span": {
+                "offset": 283,
+                "length": 2
+              },
+              "confidence": 0.997,
+              "source": "D(1,352,469,380,469,380,510,352,510)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 286,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,388,469,405,469,405,510,388,510)"
+            },
+            {
+              "content": "14.8",
+              "span": {
+                "offset": 287,
+                "length": 4
+              },
+              "confidence": 0.973,
+              "source": "D(1,410,469,472,469,472,510,410,510)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 292,
+                "length": 7
+              },
+              "confidence": 0.987,
+              "source": "D(1,483,469,575,469,575,510,483,510)"
+            },
+            {
+              "content": "and",
+              "span": {
+                "offset": 300,
+                "length": 3
+              },
+              "confidence": 0.999,
+              "source": "D(1,585,469,638,469,638,510,585,510)"
+            },
+            {
+              "content": "Product",
+              "span": {
+                "offset": 304,
+                "length": 7
+              },
+              "confidence": 0.995,
+              "source": "D(1,652,469,765,469,765,510,652,510)"
+            },
+            {
+              "content": "Licensing",
+              "span": {
+                "offset": 312,
+                "length": 9
+              },
+              "confidence": 0.993,
+              "source": "D(1,777,469,914,469,914,510,777,510)"
+            },
+            {
+              "content": "at",
+              "span": {
+                "offset": 322,
+                "length": 2
+              },
+              "confidence": 0.998,
+              "source": "D(1,925,469,953,469,953,510,925,510)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 325,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,961,469,978,469,978,510,961,510)"
+            },
+            {
+              "content": "8.6",
+              "span": {
+                "offset": 326,
+                "length": 3
+              },
+              "confidence": 0.958,
+              "source": "D(1,980,469,1025,469,1025,510,980,510)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 330,
+                "length": 7
+              },
+              "confidence": 0.908,
+              "source": "D(1,1036,469,1128,468,1128,510,1036,510)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 337,
+                "length": 1
+              },
+              "confidence": 0.987,
+              "source": "D(1,1130,468,1137,468,1137,510,1130,510)"
+            },
+            {
+              "content": "Headcount",
+              "span": {
+                "offset": 339,
+                "length": 9
+              },
+              "confidence": 0.934,
+              "source": "D(1,1150,468,1310,468,1310,510,1150,510)"
+            },
+            {
+              "content": "at",
+              "span": {
+                "offset": 349,
+                "length": 2
+              },
+              "confidence": 0.993,
+              "source": "D(1,1318,468,1348,468,1348,510,1318,510)"
+            },
+            {
+              "content": "end",
+              "span": {
+                "offset": 352,
+                "length": 3
+              },
+              "confidence": 0.947,
+              "source": "D(1,1355,468,1410,468,1410,510,1355,510)"
+            },
+            {
+              "content": "of",
+              "span": {
+                "offset": 356,
+                "length": 2
+              },
+              "confidence": 0.974,
+              "source": "D(1,1419,468,1453,468,1453,509,1419,509)"
+            },
+            {
+              "content": "Q1",
+              "span": {
+                "offset": 359,
+                "length": 2
+              },
+              "confidence": 0.931,
+              "source": "D(1,213,512,252,512,252,554,213,554)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 362,
+                "length": 3
+              },
+              "confidence": 0.847,
+              "source": "D(1,267,512,326,512,326,554,267,554)"
+            },
+            {
+              "content": "1,247",
+              "span": {
+                "offset": 366,
+                "length": 5
+              },
+              "confidence": 0.523,
+              "source": "D(1,338,512,419,512,419,554,338,554)"
+            },
+            {
+              "content": "employees",
+              "span": {
+                "offset": 372,
+                "length": 9
+              },
+              "confidence": 0.972,
+              "source": "D(1,429,513,591,512,591,554,429,554)"
+            },
+            {
+              "content": "across",
+              "span": {
+                "offset": 382,
+                "length": 6
+              },
+              "confidence": 0.972,
+              "source": "D(1,601,512,697,512,697,554,601,554)"
+            },
+            {
+              "content": "8",
+              "span": {
+                "offset": 389,
+                "length": 1
+              },
+              "confidence": 0.946,
+              "source": "D(1,708,512,725,512,725,553,708,554)"
+            },
+            {
+              "content": "offices",
+              "span": {
+                "offset": 391,
+                "length": 7
+              },
+              "confidence": 0.95,
+              "source": "D(1,736,512,831,512,831,553,736,553)"
+            },
+            {
+              "content": "worldwide",
+              "span": {
+                "offset": 399,
+                "length": 9
+              },
+              "confidence": 0.988,
+              "source": "D(1,840,512,989,512,989,552,840,553)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 408,
+                "length": 1
+              },
+              "confidence": 0.996,
+              "source": "D(1,991,512,1000,512,1000,552,991,552)"
+            }
+          ],
+          "lines": [
+            {
+              "content": "Contoso Q1 2025 Financial Summary",
+              "source": "D(1,214,221,1050,225,1050,279,213,273)",
+              "span": {
+                "offset": 2,
+                "length": 33
+              }
+            },
+            {
+              "content": "Total revenue for Q1 2025 was $42.7 million, an increase of 18% over Q1 2024.",
+              "source": "D(1,212,334,1394,335,1394,374,212,374)",
+              "span": {
+                "offset": 37,
+                "length": 77
+              }
+            },
+            {
+              "content": "Operating expenses were $31.2 million. Net profit was $11.5 million. The largest",
+              "source": "D(1,213,379,1398,378,1398,421,213,422)",
+              "span": {
+                "offset": 115,
+                "length": 80
+              }
+            },
+            {
+              "content": "revenue segment was Cloud Services at $19.3 million, followed by Professional",
+              "source": "D(1,212,424,1389,423,1389,463,212,464)",
+              "span": {
+                "offset": 196,
+                "length": 77
+              }
+            },
+            {
+              "content": "Services at $14.8 million and Product Licensing at $8.6 million. Headcount at end of",
+              "source": "D(1,213,469,1453,468,1453,510,213,511)",
+              "span": {
+                "offset": 274,
+                "length": 84
+              }
+            },
+            {
+              "content": "Q1 was 1,247 employees across 8 offices worldwide.",
+              "source": "D(1,213,512,1000,512,1000,554,213,554)",
+              "span": {
+                "offset": 359,
+                "length": 50
+              }
+            }
+          ]
+        }
+      ],
+      "paragraphs": [
+        {
+          "role": "title",
+          "content": "Contoso Q1 2025 Financial Summary",
+          "source": "D(1,214,219,1050,225,1050,279,213,273)",
+          "span": {
+            "offset": 0,
+            "length": 35
+          }
+        },
+        {
+          "content": "Total revenue for Q1 2025 was $42.7 million, an increase of 18% over Q1 2024. Operating expenses were $31.2 million. Net profit was $11.5 million. The largest revenue segment was Cloud Services at $19.3 million, followed by Professional Services at $14.8 million and Product Licensing at $8.6 million. Headcount at end of Q1 was 1,247 employees across 8 offices worldwide.",
+          "source": "D(1,212,334,1453,333,1454,553,212,554)",
+          "span": {
+            "offset": 37,
+            "length": 372
+          }
+        }
+      ],
+      "sections": [
+        {
+          "span": {
+            "offset": 0,
+            "length": 409
+          },
+          "elements": [
+            "/paragraphs/0",
+            "/paragraphs/1"
+          ]
+        }
+      ],
+      "analyzerId": "prebuilt-documentSearch",
+      "mimeType": "image/png"
+    }
+  ]
+}

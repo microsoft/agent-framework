@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 namespace A2A;
 
 /// <summary>
-/// Provides extension methods for <see cref="A2AClient"/>
+/// Provides extension methods for <see cref="IA2AClient"/>
 /// to simplify the creation of A2A agents.
 /// </summary>
 /// <remarks>
@@ -29,12 +29,12 @@ public static class A2AClientExtensions
     /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#3-direct-configuration--private-discovery">Direct Configuration / Private Discovery</see>
     /// discovery mechanism.
     /// </remarks>
-    /// <param name="client">The <see cref="A2AClient" /> to use for the agent.</param>
+    /// <param name="client">The <see cref="IA2AClient" /> to use for the agent.</param>
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The the name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static AIAgent AsAIAgent(this A2AClient client, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null) =>
+    public static AIAgent AsAIAgent(this IA2AClient client, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null) =>
         new A2AAgent(client, id, name, description, loggerFactory);
 }

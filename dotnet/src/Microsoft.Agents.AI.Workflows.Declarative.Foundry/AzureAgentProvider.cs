@@ -4,7 +4,6 @@ using System;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
@@ -70,7 +69,14 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
                 include: null,
                 cancellationToken).ConfigureAwait(false);
 
-        return newItems.AsChatMessages().Single();
+        ChatMessage[] createdMessages = [.. newItems.AsChatMessages()];
+        if (createdMessages.Length != 1)
+        {
+            throw new InvalidOperationException(
+                $"Expected exactly one chat message from created conversation item in conversation '{conversationId}', but got {createdMessages.Length}.");
+        }
+
+        return createdMessages[0];
 
         IEnumerable<ResponseItem> GetResponseItems()
         {
@@ -208,7 +214,14 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     {
         AgentResponseItem responseItem = await this.GetConversationClient().GetProjectConversationItemAsync(conversationId, messageId, include: null, cancellationToken).ConfigureAwait(false);
         ResponseItem[] items = [responseItem.AsResponseResultItem()];
-        return items.AsChatMessages().Single();
+        ChatMessage[] messages = [.. items.AsChatMessages()];
+        if (messages.Length != 1)
+        {
+            throw new InvalidOperationException(
+                $"Expected exactly one chat message for message '{messageId}' in conversation '{conversationId}', but got {messages.Length}.");
+        }
+
+        return messages[0];
     }
 
     /// <inheritdoc/>

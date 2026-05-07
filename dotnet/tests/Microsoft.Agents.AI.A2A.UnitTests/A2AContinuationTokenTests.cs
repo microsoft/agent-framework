@@ -107,6 +107,18 @@ public sealed class A2AContinuationTokenTests
     }
 
     [Fact]
+    public void FromToken_WithNullTaskIdValue_ThrowsJsonException()
+    {
+        // Arrange
+        var jsonWithNullTaskId = System.Text.Encoding.UTF8.GetBytes("{ \"taskId\": null }").AsMemory();
+        var mockToken = new MockResponseContinuationToken(jsonWithNullTaskId);
+
+        // Act & Assert
+        var ex = Assert.Throws<JsonException>(() => A2AContinuationToken.FromToken(mockToken));
+        Assert.Contains("taskId", ex.Message);
+    }
+
+    [Fact]
     public void FromToken_WithMissingTaskIdProperty_ThrowsException()
     {
         // Arrange

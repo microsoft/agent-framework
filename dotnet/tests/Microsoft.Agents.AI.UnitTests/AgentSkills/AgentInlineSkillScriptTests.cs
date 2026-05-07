@@ -5,7 +5,6 @@ using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 
@@ -22,7 +21,7 @@ public sealed class AgentInlineSkillScriptTests
         var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
 
         // Act
-        var result = await script.RunAsync(skill, new AIFunctionArguments(), CancellationToken.None);
+        var result = await script.RunAsync(skill, null, null, CancellationToken.None);
 
         // Assert
         Assert.Equal("hello", result?.ToString());
@@ -34,10 +33,11 @@ public sealed class AgentInlineSkillScriptTests
         // Arrange
         var script = new AgentInlineSkillScript("add", (int a, int b) => a + b);
         var skill = new AgentInlineSkill("calc-skill", "Calc.", "Instructions.");
-        var args = new AIFunctionArguments { ["a"] = 3, ["b"] = 7 };
+        using var argsDoc = JsonDocument.Parse("""{"a":3,"b":7}""");
+        var args = argsDoc.RootElement;
 
         // Act
-        var result = await script.RunAsync(skill, args, CancellationToken.None);
+        var result = await script.RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert
         Assert.Equal(10, int.Parse(result?.ToString()!));
@@ -129,10 +129,11 @@ public sealed class AgentInlineSkillScriptTests
         }, serializerOptions: jso);
         var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
         var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "test", MaxResults = 5 }, jso);
-        var args = new AIFunctionArguments { ["request"] = inputJson };
+        using var argsDoc = JsonDocument.Parse($$"""{ "request": {{inputJson.GetRawText()}} }""");
+        var args = argsDoc.RootElement;
 
         // Act
-        var result = await script.RunAsync(skill, args, CancellationToken.None);
+        var result = await script.RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert — the custom input type was deserialized and the response was produced
         Assert.NotNull(result);
@@ -145,10 +146,11 @@ public sealed class AgentInlineSkillScriptTests
         // Arrange
         var script = new AgentInlineSkillScript("echo", (string message) => message);
         var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
-        var args = new AIFunctionArguments { ["message"] = "hello world" };
+        using var argsDoc = JsonDocument.Parse("""{"message":"hello world"}""");
+        var args = argsDoc.RootElement;
 
         // Act
-        var result = await script.RunAsync(skill, args, CancellationToken.None);
+        var result = await script.RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert
         Assert.Equal("hello world", result?.ToString());
@@ -175,10 +177,11 @@ public sealed class AgentInlineSkillScriptTests
         var method = typeof(AgentInlineSkillScriptTests).GetMethod(nameof(StaticScriptHelper), BindingFlags.NonPublic | BindingFlags.Static)!;
         var script = new AgentInlineSkillScript("static-method-script", method, target: null);
         var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
-        var args = new AIFunctionArguments { ["input"] = "hello" };
+        using var argsDoc = JsonDocument.Parse("""{"input":"hello"}""");
+        var args = argsDoc.RootElement;
 
         // Act
-        var result = await script.RunAsync(skill, args, CancellationToken.None);
+        var result = await script.RunAsync(skill, args, null, CancellationToken.None);
 
         // Assert
         Assert.Equal("HELLO", result?.ToString());
@@ -191,10 +194,11 @@ public sealed class AgentInlineSkillScriptTests
         var method = typeof(AgentInlineSkillScriptTests).GetMethod(nameof(InstanceScriptHelper), BindingFlags.NonPublic | BindingFlags.Instance)!;
         var script = new AgentInlineSkillScript("instance-method-script", method, target: this);
         var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
-        var args = new AIFunctionArguments { ["input"] = "test" };
+        using var argsDoc2 = JsonDocument.Parse("""{"input":"test"}""");
+        var args2 = argsDoc2.RootElement;
 
         // Act
-        var result = await script.RunAsync(skill, args, CancellationToken.None);
+        var result = await script.RunAsync(skill, args2, null, CancellationToken.None);
 
         // Assert
         Assert.Equal("test-suffix", result?.ToString());
@@ -223,7 +227,63 @@ public sealed class AgentInlineSkillScriptTests
         Assert.Contains("input", schema!.Value.GetRawText());
     }
 
+    [Fact]
+    public async Task RunAsync_WithNonObjectArguments_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange — inline scripts require a JSON object for arguments
+        var script = new AgentInlineSkillScript("noop", () => "ok");
+        var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
+        using var arrayArgsDoc = JsonDocument.Parse("""["a","b"]""");
+        var arrayArgs = arrayArgsDoc.RootElement;
+
+        // Act & Assert — non-object JSON should fail fast rather than silently dropping arguments
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => script.RunAsync(skill, arrayArgs, null, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task RunAsync_WithNullArguments_TreatsAsNoArgumentsAsync()
+    {
+        // Arrange — a parameterless delegate should succeed when given null arguments
+        var script = new AgentInlineSkillScript("noop", () => "ok");
+        var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
+
+        // Act
+        var result = await script.RunAsync(skill, null, null, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("ok", result?.ToString());
+    }
+
+    [Fact]
+    public async Task RunAsync_ServiceProviderIsForwardedAsync()
+    {
+        // Arrange — delegate that resolves a service from the IServiceProvider
+        IServiceProvider? capturedProvider = null;
+        var script = new AgentInlineSkillScript("svc-test", (IServiceProvider sp) =>
+        {
+            capturedProvider = sp;
+            return "done";
+        });
+        var skill = new AgentInlineSkill("test-skill", "Test.", "Instructions.");
+        var mockProvider = new TestServiceProvider();
+
+        // Act
+        await script.RunAsync(skill, null, mockProvider, CancellationToken.None);
+
+        // Assert
+        Assert.Same(mockProvider, capturedProvider);
+    }
+
     private static string StaticScriptHelper(string input) => input.ToUpperInvariant();
 
     private string InstanceScriptHelper(string input) => input + "-suffix";
+
+    /// <summary>
+    /// Minimal <see cref="IServiceProvider"/> for testing service forwarding.
+    /// </summary>
+    private sealed class TestServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
+    }
 }

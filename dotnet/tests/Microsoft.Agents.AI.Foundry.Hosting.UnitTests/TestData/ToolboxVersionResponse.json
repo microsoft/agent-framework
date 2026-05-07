@@ -1,0 +1,11 @@
+{
+  "metadata": {},
+  "id": "tbv-research_tools-v5",
+  "name": "research_tools",
+  "version": "v5",
+  "description": "Example research toolbox",
+  "created_at": 1775779200,
+  "tools": [
+    { "type": "code_interpreter" }
+  ]
+}

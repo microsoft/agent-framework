@@ -21,6 +21,9 @@ internal static class TestSettings
     public const string AzureAIModelDeploymentName = "AZURE_AI_MODEL_DEPLOYMENT_NAME";
     public const string AzureAIProjectEndpoint = "AZURE_AI_PROJECT_ENDPOINT";
 
+    // Foundry Hosted Agents (Foundry.Hosting integration tests)
+    public const string FoundryHostingItImage = "IT_HOSTED_AGENT_IMAGE";
+
     // Copilot Studio
     public const string CopilotStudioAgentAppId = "COPILOTSTUDIO_AGENT_APP_ID";
     public const string CopilotStudioDirectConnectUrl = "COPILOTSTUDIO_DIRECT_CONNECT_URL";

@@ -1,0 +1,11 @@
+{
+  "metadata": {},
+  "id": "tbv-dirty-v1",
+  "name": "dirty_toolbox",
+  "version": "v1",
+  "description": "Toolbox with decoration fields on tools",
+  "created_at": 1775779200,
+  "tools": [
+    { "type": "code_interpreter", "name": "code_interpreter", "description": "Execute Python code" }
+  ]
+}

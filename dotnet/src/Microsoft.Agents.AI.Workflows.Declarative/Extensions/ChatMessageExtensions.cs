@@ -16,6 +16,60 @@ internal static class ChatMessageExtensions
     public static RecordValue ToRecord(this ChatMessage message) =>
         FormulaValue.NewRecordFromFields(message.GetMessageFields());
 
+    /// <summary>
+    /// Merges the user-authored <paramref name="input"/> with the round-tripped
+    /// <paramref name="inputMessage"/> returned by <c>AgentProvider.CreateMessageAsync</c>
+    /// to produce the value stored in <c>System.LastMessage</c>.
+    /// </summary>
+    /// <remarks>
+    /// The agent service often strips or alters <see cref="TextContent"/> on round-trip,
+    /// while replacing inline media (<see cref="DataContent"/>, <see cref="UriContent"/>)
+    /// with server-side references (typically <see cref="HostedFileContent"/>).
+    /// We want both: the original text (so <c>=System.LastMessage.Text</c> works) and
+    /// the server's media references (so subsequent actions don't re-upload large blobs).
+    /// <para>
+    /// Strategy: keep <paramref name="inputMessage"/> as the base — it has the server-generated
+    /// <see cref="ChatMessage.MessageId"/> and any provider-augmented metadata, and is forward-
+    /// compatible with new properties added on <see cref="ChatMessage"/> in the abstractions
+    /// layer. Only the <see cref="ChatMessage.Contents"/> list is mutated to substitute
+    /// original <see cref="TextContent"/> items in place (and append any extras the round-trip
+    /// dropped). Non-text content items returned by the service are left untouched so
+    /// server-side references survive.
+    /// </para>
+    /// </remarks>
+    public static ChatMessage MergeForLastMessage(this ChatMessage input, ChatMessage? inputMessage)
+    {
+        if (inputMessage is null)
+        {
+            return input;
+        }
+
+        // Build a queue of the original text items, in order. Fall back to ChatMessage.Text
+        // if the input has no explicit TextContent entries.
+        Queue<TextContent> originalTexts = new(input.Contents.OfType<TextContent>());
+        if (originalTexts.Count == 0 && !string.IsNullOrEmpty(input.Text))
+        {
+            originalTexts.Enqueue(new TextContent(input.Text));
+        }
+
+        // Replace TextContent items in inputMessage.Contents with the originals, in order.
+        for (int i = 0; i < inputMessage.Contents.Count && originalTexts.Count > 0; i++)
+        {
+            if (inputMessage.Contents[i] is TextContent)
+            {
+                inputMessage.Contents[i] = originalTexts.Dequeue();
+            }
+        }
+
+        // Append any remaining original text items that the round-trip dropped entirely.
+        while (originalTexts.Count > 0)
+        {
+            inputMessage.Contents.Add(originalTexts.Dequeue());
+        }
+
+        return inputMessage;
+    }
+
     public static TableValue ToTable(this IEnumerable<ChatMessage> messages) =>
         FormulaValue.NewTable(TypeSchema.Message.RecordType, messages.Select(message => message.ToRecord()));
 

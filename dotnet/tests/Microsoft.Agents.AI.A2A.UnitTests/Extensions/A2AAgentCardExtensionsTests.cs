@@ -26,7 +26,7 @@ public sealed class A2AAgentCardExtensionsTests
         {
             Name = "Test Agent",
             Description = "A test agent for unit testing",
-            Url = "http://test-endpoint/agent"
+            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
         };
     }
 
@@ -50,13 +50,13 @@ public sealed class A2AAgentCardExtensionsTests
         using var handler = new HttpMessageHandlerStub();
         using var httpClient = new HttpClient(handler, false);
 
-        handler.ResponsesToReturn.Enqueue(new AgentMessage
+        handler.ResponsesToReturn.Enqueue(new Message
         {
-            Role = MessageRole.Agent,
-            Parts = [new TextPart { Text = "Response" }],
+            Role = Role.Agent,
+            Parts = [Part.FromText("Response")],
         });
 
-        var agent = this._agentCard.AsAIAgent(httpClient);
+        var agent = this._agentCard.AsAIAgent(httpClient: httpClient);
 
         // Act
         await agent.RunAsync("Test input");
@@ -64,6 +64,105 @@ public sealed class A2AAgentCardExtensionsTests
         // Assert
         Assert.Single(handler.CapturedUris);
         Assert.Equal(new Uri("http://test-endpoint/agent"), handler.CapturedUris[0]);
+    }
+
+    [Fact]
+    public async Task AsAIAgent_WithPreferredBindings_UsesMatchingInterfaceAsync()
+    {
+        // Arrange
+        var card = new AgentCard
+        {
+            Name = "Multi-Interface Agent",
+            Description = "An agent with multiple interfaces",
+            SupportedInterfaces =
+            [
+                new AgentInterface { Url = "http://first/agent", ProtocolBinding = ProtocolBindingNames.HttpJson },
+                new AgentInterface { Url = "http://second/agent", ProtocolBinding = ProtocolBindingNames.JsonRpc },
+            ]
+        };
+
+        using var handler = new HttpMessageHandlerStub();
+        using var httpClient = new HttpClient(handler, false);
+
+        handler.ResponsesToReturn.Enqueue(new Message
+        {
+            Role = Role.Agent,
+            Parts = [Part.FromText("Response")],
+        });
+
+        var options = new A2AClientOptions
+        {
+            PreferredBindings = [ProtocolBindingNames.JsonRpc]
+        };
+
+        var agent = card.AsAIAgent(httpClient, options: options);
+
+        // Act
+        await agent.RunAsync("Test input");
+
+        // Assert
+        Assert.Single(handler.CapturedUris);
+        Assert.Equal(new Uri("http://second/agent"), handler.CapturedUris[0]);
+    }
+
+    [Fact]
+    public void AsAIAgent_WithNullOptions_UsesDefaultBindingPreference()
+    {
+        // Arrange
+        var card = new AgentCard
+        {
+            Name = "Default Options Agent",
+            Description = "Tests default A2AClientOptions behavior",
+            SupportedInterfaces =
+            [
+                new AgentInterface { Url = "http://default/agent" },
+            ]
+        };
+
+        // Act - null options should use defaults (HTTP+JSON first, JSON-RPC as fallback)
+        var agent = card.AsAIAgent(options: null);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<A2AAgent>(agent);
+        Assert.Equal("Default Options Agent", agent.Name);
+    }
+
+    [Fact]
+    public void AsAIAgent_WithNoMatchingBinding_ThrowsException()
+    {
+        // Arrange
+        var card = new AgentCard
+        {
+            Name = "Unmatched Binding Agent",
+            Description = "Agent with unsupported binding only",
+            SupportedInterfaces =
+            [
+                new AgentInterface { Url = "http://grpc/agent", ProtocolBinding = "GRPC" },
+            ]
+        };
+
+        var options = new A2AClientOptions
+        {
+            PreferredBindings = [ProtocolBindingNames.JsonRpc]
+        };
+
+        // Act & Assert - factory should throw when no matching binding exists
+        Assert.ThrowsAny<Exception>(() => card.AsAIAgent(options: options));
+    }
+
+    [Fact]
+    public void AsAIAgent_WithNoSupportedInterfaces_ThrowsException()
+    {
+        // Arrange
+        var card = new AgentCard
+        {
+            Name = "No Interfaces Agent",
+            Description = "Agent with no supported interfaces",
+        };
+
+        // Act & Assert
+        Assert.ThrowsAny<Exception>(() => card.AsAIAgent());
     }
 
     internal sealed class HttpMessageHandlerStub : HttpMessageHandler
@@ -86,13 +185,18 @@ public sealed class A2AAgentCardExtensionsTests
                     Content = new StringContent(json, Encoding.UTF8, "application/json")
                 };
             }
-            else if (response is AgentMessage message)
+            else if (response is Message message)
             {
-                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", message);
+                var sendMessageResponse = new SendMessageResponse { Message = message };
+                var jsonRpcResponse = new JsonRpcResponse
+                {
+                    Id = "response-id",
+                    Result = JsonSerializer.SerializeToNode(sendMessageResponse, A2AJsonUtilities.DefaultOptions)
+                };
 
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(JsonSerializer.Serialize(jsonRpcResponse), Encoding.UTF8, "application/json")
+                    Content = new StringContent(JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions), Encoding.UTF8, "application/json")
                 };
             }
 

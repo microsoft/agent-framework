@@ -56,6 +56,13 @@ public static class DeclarativeWorkflowBuilder
     /// <param name="options">Configuration options for workflow execution.</param>
     /// <param name="inputTransform">An optional function to transform the input message into a <see cref="ChatMessage"/>.</param>
     /// <returns>The <see cref="Workflow"/> that corresponds with the YAML object model.</returns>
+    /// <remarks>
+    /// The returned workflow's root executor accepts <typeparamref name="TInput"/>,
+    /// <see cref="ChatMessage"/>, <see cref="System.Collections.Generic.IEnumerable{T}"/> of
+    /// <see cref="ChatMessage"/>, <see cref="string"/>, and <see cref="TurnToken"/>. This
+    /// makes the workflow usable both for direct invocation and for hosting via
+    /// <see cref="WorkflowHostingExtensions.AsAIAgent(Workflow, string?, string?, string?, IWorkflowExecutionEnvironment?, bool, bool)"/>.
+    /// </remarks>
     public static Workflow Build<TInput>(
         TextReader yamlReader,
         DeclarativeWorkflowOptions options,

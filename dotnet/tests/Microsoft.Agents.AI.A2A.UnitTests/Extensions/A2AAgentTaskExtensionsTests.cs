@@ -40,7 +40,7 @@ public sealed class A2AAgentTaskExtensionsTests
         {
             Id = "task1",
             Artifacts = [],
-            Status = new AgentTaskStatus { State = TaskState.Completed },
+            Status = new TaskStatus { State = TaskState.Completed },
         };
 
         // Act
@@ -58,7 +58,7 @@ public sealed class A2AAgentTaskExtensionsTests
         {
             Id = "task1",
             Artifacts = null,
-            Status = new AgentTaskStatus { State = TaskState.Completed },
+            Status = new TaskStatus { State = TaskState.Completed },
         };
 
         // Act
@@ -76,7 +76,7 @@ public sealed class A2AAgentTaskExtensionsTests
         {
             Id = "task1",
             Artifacts = [],
-            Status = new AgentTaskStatus { State = TaskState.Completed },
+            Status = new TaskStatus { State = TaskState.Completed },
         };
 
         // Act
@@ -94,7 +94,7 @@ public sealed class A2AAgentTaskExtensionsTests
         {
             Id = "task1",
             Artifacts = null,
-            Status = new AgentTaskStatus { State = TaskState.Completed },
+            Status = new TaskStatus { State = TaskState.Completed },
         };
 
         // Act
@@ -110,14 +110,14 @@ public sealed class A2AAgentTaskExtensionsTests
         // Arrange
         var artifact = new Artifact
         {
-            Parts = [new TextPart { Text = "response" }],
+            Parts = [Part.FromText("response")],
         };
 
         var agentTask = new AgentTask
         {
             Id = "task1",
             Artifacts = [artifact],
-            Status = new AgentTaskStatus { State = TaskState.Completed },
+            Status = new TaskStatus { State = TaskState.Completed },
         };
 
         // Act
@@ -136,15 +136,15 @@ public sealed class A2AAgentTaskExtensionsTests
         // Arrange
         var artifact1 = new Artifact
         {
-            Parts = [new TextPart { Text = "content1" }],
+            Parts = [Part.FromText("content1")],
         };
 
         var artifact2 = new Artifact
         {
             Parts =
             [
-                new TextPart { Text = "content2" },
-                new TextPart { Text = "content3" }
+                Part.FromText("content2"),
+                Part.FromText("content3")
             ],
         };
 
@@ -152,7 +152,7 @@ public sealed class A2AAgentTaskExtensionsTests
         {
             Id = "task1",
             Artifacts = [artifact1, artifact2],
-            Status = new AgentTaskStatus { State = TaskState.Completed },
+            Status = new TaskStatus { State = TaskState.Completed },
         };
 
         // Act

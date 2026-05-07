@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.DiagnosticIds;
@@ -28,7 +29,7 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
     }
 
     /// <summary>
-    /// Dissallows the background responses from the agent. Is equivalent to configuring <see cref="AgentRunOptions.AllowBackgroundResponses"/> as <c>false</c>.
+    /// Disallows the background responses from the agent. Is equivalent to configuring <see cref="AgentRunOptions.AllowBackgroundResponses"/> as <c>false</c>.
     /// In the A2A protocol terminology will make responses be returned as <c>AgentMessage</c>.
     /// </summary>
     public static AgentRunMode DisallowBackground => new(MessageValue);
@@ -79,18 +80,22 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
         }
 
         // No delegate provided — fall back to "message" behavior.
-        return ValueTask.FromResult(true);
+        return ValueTask.FromResult(false);
     }
 
     /// <inheritdoc/>
     public bool Equals(AgentRunMode? other) =>
-        other is not null && string.Equals(this._value, other._value, StringComparison.OrdinalIgnoreCase);
+        other is not null
+        && string.Equals(this._value, other._value, StringComparison.OrdinalIgnoreCase)
+        && ReferenceEquals(this._runInBackground, other._runInBackground);
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => this.Equals(obj as AgentRunMode);
 
     /// <inheritdoc/>
-    public override int GetHashCode() => StringComparer.OrdinalIgnoreCase.GetHashCode(this._value);
+    public override int GetHashCode() => HashCode.Combine(
+        StringComparer.OrdinalIgnoreCase.GetHashCode(this._value),
+        RuntimeHelpers.GetHashCode(this._runInBackground));
 
     /// <inheritdoc/>
     public override string ToString() => this._value;
