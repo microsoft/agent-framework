@@ -72,20 +72,20 @@ public class DelegatingAgentSessionStoreTests
     public async Task GetSessionAsyncDelegatesToInnerStoreAsync()
     {
         // Arrange
-        const string expectedConversationId = "test-conversation-id";
+        const string ExpectedConversationId = "test-conversation-id";
         var expectedCancellationToken = new CancellationToken();
 
         this._innerStoreMock
             .Setup(x => x.GetSessionAsync(
                 It.Is<AIAgent>(a => a == this._agentMock.Object),
-                It.Is<string>(c => c == expectedConversationId),
+                It.Is<string>(c => c == ExpectedConversationId),
                 It.Is<CancellationToken>(ct => ct == expectedCancellationToken)))
             .ReturnsAsync(this._testSession);
 
         // Act
         var session = await this._delegatingStore.GetSessionAsync(
             this._agentMock.Object,
-            expectedConversationId,
+            ExpectedConversationId,
             expectedCancellationToken);
 
         // Assert
@@ -93,7 +93,7 @@ public class DelegatingAgentSessionStoreTests
         this._innerStoreMock.Verify(
             x => x.GetSessionAsync(
                 this._agentMock.Object,
-                expectedConversationId,
+                ExpectedConversationId,
                 expectedCancellationToken),
             Times.Once);
     }
@@ -105,14 +105,14 @@ public class DelegatingAgentSessionStoreTests
     public async Task SaveSessionAsyncDelegatesToInnerStoreAsync()
     {
         // Arrange
-        const string expectedConversationId = "test-conversation-id";
+        const string ExpectedConversationId = "test-conversation-id";
         var expectedCancellationToken = new CancellationToken();
         var expectedSession = new TestAgentSession();
 
         this._innerStoreMock
             .Setup(x => x.SaveSessionAsync(
                 It.Is<AIAgent>(a => a == this._agentMock.Object),
-                It.Is<string>(c => c == expectedConversationId),
+                It.Is<string>(c => c == ExpectedConversationId),
                 It.Is<AgentSession>(s => s == expectedSession),
                 It.Is<CancellationToken>(ct => ct == expectedCancellationToken)))
             .Returns(ValueTask.CompletedTask);
@@ -120,7 +120,7 @@ public class DelegatingAgentSessionStoreTests
         // Act
         await this._delegatingStore.SaveSessionAsync(
             this._agentMock.Object,
-            expectedConversationId,
+            ExpectedConversationId,
             expectedSession,
             expectedCancellationToken);
 
@@ -128,7 +128,7 @@ public class DelegatingAgentSessionStoreTests
         this._innerStoreMock.Verify(
             x => x.SaveSessionAsync(
                 this._agentMock.Object,
-                expectedConversationId,
+                ExpectedConversationId,
                 expectedSession,
                 expectedCancellationToken),
             Times.Once);
@@ -141,7 +141,7 @@ public class DelegatingAgentSessionStoreTests
     public async Task GetSessionAsyncAwaitsInnerStoreResultAsync()
     {
         // Arrange
-        const string expectedConversationId = "test-conversation-id";
+        const string ExpectedConversationId = "test-conversation-id";
         var taskCompletionSource = new TaskCompletionSource<AgentSession>();
 
         var innerStoreMock = new Mock<AgentSessionStore>();
@@ -152,7 +152,7 @@ public class DelegatingAgentSessionStoreTests
         var delegatingStore = new TestDelegatingAgentSessionStore(innerStoreMock.Object);
 
         // Act
-        var resultTask = delegatingStore.GetSessionAsync(this._agentMock.Object, expectedConversationId);
+        var resultTask = delegatingStore.GetSessionAsync(this._agentMock.Object, ExpectedConversationId);
 
         // Assert
         Assert.False(resultTask.IsCompleted);
@@ -168,7 +168,7 @@ public class DelegatingAgentSessionStoreTests
     public async Task SaveSessionAsyncAwaitsInnerStoreCompletionAsync()
     {
         // Arrange
-        const string expectedConversationId = "test-conversation-id";
+        const string ExpectedConversationId = "test-conversation-id";
         var expectedSession = new TestAgentSession();
         var taskCompletionSource = new TaskCompletionSource();
 
@@ -180,7 +180,7 @@ public class DelegatingAgentSessionStoreTests
         var delegatingStore = new TestDelegatingAgentSessionStore(innerStoreMock.Object);
 
         // Act
-        var resultTask = delegatingStore.SaveSessionAsync(this._agentMock.Object, expectedConversationId, expectedSession);
+        var resultTask = delegatingStore.SaveSessionAsync(this._agentMock.Object, ExpectedConversationId, expectedSession);
 
         // Assert
         Assert.False(resultTask.IsCompleted);
