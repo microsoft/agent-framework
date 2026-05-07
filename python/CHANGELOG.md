@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **samples**: Add sample for hosted agent with files ([#5596](https://github.com/microsoft/agent-framework/pull/5596))
 
 ### Changed
-- **agent-framework-core**: [BREAKING] Restructure agent skills to use multi-source architecture ([#5584](https://github.com/microsoft/agent-framework/pull/5584))
+- **agent-framework-core**: [BREAKING — experimental skills API] Restructure agent skills to use multi-source architecture ([#5584](https://github.com/microsoft/agent-framework/pull/5584))
 - **agent-framework-foundry**: Remove bespoke Foundry toolbox helpers; standardize on MCP for toolbox consumption ([#5671](https://github.com/microsoft/agent-framework/pull/5671))
 
 ### Fixed
