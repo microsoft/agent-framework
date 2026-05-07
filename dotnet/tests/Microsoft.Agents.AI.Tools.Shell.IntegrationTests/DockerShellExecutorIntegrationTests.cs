@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -48,7 +48,7 @@ public sealed class DockerShellExecutorIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Persistent);
+        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Persistent });
         await tool.InitializeAsync();
 
         var result = await tool.RunAsync("echo hello-from-docker");
@@ -62,7 +62,7 @@ public sealed class DockerShellExecutorIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Persistent);
+        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Persistent });
         await tool.InitializeAsync();
 
         var set = await tool.RunAsync("export DEMO=persisted-12345");
@@ -78,7 +78,7 @@ public sealed class DockerShellExecutorIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Persistent /* network defaults to "none" */);
+        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Persistent /* network defaults to "none" */ });
         await tool.InitializeAsync();
 
         // Try to resolve a hostname; with --network none, even DNS should fail.
@@ -96,7 +96,7 @@ public sealed class DockerShellExecutorIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Persistent);
+        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Persistent });
         await tool.InitializeAsync();
 
         var rootWrite = await tool.RunAsync("touch /should-not-exist 2>&1; echo CODE:$?");
@@ -113,7 +113,7 @@ public sealed class DockerShellExecutorIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Persistent);
+        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Persistent });
         await tool.InitializeAsync();
 
         var result = await tool.RunAsync("id -u");
@@ -128,7 +128,7 @@ public sealed class DockerShellExecutorIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Stateless);
+        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Stateless });
 
         var first = await tool.RunAsync("echo first; export STATE=set");
         Assert.Equal(0, first.ExitCode);
@@ -152,11 +152,13 @@ public sealed class DockerShellExecutorIntegrationTests
 
         try
         {
-            await using var tool = new DockerShellExecutor(
-                image: TestImage,
-                mode: ShellMode.Persistent,
-                hostWorkdir: hostDir,
-                mountReadonly: true);
+            await using var tool = new DockerShellExecutor(new()
+            {
+                Image = TestImage,
+                Mode = ShellMode.Persistent,
+                HostWorkdir = hostDir,
+                MountReadonly = true,
+            });
             await tool.InitializeAsync();
 
             var read = await tool.RunAsync("cat /workspace/from-host.txt");
@@ -178,13 +180,15 @@ public sealed class DockerShellExecutorIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(
-            image: TestImage,
-            mode: ShellMode.Persistent,
-            environment: new Dictionary<string, string>
+        await using var tool = new DockerShellExecutor(new()
+        {
+            Image = TestImage,
+            Mode = ShellMode.Persistent,
+            Environment = new Dictionary<string, string>
             {
                 ["INJECTED_VAR"] = "injected-value-7777",
-            });
+            },
+        });
         await tool.InitializeAsync();
 
         var result = await tool.RunAsync("echo $INJECTED_VAR");

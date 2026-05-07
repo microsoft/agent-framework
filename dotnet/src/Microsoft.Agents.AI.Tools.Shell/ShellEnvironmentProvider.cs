@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <para>
 /// This addresses a common failure mode where a model defaults to bash
 /// syntax while talking to a PowerShell session (or vice versa). Probes
-/// run through the supplied <see cref="IShellExecutor"/>, so the same
+/// run through the supplied <see cref="ShellExecutor"/>, so the same
 /// provider works for both <see cref="LocalShellExecutor"/> (host shell) and
 /// <see cref="DockerShellExecutor"/> (container shell).
 /// </para>
@@ -57,7 +57,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </remarks>
 public sealed class ShellEnvironmentProvider : AIContextProvider
 {
-    private readonly IShellExecutor _executor;
+    private readonly ShellExecutor _executor;
     private readonly ShellEnvironmentProviderOptions _options;
     private Task<ShellEnvironmentSnapshot>? _snapshotTask;
 
@@ -67,7 +67,7 @@ public sealed class ShellEnvironmentProvider : AIContextProvider
     /// <param name="executor">The shell executor used to run probe commands.</param>
     /// <param name="options">Optional configuration; defaults are used when <see langword="null"/>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="executor"/> is <see langword="null"/>.</exception>
-    public ShellEnvironmentProvider(IShellExecutor executor, ShellEnvironmentProviderOptions? options = null)
+    public ShellEnvironmentProvider(ShellExecutor executor, ShellEnvironmentProviderOptions? options = null)
     {
         this._executor = executor ?? throw new ArgumentNullException(nameof(executor));
         this._options = options ?? new ShellEnvironmentProviderOptions();

@@ -43,13 +43,10 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// runs each call in a fresh <c>docker run --rm</c>.
 /// </para>
 /// </remarks>
-public sealed class DockerShellExecutor : IShellExecutor
+public sealed class DockerShellExecutor : ShellExecutor
 {
     /// <summary>Default container image. A small Microsoft-maintained Linux base.</summary>
-    internal const string DefaultImage = "mcr.microsoft.com/azurelinux/base/core:3.0";
-
-    /// <summary>Default container user (nobody:nogroup on most distros).</summary>
-    internal const string DefaultContainerUser = "65534:65534";
+    public const string DefaultImage = "mcr.microsoft.com/azurelinux/base/core:3.0";
 
     /// <summary>Default Docker network mode (no network).</summary>
     internal const string DefaultNetwork = DockerNetworkMode.None;
@@ -58,18 +55,16 @@ public sealed class DockerShellExecutor : IShellExecutor
     internal const long DefaultMemoryBytes = 512L * 1024 * 1024;
 
     /// <summary>Default pids limit.</summary>
-    internal const int DefaultPidsLimit = 256;
+    public const int DefaultPidsLimit = 256;
 
     /// <summary>Default container working directory.</summary>
-    internal const string DefaultContainerWorkdir = "/workspace";
-
-    private const int DefaultMaxOutputBytes = 64 * 1024;
+    public const string DefaultContainerWorkdir = "/workspace";
 
     /// <summary>
     /// Recommended default per-command timeout (30 seconds). Pass this
-    /// explicitly to the constructor to opt in to a bounded timeout. Note
-    /// that <see langword="null"/> (the parameter default) means
-    /// <em>no timeout</em>, matching the documented contract.
+    /// explicitly via <see cref="DockerShellExecutorOptions.Timeout"/> to
+    /// opt in. Note that <see langword="null"/> (the property default) means
+    /// <em>no timeout</em>.
     /// </summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
 
@@ -81,7 +76,7 @@ public sealed class DockerShellExecutor : IShellExecutor
     private readonly string _network;
     private readonly long _memoryBytes;
     private readonly int _pidsLimit;
-    private readonly string _user;
+    private readonly ContainerUser _user;
     private readonly bool _readOnlyRoot;
     private readonly IReadOnlyList<string> _extraRunArgs;
     private readonly IReadOnlyDictionary<string, string> _env;
@@ -93,71 +88,47 @@ public sealed class DockerShellExecutor : IShellExecutor
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
 
     /// <summary>
+    /// Initializes a new instance of the <see cref="DockerShellExecutor"/>
+    /// class with default options.
+    /// </summary>
+    public DockerShellExecutor() : this(new DockerShellExecutorOptions())
+    {
+    }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="DockerShellExecutor"/> class.
     /// </summary>
-    /// <param name="image">OCI image to run. Must include <c>bash</c> and (for persistent mode) <c>sleep</c>.</param>
-    /// <param name="containerName">Optional container name. When <see langword="null"/>, a unique name is generated.</param>
-    /// <param name="mode">Execution mode. Defaults to <see cref="ShellMode.Persistent"/>.</param>
-    /// <param name="hostWorkdir">Optional host directory mounted at <paramref name="containerWorkdir"/>. Mounted read-only by default.</param>
-    /// <param name="containerWorkdir">Path inside the container. Defaults to <c>/workspace</c>.</param>
-    /// <param name="mountReadonly">When <see langword="true"/> (default), the host workdir is mounted read-only.</param>
-    /// <param name="network">Docker network mode. Defaults to <see cref="DockerNetworkMode.None"/>. See <see cref="DockerNetworkMode"/> for well-known values.</param>
-    /// <param name="memoryBytes">Container memory limit, in bytes. <see langword="null"/> selects <see cref="DefaultMemoryBytes"/> (512 MiB).</param>
-    /// <param name="pidsLimit">Max processes inside the container.</param>
-    /// <param name="user">UID:GID. Defaults to <c>65534:65534</c> (nobody).</param>
-    /// <param name="readOnlyRoot">When <see langword="true"/> (default), the container root filesystem is read-only.</param>
-    /// <param name="extraRunArgs">Additional args appended to <c>docker run</c>.</param>
-    /// <param name="environment">Environment variables passed via <c>-e</c> to every command.</param>
-    /// <param name="policy">Optional <see cref="ShellPolicy"/>. Less critical than for <see cref="LocalShellExecutor"/> since the container provides isolation.</param>
-    /// <param name="timeout">Per-command timeout. <see langword="null"/> disables timeouts.</param>
-    /// <param name="maxOutputBytes">Per-stream cap before head+tail truncation.</param>
-    /// <param name="dockerBinary">Override (e.g. <c>podman</c>).</param>
-    public DockerShellExecutor(
-        string image = DefaultImage,
-        string? containerName = null,
-        ShellMode mode = ShellMode.Persistent,
-        string? hostWorkdir = null,
-        string containerWorkdir = DefaultContainerWorkdir,
-        bool mountReadonly = true,
-        string network = DefaultNetwork,
-        long? memoryBytes = null,
-        int pidsLimit = DefaultPidsLimit,
-        string user = DefaultContainerUser,
-        bool readOnlyRoot = true,
-        IReadOnlyList<string>? extraRunArgs = null,
-        IReadOnlyDictionary<string, string>? environment = null,
-        ShellPolicy? policy = null,
-        TimeSpan? timeout = null,
-        int maxOutputBytes = DefaultMaxOutputBytes,
-        string dockerBinary = "docker")
+    /// <param name="options">Configuration. <see langword="null"/> selects defaults.</param>
+    public DockerShellExecutor(DockerShellExecutorOptions options)
     {
-        _ = Throw.IfNull(image);
-        if (maxOutputBytes <= 0)
+        _ = Throw.IfNull(options);
+        _ = Throw.IfNull(options.Image);
+        if (options.MaxOutputBytes <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(maxOutputBytes));
+            throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(options.MaxOutputBytes)} must be positive.");
         }
-        if (memoryBytes is <= 0)
+        if (options.MemoryBytes is <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(memoryBytes), "memoryBytes must be positive.");
+            throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(options.MemoryBytes)} must be positive.");
         }
 
-        this._image = image;
-        this.ContainerName = containerName ?? GenerateContainerName();
-        this._mode = mode;
-        this._hostWorkdir = hostWorkdir;
-        this._containerWorkdir = containerWorkdir ?? DefaultContainerWorkdir;
-        this._mountReadonly = mountReadonly;
-        this._network = network ?? DefaultNetwork;
-        this._memoryBytes = memoryBytes ?? DefaultMemoryBytes;
-        this._pidsLimit = pidsLimit;
-        this._user = user ?? DefaultContainerUser;
-        this._readOnlyRoot = readOnlyRoot;
-        this._extraRunArgs = extraRunArgs ?? Array.Empty<string>();
-        this._env = environment ?? new Dictionary<string, string>();
-        this._policy = policy ?? new ShellPolicy();
-        this._timeout = timeout;
-        this._maxOutputBytes = maxOutputBytes;
-        this.DockerBinary = dockerBinary ?? "docker";
+        this._image = options.Image;
+        this.ContainerName = options.ContainerName ?? GenerateContainerName();
+        this._mode = options.Mode;
+        this._hostWorkdir = options.HostWorkdir;
+        this._containerWorkdir = options.ContainerWorkdir ?? DefaultContainerWorkdir;
+        this._mountReadonly = options.MountReadonly;
+        this._network = options.Network ?? DefaultNetwork;
+        this._memoryBytes = options.MemoryBytes ?? DefaultMemoryBytes;
+        this._pidsLimit = options.PidsLimit;
+        this._user = options.User ?? ContainerUser.Default;
+        this._readOnlyRoot = options.ReadOnlyRoot;
+        this._extraRunArgs = options.ExtraRunArgs ?? Array.Empty<string>();
+        this._env = options.Environment ?? new Dictionary<string, string>();
+        this._policy = options.Policy ?? new ShellPolicy();
+        this._timeout = options.Timeout;
+        this._maxOutputBytes = options.MaxOutputBytes;
+        this.DockerBinary = options.DockerBinary ?? "docker";
     }
 
     /// <summary>Gets the container name (auto-generated when not specified at construction).</summary>
@@ -167,7 +138,7 @@ public sealed class DockerShellExecutor : IShellExecutor
     public string DockerBinary { get; }
 
     /// <summary>Eagerly start the container (and inner shell session in persistent mode).</summary>
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public override async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await this._lifecycleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -203,10 +174,10 @@ public sealed class DockerShellExecutor : IShellExecutor
         }
     }
 
-    /// <summary>Stop the inner shell session and tear down the container.</summary>
-    public async Task ShutdownAsync(CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public override async ValueTask DisposeAsync()
     {
-        await this._lifecycleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await this._lifecycleLock.WaitAsync().ConfigureAwait(false);
         try
         {
             if (this._session is not null)
@@ -224,11 +195,12 @@ public sealed class DockerShellExecutor : IShellExecutor
         {
             _ = this._lifecycleLock.Release();
         }
+        this._lifecycleLock.Dispose();
     }
 
     /// <summary>Run a single command inside the container.</summary>
     /// <exception cref="ShellCommandRejectedException">Thrown when the policy denies the command.</exception>
-    public async Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default)
+    public override async Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default)
     {
         if (command is null)
         {
@@ -269,7 +241,7 @@ public sealed class DockerShellExecutor : IShellExecutor
     /// </summary>
     public bool IsHardenedConfiguration =>
         StringComparer.Ordinal.Equals(this._network, "none")
-        && !IsRootUser(this._user)
+        && !this._user.IsRoot
         && this._readOnlyRoot
         && (this._hostWorkdir is null || this._mountReadonly)
         && this._extraRunArgs.Count == 0;
@@ -277,24 +249,6 @@ public sealed class DockerShellExecutor : IShellExecutor
     /// <summary>Format a byte count into the value passed to <c>docker --memory</c> (e.g. <c>536870912b</c>).</summary>
     internal static string FormatMemoryBytes(long memoryBytes) =>
         memoryBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) + "b";
-
-    private static bool IsRootUser(string user)
-    {
-        // user is typically "uid:gid" (e.g. "65534:65534") or "0", "0:0",
-        // "root", or "root:root". Anything we cannot parse is treated as
-        // root for the purpose of the safety default — fail safe.
-        if (string.IsNullOrEmpty(user))
-        {
-            return true;
-        }
-        var uidPart = user.Split(':')[0];
-        if (uidPart.Equals("root", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-        return !int.TryParse(uidPart, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var uid)
-            || uid == 0;
-    }
 
     /// <summary>
     /// Build the AIFunction for this tool.
@@ -351,13 +305,6 @@ public sealed class DockerShellExecutor : IShellExecutor
             new AIFunctionFactoryOptions { Name = name, Description = description });
 
         return effectiveRequireApproval ? new ApprovalRequiredAIFunction(fn) : fn;
-    }
-
-    /// <inheritdoc />
-    public async ValueTask DisposeAsync()
-    {
-        await this.ShutdownAsync().ConfigureAwait(false);
-        this._lifecycleLock.Dispose();
     }
 
     /// <summary>
@@ -417,7 +364,7 @@ public sealed class DockerShellExecutor : IShellExecutor
         string binary,
         string image,
         string containerName,
-        string user,
+        ContainerUser user,
         string network,
         long memoryBytes,
         int pidsLimit,
@@ -428,6 +375,7 @@ public sealed class DockerShellExecutor : IShellExecutor
         IReadOnlyDictionary<string, string>? extraEnv,
         IReadOnlyList<string>? extraArgs)
     {
+        _ = Throw.IfNull(user);
         var argv = new List<string>
         {
             binary,
@@ -435,7 +383,7 @@ public sealed class DockerShellExecutor : IShellExecutor
             "-d",
             "--rm",
             "--name", containerName,
-            "--user", user,
+            "--user", user.ToString(),
             "--network", network,
             "--memory", FormatMemoryBytes(memoryBytes),
             "--pids-limit", pidsLimit.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -595,7 +543,7 @@ public sealed class DockerShellExecutor : IShellExecutor
             this.DockerBinary,
             "run", "--rm", "-i",
             "--name", perCallName,
-            "--user", this._user,
+            "--user", this._user.ToString(),
             "--network", this._network,
             "--memory", FormatMemoryBytes(this._memoryBytes),
             "--pids-limit", this._pidsLimit.ToString(System.Globalization.CultureInfo.InvariantCulture),

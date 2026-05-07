@@ -23,7 +23,7 @@ public sealed class DockerShellExecutorTests
             binary: "docker",
             image: "alpine:3.19",
             containerName: "af-shell-test",
-            user: "65534:65534",
+            user: ContainerUser.Default,
             network: "none",
             memoryBytes: 256L * 1024 * 1024,
             pidsLimit: 64,
@@ -59,7 +59,7 @@ public sealed class DockerShellExecutorTests
             binary: "docker",
             image: "alpine:3.19",
             containerName: "af-shell-test",
-            user: "1000:1000",
+            user: new ContainerUser("1000", "1000"),
             network: "none",
             memoryBytes: 256L * 1024 * 1024,
             pidsLimit: 64,
@@ -83,7 +83,7 @@ public sealed class DockerShellExecutorTests
             binary: "docker",
             image: "alpine:3.19",
             containerName: "x",
-            user: "1000:1000",
+            user: new ContainerUser("1000", "1000"),
             network: "none",
             memoryBytes: 256L * 1024 * 1024,
             pidsLimit: 64,
@@ -108,7 +108,7 @@ public sealed class DockerShellExecutorTests
             binary: "docker",
             image: "alpine:3.19",
             containerName: "x",
-            user: "1000:1000",
+            user: new ContainerUser("1000", "1000"),
             network: "none",
             memoryBytes: 256L * 1024 * 1024,
             pidsLimit: 64,
@@ -138,8 +138,8 @@ public sealed class DockerShellExecutorTests
     [Fact]
     public async Task Ctor_GeneratesUniqueContainerNameAsync()
     {
-        await using var t1 = new DockerShellExecutor(mode: ShellMode.Stateless);
-        await using var t2 = new DockerShellExecutor(mode: ShellMode.Stateless);
+        await using var t1 = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
+        await using var t2 = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
         Assert.StartsWith("af-shell-", t1.ContainerName, StringComparison.Ordinal);
         Assert.StartsWith("af-shell-", t2.ContainerName, StringComparison.Ordinal);
         Assert.NotEqual(t1.ContainerName, t2.ContainerName);
@@ -148,15 +148,15 @@ public sealed class DockerShellExecutorTests
     [Fact]
     public async Task Ctor_RespectsExplicitContainerNameAsync()
     {
-        await using var t = new DockerShellExecutor(containerName: "my-explicit-name", mode: ShellMode.Stateless);
+        await using var t = new DockerShellExecutor(new() { ContainerName = "my-explicit-name", Mode = ShellMode.Stateless });
         Assert.Equal("my-explicit-name", t.ContainerName);
     }
 
     [Fact]
-    public async Task IShellExecutor_DockerShellTool_ImplementsInterfaceAsync()
+    public async Task ShellExecutor_DockerShellTool_ImplementsInterfaceAsync()
     {
-        await using var t = new DockerShellExecutor(mode: ShellMode.Stateless);
-        IShellExecutor executor = t;
+        await using var t = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
+        ShellExecutor executor = t;
         Assert.NotNull(executor);
     }
 
@@ -166,7 +166,7 @@ public sealed class DockerShellExecutorTests
         // With the default hardened config (network=none, non-root user,
         // read-only root, no extra args, no host mount) approval should
         // remain opt-in.
-        await using var t = new DockerShellExecutor(mode: ShellMode.Stateless);
+        await using var t = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
         Assert.True(t.IsHardenedConfiguration);
         var fn = t.AsAIFunction();
         Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
@@ -176,7 +176,7 @@ public sealed class DockerShellExecutorTests
     [Fact]
     public async Task AsAIFunction_OptInApproval_WrapsInApprovalRequiredAsync()
     {
-        await using var t = new DockerShellExecutor(mode: ShellMode.Stateless);
+        await using var t = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
         var fn = t.AsAIFunction(requireApproval: true);
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
     }
@@ -184,17 +184,20 @@ public sealed class DockerShellExecutorTests
     [Theory]
     [InlineData("host", "65534:65534", true, true)]   // network=host => relaxed
     [InlineData("none", "0:0", true, true)]            // root user => relaxed
-    [InlineData("none", "root", true, true)]           // root by name => relaxed
+    [InlineData("none", "root:root", true, true)]      // root by name => relaxed
     [InlineData("none", "65534:65534", false, true)]   // writable root => relaxed
     public async Task AsAIFunction_RelaxedConfig_DefaultsToApprovalGatedAsync(
         string network, string user, bool readOnlyRoot, bool mountReadonly)
     {
-        await using var t = new DockerShellExecutor(
-            mode: ShellMode.Stateless,
-            network: network,
-            user: user,
-            readOnlyRoot: readOnlyRoot,
-            mountReadonly: mountReadonly);
+        var parts = user.Split(':');
+        await using var t = new DockerShellExecutor(new()
+        {
+            Mode = ShellMode.Stateless,
+            Network = network,
+            User = new ContainerUser(parts[0], parts.Length > 1 ? parts[1] : parts[0]),
+            ReadOnlyRoot = readOnlyRoot,
+            MountReadonly = mountReadonly,
+        });
         Assert.False(t.IsHardenedConfiguration);
 
         var fn = t.AsAIFunction();
@@ -204,9 +207,11 @@ public sealed class DockerShellExecutorTests
     [Fact]
     public async Task AsAIFunction_ExtraRunArgs_DefaultsToApprovalGatedAsync()
     {
-        await using var t = new DockerShellExecutor(
-            mode: ShellMode.Stateless,
-            extraRunArgs: s_privilegedExtraRunArgs);
+        await using var t = new DockerShellExecutor(new()
+        {
+            Mode = ShellMode.Stateless,
+            ExtraRunArgs = s_privilegedExtraRunArgs,
+        });
         Assert.False(t.IsHardenedConfiguration);
 
         var fn = t.AsAIFunction();
@@ -216,9 +221,11 @@ public sealed class DockerShellExecutorTests
     [Fact]
     public async Task AsAIFunction_RelaxedButExplicitOptOut_IsNotApprovalGatedAsync()
     {
-        await using var t = new DockerShellExecutor(
-            mode: ShellMode.Stateless,
-            network: "host");
+        await using var t = new DockerShellExecutor(new()
+        {
+            Mode = ShellMode.Stateless,
+            Network = "host",
+        });
         var fn = t.AsAIFunction(requireApproval: false);
         Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
     }
@@ -235,7 +242,7 @@ public sealed class DockerShellExecutorTests
     {
         // Pure policy path: the policy check runs before any docker invocation,
         // so this exercises rejection without needing a Docker daemon.
-        await using var t = new DockerShellExecutor(mode: ShellMode.Stateless);
+        await using var t = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
         await Assert.ThrowsAsync<ShellCommandRejectedException>(
             () => t.RunAsync("rm -rf /"));
     }

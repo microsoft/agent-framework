@@ -38,15 +38,13 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// refuse to return a non-approval-gated function.
 /// </para>
 /// </remarks>
-public sealed class LocalShellExecutor : IShellExecutor
+public sealed class LocalShellExecutor : ShellExecutor
 {
-    private const int DefaultMaxOutputBytes = 64 * 1024;
-
     /// <summary>
     /// Recommended default per-command timeout (30 seconds). Pass this
-    /// explicitly to the constructor to opt in to a bounded timeout. Note
-    /// that <see langword="null"/> (the parameter default) means
-    /// <em>no timeout</em>, matching the documented contract.
+    /// explicitly via <see cref="LocalShellExecutorOptions.Timeout"/> to opt
+    /// in. Note that <see langword="null"/> (the property default) means
+    /// <em>no timeout</em>.
     /// </summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
 
@@ -64,60 +62,42 @@ public sealed class LocalShellExecutor : IShellExecutor
     private readonly object _sessionGate = new();
 
     /// <summary>
+    /// Initializes a new instance of the <see cref="LocalShellExecutor"/>
+    /// class with default options.
+    /// </summary>
+    public LocalShellExecutor() : this(new LocalShellExecutorOptions())
+    {
+    }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="LocalShellExecutor"/> class.
     /// </summary>
-    /// <param name="mode">Execution mode. Defaults to <see cref="ShellMode.Persistent"/> so
-    /// <c>cd</c>, exported variables, and function definitions persist across calls. Use
-    /// <see cref="ShellMode.Stateless"/> if you specifically need every call to start fresh.</param>
-    /// <param name="shell">Override path to the shell binary. Falls back to the <c>AGENT_FRAMEWORK_SHELL</c> environment variable, then OS defaults. Mutually exclusive with <paramref name="shellArgv"/>.</param>
-    /// <param name="shellArgv">Override argv for the shell launch. The first element is the binary; subsequent elements are passed as a launch-time prefix (e.g. <c>["/bin/bash", "--rcfile", "/path/to/rc"]</c>). Mutually exclusive with <paramref name="shell"/>.</param>
-    /// <param name="workingDirectory">Working directory for the spawned shell. Defaults to the current process directory. Required when <paramref name="confineWorkingDirectory"/> is <see langword="true"/>.</param>
-    /// <param name="confineWorkingDirectory">When <see langword="true"/> (the default) and a <paramref name="workingDirectory"/> is set, every command in persistent mode is prefixed with a <c>cd</c> back into that directory so a wandering <c>cd</c> in one call doesn't leak to the next. This is a re-anchor, not a hard confinement — a command that does <c>cd /tmp; rm -rf .</c> can still touch <c>/tmp</c>. Use a sandboxed executor for true isolation.</param>
-    /// <param name="environment">Extra environment variables. Pass a <see langword="null"/> value to remove an inherited variable.</param>
-    /// <param name="cleanEnvironment">When <see langword="true"/>, the spawned shell does not inherit the parent process environment; only PATH/HOME/USER/USERNAME/USERPROFILE/SystemRoot/TEMP/TMP plus anything in <paramref name="environment"/> are visible.</param>
-    /// <param name="policy">Optional <see cref="ShellPolicy"/>. Defaults to a policy seeded with <see cref="ShellPolicy.DefaultDenyList"/>.</param>
-    /// <param name="timeout">Per-command timeout. <see langword="null"/> disables timeouts.</param>
-    /// <param name="maxOutputBytes">Per-stream cap before head+tail truncation.</param>
-    /// <param name="acknowledgeUnsafe">
-    /// Set to <see langword="true"/> to allow <see cref="AsAIFunction"/> to produce an
-    /// AIFunction without an <c>ApprovalRequiredAIFunction</c> wrapper. Required if you pass
-    /// <c>requireApproval: false</c> to <see cref="AsAIFunction"/>. The default is
-    /// <see langword="false"/>, which makes accidentally bypassing approval impossible.
-    /// </param>
-    public LocalShellExecutor(
-        ShellMode mode = ShellMode.Persistent,
-        string? shell = null,
-        IReadOnlyList<string>? shellArgv = null,
-        string? workingDirectory = null,
-        bool confineWorkingDirectory = true,
-        IReadOnlyDictionary<string, string?>? environment = null,
-        bool cleanEnvironment = false,
-        ShellPolicy? policy = null,
-        TimeSpan? timeout = null,
-        int maxOutputBytes = DefaultMaxOutputBytes,
-        bool acknowledgeUnsafe = false)
+    /// <param name="options">Configuration. <see langword="null"/> selects defaults.</param>
+    public LocalShellExecutor(LocalShellExecutorOptions options)
     {
-        if (maxOutputBytes <= 0)
+        options ??= new LocalShellExecutorOptions();
+
+        if (options.MaxOutputBytes <= 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(maxOutputBytes));
+            throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(options.MaxOutputBytes)} must be positive.");
         }
-        if (shell is not null && shellArgv is not null)
+        if (options.Shell is not null && options.ShellArgv is not null)
         {
-            throw new ArgumentException("Pass either shell or shellArgv, not both.", nameof(shellArgv));
+            throw new ArgumentException($"Pass either {nameof(options.Shell)} or {nameof(options.ShellArgv)}, not both.", nameof(options));
         }
 
-        this._mode = mode;
-        this._policy = policy ?? new ShellPolicy();
-        this._shell = shellArgv is not null ? ShellResolver.ResolveArgv(shellArgv) : ShellResolver.Resolve(shell);
-        this._timeout = timeout;
-        this._maxOutputBytes = maxOutputBytes;
-        this._workingDirectory = workingDirectory;
-        this._confineWorkingDirectory = confineWorkingDirectory;
-        this._environment = environment;
-        this._cleanEnvironment = cleanEnvironment;
-        this._acknowledgeUnsafe = acknowledgeUnsafe;
+        this._mode = options.Mode;
+        this._policy = options.Policy ?? new ShellPolicy();
+        this._shell = options.ShellArgv is not null ? ShellResolver.ResolveArgv(options.ShellArgv) : ShellResolver.Resolve(options.Shell);
+        this._timeout = options.Timeout;
+        this._maxOutputBytes = options.MaxOutputBytes;
+        this._workingDirectory = options.WorkingDirectory;
+        this._confineWorkingDirectory = options.ConfineWorkingDirectory;
+        this._environment = options.Environment;
+        this._cleanEnvironment = options.CleanEnvironment;
+        this._acknowledgeUnsafe = options.AcknowledgeUnsafe;
 
-        if (mode == ShellMode.Persistent && this._shell.Kind == ShellKind.Cmd)
+        if (this._mode == ShellMode.Persistent && this._shell.Kind == ShellKind.Cmd)
         {
             throw new NotSupportedException(
                 "Persistent mode is not supported for cmd.exe — use pwsh/powershell or override the shell with AGENT_FRAMEWORK_SHELL.");
@@ -134,7 +114,7 @@ public sealed class LocalShellExecutor : IShellExecutor
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The captured <see cref="ShellResult"/>.</returns>
     /// <exception cref="ShellCommandRejectedException">Thrown when the policy denies the command.</exception>
-    public async Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default)
+    public override async Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default)
     {
         if (command is null)
         {
@@ -171,7 +151,7 @@ public sealed class LocalShellExecutor : IShellExecutor
     }
 
     /// <inheritdoc />
-    Task IShellExecutor.InitializeAsync(CancellationToken cancellationToken)
+    public override Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         if (this._mode != ShellMode.Persistent)
         {
@@ -192,9 +172,6 @@ public sealed class LocalShellExecutor : IShellExecutor
         // Force a tiny no-op so the session spawns now rather than lazily.
         return session.RunAsync(this._shell.Kind == ShellKind.PowerShell ? "$null" : ":", this._timeout, cancellationToken);
     }
-
-    /// <inheritdoc />
-    Task IShellExecutor.ShutdownAsync(CancellationToken cancellationToken) => this.DisposeAsync().AsTask();
 
     private async Task<ShellResult> RunStatelessAsync(string command, CancellationToken cancellationToken)
     {
@@ -374,7 +351,7 @@ public sealed class LocalShellExecutor : IShellExecutor
     }
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync()
+    public override async ValueTask DisposeAsync()
     {
         ShellSession? session;
         lock (this._sessionGate)

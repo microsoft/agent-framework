@@ -53,7 +53,7 @@ const string Instructions = """
 // 1. Stateless mode — each call gets a fresh shell.
 // --------------------------------------------------------------------
 Console.WriteLine("### Stateless mode\n");
-await using (var statelessShell = new LocalShellExecutor(mode: ShellMode.Stateless, acknowledgeUnsafe: true))
+await using (var statelessShell = new LocalShellExecutor(new() { Mode = ShellMode.Stateless, AcknowledgeUnsafe = true }))
 {
     var envProvider = new ShellEnvironmentProvider(statelessShell);
     var statelessAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
@@ -85,7 +85,7 @@ await using (var statelessShell = new LocalShellExecutor(mode: ShellMode.Statele
 // 2. Persistent mode — one shell, reused across calls. State carries.
 // --------------------------------------------------------------------
 Console.WriteLine("\n### Persistent mode\n");
-await using (var persistentShell = new LocalShellExecutor(mode: ShellMode.Persistent, acknowledgeUnsafe: true))
+await using (var persistentShell = new LocalShellExecutor(new() { Mode = ShellMode.Persistent, AcknowledgeUnsafe = true }))
 {
     var envProvider = new ShellEnvironmentProvider(persistentShell);
     var persistentAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
