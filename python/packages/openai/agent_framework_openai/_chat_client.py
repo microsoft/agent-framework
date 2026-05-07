@@ -1992,11 +1992,20 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                 )
                 case "reasoning":  # ResponseOutputReasoning
                     added_reasoning = False
+                    # Extract encrypted_content once so it is propagated through
+                    # whichever branch fires and can round-trip via
+                    # _prepare_content_for_openai.  Previously only the fallback
+                    # (no-content, no-summary) branch captured it, so responses
+                    # containing both summaries and encrypted_content silently
+                    # dropped the encrypted payload.  See #4644.
+                    encrypted_content = getattr(item, "encrypted_content", None)
                     if item_content := getattr(item, "content", None):
                         for index, reasoning_content in enumerate(item_content):
                             additional_properties: dict[str, Any] = {}
                             if hasattr(item, "summary") and item.summary and index < len(item.summary):
                                 additional_properties["summary"] = item.summary[index]
+                            if encrypted_content:
+                                additional_properties["encrypted_content"] = encrypted_content
                             contents.append(
                                 Content.from_text_reasoning(
                                     id=item.id,
@@ -2008,11 +2017,15 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             added_reasoning = True
                     if item_summary := getattr(item, "summary", None):
                         for summary in item_summary:
+                            summary_additional: dict[str, Any] = {}
+                            if encrypted_content:
+                                summary_additional["encrypted_content"] = encrypted_content
                             contents.append(
                                 Content.from_text_reasoning(
                                     id=item.id,
                                     text=summary.text,
                                     raw_representation=summary,  # type: ignore[arg-type]
+                                    additional_properties=summary_additional or None,
                                 )
                             )
                             added_reasoning = True
@@ -2020,8 +2033,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         # Reasoning item with no visible text (e.g. encrypted reasoning).
                         # Always emit an empty marker so co-occurrence detection can be done
                         additional_properties_empty: dict[str, Any] = {}
-                        if encrypted := getattr(item, "encrypted_content", None):
-                            additional_properties_empty["encrypted_content"] = encrypted
+                        if encrypted_content:
+                            additional_properties_empty["encrypted_content"] = encrypted_content
                         contents.append(
                             Content.from_text_reasoning(
                                 id=item.id,
@@ -2639,6 +2652,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     case "reasoning":  # ResponseOutputReasoning
                         reasoning_id = getattr(event_item, "id", None)
                         added_reasoning = False
+                        # Extract encrypted_content once so it is propagated
+                        # through whichever branch fires - mirrors the
+                        # non-streaming fix in _parse_response_from_openai.
+                        # See #4644.
+                        encrypted_content = getattr(event_item, "encrypted_content", None)
                         if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):
                                 additional_properties: dict[str, Any] = {}
@@ -2648,6 +2666,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                     and index < len(event_item.summary)
                                 ):
                                     additional_properties["summary"] = event_item.summary[index]
+                                if encrypted_content:
+                                    additional_properties["encrypted_content"] = encrypted_content
                                 contents.append(
                                     Content.from_text_reasoning(
                                         id=reasoning_id or None,
@@ -2661,8 +2681,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             # Reasoning item with no visible text (e.g. encrypted reasoning).
                             # Always emit an empty marker so co-occurrence detection can occur.
                             additional_properties_empty: dict[str, Any] = {}
-                            if encrypted := getattr(event_item, "encrypted_content", None):
-                                additional_properties_empty["encrypted_content"] = encrypted
+                            if encrypted_content:
+                                additional_properties_empty["encrypted_content"] = encrypted_content
                             contents.append(
                                 Content.from_text_reasoning(
                                     id=reasoning_id or None,

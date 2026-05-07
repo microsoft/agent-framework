@@ -765,6 +765,7 @@ def test_response_content_creation_with_reasoning() -> None:
     mock_reasoning_item.type = "reasoning"
     mock_reasoning_item.content = [mock_reasoning_content]
     mock_reasoning_item.summary = [Summary(text="Summary", type="summary_text")]
+    mock_reasoning_item.encrypted_content = None
 
     mock_response.output = [mock_reasoning_item]
 
@@ -773,6 +774,122 @@ def test_response_content_creation_with_reasoning() -> None:
     assert len(response.messages[0].contents) == 2
     assert response.messages[0].contents[0].type == "text_reasoning"
     assert response.messages[0].contents[0].text == "Reasoning step"
+
+
+def test_response_reasoning_preserves_encrypted_content_with_summary() -> None:
+    """encrypted_content must survive when both content/summary and encrypted_content are present.
+
+    Regression test for #4644: _parse_response_from_openai dropped encrypted_content
+    when reasoning summaries were also present because only the fallback (no-content,
+    no-summary) branch captured it.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_reasoning_content = MagicMock()
+    mock_reasoning_content.text = "Reasoning step"
+
+    mock_reasoning_item = MagicMock()
+    mock_reasoning_item.type = "reasoning"
+    mock_reasoning_item.id = "rs_enc"
+    mock_reasoning_item.content = [mock_reasoning_content]
+    mock_reasoning_item.summary = [Summary(text="Summary text", type="summary_text")]
+    mock_reasoning_item.encrypted_content = "gAAAA_encrypted_payload"
+
+    mock_response.output = [mock_reasoning_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    # The content branch should carry encrypted_content in additional_properties
+    reasoning_contents = [c for c in response.messages[0].contents if c.type == "text_reasoning"]
+    assert len(reasoning_contents) >= 1
+    first_reasoning = reasoning_contents[0]
+    assert first_reasoning.text == "Reasoning step"
+    assert first_reasoning.additional_properties is not None
+    assert first_reasoning.additional_properties.get("encrypted_content") == "gAAAA_encrypted_payload"
+    assert first_reasoning.additional_properties.get("summary") is not None
+
+    # The summary branch Content should also carry encrypted_content
+    assert len(reasoning_contents) >= 2
+    assert reasoning_contents[1].additional_properties is not None
+    assert reasoning_contents[1].additional_properties.get("encrypted_content") == "gAAAA_encrypted_payload"
+
+
+def test_response_reasoning_preserves_encrypted_content_summary_only() -> None:
+    """encrypted_content must survive when only summary (no content) is present.
+
+    Covers the case where the API returns summary + encrypted_content but no
+    clear-text reasoning content.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_reasoning_item = MagicMock()
+    mock_reasoning_item.type = "reasoning"
+    mock_reasoning_item.id = "rs_enc2"
+    mock_reasoning_item.content = None  # No clear-text content
+    mock_reasoning_item.summary = [Summary(text="Summary only", type="summary_text")]
+    mock_reasoning_item.encrypted_content = "gAAAA_encrypted_payload_2"
+
+    mock_response.output = [mock_reasoning_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    reasoning_contents = [c for c in response.messages[0].contents if c.type == "text_reasoning"]
+    assert len(reasoning_contents) >= 1
+    # The summary branch should carry encrypted_content
+    summary_reasoning = reasoning_contents[0]
+    assert summary_reasoning.text == "Summary only"
+    assert summary_reasoning.additional_properties is not None
+    assert summary_reasoning.additional_properties.get("encrypted_content") == "gAAAA_encrypted_payload_2"
+
+
+def test_response_reasoning_no_encrypted_content() -> None:
+    """When encrypted_content is None/missing, additional_properties should not contain it."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_reasoning_content = MagicMock()
+    mock_reasoning_content.text = "Reasoning step"
+
+    mock_reasoning_item = MagicMock()
+    mock_reasoning_item.type = "reasoning"
+    mock_reasoning_item.id = "rs_no_enc"
+    mock_reasoning_item.content = [mock_reasoning_content]
+    mock_reasoning_item.summary = [Summary(text="Summary text", type="summary_text")]
+    mock_reasoning_item.encrypted_content = None
+
+    mock_response.output = [mock_reasoning_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    reasoning_contents = [c for c in response.messages[0].contents if c.type == "text_reasoning"]
+    assert len(reasoning_contents) >= 1
+    for rc in reasoning_contents:
+        # additional_properties should either be None or not contain encrypted_content
+        if rc.additional_properties is not None:
+            assert "encrypted_content" not in rc.additional_properties
 
 
 def test_response_content_keeps_reasoning_and_function_calls_in_one_message() -> None:
@@ -795,6 +912,7 @@ def test_response_content_keeps_reasoning_and_function_calls_in_one_message() ->
     mock_reasoning_item.id = "rs_123"
     mock_reasoning_item.content = [mock_reasoning_content]
     mock_reasoning_item.summary = []
+    mock_reasoning_item.encrypted_content = None
 
     mock_function_call_item_1 = MagicMock()
     mock_function_call_item_1.type = "function_call"
