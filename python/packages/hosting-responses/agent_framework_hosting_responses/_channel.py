@@ -29,6 +29,7 @@ from agent_framework_hosting import (
     DeliveryReport,
     HostedRunResult,
     apply_run_hook,
+    get_current_isolation_keys,
     logger,
 )
 from openai.types.responses import (
@@ -99,6 +100,22 @@ class ResponsesChannel:
                 The same id is used for the channel envelope and for
                 the host-side anchoring (``ChannelRequest.attributes``)
                 so storage and replay agree.
+
+                Security note on partition co-location: when a caller
+                supplies ``previous_response_id`` we forward it to the
+                factory so id backends that embed partition keys can
+                co-locate the new record with the chain's existing
+                partition. The factory passes that hint through to the
+                storage layer; **partition ownership is enforced at
+                the storage layer**, not in the channel: the Foundry
+                storage provider, for example, validates the request
+                against the bound user/chat isolation keys and rejects
+                writes whose embedded partition does not match the
+                authenticated caller's isolation. Channel-level
+                forwarding is therefore a performance hint, not a
+                security boundary; the host's isolation middleware
+                must establish the caller's identity before this
+                route is entered.
         """
         self.path = path
         self._hook = run_hook
@@ -135,18 +152,27 @@ class ResponsesChannel:
             return JSONResponse({"error": str(exc)}, status_code=422)
 
         # When no ``previous_response_id`` chain anchor is on the body,
-        # surface the platform-injected ``x-agent-chat-isolation-key`` as
-        # the channel session so callers without an explicit anchor still
-        # get a stable per-conversation session id (used by non-Foundry
-        # history providers, routing/idempotency, etc.). The chat-iso
-        # value is *not* a valid storage anchor; the Foundry history
-        # provider deliberately ignores it — multi-turn storage chaining
-        # goes through the ``previous_response_id`` / bound
-        # ``response_id`` pair on ``ChannelRequest.attributes``. The
-        # user-iso companion header is consumed at the host level by
-        # ``_FoundryIsolationASGIMiddleware`` so the channel never has
-        # to import Foundry-specific types.
-        chat_iso = request.headers.get("x-agent-chat-isolation-key")
+        # surface the isolation key the **host** lifted off the request
+        # (via ``_FoundryIsolationASGIMiddleware`` for the default
+        # Foundry-platform deployment, or whatever middleware the
+        # operator configured in front of the host) as the channel
+        # session id, so callers without an explicit anchor still get
+        # a stable per-conversation session id (used by non-Foundry
+        # history providers, routing/idempotency, etc.).
+        #
+        # Security note: we consume the host-bound contextvar set by the
+        # ASGI isolation middleware, NOT the raw header off the wire.
+        # That middleware is the operator's place to enforce auth and
+        # gate which callers get to set isolation. If you mount the host
+        # in front of a custom auth boundary, your middleware should
+        # validate the caller before stamping ``set_current_isolation_keys``;
+        # never trust raw wire headers to identify a session bucket.
+        # The chat-iso value is *not* a valid storage anchor: the
+        # Foundry history provider deliberately ignores it — multi-turn
+        # storage chaining goes through the ``previous_response_id`` /
+        # bound ``response_id`` pair on ``ChannelRequest.attributes``.
+        bound_keys = get_current_isolation_keys()
+        chat_iso = bound_keys.chat_key if bound_keys is not None else None
         if session is None and chat_iso:
             session = ChannelSession(isolation_key=chat_iso)
 
@@ -308,6 +334,19 @@ class ResponsesChannel:
                 logger.exception("Responses stream finalize failed")
         except Exception as exc:
             logger.exception("Responses stream consumption failed")
+            # Mid-stream failure: the wire already saw partial deltas
+            # so host-side state must reflect that — call
+            # ``deliver_response`` with the accumulated text (best-effort)
+            # before signalling failure to the client. Without this,
+            # next turn's chain anchored on this ``response_id`` would
+            # be inconsistent with what the user actually saw, and any
+            # non-originating push targets would silently miss the turn.
+            # ``deliver_response`` itself is best-effort; we swallow its
+            # exceptions so the failure event still reaches the client.
+            try:
+                await self._ctx.deliver_response(request, HostedRunResult(text=accumulated))
+            except Exception:  # pragma: no cover - delivery is best-effort
+                logger.exception("Responses stream failure deliver_response failed")
             failed = self._build_response(body, accumulated, status="failed", response_id=response_id)
             failed.error = ResponseError(code="server_error", message=str(exc))
             yield sse(

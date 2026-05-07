@@ -23,6 +23,11 @@ _RESPONSES_OPTION_REMAP = {
     "parallel_tool_calls": "allow_multiple_tool_calls",
 }
 # Fields we forward to ChatOptions verbatim.
+# NOTE: ``instructions`` is intentionally NOT in this set. It is handled
+# separately above by being prepended as a system message in
+# ``parse_responses_request``; keeping it out of the passthrough set
+# prevents future consumers from accidentally also forwarding it as a
+# ChatOptions field (which would ship the system message twice).
 _RESPONSES_OPTION_PASSTHROUGH = {
     "temperature",
     "top_p",
@@ -38,7 +43,6 @@ _RESPONSES_OPTION_PASSTHROUGH = {
     "frequency_penalty",
     "presence_penalty",
     "logit_bias",
-    "instructions",
 }
 # Fields the Responses transport owns; they must not be forwarded as options.
 _RESPONSES_TRANSPORT_KEYS = {"input", "model", "stream", "previous_response_id", "response_target"}
@@ -215,8 +219,11 @@ def parse_responses_request(
     for key, value in body.items():
         if key in _RESPONSES_TRANSPORT_KEYS or value is None:
             continue
-        if key == "instructions":
-            continue
+        # ``instructions`` is consumed above (prepended as a system
+        # message) and intentionally absent from
+        # ``_RESPONSES_OPTION_PASSTHROUGH`` so this loop drops it
+        # silently — defence against a future passthrough-set edit
+        # that would re-introduce double-forwarding.
         if (mapped := _RESPONSES_OPTION_REMAP.get(key)) is not None:
             options[mapped] = value
         elif key in _RESPONSES_OPTION_PASSTHROUGH:
