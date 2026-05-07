@@ -3641,6 +3641,31 @@ async def test_connect_reinitializes_existing_session_and_loads_tools_and_prompt
     assert tool._prompts_loaded is True
 
 
+async def test_connect_skips_prompts_when_server_does_not_advertise_capability() -> None:
+    tool = MCPTool(name="test_tool", load_tools=False, load_prompts=True)
+    tool.is_connected = True
+    tool.session = Mock()
+    tool.session._request_id = 0
+    tool.session.initialize = AsyncMock(
+        return_value=types.InitializeResult(
+            protocolVersion=types.LATEST_PROTOCOL_VERSION,
+            capabilities=types.ServerCapabilities(tools=types.ToolsCapability(listChanged=True)),
+            serverInfo=types.Implementation(name="test", version="1.0"),
+        )
+    )
+    tool.session.list_prompts = AsyncMock(
+        side_effect=McpError(types.ErrorData(code=-32601, message="Method 'prompts/list' is not available."))
+    )
+
+    with patch.object(logger, "level", logging.NOTSET):
+        await tool._connect_on_owner()
+
+    tool.session.initialize.assert_awaited_once()
+    tool.session.list_prompts.assert_not_called()
+    assert tool.is_connected is True
+    assert tool._prompts_loaded is True
+
+
 async def test_ensure_connected_reconnects_on_failed_ping() -> None:
     tool = MCPTool(name="test_tool")
     tool.session = Mock(send_ping=AsyncMock(side_effect=RuntimeError("closed")))
