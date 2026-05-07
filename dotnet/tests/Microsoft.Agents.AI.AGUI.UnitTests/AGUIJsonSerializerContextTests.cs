@@ -782,6 +782,24 @@ public sealed class AGUIJsonSerializerContextTests
         Assert.IsType<TextMessageEndEvent>(events[5]);
     }
 
+    [Fact]
+    public void BaseEvent_Deserializes_StateDeltaEventAsBaseEvent()
+    {
+        // Arrange
+        const string Json = """
+            {
+              "type":"STATE_DELTA","delta":[{"op":"replace","path":"/x","value":1}]
+            }
+            """;
+
+        // Act
+        BaseEvent? evt = JsonSerializer.Deserialize(Json, AGUIJsonSerializerContext.Default.BaseEvent);
+
+        // Assert
+        Assert.NotNull(evt);
+        Assert.IsType<StateDeltaEvent>(evt);
+    }
+
     #region Comprehensive Message Serialization Tests
 
     [Fact]
