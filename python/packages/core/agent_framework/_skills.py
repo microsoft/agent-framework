@@ -852,6 +852,26 @@ def _make_method_name(method_name: str) -> str:
     return method_name.replace("_", "-").strip("-")
 
 
+def _validate_member_name(name: str, kind: str) -> None:
+    """Validate a resource or script name at decoration time.
+
+    Args:
+        name: The name to validate.
+        kind: ``"resource"`` or ``"script"`` — used in error messages.
+
+    Raises:
+        ValueError: If the name is empty, too long, or contains invalid characters.
+    """
+    if not name or not name.strip():
+        raise ValueError(f"@ClassSkill.{kind} name cannot be empty.")
+    if len(name) > MAX_NAME_LENGTH or not VALID_NAME_RE.match(name):
+        raise ValueError(
+            f"Invalid @ClassSkill.{kind} name '{name}': Must be {MAX_NAME_LENGTH} characters or fewer, "
+            "using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen "
+            "or contain consecutive hyphens."
+        )
+
+
 def _discover_marked_members(cls: type, marker_attr: str) -> list[tuple[str, dict[str, Any]]]:
     """Scan a class for methods or properties stamped with a marker attribute.
 
@@ -869,12 +889,19 @@ def _discover_marked_members(cls: type, marker_attr: str) -> list[tuple[str, dic
     results: list[tuple[str, dict[str, Any]]] = []
     seen: set[str] = set()
 
-    # Check property descriptors first — their fget carries the marker,
-    # but getattr(cls, name) triggers the descriptor and hides it.
-    for attr_name, attr_value in cls.__dict__.items():
-        if isinstance(attr_value, property) and attr_value.fget is not None and hasattr(attr_value.fget, marker_attr):
-            results.append((attr_name, getattr(attr_value.fget, marker_attr)))
-            seen.add(attr_name)
+    # Walk the MRO so that property-resources defined on a parent class
+    # are also discovered.  ``cls.__dict__`` only sees the leaf class.
+    for klass in cls.__mro__:
+        for attr_name, attr_value in klass.__dict__.items():
+            if attr_name in seen:
+                continue
+            if (
+                isinstance(attr_value, property)
+                and attr_value.fget is not None
+                and hasattr(attr_value.fget, marker_attr)
+            ):
+                results.append((attr_name, getattr(attr_value.fget, marker_attr)))
+                seen.add(attr_name)
 
     # Check regular callable attributes.
     for attr_name in dir(cls):
@@ -882,8 +909,9 @@ def _discover_marked_members(cls: type, marker_attr: str) -> list[tuple[str, dic
             continue
         try:
             attr = getattr(cls, attr_name, None)
-        except Exception:  # noqa: BAN-B112
+        except Exception:
             # Some descriptors (e.g. abstract properties) may raise on access.
+            logger.warning("Skipping '%s' during skill discovery: descriptor raised on access", attr_name)
             attr = None
         if attr is not None and callable(attr) and hasattr(attr, marker_attr):
             results.append((attr_name, getattr(attr, marker_attr)))
@@ -1031,6 +1059,13 @@ class ClassSkill(Skill, ABC):
         """
 
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+            if isinstance(f, (property, classmethod, staticmethod)):
+                raise TypeError(
+                    "@ClassSkill.resource must be applied before @property, @classmethod, or @staticmethod. "
+                    "Place @property first, then @ClassSkill.resource."
+                )
+            if name is not None:
+                _validate_member_name(name, "resource")
             f._skill_resource_marker = {  # type: ignore[attr-defined]
                 "name": name,
                 "description": description,
@@ -1076,6 +1111,12 @@ class ClassSkill(Skill, ABC):
         """
 
         def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+            if isinstance(f, (property, classmethod, staticmethod)):
+                raise TypeError(
+                    "@ClassSkill.script must be applied before @property, @classmethod, or @staticmethod."
+                )
+            if name is not None:
+                _validate_member_name(name, "script")
             f._skill_script_marker = {  # type: ignore[attr-defined]
                 "name": name,
                 "description": description,
@@ -1108,7 +1149,7 @@ class ClassSkill(Skill, ABC):
         using decorator-based discovery.
         """
         if self._cached_resources is not None:
-            return self._cached_resources
+            return list(self._cached_resources)
 
         resources: list[SkillResource] = []
         seen_names: set[str] = set()
@@ -1123,7 +1164,10 @@ class ClassSkill(Skill, ABC):
                 )
             seen_names.add(resource_name)
 
-            is_property = isinstance(type(self).__dict__.get(attr_name), property)
+            # Use inspect.getattr_static to check the descriptor type without
+            # triggering it, and walk the MRO so inherited properties are found.
+            static_attr = inspect.getattr_static(self, attr_name, None)
+            is_property = isinstance(static_attr, property)
             resource_description = marker.get("description")
 
             if is_property:
@@ -1150,7 +1194,7 @@ class ClassSkill(Skill, ABC):
                 )
 
         self._cached_resources = resources
-        return self._cached_resources
+        return list(self._cached_resources)
 
     @property
     def scripts(self) -> list[SkillScript]:
@@ -1165,7 +1209,7 @@ class ClassSkill(Skill, ABC):
         using decorator-based discovery.
         """
         if self._cached_scripts is not None:
-            return self._cached_scripts
+            return list(self._cached_scripts)
 
         scripts: list[SkillScript] = []
         seen_names: set[str] = set()
@@ -1191,7 +1235,7 @@ class ClassSkill(Skill, ABC):
             )
 
         self._cached_scripts = scripts
-        return self._cached_scripts
+        return list(self._cached_scripts)
 
     @property
     def content(self) -> str:

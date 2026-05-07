@@ -3520,13 +3520,15 @@ class TestClassSkillDecoratorDiscovery:
         skill = _DecoratorClassSkill()
         r1 = skill.resources
         r2 = skill.resources
-        assert r1 is r2
+        assert r1 == r2
+        assert r1 is not r2  # defensive copy
 
     def test_scripts_cached(self) -> None:
         skill = _DecoratorClassSkill()
         s1 = skill.scripts
         s2 = skill.scripts
-        assert s1 is s2
+        assert s1 == s2
+        assert s1 is not s2  # defensive copy
 
     def test_content_includes_discovered_resources(self) -> None:
         skill = _DecoratorClassSkill()
@@ -3671,6 +3673,112 @@ class TestClassSkillDecoratorDiscovery:
         result = await script.run(skill, {"x": 5}, custom_key="hello")
         assert result == "5-hello"
 
+    def test_wrong_decorator_order_resource_raises(self) -> None:
+        """@ClassSkill.resource above @property raises TypeError at class definition."""
+        with pytest.raises(TypeError, match="must be applied before @property"):
+
+            class _BadOrder(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(name="bad", description="bad")
+
+                @property
+                def instructions(self) -> str:
+                    return "x"
+
+                @ClassSkill.resource(name="oops")  # wrong: should be below @property
+                @property
+                def bad_prop(self) -> str:
+                    return "x"
+
+    def test_wrong_decorator_order_script_raises(self) -> None:
+        """@ClassSkill.script on a property raises TypeError."""
+        with pytest.raises(TypeError, match="must be applied before"):
+
+            class _BadOrder(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(name="bad", description="bad")
+
+                @property
+                def instructions(self) -> str:
+                    return "x"
+
+                @ClassSkill.script(name="oops")
+                @property
+                def bad_prop(self) -> str:
+                    return "x"
+
+    def test_invalid_explicit_resource_name_raises(self) -> None:
+        """Invalid name= on @ClassSkill.resource raises ValueError at decoration."""
+        with pytest.raises(ValueError, match="Invalid @ClassSkill.resource name"):
+
+            class _BadName(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(name="bad", description="bad")
+
+                @property
+                def instructions(self) -> str:
+                    return "x"
+
+                @ClassSkill.resource(name="UPPER CASE!")
+                def res(self) -> str:
+                    return "x"
+
+    def test_invalid_explicit_script_name_raises(self) -> None:
+        """Invalid name= on @ClassSkill.script raises ValueError at decoration."""
+        with pytest.raises(ValueError, match="Invalid @ClassSkill.script name"):
+
+            class _BadName(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(name="bad", description="bad")
+
+                @property
+                def instructions(self) -> str:
+                    return "x"
+
+                @ClassSkill.script(name="has spaces")
+                def scr(self, x: int) -> int:
+                    return x
+
+    def test_empty_explicit_name_raises(self) -> None:
+        """Empty name= on @ClassSkill.resource raises ValueError."""
+        with pytest.raises(ValueError, match="name cannot be empty"):
+
+            class _EmptyName(ClassSkill):
+                def __init__(self) -> None:
+                    super().__init__(name="bad", description="bad")
+
+                @property
+                def instructions(self) -> str:
+                    return "x"
+
+                @ClassSkill.resource(name="")
+                def res(self) -> str:
+                    return "x"
+
+    def test_resources_copy_prevents_cache_mutation(self) -> None:
+        """Mutating the returned resources list does not affect the cache."""
+        skill = _DecoratorClassSkill()
+        r1 = skill.resources
+        r1.clear()
+        r2 = skill.resources
+        assert len(r2) == 1  # original cached list is intact
+
+    def test_scripts_copy_prevents_cache_mutation(self) -> None:
+        """Mutating the returned scripts list does not affect the cache."""
+        skill = _DecoratorClassSkill()
+        s1 = skill.scripts
+        s1.clear()
+        s2 = skill.scripts
+        assert len(s2) == 1  # original cached list is intact
+
+    async def test_inherited_property_resource_discovered(self) -> None:
+        """A @property @ClassSkill.resource on a parent class is discovered on child."""
+        skill = _ChildWithInheritedPropertySkill()
+        names = {r.name for r in skill.resources}
+        assert "parent-prop" in names
+        content = await next(r for r in skill.resources if r.name == "parent-prop").read()
+        assert content == "parent property content"
+
 
 # ---------------------------------------------------------------------------
 # Helper skills for additional tests
@@ -3754,6 +3862,26 @@ class _KwargsSkill(ClassSkill):
     @ClassSkill.script(name="echo")
     def echo(self, x: int, **kwargs: Any) -> str:
         return f"{x}-{kwargs.get('custom_key', 'none')}"
+
+
+class _ParentWithPropertyResource(ClassSkill, ABC):
+    """Parent with a property-based resource."""
+
+    @property
+    @ClassSkill.resource(name="parent-prop")
+    def parent_property(self) -> str:
+        return "parent property content"
+
+
+class _ChildWithInheritedPropertySkill(_ParentWithPropertyResource):
+    """Child that should discover inherited property resource."""
+
+    def __init__(self) -> None:
+        super().__init__(name="child-prop-skill", description="Child prop.")
+
+    @property
+    def instructions(self) -> str:
+        return "x"
 
 
 class _PropertyResourceSkill(ClassSkill):
