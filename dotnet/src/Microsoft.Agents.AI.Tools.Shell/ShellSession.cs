@@ -167,9 +167,9 @@ internal sealed class ShellSession : IAsyncDisposable
             if (this._cleanEnvironment)
             {
                 // Strip everything inherited except the allowlist in
-                // CleanEnvironmentHelper.PreservedVariables, so the shell can
+                // EnvironmentSanitizer.PreservedVariables, so the shell can
                 // still locate itself and basic tools.
-                CleanEnvironmentHelper.ApplyPreserved(startInfo.Environment);
+                EnvironmentSanitizer.RemoveNonPreserved(startInfo.Environment);
             }
 
             if (this._environment is not null)

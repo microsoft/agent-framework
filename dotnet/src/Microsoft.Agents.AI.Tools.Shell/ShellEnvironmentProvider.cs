@@ -21,8 +21,8 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// This addresses a common failure mode where a model defaults to bash
 /// syntax while talking to a PowerShell session (or vice versa). Probes
 /// run through the supplied <see cref="IShellExecutor"/>, so the same
-/// provider works for both <see cref="LocalShellTool"/> (host shell) and
-/// <see cref="DockerShellTool"/> (container shell).
+/// provider works for both <see cref="LocalShellExecutor"/> (host shell) and
+/// <see cref="DockerShellExecutor"/> (container shell).
 /// </para>
 /// <para>
 /// The provider does not expose any new tools; it augments the system
@@ -130,7 +130,7 @@ public sealed class ShellEnvironmentProvider : AIContextProvider
     {
         var family = this._options.OverrideFamily ?? DetectFamily();
 
-        await this._executor.StartAsync(cancellationToken).ConfigureAwait(false);
+        await this._executor.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         var (shellVersion, workingDir) = await this.ProbeShellAndCwdAsync(family, cancellationToken).ConfigureAwait(false);
 

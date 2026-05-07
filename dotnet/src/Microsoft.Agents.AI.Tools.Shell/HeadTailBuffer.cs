@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Used by <see cref="LocalShellTool"/> and <see cref="DockerShellTool"/> when
+/// Used by <see cref="LocalShellExecutor"/> and <see cref="DockerShellExecutor"/> when
 /// streaming stdout / stderr from a long-running subprocess. Memory usage is bounded
 /// at roughly <c>cap</c> bytes regardless of how much is appended.
 /// </para>

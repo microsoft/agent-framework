@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 /// <summary>
 /// Direct coverage for <see cref="ShellSession.TruncateHeadTail"/> (internal,
 /// reachable via InternalsVisibleTo). The function is on the hot path for
-/// every shell command — both LocalShellTool and DockerShellTool feed
+/// every shell command — both LocalShellExecutor and DockerShellExecutor feed
 /// captured stdout/stderr through it before returning.
 /// </summary>
 public sealed class ShellSessionTests

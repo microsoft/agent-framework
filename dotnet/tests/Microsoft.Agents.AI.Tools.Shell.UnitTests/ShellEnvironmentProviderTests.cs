@@ -24,7 +24,7 @@ public sealed class ShellEnvironmentProviderTests
             return; // The default-detection path only fires PowerShell on Windows.
         }
 
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless);
         var provider = new ShellEnvironmentProvider(shell, new() { ProbeTools = [] });
         var snapshot = await provider.RefreshAsync();
 
@@ -42,7 +42,7 @@ public sealed class ShellEnvironmentProviderTests
             return;
         }
 
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless);
         var provider = new ShellEnvironmentProvider(shell, new() { ProbeTools = [] });
         var snapshot = await provider.RefreshAsync();
 
@@ -89,7 +89,7 @@ public sealed class ShellEnvironmentProviderTests
     [Fact]
     public async Task RefreshAsync_MissingTool_RecordedAsNullAsync()
     {
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless);
         var provider = new ShellEnvironmentProvider(shell, new()
         {
             ProbeTools = ["definitely-not-a-real-binary-xyz123"],
@@ -223,8 +223,8 @@ public sealed class ShellEnvironmentProviderTests
     private sealed class ScriptedShellExecutor : IShellExecutor
     {
         public Queue<ShellResult> Responses { get; } = new();
-        public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ShutdownAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default) =>
             Task.FromResult(this.Responses.Dequeue());
         public ValueTask DisposeAsync() => default;
@@ -278,8 +278,8 @@ public sealed class ShellEnvironmentProviderTests
     {
         private readonly Func<CancellationToken, ShellResult> _factory;
         public ThrowingShellExecutor(Func<CancellationToken, ShellResult> factory) { this._factory = factory; }
-        public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ShutdownAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default) =>
             Task.FromResult(this._factory(cancellationToken));
         public ValueTask DisposeAsync() => default;
@@ -368,8 +368,8 @@ public sealed class ShellEnvironmentProviderTests
         public FakeShellExecutor(ShellResult result) { this.NextResult = result; }
         public ShellResult NextResult { get; set; }
         public int RunCount { get; private set; }
-        public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ShutdownAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default)
         {
             this.RunCount++;

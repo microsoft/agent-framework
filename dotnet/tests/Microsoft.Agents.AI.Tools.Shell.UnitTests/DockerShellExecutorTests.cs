@@ -9,23 +9,23 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 
 /// <summary>
-/// Tests for the side-effect-free argv builders on <see cref="DockerShellTool"/>.
+/// Tests for the side-effect-free argv builders on <see cref="DockerShellExecutor"/>.
 /// These don't require a Docker daemon to run.
 /// </summary>
-public sealed class DockerShellToolTests
+public sealed class DockerShellExecutorTests
 {
     private static readonly string[] s_privilegedExtraRunArgs = new[] { "--privileged" };
 
     [Fact]
     public void BuildRunArgv_EmitsHardenedDefaults()
     {
-        var argv = DockerShellTool.BuildRunArgv(
+        var argv = DockerShellExecutor.BuildRunArgv(
             binary: "docker",
             image: "alpine:3.19",
             containerName: "af-shell-test",
             user: "65534:65534",
             network: "none",
-            memory: "256m",
+            memoryBytes: 256L * 1024 * 1024,
             pidsLimit: 64,
             workdir: "/workspace",
             hostWorkdir: null,
@@ -55,13 +55,13 @@ public sealed class DockerShellToolTests
     [Fact]
     public void BuildRunArgv_HostWorkdir_AddsVolumeMount()
     {
-        var argv = DockerShellTool.BuildRunArgv(
+        var argv = DockerShellExecutor.BuildRunArgv(
             binary: "docker",
             image: "alpine:3.19",
             containerName: "af-shell-test",
             user: "1000:1000",
             network: "none",
-            memory: "256m",
+            memoryBytes: 256L * 1024 * 1024,
             pidsLimit: 64,
             workdir: "/workspace",
             hostWorkdir: "/tmp/proj",
@@ -79,13 +79,13 @@ public sealed class DockerShellToolTests
     [Fact]
     public void BuildRunArgv_HostWorkdir_DefaultsToReadonly()
     {
-        var argv = DockerShellTool.BuildRunArgv(
+        var argv = DockerShellExecutor.BuildRunArgv(
             binary: "docker",
             image: "alpine:3.19",
             containerName: "x",
             user: "1000:1000",
             network: "none",
-            memory: "256m",
+            memoryBytes: 256L * 1024 * 1024,
             pidsLimit: 64,
             workdir: "/workspace",
             hostWorkdir: "/host/path",
@@ -104,13 +104,13 @@ public sealed class DockerShellToolTests
     {
         var env = new Dictionary<string, string> { ["LOG"] = "1", ["MODE"] = "ci" };
         var extra = new[] { "--label", "owner=test" };
-        var argv = DockerShellTool.BuildRunArgv(
+        var argv = DockerShellExecutor.BuildRunArgv(
             binary: "docker",
             image: "alpine:3.19",
             containerName: "x",
             user: "1000:1000",
             network: "none",
-            memory: "256m",
+            memoryBytes: 256L * 1024 * 1024,
             pidsLimit: 64,
             workdir: "/workspace",
             hostWorkdir: null,
@@ -131,15 +131,15 @@ public sealed class DockerShellToolTests
     [Fact]
     public void BuildExecArgv_EmitsBashNoProfileNoRc()
     {
-        var argv = DockerShellTool.BuildExecArgv("docker", "af-shell-x");
+        var argv = DockerShellExecutor.BuildExecArgv("docker", "af-shell-x");
         Assert.Equal(s_expectedInteractive, argv);
     }
 
     [Fact]
     public async Task Ctor_GeneratesUniqueContainerNameAsync()
     {
-        await using var t1 = new DockerShellTool(mode: ShellMode.Stateless);
-        await using var t2 = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t1 = new DockerShellExecutor(mode: ShellMode.Stateless);
+        await using var t2 = new DockerShellExecutor(mode: ShellMode.Stateless);
         Assert.StartsWith("af-shell-", t1.ContainerName, StringComparison.Ordinal);
         Assert.StartsWith("af-shell-", t2.ContainerName, StringComparison.Ordinal);
         Assert.NotEqual(t1.ContainerName, t2.ContainerName);
@@ -148,14 +148,14 @@ public sealed class DockerShellToolTests
     [Fact]
     public async Task Ctor_RespectsExplicitContainerNameAsync()
     {
-        await using var t = new DockerShellTool(containerName: "my-explicit-name", mode: ShellMode.Stateless);
+        await using var t = new DockerShellExecutor(containerName: "my-explicit-name", mode: ShellMode.Stateless);
         Assert.Equal("my-explicit-name", t.ContainerName);
     }
 
     [Fact]
     public async Task IShellExecutor_DockerShellTool_ImplementsInterfaceAsync()
     {
-        await using var t = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t = new DockerShellExecutor(mode: ShellMode.Stateless);
         IShellExecutor executor = t;
         Assert.NotNull(executor);
     }
@@ -166,7 +166,7 @@ public sealed class DockerShellToolTests
         // With the default hardened config (network=none, non-root user,
         // read-only root, no extra args, no host mount) approval should
         // remain opt-in.
-        await using var t = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t = new DockerShellExecutor(mode: ShellMode.Stateless);
         Assert.True(t.IsHardenedConfiguration);
         var fn = t.AsAIFunction();
         Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
@@ -176,7 +176,7 @@ public sealed class DockerShellToolTests
     [Fact]
     public async Task AsAIFunction_OptInApproval_WrapsInApprovalRequiredAsync()
     {
-        await using var t = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t = new DockerShellExecutor(mode: ShellMode.Stateless);
         var fn = t.AsAIFunction(requireApproval: true);
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
     }
@@ -189,7 +189,7 @@ public sealed class DockerShellToolTests
     public async Task AsAIFunction_RelaxedConfig_DefaultsToApprovalGatedAsync(
         string network, string user, bool readOnlyRoot, bool mountReadonly)
     {
-        await using var t = new DockerShellTool(
+        await using var t = new DockerShellExecutor(
             mode: ShellMode.Stateless,
             network: network,
             user: user,
@@ -204,7 +204,7 @@ public sealed class DockerShellToolTests
     [Fact]
     public async Task AsAIFunction_ExtraRunArgs_DefaultsToApprovalGatedAsync()
     {
-        await using var t = new DockerShellTool(
+        await using var t = new DockerShellExecutor(
             mode: ShellMode.Stateless,
             extraRunArgs: s_privilegedExtraRunArgs);
         Assert.False(t.IsHardenedConfiguration);
@@ -216,7 +216,7 @@ public sealed class DockerShellToolTests
     [Fact]
     public async Task AsAIFunction_RelaxedButExplicitOptOut_IsNotApprovalGatedAsync()
     {
-        await using var t = new DockerShellTool(
+        await using var t = new DockerShellExecutor(
             mode: ShellMode.Stateless,
             network: "host");
         var fn = t.AsAIFunction(requireApproval: false);
@@ -226,7 +226,7 @@ public sealed class DockerShellToolTests
     [Fact]
     public async Task IsAvailableAsync_NonExistentBinary_ReturnsFalseAsync()
     {
-        var ok = await DockerShellTool.IsAvailableAsync(binary: "definitely-not-a-real-binary-xyz123");
+        var ok = await DockerShellExecutor.IsAvailableAsync(binary: "definitely-not-a-real-binary-xyz123");
         Assert.False(ok);
     }
 
@@ -235,7 +235,7 @@ public sealed class DockerShellToolTests
     {
         // Pure policy path: the policy check runs before any docker invocation,
         // so this exercises rejection without needing a Docker daemon.
-        await using var t = new DockerShellTool(mode: ShellMode.Stateless);
+        await using var t = new DockerShellExecutor(mode: ShellMode.Stateless);
         await Assert.ThrowsAsync<ShellCommandRejectedException>(
             () => t.RunAsync("rm -rf /"));
     }

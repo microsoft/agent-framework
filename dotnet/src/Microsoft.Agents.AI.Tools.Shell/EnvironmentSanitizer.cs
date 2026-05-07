@@ -6,12 +6,12 @@ using System.Collections.Generic;
 namespace Microsoft.Agents.AI.Tools.Shell;
 
 /// <summary>
-/// Helpers shared by <see cref="LocalShellTool"/> and <see cref="ShellSession"/> for the
-/// <c>cleanEnvironment</c> mode where the spawned shell does not inherit the parent
-/// process environment, but a small allowlist of variables is kept so the shell can still
-/// locate itself and basic tools.
+/// Helpers shared by <see cref="LocalShellExecutor"/> and <see cref="ShellSession"/> for
+/// the <c>cleanEnvironment</c> mode where the spawned shell does not inherit the parent
+/// process environment — except for a small allowlist of variables that the shell needs
+/// to locate itself and basic tools.
 /// </summary>
-internal static class CleanEnvironmentHelper
+internal static class EnvironmentSanitizer
 {
     /// <summary>
     /// Variables propagated from the host environment when <c>cleanEnvironment</c> is true.
@@ -35,7 +35,8 @@ internal static class CleanEnvironmentHelper
     /// Windows (case-insensitive env vars) and POSIX (case-sensitive but typed in the
     /// expected case). Variables that aren't present in the input dictionary are skipped.
     /// </summary>
-    public static void ApplyPreserved(IDictionary<string, string?> environment)
+    /// <param name="environment">The environment dictionary to sanitize in-place.</param>
+    public static void RemoveNonPreserved(IDictionary<string, string?> environment)
     {
         if (environment is null)
         {

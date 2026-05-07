@@ -4,7 +4,7 @@ namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 
 /// <summary>
 /// Coverage for <see cref="HeadTailBuffer"/>, the bounded stdout/stderr accumulator
-/// shared by <see cref="LocalShellTool"/> and <see cref="DockerShellTool"/>.
+/// shared by <see cref="LocalShellExecutor"/> and <see cref="DockerShellExecutor"/>.
 /// </summary>
 public sealed class HeadTailBufferTests
 {

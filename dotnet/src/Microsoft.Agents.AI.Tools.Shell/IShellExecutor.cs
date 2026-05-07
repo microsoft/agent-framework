@@ -11,9 +11,9 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="LocalShellTool"/> runs commands directly on the host (no
+/// <see cref="LocalShellExecutor"/> runs commands directly on the host (no
 /// isolation; approval-in-the-loop is the security boundary).
-/// <see cref="DockerShellTool"/> runs them inside a container with resource
+/// <see cref="DockerShellExecutor"/> runs them inside a container with resource
 /// limits, network isolation, and a non-root user — the container itself
 /// is the security boundary, which is why it can be used without approval
 /// gating for untrusted-input scenarios.
@@ -33,14 +33,14 @@ public interface IShellExecutor : IAsyncDisposable
     /// is typically a no-op.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task StartAsync(CancellationToken cancellationToken = default);
+    Task InitializeAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Tear down all backend resources. Idempotent; safe to call multiple
     /// times.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task CloseAsync(CancellationToken cancellationToken = default);
+    Task ShutdownAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Run a single command and return its result. Implementations are

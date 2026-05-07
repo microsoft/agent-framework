@@ -8,9 +8,9 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 
 /// <summary>
-/// Smoke + behavior tests for <see cref="LocalShellTool"/> and <see cref="ShellPolicy"/>.
+/// Smoke + behavior tests for <see cref="LocalShellExecutor"/> and <see cref="ShellPolicy"/>.
 /// </summary>
-public sealed class LocalShellToolTests
+public sealed class LocalShellExecutorTests
 {
     [Fact]
     public void Policy_DenyList_BlocksDestructiveRm()
@@ -53,7 +53,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task RunAsync_EchoCommand_RoundtripsStdoutAndExitCodeAsync()
     {
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless);
         // Use an OS-appropriate echo. On Windows the resolved shell is PowerShell.
         var result = await shell.RunAsync("echo hello-from-shell");
         Assert.Equal(0, result.ExitCode);
@@ -64,7 +64,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task RunAsync_RejectedCommand_ThrowsShellCommandRejectedAsync()
     {
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless);
         await Assert.ThrowsAsync<ShellCommandRejectedException>(
             () => shell.RunAsync("rm -rf /"));
     }
@@ -72,7 +72,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task RunAsync_NonZeroExit_PropagatesExitCodeAsync()
     {
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless);
         // `exit <n>` works in both bash and PowerShell.
         var result = await shell.RunAsync("exit 7");
         Assert.Equal(7, result.ExitCode);
@@ -81,7 +81,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task RunAsync_Timeout_FlagsTimedOutAndKillsProcessAsync()
     {
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless, timeout: TimeSpan.FromMilliseconds(250));
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless, timeout: TimeSpan.FromMilliseconds(250));
         var sleepCmd = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? "Start-Sleep -Seconds 30"
             : "sleep 30";
@@ -97,7 +97,7 @@ public sealed class LocalShellToolTests
         // Documented contract: timeout: null disables timeouts. Verify that
         // a short-lived command completes normally instead of being killed
         // when the caller explicitly opts out of a timeout.
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless, timeout: null);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless, timeout: null);
         var echo = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? "Write-Output ok"
             : "echo ok";
@@ -109,13 +109,13 @@ public sealed class LocalShellToolTests
     [Fact]
     public void DefaultTimeout_IsThirtySeconds()
     {
-        Assert.Equal(TimeSpan.FromSeconds(30), LocalShellTool.DefaultTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(30), LocalShellExecutor.DefaultTimeout);
     }
 
     [Fact]
     public async Task AsAIFunction_DefaultsToApprovalRequiredAsync()
     {
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless);
         var fn = shell.AsAIFunction();
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
@@ -125,14 +125,14 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task AsAIFunction_OptOut_RequiresAcknowledgeUnsafeAsync()
     {
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless);
         _ = Assert.Throws<InvalidOperationException>(() => shell.AsAIFunction(requireApproval: false));
     }
 
     [Fact]
     public async Task AsAIFunction_OptOut_WithAck_ReturnsPlainFunctionAsync()
     {
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless, acknowledgeUnsafe: true);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless, acknowledgeUnsafe: true);
         var fn = shell.AsAIFunction(requireApproval: false);
         Assert.IsNotType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
@@ -147,13 +147,13 @@ public sealed class LocalShellToolTests
             return;
         }
         _ = Assert.Throws<NotSupportedException>(() =>
-            new LocalShellTool(mode: ShellMode.Persistent, shell: "cmd.exe"));
+            new LocalShellExecutor(mode: ShellMode.Persistent, shell: "cmd.exe"));
     }
 
     [Fact]
     public async Task Persistent_CarriesWorkingDirectory_AcrossCallsAsync()
     {
-        await using var shell = new LocalShellTool(
+        await using var shell = new LocalShellExecutor(
             mode: ShellMode.Persistent,
             timeout: TimeSpan.FromSeconds(20));
 
@@ -176,7 +176,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task Persistent_CarriesEnvironment_AcrossCallsAsync()
     {
-        await using var shell = new LocalShellTool(
+        await using var shell = new LocalShellExecutor(
             mode: ShellMode.Persistent,
             timeout: TimeSpan.FromSeconds(20));
 
@@ -193,7 +193,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task Persistent_Timeout_ReturnsExitCode124Async()
     {
-        await using var shell = new LocalShellTool(
+        await using var shell = new LocalShellExecutor(
             mode: ShellMode.Persistent,
             timeout: TimeSpan.FromMilliseconds(400));
 
@@ -210,7 +210,7 @@ public sealed class LocalShellToolTests
     public async Task Stateless_OutputTruncation_UsesHeadTailFormatAsync()
     {
         // 2KB cap, emit ~10KB → must be truncated and contain the head+tail marker.
-        await using var shell = new LocalShellTool(
+        await using var shell = new LocalShellExecutor(
             mode: ShellMode.Stateless,
             maxOutputBytes: 2048,
             timeout: TimeSpan.FromSeconds(20));
@@ -234,7 +234,7 @@ public sealed class LocalShellToolTests
         // any system that has pwsh or bash on PATH (CI, dev boxes).
         try
         {
-            await using var shell = new LocalShellTool();
+            await using var shell = new LocalShellExecutor();
             Assert.NotNull(shell);
         }
         catch (NotSupportedException)
@@ -247,7 +247,7 @@ public sealed class LocalShellToolTests
     public void Ctor_RejectsBothShellAndShellArgv()
     {
         var argv = new[] { "/bin/bash", "--noprofile" };
-        _ = Assert.Throws<ArgumentException>(() => new LocalShellTool(
+        _ = Assert.Throws<ArgumentException>(() => new LocalShellExecutor(
             mode: ShellMode.Stateless,
             shell: "/bin/bash",
             shellArgv: argv));
@@ -261,7 +261,7 @@ public sealed class LocalShellToolTests
         System.IO.Directory.CreateDirectory(subDir);
         try
         {
-            await using var shell = new LocalShellTool(
+            await using var shell = new LocalShellExecutor(
                 mode: ShellMode.Persistent,
                 workingDirectory: rootDir,
                 confineWorkingDirectory: true,
@@ -295,7 +295,7 @@ public sealed class LocalShellToolTests
         System.IO.Directory.CreateDirectory(subDir);
         try
         {
-            await using var shell = new LocalShellTool(
+            await using var shell = new LocalShellExecutor(
                 mode: ShellMode.Persistent,
                 workingDirectory: rootDir,
                 confineWorkingDirectory: false,
@@ -323,7 +323,7 @@ public sealed class LocalShellToolTests
         Environment.SetEnvironmentVariable("AF_SHELL_PARENT_VAR", "should-not-leak");
         try
         {
-            await using var shell = new LocalShellTool(mode: ShellMode.Stateless, cleanEnvironment: true);
+            await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless, cleanEnvironment: true);
             var read = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? "$env:AF_SHELL_PARENT_VAR"
                 : "echo $AF_SHELL_PARENT_VAR";
@@ -340,7 +340,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task IShellExecutor_LocalShellTool_ImplementsInterfaceAsync()
     {
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless);
         IShellExecutor executor = shell;
         Assert.NotNull(executor);
     }
@@ -364,7 +364,7 @@ public sealed class LocalShellToolTests
     [Fact]
     public async Task RunAsync_StderrContent_IsCapturedAsync()
     {
-        await using var shell = new LocalShellTool(mode: ShellMode.Stateless);
+        await using var shell = new LocalShellExecutor(mode: ShellMode.Stateless);
         // Portable across pwsh and bash: write to stderr via redirection.
         var script = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? "[Console]::Error.WriteLine('err-from-shell')"

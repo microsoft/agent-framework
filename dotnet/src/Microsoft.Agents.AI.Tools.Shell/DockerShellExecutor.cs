@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Tools.Shell;
 
@@ -17,7 +18,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Exposes the same public surface as <see cref="LocalShellTool"/> but executes
+/// Exposes the same public surface as <see cref="LocalShellExecutor"/> but executes
 /// commands inside a container. The container is intended to be the
 /// security boundary, and the defaults set up a hardened-looking
 /// configuration (<c>--network none</c>, non-root user,
@@ -42,7 +43,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// runs each call in a fresh <c>docker run --rm</c>.
 /// </para>
 /// </remarks>
-public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
+public sealed class DockerShellExecutor : IAsyncDisposable, IShellExecutor
 {
     /// <summary>Default container image. A small Microsoft-maintained Linux base.</summary>
     public const string DefaultImage = "mcr.microsoft.com/azurelinux/base/core:3.0";
@@ -51,10 +52,10 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
     public const string DefaultContainerUser = "65534:65534";
 
     /// <summary>Default Docker network mode (no network).</summary>
-    public const string DefaultNetwork = "none";
+    public const string DefaultNetwork = DockerNetworkMode.None;
 
-    /// <summary>Default container memory limit.</summary>
-    public const string DefaultMemory = "512m";
+    /// <summary>Default container memory limit, in bytes (512 MiB).</summary>
+    public const long DefaultMemoryBytes = 512L * 1024 * 1024;
 
     /// <summary>Default pids limit.</summary>
     public const int DefaultPidsLimit = 256;
@@ -78,7 +79,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
     private readonly string _containerWorkdir;
     private readonly bool _mountReadonly;
     private readonly string _network;
-    private readonly string _memory;
+    private readonly long _memoryBytes;
     private readonly int _pidsLimit;
     private readonly string _user;
     private readonly bool _readOnlyRoot;
@@ -92,7 +93,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="DockerShellTool"/> class.
+    /// Initializes a new instance of the <see cref="DockerShellExecutor"/> class.
     /// </summary>
     /// <param name="image">OCI image to run. Must include <c>bash</c> and (for persistent mode) <c>sleep</c>.</param>
     /// <param name="containerName">Optional container name. When <see langword="null"/>, a unique name is generated.</param>
@@ -100,18 +101,18 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
     /// <param name="hostWorkdir">Optional host directory mounted at <paramref name="containerWorkdir"/>. Mounted read-only by default.</param>
     /// <param name="containerWorkdir">Path inside the container. Defaults to <c>/workspace</c>.</param>
     /// <param name="mountReadonly">When <see langword="true"/> (default), the host workdir is mounted read-only.</param>
-    /// <param name="network">Docker network mode. Defaults to <c>none</c>.</param>
-    /// <param name="memory">Container memory limit (e.g. <c>512m</c>, <c>2g</c>).</param>
+    /// <param name="network">Docker network mode. Defaults to <see cref="DockerNetworkMode.None"/>. See <see cref="DockerNetworkMode"/> for well-known values.</param>
+    /// <param name="memoryBytes">Container memory limit, in bytes. <see langword="null"/> selects <see cref="DefaultMemoryBytes"/> (512 MiB).</param>
     /// <param name="pidsLimit">Max processes inside the container.</param>
     /// <param name="user">UID:GID. Defaults to <c>65534:65534</c> (nobody).</param>
     /// <param name="readOnlyRoot">When <see langword="true"/> (default), the container root filesystem is read-only.</param>
     /// <param name="extraRunArgs">Additional args appended to <c>docker run</c>.</param>
     /// <param name="environment">Environment variables passed via <c>-e</c> to every command.</param>
-    /// <param name="policy">Optional <see cref="ShellPolicy"/>. Less critical than for <see cref="LocalShellTool"/> since the container provides isolation.</param>
+    /// <param name="policy">Optional <see cref="ShellPolicy"/>. Less critical than for <see cref="LocalShellExecutor"/> since the container provides isolation.</param>
     /// <param name="timeout">Per-command timeout. <see langword="null"/> disables timeouts.</param>
     /// <param name="maxOutputBytes">Per-stream cap before head+tail truncation.</param>
     /// <param name="dockerBinary">Override (e.g. <c>podman</c>).</param>
-    public DockerShellTool(
+    public DockerShellExecutor(
         string image = DefaultImage,
         string? containerName = null,
         ShellMode mode = ShellMode.Persistent,
@@ -119,7 +120,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
         string containerWorkdir = DefaultContainerWorkdir,
         bool mountReadonly = true,
         string network = DefaultNetwork,
-        string memory = DefaultMemory,
+        long? memoryBytes = null,
         int pidsLimit = DefaultPidsLimit,
         string user = DefaultContainerUser,
         bool readOnlyRoot = true,
@@ -130,19 +131,24 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
         int maxOutputBytes = DefaultMaxOutputBytes,
         string dockerBinary = "docker")
     {
+        _ = Throw.IfNull(image);
         if (maxOutputBytes <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(maxOutputBytes));
         }
+        if (memoryBytes is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(memoryBytes), "memoryBytes must be positive.");
+        }
 
-        this._image = image ?? throw new ArgumentNullException(nameof(image));
+        this._image = image;
         this.ContainerName = containerName ?? GenerateContainerName();
         this._mode = mode;
         this._hostWorkdir = hostWorkdir;
         this._containerWorkdir = containerWorkdir ?? DefaultContainerWorkdir;
         this._mountReadonly = mountReadonly;
         this._network = network ?? DefaultNetwork;
-        this._memory = memory ?? DefaultMemory;
+        this._memoryBytes = memoryBytes ?? DefaultMemoryBytes;
         this._pidsLimit = pidsLimit;
         this._user = user ?? DefaultContainerUser;
         this._readOnlyRoot = readOnlyRoot;
@@ -161,7 +167,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
     public string DockerBinary { get; }
 
     /// <summary>Eagerly start the container (and inner shell session in persistent mode).</summary>
-    public async Task StartAsync(CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await this._lifecycleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -198,7 +204,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
     }
 
     /// <summary>Stop the inner shell session and tear down the container.</summary>
-    public async Task CloseAsync(CancellationToken cancellationToken = default)
+    public async Task ShutdownAsync(CancellationToken cancellationToken = default)
     {
         await this._lifecycleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -239,7 +245,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
         {
             if (this._session is null)
             {
-                await this.StartAsync(cancellationToken).ConfigureAwait(false);
+                await this.InitializeAsync(cancellationToken).ConfigureAwait(false);
             }
             return await this._session!.RunAsync(command, this._timeout, cancellationToken).ConfigureAwait(false);
         }
@@ -266,6 +272,10 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
         && this._readOnlyRoot
         && (this._hostWorkdir is null || this._mountReadonly)
         && this._extraRunArgs.Count == 0;
+
+    /// <summary>Format a byte count into the value passed to <c>docker --memory</c> (e.g. <c>536870912b</c>).</summary>
+    internal static string FormatMemoryBytes(long memoryBytes) =>
+        memoryBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) + "b";
 
     private static bool IsRootUser(string user)
     {
@@ -345,7 +355,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
-        await this.CloseAsync().ConfigureAwait(false);
+        await this.ShutdownAsync().ConfigureAwait(false);
         this._lifecycleLock.Dispose();
     }
 
@@ -408,7 +418,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
         string containerName,
         string user,
         string network,
-        string memory,
+        long memoryBytes,
         int pidsLimit,
         string workdir,
         string? hostWorkdir,
@@ -426,7 +436,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
             "--name", containerName,
             "--user", user,
             "--network", network,
-            "--memory", memory,
+            "--memory", FormatMemoryBytes(memoryBytes),
             "--pids-limit", pidsLimit.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
@@ -476,7 +486,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
     {
         var argv = BuildRunArgv(
             this.DockerBinary, this._image, this.ContainerName, this._user, this._network,
-            this._memory, this._pidsLimit, this._containerWorkdir, this._hostWorkdir,
+            this._memoryBytes, this._pidsLimit, this._containerWorkdir, this._hostWorkdir,
             this._mountReadonly, this._readOnlyRoot, this._env, this._extraRunArgs);
 
         var (exit, _, stderr) = await RunDockerCommandAsync(argv, cancellationToken).ConfigureAwait(false);
@@ -586,7 +596,7 @@ public sealed class DockerShellTool : IAsyncDisposable, IShellExecutor
             "--name", perCallName,
             "--user", this._user,
             "--network", this._network,
-            "--memory", this._memory,
+            "--memory", FormatMemoryBytes(this._memoryBytes),
             "--pids-limit", this._pidsLimit.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",

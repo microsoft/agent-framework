@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -8,19 +8,19 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.Tools.Shell.IntegrationTests;
 
 /// <summary>
-/// End-to-end tests that exercise <see cref="DockerShellTool"/> against a live
+/// End-to-end tests that exercise <see cref="DockerShellExecutor"/> against a live
 /// Docker (or Podman) daemon. Tests auto-skip when no daemon is available, so
 /// they're safe to run in CI.
 /// </summary>
 /// <remarks>
 /// To run only these tests locally:
 /// <code>
-/// dotnet test --filter "Category=Integration&amp;FullyQualifiedName~DockerShellToolIntegrationTests"
+/// dotnet test --filter "Category=Integration&amp;FullyQualifiedName~DockerShellExecutorIntegrationTests"
 /// </code>
 /// or run the test exe directly with the trait filter.
 /// </remarks>
 [Trait("Category", "Integration")]
-public sealed class DockerShellToolIntegrationTests
+public sealed class DockerShellExecutorIntegrationTests
 {
     // Small, fast image that has bash. Pulled lazily on first run.
     // Alpine ships only busybox sh, which the persistent shell session can't use.
@@ -28,7 +28,7 @@ public sealed class DockerShellToolIntegrationTests
 
     private static async Task<bool> EnsureDockerOrSkipAsync()
     {
-        if (!await DockerShellTool.IsAvailableAsync().ConfigureAwait(false))
+        if (!await DockerShellExecutor.IsAvailableAsync().ConfigureAwait(false))
         {
             Assert.Skip("Docker (or Podman) daemon is not available on this machine.");
             return false; // unreachable
@@ -40,7 +40,7 @@ public sealed class DockerShellToolIntegrationTests
     public async Task IsAvailableAsync_ReturnsTrue_WhenDaemonRunningAsync()
     {
         await EnsureDockerOrSkipAsync();
-        Assert.True(await DockerShellTool.IsAvailableAsync());
+        Assert.True(await DockerShellExecutor.IsAvailableAsync());
     }
 
     [Fact]
@@ -48,8 +48,8 @@ public sealed class DockerShellToolIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Persistent);
-        await tool.StartAsync();
+        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Persistent);
+        await tool.InitializeAsync();
 
         var result = await tool.RunAsync("echo hello-from-docker");
 
@@ -62,8 +62,8 @@ public sealed class DockerShellToolIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Persistent);
-        await tool.StartAsync();
+        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Persistent);
+        await tool.InitializeAsync();
 
         var set = await tool.RunAsync("export DEMO=persisted-12345");
         Assert.Equal(0, set.ExitCode);
@@ -78,8 +78,8 @@ public sealed class DockerShellToolIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Persistent /* network defaults to "none" */);
-        await tool.StartAsync();
+        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Persistent /* network defaults to "none" */);
+        await tool.InitializeAsync();
 
         // Try to resolve a hostname; with --network none, even DNS should fail.
         // Use getent (always present on debian) so we don't depend on optional tools.
@@ -96,8 +96,8 @@ public sealed class DockerShellToolIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Persistent);
-        await tool.StartAsync();
+        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Persistent);
+        await tool.InitializeAsync();
 
         var rootWrite = await tool.RunAsync("touch /should-not-exist 2>&1; echo CODE:$?");
         Assert.Contains("CODE:", rootWrite.Stdout);
@@ -113,8 +113,8 @@ public sealed class DockerShellToolIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Persistent);
-        await tool.StartAsync();
+        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Persistent);
+        await tool.InitializeAsync();
 
         var result = await tool.RunAsync("id -u");
 
@@ -128,7 +128,7 @@ public sealed class DockerShellToolIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellTool(image: TestImage, mode: ShellMode.Stateless);
+        await using var tool = new DockerShellExecutor(image: TestImage, mode: ShellMode.Stateless);
 
         var first = await tool.RunAsync("echo first; export STATE=set");
         Assert.Equal(0, first.ExitCode);
@@ -152,12 +152,12 @@ public sealed class DockerShellToolIntegrationTests
 
         try
         {
-            await using var tool = new DockerShellTool(
+            await using var tool = new DockerShellExecutor(
                 image: TestImage,
                 mode: ShellMode.Persistent,
                 hostWorkdir: hostDir,
                 mountReadonly: true);
-            await tool.StartAsync();
+            await tool.InitializeAsync();
 
             var read = await tool.RunAsync("cat /workspace/from-host.txt");
             Assert.Equal(0, read.ExitCode);
@@ -178,14 +178,14 @@ public sealed class DockerShellToolIntegrationTests
     {
         await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellTool(
+        await using var tool = new DockerShellExecutor(
             image: TestImage,
             mode: ShellMode.Persistent,
             environment: new Dictionary<string, string>
             {
                 ["INJECTED_VAR"] = "injected-value-7777",
             });
-        await tool.StartAsync();
+        await tool.InitializeAsync();
 
         var result = await tool.RunAsync("echo $INJECTED_VAR");
 

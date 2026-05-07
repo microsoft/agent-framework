@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <c>LocalShellTool</c> launches a real shell (bash/sh on POSIX, pwsh/powershell/cmd on Windows)
+/// <c>LocalShellExecutor</c> launches a real shell (bash/sh on POSIX, pwsh/powershell/cmd on Windows)
 /// to execute commands emitted by an agent. Output is captured, optionally truncated, and a
 /// timeout terminates the process tree.
 /// </para>
@@ -33,12 +33,12 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// requires either (a) approval-in-the-loop, where every command is reviewed by a human via the
 /// harness <c>ToolApprovalAgent</c> (this is the default; see
 /// <see cref="AsAIFunction(string, string?, bool)"/>), or (b) container isolation
-/// (<c>DockerShellTool</c>). To produce an unapproved <see cref="AIFunction"/> you must pass
+/// (<c>DockerShellExecutor</c>). To produce an unapproved <see cref="AIFunction"/> you must pass
 /// <c>acknowledgeUnsafe: true</c> at construction; otherwise <see cref="AsAIFunction"/> will
 /// refuse to return a non-approval-gated function.
 /// </para>
 /// </remarks>
-public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
+public sealed class LocalShellExecutor : IAsyncDisposable, IShellExecutor
 {
     private const int DefaultMaxOutputBytes = 64 * 1024;
 
@@ -64,7 +64,7 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
     private readonly object _sessionGate = new();
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="LocalShellTool"/> class.
+    /// Initializes a new instance of the <see cref="LocalShellExecutor"/> class.
     /// </summary>
     /// <param name="mode">Execution mode. Defaults to <see cref="ShellMode.Persistent"/> so
     /// <c>cd</c>, exported variables, and function definitions persist across calls. Use
@@ -84,7 +84,7 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
     /// <c>requireApproval: false</c> to <see cref="AsAIFunction"/>. The default is
     /// <see langword="false"/>, which makes accidentally bypassing approval impossible.
     /// </param>
-    public LocalShellTool(
+    public LocalShellExecutor(
         ShellMode mode = ShellMode.Persistent,
         string? shell = null,
         IReadOnlyList<string>? shellArgv = null,
@@ -171,7 +171,7 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
     }
 
     /// <inheritdoc />
-    Task IShellExecutor.StartAsync(CancellationToken cancellationToken)
+    Task IShellExecutor.InitializeAsync(CancellationToken cancellationToken)
     {
         if (this._mode != ShellMode.Persistent)
         {
@@ -194,7 +194,7 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
     }
 
     /// <inheritdoc />
-    Task IShellExecutor.CloseAsync(CancellationToken cancellationToken) => this.DisposeAsync().AsTask();
+    Task IShellExecutor.ShutdownAsync(CancellationToken cancellationToken) => this.DisposeAsync().AsTask();
 
     private async Task<ShellResult> RunStatelessAsync(string command, CancellationToken cancellationToken)
     {
@@ -216,7 +216,7 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
 
         if (this._cleanEnvironment)
         {
-            CleanEnvironmentHelper.ApplyPreserved(startInfo.Environment);
+            EnvironmentSanitizer.RemoveNonPreserved(startInfo.Environment);
         }
 
         if (this._environment is not null)
@@ -343,7 +343,7 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
         {
             throw new InvalidOperationException(
                 "Refusing to produce an AIFunction without approval gating. " +
-                "Pass `acknowledgeUnsafe: true` to the LocalShellTool constructor to opt out, " +
+                "Pass `acknowledgeUnsafe: true` to the LocalShellExecutor constructor to opt out, " +
                 "or leave `requireApproval: true` (the default).");
         }
 
@@ -477,7 +477,7 @@ public sealed class LocalShellTool : IAsyncDisposable, IShellExecutor
 }
 
 /// <summary>
-/// Thrown when <see cref="LocalShellTool"/> rejects a command via its policy.
+/// Thrown when <see cref="LocalShellExecutor"/> rejects a command via its policy.
 /// </summary>
 public sealed class ShellCommandRejectedException : Exception
 {

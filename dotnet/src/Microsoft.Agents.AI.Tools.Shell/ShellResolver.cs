@@ -20,7 +20,11 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </remarks>
 internal static class ShellResolver
 {
-    internal const string EnvVarName = "AGENT_FRAMEWORK_SHELL";
+    /// <summary>
+    /// The environment variable consulted by <see cref="Resolve"/> to override
+    /// the default shell selection (e.g. <c>AGENT_FRAMEWORK_SHELL=/usr/bin/bash</c>).
+    /// </summary>
+    public const string EnvVarName = "AGENT_FRAMEWORK_SHELL";
 
     /// <summary>Resolve the shell binary and the per-command argv prefix.</summary>
     public static ResolvedShell Resolve(string? overrideShell = null)

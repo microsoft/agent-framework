@@ -2,17 +2,17 @@
 
 // Shell tool with environment-aware system prompt
 //
-// WARNING: This sample uses LocalShellTool, which executes real commands
+// WARNING: This sample uses LocalShellExecutor, which executes real commands
 // against the shell on this machine. Approval gating is disabled here so
 // the demo runs unattended; in any real application keep approval on
-// (the default), or use DockerShellTool for container isolation. The
+// (the default), or use DockerShellExecutor for container isolation. The
 // commands the model emits below are read-only or scoped (echo, cd into
 // a temp folder, set a process-local env var) but a different model or
 // prompt could choose to do something destructive. Run this only in an
 // environment where you are comfortable with the agent typing into your
 // terminal.
 //
-// Demonstrates LocalShellTool in both modes paired with
+// Demonstrates LocalShellExecutor in both modes paired with
 // ShellEnvironmentProvider, an AIContextProvider that probes the live
 // shell (OS, family, version, CWD, common CLIs) and injects authoritative
 // system-prompt instructions so the agent emits commands in the right
@@ -53,7 +53,7 @@ const string Instructions = """
 // 1. Stateless mode — each call gets a fresh shell.
 // --------------------------------------------------------------------
 Console.WriteLine("### Stateless mode\n");
-await using (var statelessShell = new LocalShellTool(mode: ShellMode.Stateless, acknowledgeUnsafe: true))
+await using (var statelessShell = new LocalShellExecutor(mode: ShellMode.Stateless, acknowledgeUnsafe: true))
 {
     var envProvider = new ShellEnvironmentProvider(statelessShell);
     var statelessAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
@@ -85,7 +85,7 @@ await using (var statelessShell = new LocalShellTool(mode: ShellMode.Stateless, 
 // 2. Persistent mode — one shell, reused across calls. State carries.
 // --------------------------------------------------------------------
 Console.WriteLine("\n### Persistent mode\n");
-await using (var persistentShell = new LocalShellTool(mode: ShellMode.Persistent, acknowledgeUnsafe: true))
+await using (var persistentShell = new LocalShellExecutor(mode: ShellMode.Persistent, acknowledgeUnsafe: true))
 {
     var envProvider = new ShellEnvironmentProvider(persistentShell);
     var persistentAgent = chatClient.AsAIAgent(new ChatClientAgentOptions

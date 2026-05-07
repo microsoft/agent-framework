@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
@@ -8,24 +9,90 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <summary>
 /// A shell command awaiting a policy decision.
 /// </summary>
-/// <param name="Command">The full command line that the agent wants to run.</param>
-/// <param name="WorkingDirectory">Optional working directory the command will execute in, if known.</param>
-public readonly record struct ShellRequest(string Command, string? WorkingDirectory = null);
+/// <remarks>
+/// Plain <see langword="readonly struct"/> rather than a record struct: the
+/// type carries no equality semantics that callers care about, and the
+/// minimal POCO is cheaper than the synthesized record machinery.
+/// </remarks>
+public readonly struct ShellRequest : IEquatable<ShellRequest>
+{
+    /// <summary>Initializes a new instance of the <see cref="ShellRequest"/> struct.</summary>
+    /// <param name="command">The full command line that the agent wants to run.</param>
+    /// <param name="workingDirectory">Optional working directory the command will execute in, if known.</param>
+    public ShellRequest(string command, string? workingDirectory = null)
+    {
+        this.Command = command;
+        this.WorkingDirectory = workingDirectory;
+    }
+
+    /// <summary>Gets the full command line that the agent wants to run.</summary>
+    public string Command { get; }
+
+    /// <summary>Gets the optional working directory the command will execute in, if known.</summary>
+    public string? WorkingDirectory { get; }
+
+    /// <inheritdoc />
+    public bool Equals(ShellRequest other) =>
+        string.Equals(this.Command, other.Command, StringComparison.Ordinal)
+        && string.Equals(this.WorkingDirectory, other.WorkingDirectory, StringComparison.Ordinal);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is ShellRequest r && this.Equals(r);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => HashCode.Combine(this.Command, this.WorkingDirectory);
+
+    /// <summary>Equality operator.</summary>
+    public static bool operator ==(ShellRequest left, ShellRequest right) => left.Equals(right);
+
+    /// <summary>Inequality operator.</summary>
+    public static bool operator !=(ShellRequest left, ShellRequest right) => !left.Equals(right);
+}
 
 /// <summary>
 /// The outcome of a <see cref="ShellPolicy"/> evaluation.
 /// </summary>
-/// <param name="Allowed"><see langword="true"/> when the command may run.</param>
-/// <param name="Reason">Human-readable rationale; populated for both allow and deny when applicable.</param>
-public readonly record struct ShellDecision(bool Allowed, string? Reason = null)
+public readonly struct ShellPolicyOutcome : IEquatable<ShellPolicyOutcome>
 {
-    /// <summary>Gets a default-allow decision.</summary>
-    public static ShellDecision Allow { get; } = new(true);
+    /// <summary>Initializes a new instance of the <see cref="ShellPolicyOutcome"/> struct.</summary>
+    /// <param name="allowed"><see langword="true"/> when the command may run.</param>
+    /// <param name="reason">Human-readable rationale; populated for both allow and deny when applicable.</param>
+    public ShellPolicyOutcome(bool allowed, string? reason = null)
+    {
+        this.Allowed = allowed;
+        this.Reason = reason;
+    }
 
-    /// <summary>Build a deny decision with a human-readable reason.</summary>
+    /// <summary>Gets a value indicating whether the command may run.</summary>
+    public bool Allowed { get; }
+
+    /// <summary>Gets the human-readable rationale; populated for both allow and deny when applicable.</summary>
+    public string? Reason { get; }
+
+    /// <summary>Gets a default-allow outcome.</summary>
+    public static ShellPolicyOutcome Allow { get; } = new(true);
+
+    /// <summary>Build a deny outcome with a human-readable reason.</summary>
     /// <param name="reason">The rationale to surface to the caller.</param>
-    /// <returns>A new <see cref="ShellDecision"/>.</returns>
-    public static ShellDecision Deny(string reason) => new(false, reason);
+    /// <returns>A new <see cref="ShellPolicyOutcome"/>.</returns>
+    public static ShellPolicyOutcome Deny(string reason) => new(false, reason);
+
+    /// <inheritdoc />
+    public bool Equals(ShellPolicyOutcome other) =>
+        this.Allowed == other.Allowed
+        && string.Equals(this.Reason, other.Reason, StringComparison.Ordinal);
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is ShellPolicyOutcome o && this.Equals(o);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => HashCode.Combine(this.Allowed, this.Reason);
+
+    /// <summary>Equality operator.</summary>
+    public static bool operator ==(ShellPolicyOutcome left, ShellPolicyOutcome right) => left.Equals(right);
+
+    /// <summary>Inequality operator.</summary>
+    public static bool operator !=(ShellPolicyOutcome left, ShellPolicyOutcome right) => !left.Equals(right);
 }
 
 /// <summary>
@@ -38,12 +105,16 @@ public readonly record struct ShellDecision(bool Allowed, string? Reason = null)
 /// interpreter escapes (<c>python -c "…"</c>), base64 smuggling, alternative
 /// tools (<c>find / -delete</c>), or PowerShell-native verbs
 /// (<c>Remove-Item -Recurse -Force</c>). The actual security boundary is
-/// approval-in-the-loop (see <see cref="LocalShellTool"/>) or container
+/// approval-in-the-loop (see <see cref="LocalShellExecutor"/>) or container
 /// isolation (Docker/Firecracker, planned in a follow-up).
 /// </para>
 /// <para>
-/// Evaluation order: explicit allow patterns short-circuit; otherwise the
-/// command is checked against the deny list; otherwise the request is allowed.
+/// <b>Evaluation order — allow short-circuits deny.</b> Allow patterns are
+/// checked first; a match returns immediately without consulting the deny
+/// list. Use allow patterns sparingly (and prefer narrowly anchored regexes
+/// like <c>^git\s+status$</c> rather than substring matches), because an
+/// over-broad allow pattern can re-enable a command that the deny list was
+/// supposed to block.
 /// </para>
 /// </remarks>
 public sealed class ShellPolicy
@@ -53,20 +124,32 @@ public sealed class ShellPolicy
     /// </summary>
     public static IReadOnlyList<string> DefaultDenyList { get; } =
     [
+        // rm -rf / and friends: recursive remove with the root or any
+        // absolute path as the target.
         @"\brm\s+(?:-[a-zA-Z]*r[a-zA-Z]*\s+)?-?\s*-?-?\s*[\/]",
+        // rm -rf ~: recursive remove of the user's home directory.
         @"\brm\s+-rf?\s+~",
+        // ":(){…}": classic bash fork-bomb prologue.
         @":\(\)\s*\{",
+        // dd if=… of=/dev/…: writing raw bytes to a block device (disk wipe).
         @"\bdd\s+if=.*\bof=/dev/",
+        // mkfs / mkfs.ext4 / mkfs.xfs / …: filesystem format.
         @"\bmkfs(\.\w+)?\b",
+        // System power-state changes.
         @"\bshutdown\b",
         @"\breboot\b",
         @"\bhalt\b",
         @"\bpoweroff\b",
+        // Redirect to /dev/sda* — direct write to a primary disk device.
         @">\s*/dev/sda",
+        // chmod -R 777 /: world-writable on the entire filesystem.
         @"\bchmod\s+-R\s+777\s+/",
+        // chown -R …: recursive ownership change (commonly paired with /).
         @"\bchown\s+-R\s+",
+        // curl … | sh / wget … | sh: classic untrusted-pipe-to-shell.
         @"\bcurl\s+[^|]*\|\s*sh\b",
         @"\bwget\s+[^|]*\|\s*sh\b",
+        // PowerShell equivalents of rm -rf / and Format-Volume.
         @"\bRemove-Item\s+(?:-Path\s+)?[/\\]\s+-Recurse",
         @"\bFormat-Volume\b",
     ];
@@ -78,7 +161,7 @@ public sealed class ShellPolicy
     /// Initializes a new instance of the <see cref="ShellPolicy"/> class.
     /// </summary>
     /// <param name="denyList">
-    /// Patterns that trigger a deny decision. <see langword="null"/> selects
+    /// Patterns that trigger a deny outcome. <see langword="null"/> selects
     /// <see cref="DefaultDenyList"/>; pass an empty collection to disable
     /// the deny list entirely.
     /// </param>
@@ -107,23 +190,28 @@ public sealed class ShellPolicy
     }
 
     /// <summary>
-    /// Evaluate <paramref name="request"/> and return a decision.
+    /// Evaluate <paramref name="request"/> and return an outcome.
     /// </summary>
+    /// <remarks>
+    /// Order of operations: empty-command guard → explicit allow patterns
+    /// (a match short-circuits with <see cref="ShellPolicyOutcome.Allow"/>)
+    /// → deny patterns (first match wins) → default allow.
+    /// </remarks>
     /// <param name="request">The request to evaluate.</param>
-    /// <returns>An allow or deny decision.</returns>
-    public ShellDecision Evaluate(ShellRequest request)
+    /// <returns>An allow or deny outcome.</returns>
+    public ShellPolicyOutcome Evaluate(ShellRequest request)
     {
         var command = request.Command?.Trim() ?? string.Empty;
         if (command.Length == 0)
         {
-            return ShellDecision.Deny("empty command");
+            return ShellPolicyOutcome.Deny("empty command");
         }
 
         foreach (var allow in this._allows)
         {
             if (allow.IsMatch(command))
             {
-                return new ShellDecision(true, "matched allow pattern");
+                return new ShellPolicyOutcome(true, "matched allow pattern");
             }
         }
 
@@ -131,10 +219,10 @@ public sealed class ShellPolicy
         {
             if (deny.IsMatch(command))
             {
-                return ShellDecision.Deny($"matched deny pattern: {deny}");
+                return ShellPolicyOutcome.Deny($"matched deny pattern: {deny}");
             }
         }
 
-        return ShellDecision.Allow;
+        return ShellPolicyOutcome.Allow;
     }
 }
