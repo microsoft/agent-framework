@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
+using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 
 namespace Microsoft.Agents.AI.Workflows;
 
@@ -10,6 +11,7 @@ namespace Microsoft.Agents.AI.Workflows;
 [JsonDerivedType(typeof(ExecutorInvokedEvent))]
 [JsonDerivedType(typeof(ExecutorCompletedEvent))]
 [JsonDerivedType(typeof(ExecutorFailedEvent))]
+[JsonDerivedType(typeof(MagenticOrchestratorEvent))]
 public class ExecutorEvent(string executorId, object? data) : WorkflowEvent(data)
 {
     /// <summary>
