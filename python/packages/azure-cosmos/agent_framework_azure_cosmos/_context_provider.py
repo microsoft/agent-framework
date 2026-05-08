@@ -110,6 +110,7 @@ class CosmosContextProvider(ContextProvider):
         self._container_proxy: ContainerProxy | None = container_client
         self._database_client: DatabaseProxy | None = None
         self._owns_client = False
+        self._partition_key_field: str | None = None
 
         if self._container_proxy is not None:
             self.database_name: str = database_name or ""
@@ -155,6 +156,42 @@ class CosmosContextProvider(ContextProvider):
 
         self._database_client = self._cosmos_client.get_database_client(self.database_name)
 
+    def _resolve_partition_key(self, context: SessionContext) -> str:
+        """Resolve the effective partition key for retrieval and writeback.
+
+        Uses the user-provided ``partition_key`` when set, otherwise falls back
+        to ``context.session_id``.  The provider always scopes queries to a
+        single partition key value for efficient, cost-effective retrieval.
+
+        Raises:
+            ValueError: If neither ``partition_key`` nor ``context.session_id`` is available.
+        """
+        effective_key = self.partition_key or context.session_id
+        if not effective_key:
+            raise ValueError(
+                "CosmosContextProvider requires a partition key for retrieval and writeback. "
+                "Set 'partition_key' on the provider or ensure the session has a 'session_id'."
+            )
+        return effective_key
+
+    async def _get_partition_key_field(self) -> str:
+        """Read the container's partition key path and return the field name.
+
+        The result is cached for the lifetime of the provider.
+        """
+        if self._partition_key_field is not None:
+            return self._partition_key_field
+
+        container = await self._get_container()
+        properties = await container.read()
+        paths: list[str] = properties.get("partitionKey", {}).get("paths", [])  # type: ignore[assignment]
+        if not paths:
+            raise ValueError("Could not read partition key path from container properties.")
+        # Use the first path, strip the leading slash to get the field name.
+        field = paths[0].lstrip("/")
+        self._partition_key_field = field
+        return field
+
     async def before_run(
         self,
         *,
@@ -180,7 +217,8 @@ class CosmosContextProvider(ContextProvider):
 
         state["query_text"] = query_text
 
-        items = await self._execute_retrieval_query(query_text, query_terms)
+        effective_pk = self._resolve_partition_key(context)
+        items = await self._execute_retrieval_query(query_text, query_terms, effective_pk)
 
         result_messages: list[Message] = []
         for item in items:
@@ -224,9 +262,8 @@ class CosmosContextProvider(ContextProvider):
             return
 
         container = await self._get_container()
-        session_key = context.session_id or str(uuid.uuid4())
-        if not context.session_id:
-            logger.warning("No session_id; generated '%s' for Cosmos writeback partition key.", session_key)
+        effective_pk = self._resolve_partition_key(context)
+        pk_field = await self._get_partition_key_field()
 
         agent_name = getattr(agent, "name", None)
         user_id = context.metadata.get("user_id") if context.metadata else None
@@ -237,21 +274,24 @@ class CosmosContextProvider(ContextProvider):
             role_value = str(message.role.value) if hasattr(message.role, "value") else str(message.role)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType,reportAttributeAccessIssue]
             document: dict[str, Any] = {
                 "id": str(uuid.uuid4()),
-                "session_id": session_key,
+                "session_id": context.session_id or "",
                 "sort_key": base_sort_key + index,
                 "source_id": self.source_id,
                 "role": role_value,
                 "content": content_text,
                 "message": message.to_dict(),
             }
+            # Write the partition key value into the field that matches the
+            # container's partition key path. If the path is /session_id the
+            # field is already present with the real conversation session_id.
+            if pk_field != "session_id":
+                document[pk_field] = effective_pk
             if agent_name:
                 document["agent_name"] = agent_name
             if user_id:
                 document["user_id"] = user_id
             if message.author_name:
                 document["author_name"] = message.author_name
-            if self.partition_key is not None:
-                document["partition_key"] = self.partition_key
 
             if self.embedding_function is not None:
                 try:
@@ -293,7 +333,9 @@ class CosmosContextProvider(ContextProvider):
         self._container_proxy = self._database_client.get_container_client(self.container_name)
         return self._container_proxy
 
-    async def _execute_retrieval_query(self, query_text: str, query_terms: tuple[str, ...]) -> list[dict[str, Any]]:
+    async def _execute_retrieval_query(
+        self, query_text: str, query_terms: tuple[str, ...], partition_key: str
+    ) -> list[dict[str, Any]]:
         """Build and execute the Cosmos retrieval query for the configured search mode."""
         fields = list(self.content_field_names)
         if self.message_field_name and self.message_field_name not in fields:
@@ -343,8 +385,7 @@ class CosmosContextProvider(ContextProvider):
         query_kwargs: dict[str, Any] = {"query": query, "max_item_count": self.scan_limit}
         if parameters:
             query_kwargs["parameters"] = parameters
-        if self.partition_key is not None:
-            query_kwargs["partition_key"] = self.partition_key
+        query_kwargs["partition_key"] = partition_key
         return [item async for item in container.query_items(**query_kwargs)]
 
     @staticmethod

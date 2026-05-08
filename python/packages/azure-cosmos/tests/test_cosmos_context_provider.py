@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -25,6 +24,14 @@ def _to_async_iter(items: list[Any]) -> AsyncIterator[Any]:
 
 async def _stub_embed(_: str) -> list[float]:
     return [1.0, 0.0]
+
+
+def _make_container_mock(*, pk_path: str = "/session_id") -> MagicMock:
+    """Create a mock ContainerProxy that returns partition key properties."""
+    container = MagicMock()
+    container.upsert_item = AsyncMock()
+    container.read = AsyncMock(return_value={"partitionKey": {"paths": [pk_path]}})
+    return container
 
 
 def test_provider_uses_existing_container_client() -> None:
@@ -300,8 +307,7 @@ class TestBeforeRun:
 
 class TestAfterRun:
     async def test_writeback_stores_messages(self) -> None:
-        container = MagicMock()
-        container.upsert_item = AsyncMock()
+        container = _make_container_mock()
         provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
         session = AgentSession(session_id="s")
         context = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id="s1")
@@ -320,8 +326,7 @@ class TestAfterRun:
         assert "document_type" not in first
 
     async def test_excludes_system_messages(self) -> None:
-        container = MagicMock()
-        container.upsert_item = AsyncMock()
+        container = _make_container_mock()
         provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
         session = AgentSession(session_id="s")
         context = SessionContext(
@@ -343,8 +348,7 @@ class TestAfterRun:
         assert roles == ["user", "assistant"]
 
     async def test_writeback_includes_embedding_when_function_available(self) -> None:
-        container = MagicMock()
-        container.upsert_item = AsyncMock()
+        container = _make_container_mock()
         provider = CosmosContextProvider(
             container_client=container,
             embedding_function=_stub_embed,
@@ -362,8 +366,7 @@ class TestAfterRun:
         assert doc["embedding"] == [1.0, 0.0]
 
     async def test_writeback_skips_embedding_when_no_function(self) -> None:
-        container = MagicMock()
-        container.upsert_item = AsyncMock()
+        container = _make_container_mock()
         provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
         session = AgentSession(session_id="s")
         context = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id="s1")
@@ -376,8 +379,7 @@ class TestAfterRun:
         assert "embedding" not in doc
 
     async def test_writeback_includes_agent_and_user_metadata(self) -> None:
-        container = MagicMock()
-        container.upsert_item = AsyncMock()
+        container = _make_container_mock()
         provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
         session = AgentSession(session_id="s")
         agent = MagicMock()
@@ -397,8 +399,7 @@ class TestAfterRun:
         assert doc["user_id"] == "user-42"
 
     async def test_writeback_omits_metadata_when_not_available(self) -> None:
-        container = MagicMock()
-        container.upsert_item = AsyncMock()
+        container = _make_container_mock()
         provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
         session = AgentSession(session_id="s")
 
@@ -412,9 +413,9 @@ class TestAfterRun:
         assert "agent_name" not in doc
         assert "user_id" not in doc
 
-    async def test_writeback_includes_partition_key(self) -> None:
-        container = MagicMock()
-        container.upsert_item = AsyncMock()
+    async def test_writeback_always_includes_session_id(self) -> None:
+        """session_id always records the real conversation ID regardless of partition_key."""
+        container = _make_container_mock(pk_path="/tenant_id")
         provider = CosmosContextProvider(
             container_client=container,
             partition_key="tenant-a",
@@ -428,11 +429,12 @@ class TestAfterRun:
         )  # type: ignore[arg-type]
 
         doc = container.upsert_item.await_args.args[0]
-        assert doc["partition_key"] == "tenant-a"
+        assert doc["session_id"] == "s1"
+        assert doc["tenant_id"] == "tenant-a"
 
-    async def test_writeback_omits_partition_key_when_not_set(self) -> None:
-        container = MagicMock()
-        container.upsert_item = AsyncMock()
+    async def test_writeback_non_session_pk_defaults_to_session_id_value(self) -> None:
+        """When no partition_key is set and pk path is not /session_id, the pk field gets session_id value."""
+        container = _make_container_mock(pk_path="/tenant_id")
         provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
         session = AgentSession(session_id="s")
         context = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id="s1")
@@ -442,14 +444,28 @@ class TestAfterRun:
         )  # type: ignore[arg-type]
 
         doc = container.upsert_item.await_args.args[0]
-        assert "partition_key" not in doc
+        assert doc["session_id"] == "s1"
+        assert doc["tenant_id"] == "s1"
+
+    async def test_writeback_session_id_pk_path_no_extra_field(self) -> None:
+        """When pk path is /session_id, no duplicate field is added."""
+        container = _make_container_mock(pk_path="/session_id")
+        provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
+        session = AgentSession(session_id="s")
+        context = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id="s1")
+
+        await provider.after_run(
+            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        doc = container.upsert_item.await_args.args[0]
+        assert doc["session_id"] == "s1"
 
     async def test_writeback_continues_when_embedding_fails(self) -> None:
         async def _failing_embed(_: str) -> list[float]:
             raise RuntimeError("embedding service down")
 
-        container = MagicMock()
-        container.upsert_item = AsyncMock()
+        container = _make_container_mock()
         provider = CosmosContextProvider(
             container_client=container,
             embedding_function=_failing_embed,
@@ -467,21 +483,16 @@ class TestAfterRun:
         assert doc["content"] == "hello"
         assert "embedding" not in doc
 
-    async def test_generates_session_id_when_missing(self, caplog: pytest.LogCaptureFixture) -> None:
-        container = MagicMock()
-        container.upsert_item = AsyncMock()
+    async def test_raises_when_no_partition_key_or_session_id(self) -> None:
+        container = _make_container_mock()
         provider = CosmosContextProvider(container_client=container, search_mode=CosmosContextSearchMode.FULL_TEXT)
         session = AgentSession(session_id="s")
         context = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id=None)
 
-        with caplog.at_level("WARNING"):
+        with pytest.raises(ValueError, match="partition key"):
             await provider.after_run(
                 agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
             )  # type: ignore[arg-type]
-
-        doc = container.upsert_item.await_args.args[0]
-        uuid.UUID(doc["session_id"])
-        assert "session_id" in caplog.text
 
 
 class TestLifecycle:

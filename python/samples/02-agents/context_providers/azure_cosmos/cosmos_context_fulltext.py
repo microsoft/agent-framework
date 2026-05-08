@@ -14,29 +14,30 @@ from dotenv import load_dotenv
 load_dotenv()
 
 """
-Azure Cosmos DB Context Provider -- Vector Search with Writeback
+Azure Cosmos DB Context Provider -- Full-Text Search
 
-This sample demonstrates Retrieval Augmented Generation (RAG) with Azure Cosmos DB
-using vector search (the default mode). After each agent run, the conversation
-exchange is automatically written back into the Cosmos container, so the knowledge
-base grows over time and follow-up questions can retrieve prior exchanges.
+This sample demonstrates RAG with Azure Cosmos DB using full-text search mode.
+Full-text search uses BM25 ranking to find documents by keyword relevance rather
+than vector similarity. No embedding function is needed for this mode.
 
-By default, context is scoped to the current session_id, keeping each conversation's
-knowledge isolated. To share context across conversations, see the shared knowledge
-sample (cosmos_context_shared.py).
+The provider automatically handles queries with more than 5 search terms by
+chunking them into batches and merging results via Cosmos RRF (Reciprocal Rank
+Fusion), which is transparent to the caller.
+
+After each agent run, the conversation exchange is written back to the container
+automatically. Follow-up questions can then retrieve prior exchanges by keyword.
 
 Key components:
-- CosmosContextProvider configured for vector search retrieval
-- Automatic writeback of conversation exchanges after each run
+- CosmosContextProvider configured for FULL_TEXT search mode
+- No embedding function required (BM25 keyword matching only)
 - FoundryChatClient for the agent's LLM
-- A simple embedding function (toy 3D vectors for demo purposes)
+- Automatic writeback of conversation exchanges
 
 The flow:
-1. Create an agent with CosmosContextProvider (vector mode)
+1. Create an agent with CosmosContextProvider (full-text mode)
 2. Ask questions -- the agent answers using its own knowledge
 3. After each run, the exchange is written back to Cosmos automatically
-4. A follow-up question retrieves the written-back exchanges as context
-5. Clean up all documents
+4. Clean up written-back documents
 
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT    -- Azure AI Foundry project endpoint
@@ -47,16 +48,6 @@ Environment variables:
 Optional:
     AZURE_COSMOS_KEY            -- Account key (if not using AzureCliCredential)
 """
-
-# Toy 3-dimensional embedding function for demonstration.
-# Replace with a real embedding model (e.g., OpenAIEmbeddingClient) for production.
-EMBEDDING_DIMENSION = 3
-
-
-async def fake_embed(text: str) -> list[float]:
-    """Deterministic hash-based 3D vector for testing retrieval ordering."""
-    h = hash(text) % 1000
-    return [h / 1000.0, (h * 37 % 1000) / 1000.0, (h * 73 % 1000) / 1000.0]
 
 
 async def cleanup_documents(client: CosmosClient, database_name: str, container_name: str, session_id: str) -> None:
@@ -76,7 +67,7 @@ async def cleanup_documents(client: CosmosClient, database_name: str, container_
 
 
 async def main() -> None:
-    """Run the vector search + writeback sample."""
+    """Run the full-text search sample."""
     # Read configuration from environment
     project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
     model = os.getenv("FOUNDRY_MODEL")
@@ -92,23 +83,23 @@ async def main() -> None:
         )
         return
 
-    session_id = f"basics-{uuid.uuid4().hex[:8]}"
+    session_id = f"fulltext-{uuid.uuid4().hex[:8]}"
 
     async with AzureCliCredential() as credential:
         cosmos_client = CosmosClient(url=cosmos_endpoint, credential=cosmos_key or credential)
 
         async with cosmos_client:
-            # 1. Create the CosmosContextProvider for vector search retrieval.
+            # 1. Create the CosmosContextProvider for full-text search.
+            #    No embedding function is needed since BM25 uses keyword matching.
             #    No partition_key is set, so the provider uses session_id from the
             #    conversation context for both retrieval and writeback.
-            print("=== Step 1: Ask questions with vector search ===\n")
+            print("=== Step 1: Ask questions with full-text search ===\n")
             context_provider = CosmosContextProvider(
                 source_id="cosmos_knowledge",
                 cosmos_client=cosmos_client,
                 database_name=database_name,
                 container_name=container_name,
-                search_mode=CosmosContextSearchMode.VECTOR,
-                embedding_function=fake_embed,
+                search_mode=CosmosContextSearchMode.FULL_TEXT,
                 top_k=3,
                 context_prompt="Use the following knowledge base context to answer the question:",
             )
@@ -120,7 +111,7 @@ async def main() -> None:
                     model=model,
                     credential=credential,
                 ),
-                name="CosmosVectorAgent",
+                name="CosmosFullTextAgent",
                 instructions=(
                     "You are a helpful assistant. Answer questions using the provided context. "
                     "If the context doesn't contain relevant information, say so."
@@ -129,11 +120,12 @@ async def main() -> None:
             ) as agent:
                 session = agent.create_session(session_id=session_id)
 
-                # 3. Ask questions. The agent answers from its own knowledge.
+                # 3. Ask questions. Full-text search finds documents by keyword relevance.
                 #    After each run, the exchange is written back to Cosmos.
                 questions = [
-                    "What is Azure Cosmos DB?",
-                    "How does vector search work in Cosmos DB?",
+                    "What is BM25 ranking?",
+                    "Tell me about Python web frameworks",
+                    "How does Cosmos DB handle distributed data with multiple APIs?",
                 ]
 
                 for question in questions:
@@ -141,20 +133,11 @@ async def main() -> None:
                     response = await agent.run(question, session=session)
                     print(f"Agent: {response.text}\n")
 
-                # 4. Demonstrate writeback: ask a follow-up question.
-                #    The provider retrieves the conversation exchanges that were
-                #    written back in the previous steps as additional context.
-                print("=== Step 2: Writeback in action ===\n")
-                followup = "What did we just discuss about Cosmos DB?"
-                print(f"User: {followup}")
-                response = await agent.run(followup, session=session)
-                print(f"Agent: {response.text}\n")
-
-            # 5. Clean up written-back documents.
-            print("=== Step 3: Cleaning up ===")
+            # 4. Clean up written-back documents.
+            print("=== Step 2: Cleaning up ===")
             await cleanup_documents(cosmos_client, database_name, container_name, session_id)
 
-    print("\n✓ Vector search + writeback sample complete.")
+    print("\n✓ Full-text search sample complete.")
 
 
 if __name__ == "__main__":
@@ -162,25 +145,23 @@ if __name__ == "__main__":
 
 """
 Sample output:
-=== Step 1: Ask questions with vector search ===
+=== Step 1: Ask questions with full-text search ===
 
-User: What is Azure Cosmos DB?
-Agent: Azure Cosmos DB is a globally distributed, multi-model database service that supports
-NoSQL, MongoDB, Cassandra, Gremlin, and Table APIs.
+User: What is BM25 ranking?
+Agent: Full-text search in Cosmos DB uses BM25 ranking to find documents matching
+keyword queries, similar to traditional search engines.
 
-User: How does vector search work in Cosmos DB?
-Agent: Vector search in Cosmos DB enables AI applications to find semantically similar
-documents using embeddings and cosine distance functions.
+User: Tell me about Python web frameworks
+Agent: Python is widely used for web development. Popular frameworks include Django,
+Flask, and FastAPI.
 
-=== Step 2: Writeback in action ===
+User: How does Cosmos DB handle distributed data with multiple APIs?
+Agent: Azure Cosmos DB is a globally distributed, multi-model database service that
+supports NoSQL, MongoDB, Cassandra, Gremlin, and Table APIs.
 
-User: What did we just discuss about Cosmos DB?
-Agent: We discussed that Azure Cosmos DB is a globally distributed database service, and that
-it supports vector search for finding semantically similar documents using embeddings.
-
-=== Step 3: Cleaning up ===
+=== Step 2: Cleaning up ===
 
   Cleaned up 6 documents.
 
-✓ Vector search + writeback sample complete.
+✓ Full-text search sample complete.
 """

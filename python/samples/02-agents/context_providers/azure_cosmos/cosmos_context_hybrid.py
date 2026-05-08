@@ -14,29 +14,32 @@ from dotenv import load_dotenv
 load_dotenv()
 
 """
-Azure Cosmos DB Context Provider -- Vector Search with Writeback
+Azure Cosmos DB Context Provider -- Hybrid Search
 
-This sample demonstrates Retrieval Augmented Generation (RAG) with Azure Cosmos DB
-using vector search (the default mode). After each agent run, the conversation
-exchange is automatically written back into the Cosmos container, so the knowledge
-base grows over time and follow-up questions can retrieve prior exchanges.
+This sample demonstrates RAG with Azure Cosmos DB using hybrid search mode.
+Hybrid search combines vector similarity (VectorDistance) and full-text keyword
+matching (FullTextScore) using Reciprocal Rank Fusion (RRF) to get the best of
+both approaches.
 
-By default, context is scoped to the current session_id, keeping each conversation's
-knowledge isolated. To share context across conversations, see the shared knowledge
-sample (cosmos_context_shared.py).
+Optionally, you can pass weights to control the relative importance of each
+component (e.g., weighting vector results higher than keyword results).
+
+After each agent run, the conversation exchange is written back to the container
+automatically. Follow-up questions can then retrieve prior exchanges using both
+semantic similarity and keyword matching.
 
 Key components:
-- CosmosContextProvider configured for vector search retrieval
-- Automatic writeback of conversation exchanges after each run
+- CosmosContextProvider configured for HYBRID search mode
+- An embedding function for vector similarity
+- Optional weighted RRF for tuning vector vs. keyword balance
 - FoundryChatClient for the agent's LLM
-- A simple embedding function (toy 3D vectors for demo purposes)
+- Automatic writeback of conversation exchanges
 
 The flow:
-1. Create an agent with CosmosContextProvider (vector mode)
+1. Create an agent with CosmosContextProvider (hybrid mode)
 2. Ask questions -- the agent answers using its own knowledge
-3. After each run, the exchange is written back to Cosmos automatically
-4. A follow-up question retrieves the written-back exchanges as context
-5. Clean up all documents
+3. Show optional weighted hybrid search configuration
+4. Clean up written-back documents
 
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT    -- Azure AI Foundry project endpoint
@@ -76,7 +79,7 @@ async def cleanup_documents(client: CosmosClient, database_name: str, container_
 
 
 async def main() -> None:
-    """Run the vector search + writeback sample."""
+    """Run the hybrid search sample."""
     # Read configuration from environment
     project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
     model = os.getenv("FOUNDRY_MODEL")
@@ -92,22 +95,23 @@ async def main() -> None:
         )
         return
 
-    session_id = f"basics-{uuid.uuid4().hex[:8]}"
+    session_id = f"hybrid-{uuid.uuid4().hex[:8]}"
 
     async with AzureCliCredential() as credential:
         cosmos_client = CosmosClient(url=cosmos_endpoint, credential=cosmos_key or credential)
 
         async with cosmos_client:
-            # 1. Create the CosmosContextProvider for vector search retrieval.
+            # 1. Create the CosmosContextProvider for hybrid search.
+            #    Hybrid combines vector similarity and BM25 keyword matching via RRF.
             #    No partition_key is set, so the provider uses session_id from the
             #    conversation context for both retrieval and writeback.
-            print("=== Step 1: Ask questions with vector search ===\n")
+            print("=== Step 1: Ask questions with hybrid search ===\n")
             context_provider = CosmosContextProvider(
                 source_id="cosmos_knowledge",
                 cosmos_client=cosmos_client,
                 database_name=database_name,
                 container_name=container_name,
-                search_mode=CosmosContextSearchMode.VECTOR,
+                search_mode=CosmosContextSearchMode.HYBRID,
                 embedding_function=fake_embed,
                 top_k=3,
                 context_prompt="Use the following knowledge base context to answer the question:",
@@ -120,7 +124,7 @@ async def main() -> None:
                     model=model,
                     credential=credential,
                 ),
-                name="CosmosVectorAgent",
+                name="CosmosHybridAgent",
                 instructions=(
                     "You are a helpful assistant. Answer questions using the provided context. "
                     "If the context doesn't contain relevant information, say so."
@@ -129,11 +133,11 @@ async def main() -> None:
             ) as agent:
                 session = agent.create_session(session_id=session_id)
 
-                # 3. Ask questions. The agent answers from its own knowledge.
+                # 3. Ask questions. Hybrid search combines semantic and keyword matching.
                 #    After each run, the exchange is written back to Cosmos.
                 questions = [
-                    "What is Azure Cosmos DB?",
-                    "How does vector search work in Cosmos DB?",
+                    "What is Azure Cosmos DB and what APIs does it support?",
+                    "How does full-text search ranking work?",
                 ]
 
                 for question in questions:
@@ -141,20 +145,46 @@ async def main() -> None:
                     response = await agent.run(question, session=session)
                     print(f"Agent: {response.text}\n")
 
-                # 4. Demonstrate writeback: ask a follow-up question.
-                #    The provider retrieves the conversation exchanges that were
-                #    written back in the previous steps as additional context.
-                print("=== Step 2: Writeback in action ===\n")
-                followup = "What did we just discuss about Cosmos DB?"
-                print(f"User: {followup}")
-                response = await agent.run(followup, session=session)
+            # 4. Demonstrate weighted hybrid search.
+            #    Weights control the relative importance of each RRF component.
+            #    weights=[1, 2] means full-text results are weighted 2x vs vector results.
+            print("=== Step 2: Weighted hybrid search ===\n")
+            weighted_provider = CosmosContextProvider(
+                source_id="cosmos_knowledge",
+                cosmos_client=cosmos_client,
+                database_name=database_name,
+                container_name=container_name,
+                search_mode=CosmosContextSearchMode.HYBRID,
+                embedding_function=fake_embed,
+                top_k=3,
+                weights=[1, 2],  # [full-text weight, vector weight]
+                context_prompt="Use the following knowledge base context to answer the question:",
+            )
+
+            async with Agent(
+                client=FoundryChatClient(
+                    project_endpoint=project_endpoint,
+                    model=model,
+                    credential=credential,
+                ),
+                name="CosmosWeightedHybridAgent",
+                instructions=(
+                    "You are a helpful assistant. Answer questions using the provided context. "
+                    "If the context doesn't contain relevant information, say so."
+                ),
+                context_providers=[weighted_provider],
+            ) as agent:
+                session = agent.create_session(session_id=session_id)
+                question = "Tell me about search capabilities in Cosmos DB"
+                print(f"User: {question}")
+                response = await agent.run(question, session=session)
                 print(f"Agent: {response.text}\n")
 
             # 5. Clean up written-back documents.
             print("=== Step 3: Cleaning up ===")
             await cleanup_documents(cosmos_client, database_name, container_name, session_id)
 
-    print("\n✓ Vector search + writeback sample complete.")
+    print("\n✓ Hybrid search sample complete.")
 
 
 if __name__ == "__main__":
@@ -162,25 +192,26 @@ if __name__ == "__main__":
 
 """
 Sample output:
-=== Step 1: Ask questions with vector search ===
+=== Step 1: Ask questions with hybrid search ===
 
-User: What is Azure Cosmos DB?
+User: What is Azure Cosmos DB and what APIs does it support?
 Agent: Azure Cosmos DB is a globally distributed, multi-model database service that supports
 NoSQL, MongoDB, Cassandra, Gremlin, and Table APIs.
 
-User: How does vector search work in Cosmos DB?
-Agent: Vector search in Cosmos DB enables AI applications to find semantically similar
-documents using embeddings and cosine distance functions.
+User: How does full-text search ranking work?
+Agent: Full-text search in Cosmos DB uses BM25 ranking to find documents matching keyword
+queries, similar to traditional search engines.
 
-=== Step 2: Writeback in action ===
+=== Step 2: Weighted hybrid search ===
 
-User: What did we just discuss about Cosmos DB?
-Agent: We discussed that Azure Cosmos DB is a globally distributed database service, and that
-it supports vector search for finding semantically similar documents using embeddings.
+User: Tell me about search capabilities in Cosmos DB
+Agent: Cosmos DB supports multiple search capabilities: vector search for semantic similarity
+using embeddings, full-text search using BM25 ranking for keyword matching, and hybrid search
+that combines both using Reciprocal Rank Fusion (RRF).
 
 === Step 3: Cleaning up ===
 
   Cleaned up 6 documents.
 
-✓ Vector search + writeback sample complete.
+✓ Hybrid search sample complete.
 """
