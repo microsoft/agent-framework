@@ -398,7 +398,7 @@ jobs:
         shell: pwsh
         working-directory: dotnet
         run: |
-          dotnet test tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj `
+          dotnet test --project tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj `
             -c $env:configuration `
             --no-build -v Normal `
             --report-xunit-trx `
