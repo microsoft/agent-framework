@@ -28,7 +28,7 @@ def resolve_toolbox_endpoint() -> str:
         return endpoint
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")
     toolbox_name = os.environ["TOOLBOX_NAME"]
-    return f"{project_endpoint}/toolboxes/{toolbox_name}/versions/29/mcp?api-version=v1"
+    return f"{project_endpoint}/toolboxes/{toolbox_name}/mcp?api-version=v1"
 
 
 class ToolboxAuth(httpx.Auth):
