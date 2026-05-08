@@ -76,6 +76,7 @@ jobs:
               - 'dotnet/src/Microsoft.Agents.AI.Abstractions/**'
               - 'dotnet/src/Microsoft.Agents.AI.OpenAI/**'
               - 'dotnet/src/Microsoft.Agents.AI.Workflows/**'
+              - 'dotnet/src/Microsoft.Agents.AI.Workflows.Generators/**'
               - 'dotnet/eng/scripts/New-FilteredSolution.ps1'
               - 'dotnet/tests/Directory.Build.props'
               - 'dotnet/Directory.Packages.props'
@@ -443,7 +444,6 @@ jobs:
   dotnet-test-functions:
     needs: [paths-filter]
     if: >
-      needs.paths-filter.outputs.dotnetChanges == 'true' &&
       github.event_name != 'pull_request' &&
       (needs.paths-filter.outputs.functionsChanged == 'true' ||
        needs.paths-filter.outputs.coreChanged == 'true' ||
