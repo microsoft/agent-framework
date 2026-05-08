@@ -102,11 +102,6 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
 
     public async ValueTask InitializeAsync()
     {
-        // Temporarily disabled: Anthropic SDK has a binary incompatibility with the current
-        // Microsoft.Extensions.AI version (WebSearchToolResultContent.Results method not found).
-        // See: https://github.com/microsoft/agent-framework/pull/5515
-        Assert.Skip("Anthropic integration tests temporarily disabled due to SDK incompatibility with Microsoft.Extensions.AI");
-
         try
         {
             _ = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey);
