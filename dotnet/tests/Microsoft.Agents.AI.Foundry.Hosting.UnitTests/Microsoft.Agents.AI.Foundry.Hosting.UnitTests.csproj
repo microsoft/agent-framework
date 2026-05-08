@@ -9,7 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="Azure.AI.AgentServer.Responses" />
-    <PackageReference Include="Azure.AI.Projects" VersionOverride="2.1.0-beta.1" />
+    <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
     <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
