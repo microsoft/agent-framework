@@ -81,6 +81,8 @@ public sealed class AnthropicClientExtensionsTests
 
         public IBetaService Beta => throw new NotImplementedException();
 
+        public string? WebhookKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
+
         public IAnthropicClient WithOptions(Func<ClientOptions, ClientOptions> modifier)
         {
             throw new NotImplementedException();

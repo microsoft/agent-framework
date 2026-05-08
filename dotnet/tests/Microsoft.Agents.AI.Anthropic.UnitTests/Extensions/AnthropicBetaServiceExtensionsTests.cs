@@ -451,6 +451,8 @@ public sealed class AnthropicBetaServiceExtensionsTests
 
         public IBetaService Beta => this.BetaService;
 
+        public string? WebhookKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
+
         public IBetaService BetaService { get; }
 
         IMessageService IAnthropicClient.Messages => new Mock<IMessageService>().Object;
@@ -490,6 +492,12 @@ public sealed class AnthropicBetaServiceExtensionsTests
             public global::Anthropic.Services.Beta.ISessionService Sessions => throw new NotImplementedException();
 
             public global::Anthropic.Services.Beta.IVaultService Vaults => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.IMemoryStoreService MemoryStores => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.IWebhookService Webhooks => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.IUserProfileService UserProfiles => throw new NotImplementedException();
 
             public IBetaService WithOptions(Func<ClientOptions, ClientOptions> modifier)
             {
