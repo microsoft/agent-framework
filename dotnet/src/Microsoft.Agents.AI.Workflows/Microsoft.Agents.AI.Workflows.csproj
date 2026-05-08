@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <IsReleased>true</IsReleased>
-    <NoWarn>$(NoWarn);MEAI001</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001;MAAIW001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
