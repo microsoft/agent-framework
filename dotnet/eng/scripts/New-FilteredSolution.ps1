@@ -25,6 +25,11 @@
     Optional wildcard pattern to filter test project names (e.g., *UnitTests*, *IntegrationTests*).
     When specified, only test projects whose filename matches this pattern are kept.
 
+.PARAMETER TestProjectNameExclude
+    Optional wildcard pattern(s) to exclude test projects by name (e.g., *DurableTask.IntegrationTests*).
+    When specified, test projects whose filename matches any of these patterns are removed.
+    Applied after TestProjectNameFilter. Can be a single string or an array of strings.
+
 .PARAMETER ExcludeSamples
     When specified, removes all projects under the samples/ directory from the solution.
 
@@ -43,6 +48,10 @@
 .EXAMPLE
     # Inline usage with dotnet test (PowerShell)
     dotnet test --solution (./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net472) --no-build -f net472
+
+.EXAMPLE
+    # Generate integration tests excluding DurableTask and AzureFunctions
+    ./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net10.0 -TestProjectNameFilter "*IntegrationTests*" -TestProjectNameExclude "*DurableTask.IntegrationTests*","*AzureFunctions.IntegrationTests*" -OutputPath filtered-other-integration.slnx
 #>
 
 [CmdletBinding()]
@@ -56,6 +65,8 @@ param(
     [string]$Configuration = "Debug",
 
     [string]$TestProjectNameFilter,
+
+    [string[]]$TestProjectNameExclude,
 
     [switch]$ExcludeSamples,
 
@@ -105,6 +116,23 @@ foreach ($proj in $allProjects) {
         $removed += $projRelPath
         $proj.ParentNode.RemoveChild($proj) | Out-Null
         continue
+    }
+
+    # Exclude test projects matching any exclusion pattern
+    if ($isTestProject -and $TestProjectNameExclude) {
+        $excluded = $false
+        foreach ($pattern in $TestProjectNameExclude) {
+            if ($projFileName -like $pattern) {
+                $excluded = $true
+                break
+            }
+        }
+        if ($excluded) {
+            Write-Verbose "Removing (exclude filter): $projRelPath"
+            $removed += $projRelPath
+            $proj.ParentNode.RemoveChild($proj) | Out-Null
+            continue
+        }
     }
 
     if (-not (Test-Path $projFullPath)) {
