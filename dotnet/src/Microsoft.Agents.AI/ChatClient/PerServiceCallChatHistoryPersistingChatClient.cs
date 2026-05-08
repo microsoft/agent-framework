@@ -170,6 +170,10 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
         }
         catch (Exception ex)
         {
+            // The service call could not even be initiated. Persist the input messages
+            // (e.g. function results from a prior iteration) so that history remains
+            // consistent and a subsequent run does not see dangling FunctionCallContent.
+            await PersistInputOnErrorAsync(agent, session, newMessages, options, cancellationToken).ConfigureAwait(false);
             await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
             throw;
         }
@@ -181,41 +185,86 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
         }
         catch (Exception ex)
         {
+            await PersistInputOnErrorAsync(agent, session, newMessages, options, cancellationToken).ConfigureAwait(false);
             await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
-        while (hasUpdates)
+        bool loopExitedNormally = false;
+        try
         {
-            var update = enumerator.Current;
-            responseUpdates.Add(update.Clone());
+            while (hasUpdates)
+            {
+                var update = enumerator.Current;
+                responseUpdates.Add(update.Clone());
 
-            // If the service returned a real ConversationId on any update, remember that.
-            // Otherwise stamp our sentinel so FICC treats this as service-managed —
-            // unless this is a continuation/background run where the agent handles everything.
-            if (!string.IsNullOrEmpty(update.ConversationId))
-            {
-                isServiceManaged = true;
-            }
-            else if (!skipSimulation)
-            {
-                update.ConversationId = LocalHistoryConversationId;
-            }
+                // If the service returned a real ConversationId on any update, remember that.
+                // Otherwise stamp our sentinel so FICC treats this as service-managed —
+                // unless this is a continuation/background run where the agent handles everything.
+                if (!string.IsNullOrEmpty(update.ConversationId))
+                {
+                    isServiceManaged = true;
+                }
+                else if (!skipSimulation)
+                {
+                    update.ConversationId = LocalHistoryConversationId;
+                }
 
-            yield return update;
+                yield return update;
 
-            try
-            {
-                hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                try
+                {
+                    hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    await PersistInputOnErrorAsync(agent, session, newMessages, options, cancellationToken).ConfigureAwait(false);
+                    await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
+                    throw;
+                }
             }
-            catch (Exception ex)
+            loopExitedNormally = true;
+        }
+        finally
+        {
+            // If the iterator was disposed early (e.g. consumer bailed out, or the underlying
+            // stream ended without throwing but the loop did not complete normally), we still
+            // need to persist the input messages — otherwise function-call/function-result
+            // pairings can be lost, leaving the next iteration with dangling FunctionCallContent.
+            if (!loopExitedNormally)
             {
-                await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
-                throw;
+                try
+                {
+                    await PersistInputOnErrorAsync(agent, session, newMessages, options, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Best-effort persistence on the abnormal-exit path; swallow to avoid masking the original error.
+                }
             }
         }
 
         var chatResponse = responseUpdates.ToChatResponse();
+
+        // If the service emitted an in-stream error (e.g. rate limit) the underlying client
+        // may complete the enumeration "normally" while leaving us with no usable assistant
+        // output. Treat that as a failure and persist the input messages without polluting
+        // history with the error content.
+        var inStreamError = chatResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ErrorContent>()
+            .FirstOrDefault();
+
+        if (inStreamError is not null)
+        {
+            await PersistInputOnErrorAsync(agent, session, newMessages, options, cancellationToken).ConfigureAwait(false);
+            var errorMessage = string.IsNullOrWhiteSpace(inStreamError.Message)
+                ? "The chat service returned an in-stream error."
+                : inStreamError.Message;
+            var streamException = new InvalidOperationException(errorMessage);
+            await agent.NotifyProvidersOfFailureAsync(session, streamException, newMessages, options, cancellationToken).ConfigureAwait(false);
+            throw streamException;
+        }
 
         await agent.NotifyProvidersOfNewMessagesAsync(session, newMessages, chatResponse.Messages, options, cancellationToken).ConfigureAwait(false);
 
@@ -234,6 +283,29 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             // Normal simulated path — set sentinel on session.
             session.ConversationId = LocalHistoryConversationId;
         }
+    }
+
+    /// <summary>
+    /// Persists the input messages (the new messages handed to this iteration, e.g.
+    /// <see cref="FunctionResultContent"/> entries from the previous iteration) to the
+    /// agent's chat history without any response messages. This is used on error paths
+    /// to ensure that function-call/function-result pairings are not split across
+    /// failures, which would otherwise leave dangling <see cref="FunctionCallContent"/>
+    /// in the persisted chat history and corrupt subsequent runs.
+    /// </summary>
+    private static async Task PersistInputOnErrorAsync(
+        ChatClientAgent agent,
+        ChatClientAgentSession session,
+        IList<ChatMessage> newMessages,
+        ChatOptions? options,
+        CancellationToken cancellationToken)
+    {
+        if (newMessages.Count == 0)
+        {
+            return;
+        }
+
+        await agent.NotifyProvidersOfNewMessagesAsync(session, newMessages, [], options, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
