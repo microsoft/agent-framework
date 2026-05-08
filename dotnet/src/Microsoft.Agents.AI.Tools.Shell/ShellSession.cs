@@ -331,7 +331,7 @@ internal sealed class ShellSession : IAsyncDisposable
         }
         catch (IOException ex)
         {
-            throw new ShellExecutionException("Persistent shell session is no longer alive.", ex);
+            throw new IOException("Persistent shell session is no longer alive.", ex);
         }
 
         var needle = Encoding.UTF8.GetBytes(sentinel);

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
@@ -463,7 +464,7 @@ public sealed class DockerShellExecutor : ShellExecutor
         try { _ = proc.Start(); }
         catch (Win32Exception ex)
         {
-            throw new ShellExecutionException($"Failed to launch '{this.DockerBinary}': {ex.Message}", ex);
+            throw new IOException($"Failed to launch '{this.DockerBinary}': {ex.Message}", ex);
         }
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();

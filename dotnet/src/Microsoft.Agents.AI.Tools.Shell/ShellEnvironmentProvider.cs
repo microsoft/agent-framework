@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -28,11 +29,11 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// The provider does not expose any new tools; it augments the system
 /// prompt only (<see cref="AIContext.Instructions"/>). Probe failures
 /// are swallowed in a narrow set of cases — per-probe timeout
-/// (<see cref="ShellTimeoutException"/>, or an
+/// (<see cref="TimeoutException"/>, or an
 /// <see cref="OperationCanceledException"/> caused by the
 /// <see cref="ShellEnvironmentProviderOptions.ProbeTimeout"/> linked
 /// token), policy rejection (<see cref="ShellCommandRejectedException"/>),
-/// and process spawn failures (<see cref="ShellExecutionException"/>) —
+/// and process spawn / pipe failures (<see cref="IOException"/>) —
 /// and surfaced as <see langword="null"/> entries in the snapshot.
 /// Caller-requested cancellation (a <see cref="CancellationToken"/>
 /// passed in by the host) is NOT swallowed and propagates as an
@@ -227,7 +228,7 @@ public sealed class ShellEnvironmentProvider : AIContextProvider
             // Caller-driven cancellation is allowed to propagate.
             return null;
         }
-        catch (Exception ex) when (ex is ShellCommandRejectedException || ex is ShellExecutionException || ex is ShellTimeoutException)
+        catch (Exception ex) when (ex is ShellCommandRejectedException || ex is IOException || ex is TimeoutException)
         {
             return null;
         }

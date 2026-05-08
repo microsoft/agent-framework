@@ -239,7 +239,7 @@ public sealed class LocalShellExecutor : ShellExecutor
         }
         catch (Win32Exception ex)
         {
-            throw new ShellExecutionException(
+            throw new IOException(
                 $"Failed to launch shell '{this._shell.Binary}': {ex.Message}", ex);
         }
 
