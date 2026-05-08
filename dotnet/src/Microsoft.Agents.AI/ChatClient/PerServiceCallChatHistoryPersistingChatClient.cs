@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -152,13 +152,20 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             || options?.AllowBackgroundResponses is true;
         bool skipSimulation = isServiceManaged || isContinuationOrBackground;
 
-        var newMessages = messages as IList<ChatMessage> ?? messages.ToList();
+        // Snapshot the input messages into a private list. The caller (typically
+        // FunctionInvokingChatClient) reuses a single mutable buffer across iterations,
+        // and the streaming path can defer persistence until after the caller has already
+        // mutated that buffer for the next iteration (e.g. on the catch-path
+        // PersistInputOnErrorAsync). Aliasing the caller's list would then cause us to
+        // persist the wrong messages — losing FunctionResultContent and corrupting
+        // history with dangling FunctionCallContent.
+        var newMessages = messages.ToList();
 
         // When simulating, load history and prepend it. When the service manages
         // history (real ConversationId) or this is a continuation/background run,
         // just forward the input messages as-is.
         var messagesForService = skipSimulation
-            ? newMessages
+            ? (IEnumerable<ChatMessage>)newMessages
             : await agent.LoadChatHistoryAsync(session, newMessages, options, cancellationToken).ConfigureAwait(false);
 
         List<ChatResponseUpdate> responseUpdates = [];
@@ -296,7 +303,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
     private static async Task PersistInputOnErrorAsync(
         ChatClientAgent agent,
         ChatClientAgentSession session,
-        IList<ChatMessage> newMessages,
+        List<ChatMessage> newMessages,
         ChatOptions? options,
         CancellationToken cancellationToken)
     {
