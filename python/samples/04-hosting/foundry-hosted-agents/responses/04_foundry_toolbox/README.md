@@ -10,6 +10,20 @@ You can also create a Foundry Toolbox in the Foundry portal. Read more about it 
 
 > If you set up a project with this sample and provision the resources using `azd provision`, a Foundry Toolbox will be created with the specified tools in [`agent.manifest.yaml`](agent.manifest.yaml).
 
+### Authentication Methods
+
+You can connect to MCP servers in Foundry Toolbox that use different authentication methods. This sample demonstrates the following authentication methods:
+
+- **No authentication**: The tool does not require any authentication. The agent can invoke the tool without providing any credentials. Sample MCP server: `https://gitmcp.io/Azure/azure-rest-api-specs`
+- **Key-based authentication**: The tool requires a key to authenticate. Sample MCP server: `https://api.githubcopilot.com/mcp` (GitHub MCP server) with a Personal Access Token (PAT) for authentication.
+- **OAuth2 authentication (managed)**: The tool requires OAuth2 to authenticate. Sample MCP server: `https://api.githubcopilot.com/mcp` (GitHub MCP server) with OAuth2 for authentication.
+- **Agent identity authentication**: The tool requires an agent identity token to authenticate. Sample MCP server: `https://{foundry-resource-name}.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview` (Azure Language MCP server) with agent identity for authentication.
+- **Entra Pass-through authentication**: The tool requires an Entra pass-through token to authenticate. Sample MCP server: Microsoft Outlook MCP server with Entra pass-through for authentication.
+
+> Definitions of these authentication methods can be found in the [agent.manifest.yaml](agent.manifest.yaml) file in this sample.
+
+There are also Non-MCP tools in the toolbox that support different authentication methods. Learn more at the [Foundry sample repository](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/toolbox/azd#supported-scenarios).
+
 ## How It Works
 
 ### Model Integration

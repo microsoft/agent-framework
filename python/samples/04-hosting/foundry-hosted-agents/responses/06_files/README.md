@@ -21,9 +21,10 @@ This agent uses four tools:
 1. **Get Current Working Directory Tool (`get_cwd`)** – Returns the current working directory of the agent host process.
 2. **List Files Tool (`list_files`)** – Lists the files in a specified directory.
 3. **Read File Tool (`read_file`)** – Reads the contents of a specified file.
-4. **Code Interpreter Tool (`code_interpreter`)** – Allows the agent to execute Python code in a safe.
+4. **Code Interpreter Tool (`code_interpreter`)** – Allows the agent to execute Python code in a safe sandboxed environment.
+5. **Web Search Tool (`web_search`)** – Allows the agent to perform web searches using the Bing Search API.
 
-> In this sample, the filesystem tools are function tools defined in Python using the `@tool` decorator from the Agent Framework. The code interpreter tool is a managed tool provided by [Foundry Toolbox](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox). Learn more about foundry toolbox integration with hosted agents with this [sample](../04_foundry_toolbox/).
+> In this sample, the filesystem tools are function tools defined in Python using the `@tool` decorator from the Agent Framework. The code interpreter tool and web search tool are managed tools provided by [Foundry Toolbox](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox). Learn more about foundry toolbox integration with hosted agents with this [sample](../04_foundry_toolbox/).
 
 ## Running the Agent Host
 
