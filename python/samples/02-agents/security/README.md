@@ -1,10 +1,8 @@
-# FIDES security samples
+# Security samples
 
-This folder contains two runnable FIDES samples that use
-`agent_framework.foundry.FoundryChatClient`. Keep this README as the quick
-entry point for choosing and running a sample; use
-[FIDES_DEVELOPER_GUIDE.md](FIDES_DEVELOPER_GUIDE.md) for the architecture,
-security model, middleware behavior, and API reference.
+This folder contains runnable security samples. For FIDES architecture, security
+model, middleware behavior, and API reference see
+[FIDES_DEVELOPER_GUIDE.md](FIDES_DEVELOPER_GUIDE.md).
 
 ## What each sample demonstrates
 
@@ -12,6 +10,7 @@ security model, middleware behavior, and API reference.
 |--------|-------|--------------|
 | `email_security_example.py` | Prompt injection defense | `SecureAgentConfig`, Foundry-backed email handling, `quarantined_llm`, and approval on policy violations |
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
+| `hdp_provenance.py` | Delegation provenance | Cryptographic audit trail from authorising human to every agent action, verifiable offline with a single public key |
 
 ## Prerequisites
 
@@ -71,6 +70,44 @@ What to look for:
 - Reading public content keeps the context public
 - Reading private content taints the context as private
 - Posting private data to a public destination triggers an approval request
+
+### `hdp_provenance.py`
+
+This sample attaches HDP (Human Delegation Provenance) to an agent-framework `Agent`.
+Every chat call is recorded as a signed Ed25519 hop; the full chain is verifiable
+offline with a single public key.
+
+Prerequisites:
+
+```bash
+pip install "agent-framework-foundry" "hdp-agent-framework" "azure-identity" python-dotenv
+```
+
+Generate a signing key once and export it:
+
+```bash
+python -c "
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import base64; k = Ed25519PrivateKey.generate()
+print('HDP_SIGNING_KEY=' + base64.urlsafe_b64encode(k.private_bytes_raw()).decode())
+"
+export HDP_SIGNING_KEY=<value>
+```
+
+Run it with:
+
+```bash
+uv run samples/02-agents/security/hdp_provenance.py
+```
+
+What to look for:
+
+- `HDP chain valid: True` printed after the agent run
+- `Hops recorded: N` showing how many agent turns were captured
+
+References: [helixar.ai/about/labs/hdp/](https://helixar.ai/about/labs/hdp/) · [arXiv:2604.04522](https://arxiv.org/abs/2604.04522) · [PyPI](https://pypi.org/project/hdp-agent-framework/)
+
+---
 
 ## Where to find the details
 
