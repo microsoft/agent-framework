@@ -91,6 +91,31 @@ async def main() -> None:
     if verification.violations:
         print(f"Violations:      {verification.violations}")
 
+    # --- Tamper resistance ---
+    # Mutating any hop signature causes verify_chain to return valid=False.
+    # The first invalid hop is flagged; subsequent hops are not re-checked
+    # (each is verified against the cumulative chain, so later results are
+    # unreliable once an earlier hop is broken).
+    if verification.hop_count > 0:
+        tampered = dict(token)
+        tampered["chain"] = [dict(h) for h in token["chain"]]
+        tampered["chain"][0]["hop_signature"] = "AAAA"  # simulate attacker modifying chain
+        tampered_result = verify_chain(tampered, private_key.public_key())
+        print(f"\nTampered chain valid:  {tampered_result.valid}")   # False
+        print(f"Tampered violations:   {tampered_result.violations}")
+
+    # --- max_hops ---
+    # ScopePolicy(max_hops=N) caps delegation depth.  verify_chain adds a
+    # violation when len(chain) > max_hops, returning valid=False.
+    # Example: scope=ScopePolicy(intent="...", max_hops=2)
+
+    # --- Strict vs audit mode ---
+    # strict=False (default) - scope violations are recorded in the token
+    #   for post-hoc audit; the agent continues running.
+    # strict=True            - raises HDPScopeViolationError immediately on
+    #   any out-of-scope tool call.
+    # Example: HdpMiddleware(..., strict=True)
+
     # Full spec: https://helixar.ai/about/labs/hdp/
     # arXiv paper: https://arxiv.org/abs/2604.04522
 
