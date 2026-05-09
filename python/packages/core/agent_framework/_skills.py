@@ -2494,47 +2494,6 @@ class FileSkillsSource(SkillsSource):
         return resource_full_path
 
     @staticmethod
-    def _validate_skill_metadata(
-        name: str | None,
-        description: str | None,
-        source: str,
-    ) -> str | None:
-        """Validate a skill's name and description against naming rules.
-
-        Enforces length limits, character-set restrictions, and non-emptiness
-        for both file-based and code-defined skills.
-
-        Args:
-            name: Skill name to validate.
-            description: Skill description to validate.
-            source: Human-readable label for diagnostics (e.g. a file path
-                or ``"code skill"``).
-
-        Returns:
-            A diagnostic error string if validation fails, or ``None`` if valid.
-        """
-        if not name or not name.strip():
-            return f"Skill from '{source}' is missing a name."
-
-        if len(name) > MAX_NAME_LENGTH or not VALID_NAME_RE.match(name):
-            return (
-                f"Skill from '{source}' has an invalid name '{name}': Must be {MAX_NAME_LENGTH} characters or fewer, "
-                "using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen "
-                "or contain consecutive hyphens."
-            )
-
-        if not description or not description.strip():
-            return f"Skill '{name}' from '{source}' is missing a description."
-
-        if len(description) > MAX_DESCRIPTION_LENGTH:
-            return (
-                f"Skill '{name}' from '{source}' has an invalid description: "
-                f"Must be {MAX_DESCRIPTION_LENGTH} characters or fewer."
-            )
-
-        return None
-
-    @staticmethod
     def _extract_frontmatter(
         content: str,
         skill_file_path: str,
