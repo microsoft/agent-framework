@@ -55,6 +55,8 @@ from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeVar, cast, runtime_checkable
 
+import yaml
+
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
 from ._tools import FunctionTool
@@ -460,6 +462,65 @@ class FileSkillScript(SkillScript):
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
+class SkillFrontmatter:
+    """Parsed and validated YAML frontmatter from a SKILL.md file.
+
+    Frontmatter is the L1 (discovery) layer of the
+    `Agent Skills specification <https://agentskills.io/>`_.
+    It contains the minimal metadata needed to advertise a skill in the system
+    prompt without loading the full skill content.
+
+    The constructor validates ``name``, ``description``, and ``compatibility``
+    and raises :exc:`ValueError` if any value violates the specification rules.
+
+    Attributes:
+        name: Skill name in kebab-case (lowercase letters, numbers, hyphens only).
+        description: Human-readable description used for discovery.
+        license: Optional license name or SPDX identifier.
+        compatibility: Optional compatibility information (max 500 chars).
+        allowed_tools: Pre-approved tool names, parsed from the space-delimited
+            frontmatter field.
+        metadata: Arbitrary key-value metadata from the ``metadata:`` YAML block.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+        license: str | None = None,
+        compatibility: str | None = None,
+        allowed_tools: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Initialize a SkillFrontmatter.
+
+        Args:
+            name: Skill name in kebab-case.
+            description: Skill description for discovery.
+            license: Optional license name or SPDX identifier.
+            compatibility: Optional compatibility information (max 500 chars).
+            allowed_tools: Pre-approved tool names.
+            metadata: Arbitrary key-value metadata.
+
+        Raises:
+            ValueError: If ``name``, ``description``, or ``compatibility``
+                violates the Agent Skills specification rules.
+        """
+        # Perform the validations
+        _validate_skill_name(name=name)
+        _validate_skill_description(name=name, description=description)
+        _validate_compatibility(name=name, compatibility=compatibility)
+
+        self.name = name
+        self.description = description
+        self.license = license
+        self.compatibility = compatibility
+        self.allowed_tools: list[str] = allowed_tools or []
+        self.metadata = metadata
+
+
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class Skill(ABC):
     """Abstract base class for all agent skills.
 
@@ -472,34 +533,32 @@ class Skill(ABC):
     `Agent Skills specification <https://agentskills.io/>`_.
 
     Attributes:
-        name: Skill name (lowercase letters, numbers, hyphens only).
-        description: Human-readable description of the skill.
+        frontmatter: The parsed frontmatter metadata for this skill.
     """
 
     def __init__(
         self,
         *,
-        name: str,
-        description: str,
+        frontmatter: SkillFrontmatter,
     ) -> None:
         """Initialize a Skill.
 
-        Validates the skill name and description against specification rules.
-
         Args:
-            name: Skill name (lowercase letters, numbers, hyphens only;
-                max 64 characters; no leading/trailing/consecutive hyphens).
-            description: Human-readable description of the skill
-                (≤1024 characters).
-
-        Raises:
-            ValueError: If the name or description is invalid.
+            frontmatter: Validated metadata for this skill. Contains the name,
+                description, and all optional fields defined in the Agent Skills
+                specification.
         """
-        _validate_skill_name(name)
-        _validate_skill_description(name, description)
+        self.frontmatter = frontmatter
 
-        self.name = name
-        self.description = description
+    @property
+    def name(self) -> str:
+        """Skill name, delegated from :attr:`frontmatter`."""
+        return self.frontmatter.name
+
+    @property
+    def description(self) -> str:
+        """Human-readable description, delegated from :attr:`frontmatter`."""
+        return self.frontmatter.description
 
     @property
     @abstractmethod
@@ -519,8 +578,7 @@ class Skill(ABC):
         """Resources associated with this skill.
 
         The default implementation returns an empty list.
-        Override this property in derived classes to provide skill-specific
-        resources.
+        Override in derived classes to provide skill-specific resources.
         """
         return []
 
@@ -529,8 +587,7 @@ class Skill(ABC):
         """Scripts associated with this skill.
 
         The default implementation returns an empty list.
-        Override this property in derived classes to provide skill-specific
-        scripts.
+        Override in derived classes to provide skill-specific scripts.
         """
         return []
 
@@ -571,6 +628,18 @@ def _validate_skill_description(name: str, description: str) -> None:
         raise ValueError(
             f"Skill '{name}' has an invalid description: Must be {MAX_DESCRIPTION_LENGTH} characters or fewer."
         )
+
+
+def _validate_compatibility(name: str, compatibility: str | None) -> None:
+    """Validate an optional skill compatibility value against specification rules.
+
+    Args:
+        name: The skill name (used in error messages).
+        compatibility: The compatibility value to validate.
+
+    """
+    if compatibility is not None and len(compatibility) > MAX_COMPATIBILITY_LENGTH:
+        raise ValueError(f"Skill '{name}' compatibility must be {MAX_COMPATIBILITY_LENGTH} characters or fewer.")
 
 
 def _build_skill_content(
@@ -640,8 +709,7 @@ class InlineSkill(Skill):
     registered with a :class:`SkillsProvider`.
 
     Attributes:
-        name: Skill name (lowercase letters, numbers, hyphens only).
-        description: Human-readable description of the skill.
+        frontmatter: The parsed frontmatter metadata for this skill.
         instructions: The skill instructions text.
 
     Examples:
@@ -650,8 +718,7 @@ class InlineSkill(Skill):
         .. code-block:: python
 
             skill = InlineSkill(
-                name="db-skill",
-                description="Database operations",
+                SkillFrontmatter(name="db-skill", description="Database operations")
                 instructions="Use this skill for DB tasks.",
             )
 
@@ -664,8 +731,7 @@ class InlineSkill(Skill):
     def __init__(
         self,
         *,
-        name: str,
-        description: str,
+        frontmatter: SkillFrontmatter,
         instructions: str,
         resources: Sequence[SkillResource] | None = None,
         scripts: Sequence[SkillScript] | None = None,
@@ -673,13 +739,12 @@ class InlineSkill(Skill):
         """Initialize an InlineSkill.
 
         Args:
-            name: Skill name (lowercase letters, numbers, hyphens only).
-            description: Human-readable description of the skill (≤1024 chars).
+            frontmatter: The parsed frontmatter metadata for this skill.
             instructions: The skill instructions text.
             resources: Pre-built resources to attach to this skill.
             scripts: Pre-built scripts to attach to this skill.
         """
-        super().__init__(name=name, description=description)
+        super().__init__(frontmatter=frontmatter)
 
         self.instructions = instructions
         self._resources: list[SkillResource] = list(resources) if resources is not None else []
@@ -944,8 +1009,10 @@ class ClassSkill(Skill, ABC):
             class UnitConverterSkill(ClassSkill):
                 def __init__(self) -> None:
                     super().__init__(
-                        name="unit-converter",
-                        description="Convert between common units.",
+                        frontmatter=SkillFrontmatter(
+                            name="unit-converter",
+                            description="Convert between common units.",
+                        ),
                     )
 
                 @property
@@ -967,8 +1034,10 @@ class ClassSkill(Skill, ABC):
             class UnitConverterSkill(ClassSkill):
                 def __init__(self) -> None:
                     super().__init__(
-                        name="unit-converter",
-                        description="Convert between common units.",
+                        frontmatter=SkillFrontmatter(
+                            name="unit-converter",
+                            description="Convert between common units.",
+                        ),
                     )
 
                 @property
@@ -989,18 +1058,14 @@ class ClassSkill(Skill, ABC):
     def __init__(
         self,
         *,
-        name: str,
-        description: str,
+        frontmatter: SkillFrontmatter,
     ) -> None:
         """Initialize a ClassSkill.
 
         Args:
-            name: Skill name (lowercase letters, numbers, hyphens only;
-                max 64 characters).
-            description: Human-readable description of the skill
-                (≤1024 characters).
+            frontmatter: Validated metadata for this skill.
         """
-        super().__init__(name=name, description=description)
+        super().__init__(frontmatter=frontmatter)
         self._cached_content: str | None = None
         self._cached_resources: list[SkillResource] | None = None
         self._cached_scripts: list[SkillScript] | None = None
@@ -1250,16 +1315,14 @@ class FileSkill(Skill):
     """A :class:`Skill` discovered from a filesystem directory backed by a SKILL.md file.
 
     Attributes:
-        name: Skill name (lowercase letters, numbers, hyphens only).
-        description: Human-readable description of the skill.
+        frontmatter: Parsed metadata for this skill.
         path: Absolute path to the directory containing this skill.
     """
 
     def __init__(
         self,
         *,
-        name: str,
-        description: str,
+        frontmatter: SkillFrontmatter,
         content: str,
         path: str,
         resources: Sequence[SkillResource] | None = None,
@@ -1268,14 +1331,13 @@ class FileSkill(Skill):
         """Initialize a FileSkill.
 
         Args:
-            name: Skill name (lowercase letters, numbers, hyphens only).
-            description: Human-readable description of the skill (≤1024 chars).
+            frontmatter: Validated metadata parsed from the SKILL.md frontmatter block.
             content: The full raw SKILL.md file content including YAML frontmatter.
             path: Absolute path to the skill directory on disk.
             resources: Resources discovered for this skill.
             scripts: Scripts discovered for this skill.
         """
-        super().__init__(name=name, description=description)
+        super().__init__(frontmatter=frontmatter)
 
         self._content = content
         self.path = path
@@ -1346,6 +1408,7 @@ SKILL_FILE_NAME: Final[str] = "SKILL.md"
 MAX_SEARCH_DEPTH: Final[int] = 2
 MAX_NAME_LENGTH: Final[int] = 64
 MAX_DESCRIPTION_LENGTH: Final[int] = 1024
+MAX_COMPATIBILITY_LENGTH: Final[int] = 500
 DEFAULT_RESOURCE_EXTENSIONS: Final[tuple[str, ...]] = (
     ".md",
     ".json",
@@ -1366,12 +1429,6 @@ FRONTMATTER_RE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
-# Matches YAML "key: value" lines. Group 1 = key, Group 2 = quoted value,
-# Group 3 = unquoted value.
-YAML_KV_RE = re.compile(
-    r"^\s*(\w+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
-    re.MULTILINE,
-)
 
 # Validates skill names: lowercase letters, numbers, hyphens only;
 # must not start or end with a hyphen, and must not contain consecutive hyphens.
@@ -2179,19 +2236,18 @@ class FileSkillsSource(SkillsSource):
             if parsed is None:
                 continue
 
-            name, description, content = parsed
+            frontmatter, content = parsed
 
-            if name in skills:
+            if frontmatter.name in skills:
                 logger.warning(
                     "Duplicate skill name '%s': skill from '%s' skipped in favor of existing skill",
-                    name,
+                    frontmatter.name,
                     skill_path,
                 )
                 continue
 
             file_skill = FileSkill(
-                name=name,
-                description=description,
+                frontmatter=frontmatter,
                 content=content,
                 path=skill_path,
             )
@@ -2478,7 +2534,7 @@ class FileSkillsSource(SkillsSource):
     def _extract_frontmatter(
         content: str,
         skill_file_path: str,
-    ) -> tuple[str, str] | None:
+    ) -> SkillFrontmatter | None:
         """Extract and validate YAML frontmatter from a SKILL.md file.
 
         Parses the ``---``-delimited frontmatter block for ``name`` and
@@ -2497,38 +2553,54 @@ class FileSkillsSource(SkillsSource):
             logger.error("SKILL.md at '%s' does not contain valid YAML frontmatter delimited by '---'", skill_file_path)
             return None
 
-        yaml_content = match.group(1).strip()
-        name: str | None = None
-        description: str | None = None
+        yaml_text = match.group(1)
 
-        for kv_match in YAML_KV_RE.finditer(yaml_content):
-            key = kv_match.group(1)
-            value = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
-
-            if key.lower() == "name":
-                name = value
-            elif key.lower() == "description":
-                description = value
-
-        error = FileSkillsSource._validate_skill_metadata(name, description, skill_file_path)
-        if error:
-            logger.error(error)
+        try:
+            raw_data = yaml.safe_load(yaml_text)
+        except yaml.YAMLError as e:
+            logger.error("Syntax YAML error '%s': %s", skill_file_path, e)
             return None
 
-        # name and description are guaranteed non-None after validation
-        return name, description  # type: ignore[return-value]
+        if not isinstance(raw_data, dict):
+            logger.error("Frontmatter at '%s' is not a valid dict", skill_file_path)
+            return None
+
+        # Normalize!
+        parsed = {k.lower(): v for k, v in raw_data.items()}
+
+        name: str | None = parsed.get("name")
+        description: str | None = parsed.get("description")
+        compatibility: str | None = parsed.get("compatibility")
+        allowed_tools_raw: str | None = parsed.get("allowed_tools")
+        allowed_tools = [t for t in allowed_tools_raw.split() if t] if allowed_tools_raw else []
+
+        metadata_raw = parsed.get("metadata")
+        metadata: dict[str, Any] | None = metadata_raw if isinstance(metadata_raw, dict) else None
+
+        try:
+            return SkillFrontmatter(
+                name=name,  # type: ignore[arg-type]  # Constructor validates non none vals
+                description=description,  # type: ignore[arg-type]
+                license=parsed.get("license"),
+                compatibility=compatibility,
+                allowed_tools=allowed_tools or None,
+                metadata=metadata,
+            )
+        except ValueError as e:
+            logger.error("Skill at '%s' violates specification: %s", skill_file_path, e)
+            return None
 
     @staticmethod
     def _read_and_parse_skill_file(
         skill_dir_path: str,
-    ) -> tuple[str, str, str] | None:
+    ) -> tuple[SkillFrontmatter, str] | None:
         """Read and parse the SKILL.md file in *skill_dir_path*.
 
         Args:
             skill_dir_path: Absolute path to the directory containing ``SKILL.md``.
 
         Returns:
-            A ``(name, description, content)`` tuple where *content* is the
+            A ``(frontmatter, content)`` tuple where *content* is the
             full raw file text, or ``None`` if the file cannot be read or
             its frontmatter is invalid.
         """
@@ -2540,23 +2612,21 @@ class FileSkillsSource(SkillsSource):
             logger.error("Failed to read SKILL.md at '%s'", skill_file)
             return None
 
-        result = FileSkillsSource._extract_frontmatter(content, str(skill_file))
-        if result is None:
+        frontmatter = FileSkillsSource._extract_frontmatter(content, str(skill_file))
+        if frontmatter is None:
             return None
 
-        name, description = result
-
         dir_name = Path(skill_dir_path).name
-        if name != dir_name:
+        if frontmatter.name != dir_name:
             logger.error(
                 "SKILL.md at '%s' has frontmatter name '%s' that does not match the directory name '%s'; skipping.",
                 skill_file,
-                name,
+                frontmatter.name,
                 dir_name,
             )
             return None
 
-        return name, description, content
+        return frontmatter, content
 
     @staticmethod
     def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
