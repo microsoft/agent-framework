@@ -474,8 +474,10 @@ class SkillFrontmatter:
     and raises :exc:`ValueError` if any value violates the specification rules.
 
     Attributes:
-        name: Skill name in kebab-case (lowercase letters, numbers, hyphens only).
-        description: Human-readable description used for discovery.
+        name: Skill name (lowercase letters, numbers, hyphens only;
+            max 64 characters; no leading/trailing/consecutive hyphens).
+        description: Human-readable description of the skill
+            (≤1024 characters).
         license: Optional license name or SPDX identifier.
         compatibility: Optional compatibility information (max 500 chars).
         allowed_tools: Pre-approved tool names, parsed from the space-delimited
