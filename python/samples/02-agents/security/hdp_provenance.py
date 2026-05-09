@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 #
 # This sample requires:
-#   pip install "agent-framework-core" "hdp-agent-framework" python-dotenv
+#   pip install "agent-framework-foundry" "hdp-agent-framework" "azure-identity" python-dotenv
 #
 # Generate an Ed25519 signing key once:
 #   python -c "
@@ -30,7 +30,7 @@ import sys
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import AzureCliCredential
+from azure.identity import AzureCliCredential
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from dotenv import load_dotenv
 
@@ -46,8 +46,9 @@ def _load_signing_key() -> Ed25519PrivateKey:
     if not raw_b64:
         print("ERROR: HDP_SIGNING_KEY not set. See comment at top of file.")
         sys.exit(1)
+    padding = (4 - len(raw_b64) % 4) % 4
     return Ed25519PrivateKey.from_private_bytes(
-        base64.urlsafe_b64decode(raw_b64 + "==")
+        base64.urlsafe_b64decode(raw_b64 + "=" * padding)
     )
 
 
@@ -67,8 +68,9 @@ async def main() -> None:
     )
 
     # 2. Build agent as normal
+    credential = AzureCliCredential()
     agent = Agent(
-        client=FoundryChatClient(credential=AzureCliCredential()),
+        client=FoundryChatClient(credential=credential),
         name="sales_analyst",
         instructions="You are a sales analyst. Fetch data, then write a summary.",
     )
