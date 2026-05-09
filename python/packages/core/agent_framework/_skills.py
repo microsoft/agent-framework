@@ -578,7 +578,8 @@ class Skill(ABC):
         """Resources associated with this skill.
 
         The default implementation returns an empty list.
-        Override in derived classes to provide skill-specific resources.
+        Override this property in derived classes to provide skill-specific
+        resources.
         """
         return []
 
@@ -587,7 +588,8 @@ class Skill(ABC):
         """Scripts associated with this skill.
 
         The default implementation returns an empty list.
-        Override in derived classes to provide skill-specific scripts.
+        Override this property in derived classes to provide skill-specific
+        scripts.
         """
         return []
 
