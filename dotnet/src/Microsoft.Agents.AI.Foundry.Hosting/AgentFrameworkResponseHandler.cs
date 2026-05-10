@@ -77,23 +77,31 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // 4. Convert input: history + current input → ChatMessage[]
         var messages = new List<ChatMessage>();
 
-        // Load conversation history if available
-        var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
-        if (history.Count > 0)
+        // Load conversation history only for fresh sessions. When a session already exists
+        // (e.g. resuming a workflow paused at an external-input port), the workflow's
+        // checkpointed state already contains the prior turns' messages — replaying history
+        // would re-drive completed actions and break HITL resume semantics.
+        var isResume = !string.IsNullOrWhiteSpace(sessionConversationId)
+            && session?.StateBag?.Count > 0;
+        if (!isResume)
         {
-            messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history));
+            var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
+            if (history.Count > 0)
+            {
+                messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag));
+            }
         }
 
         // Load and convert current input items
         var inputItems = await context.GetInputItemsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         if (inputItems.Count > 0)
         {
-            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems));
+            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems, session?.StateBag));
         }
         else
         {
             // Fall back to raw request input
-            messages.AddRange(InputConverter.ConvertInputToMessages(request));
+            messages.AddRange(InputConverter.ConvertInputToMessages(request, session?.StateBag));
         }
 
         // 5. Build chat options
@@ -191,6 +199,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var enumerator = OutputConverter.ConvertUpdatesToEventsAsync(
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
+            session?.StateBag,
             cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
         {
@@ -297,6 +306,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             var agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
             if (agent is not null)
             {
+                FoundryHostingExtensions.TryApplyUserAgent(agent);
                 return FoundryHostingExtensions.ApplyOpenTelemetry(agent);
             }
 
@@ -310,12 +320,13 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var defaultAgent = this._serviceProvider.GetService<AIAgent>();
         if (defaultAgent is not null)
         {
+            FoundryHostingExtensions.TryApplyUserAgent(defaultAgent);
             return FoundryHostingExtensions.ApplyOpenTelemetry(defaultAgent);
         }
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AIAgent is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via AddAIAgent(\"{agentName}\", ...) or as a default AIAgent.";
+            : $"Agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }
@@ -352,7 +363,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AgentSessionStore is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via AddAIAgent(\"{agentName}\", ...) or as a default AgentSessionStore.";
+            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }

@@ -8,7 +8,9 @@ YAML/JSON-based declarative agent and workflow definitions.
 - **`WorkflowFactory`** - Creates workflows from declarative definitions
 - **`WorkflowState`** - State management for declarative workflows
 - **`ProviderTypeMapping`** - Maps provider types to implementations
-- **`DeclarativeLoaderError`** / **`ProviderLookupError`** - Error types
+- **`HttpRequestHandler`** / **`DefaultHttpRequestHandler`** - Pluggable HTTP transport for the `HttpRequestAction` declarative action (configured via `WorkflowFactory(http_request_handler=...)`)
+- **`MCPToolHandler`** / **`DefaultMCPToolHandler`** - Pluggable MCP transport for the `InvokeMcpTool` declarative action (configured via `WorkflowFactory(mcp_tool_handler=...)`)
+- **`DeclarativeLoaderError`** / **`ProviderLookupError`** / **`DeclarativeWorkflowError`** / **`DeclarativeActionError`** - Error types
 
 ## External Input Handling
 

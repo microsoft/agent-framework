@@ -32,10 +32,12 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal as _Decimal
+from enum import Enum
 from typing import Any, Literal, cast
 
 from agent_framework import (
     Executor,
+    Message,
     WorkflowContext,
 )
 from agent_framework._workflows._state import State
@@ -120,7 +122,20 @@ def _make_powerfx_safe(value: Any) -> Any:
     Returns:
         A PowerFx-safe representation of the value
     """
-    if value is None or isinstance(value, _POWERFX_SAFE_TYPES):
+    if value is None:
+        return value
+
+    # Enum coercion must run BEFORE the primitive type check: many MAF
+    # enums (e.g. MessageRole) are ``str``-subclass enums, so they pass
+    # ``isinstance(v, str)`` but pythonnet refuses to convert them to
+    # ``System.String`` and raises ``'MessageRole' value cannot be
+    # converted to System.<X>'`` for every PowerFx primitive type. Reduce
+    # to the underlying value (or its string form) so PowerFx sees a
+    # plain ``str``/``int``.
+    if isinstance(value, Enum):
+        return _make_powerfx_safe(value.value)
+
+    if isinstance(value, _POWERFX_SAFE_TYPES):
         return value
 
     if isinstance(value, dict):
@@ -196,6 +211,16 @@ class DeclarativeWorkflowState:
             self.initialize()
             result = self._state.get(DECLARATIVE_STATE_KEY)
         return cast(DeclarativeStateData, result)
+
+    def is_initialized(self) -> bool:
+        """Return True when declarative state has been initialized.
+
+        Useful for distinguishing a fresh start from a continuation: when
+        Workflow state preserves data across run() calls (multi-turn
+        scenarios), the start executor needs to avoid calling initialize()
+        and clobbering the prior turn's Conversation/Local/System data.
+        """
+        return self._state.get(DECLARATIVE_STATE_KEY) is not None
 
     def set_state_data(self, data: DeclarativeStateData) -> None:
         """Set the full state data dict in state."""
@@ -873,6 +898,20 @@ class DeclarativeActionExecutor(Executor):
         Follows .NET's DefaultTransform pattern - accepts any input type:
         - dict/Mapping: Used directly as workflow.inputs
         - str: Converted to {"input": value}
+        - list[Message]: Treated as the agent-facing message contract
+          (e.g. from WorkflowAgent / as_agent()). The prior conversation
+          history is stored in ``Conversation.messages``/
+          ``Conversation.history`` and mirrored to
+          ``System.conversations.{id}.messages`` so workflows that
+          reference ``=Conversation.messages`` (e.g. InvokeAzureAgent) see
+          assistant turns and other earlier messages, including non-text
+          content. At the start of a turn this history excludes the current
+          user message; that message's text is instead used as the string
+          input (``Inputs.input``) and surfaced via ``System.LastMessage*``
+          for backward compatibility with simple text-only workflows. Agent
+          executors are responsible for appending the current user message
+          to ``Conversation.messages`` immediately before invoking the
+          inner agent.
         - DeclarativeMessage: Internal message, no initialization needed
         - Any other type: Converted via str() to {"input": str(value)}
 
@@ -888,6 +927,100 @@ class DeclarativeActionExecutor(Executor):
         if isinstance(trigger, dict):
             # Structured inputs - use directly
             state.initialize(trigger)  # type: ignore
+        elif isinstance(trigger, list) and all(isinstance(m, Message) for m in trigger):  # pyright: ignore[reportUnknownVariableType]
+            # list[Message] (e.g. from WorkflowAgent / as_agent()).
+            messages_list = cast(list[Message], trigger)
+
+            # Detect continuation: if the workflow's shared state already
+            # carries declarative data from a prior turn (because the host
+            # restored a checkpoint and dispatched this run with
+            # reset_context=False), we MUST NOT call state.initialize() -
+            # that would wipe Conversation.messages, Local.*, System.* etc.
+            # Instead, treat the trigger as the new turn's user input only:
+            # update Inputs.input, append the new user message to existing
+            # Conversation history, and refresh System.LastMessage*.
+            #
+            # Continuation = declarative state already exists in the workflow's
+            # shared state (either left over in-memory from a prior turn on
+            # the same instance, or restored from a checkpoint just before
+            # this run). In that case state.initialize() would wipe Local.*,
+            # System.*, Conversation.* etc., destroying the cross-turn
+            # context we're trying to preserve.
+            is_continuation = state.is_initialized()
+
+            # Locate the trailing user message in the trigger.
+            last_user_index = -1
+            for idx in range(len(messages_list) - 1, -1, -1):
+                if str(messages_list[idx].role).lower() == "user":
+                    last_user_index = idx
+                    break
+
+            if last_user_index >= 0:
+                last_user_msg = messages_list[last_user_index]
+                last_user_text = last_user_msg.text or ""
+                last_user_id = getattr(last_user_msg, "message_id", "") or ""
+                history_messages = messages_list[:last_user_index] + messages_list[last_user_index + 1 :]
+            else:
+                history_messages = list(messages_list)
+                tail = messages_list[-1] if messages_list else None
+                last_user_text = (tail.text or "") if tail is not None else ""
+                last_user_id = getattr(tail, "message_id", "") or "" if tail is not None else ""
+
+            if is_continuation:
+                # Continuation turn: keep prior Conversation.messages intact.
+                # Refresh inputs and surface the new user message via the
+                # System.LastMessage* fields. We deliberately do NOT append
+                # the new user message to Conversation.messages here: agent
+                # executors append the live user input themselves before
+                # invoking the inner agent (matching the first-turn
+                # contract where Conversation.messages holds prior turns
+                # only).
+                #
+                # Note: ``state.set("Inputs.input", ...)`` would route to
+                # the Custom namespace (Inputs is not a recognized top-level
+                # writable namespace - see DeclarativeWorkflowState.set).
+                # PowerFx expressions like ``=Workflow.Inputs.input`` /
+                # ``=inputs.input`` read state_data["Inputs"] directly, so
+                # we update that dict in place via get_state_data /
+                # set_state_data.
+                state_data = state.get_state_data()
+                inputs_dict = state_data.get("Inputs")
+                if not isinstance(inputs_dict, dict):
+                    inputs_dict = {}
+                    state_data["Inputs"] = inputs_dict
+                inputs_dict["input"] = last_user_text
+                state.set_state_data(state_data)
+                # Trailing non-user messages (e.g. tool results) sandwiched
+                # before the new user message in the trigger are still
+                # appended so later actions see them.
+                for msg in history_messages:
+                    state.append("Conversation.messages", msg)
+                    state.append("Conversation.history", msg)
+                conversation_id = state.get("System.ConversationId")
+                if conversation_id:
+                    conv_path = f"System.conversations.{conversation_id}.messages"
+                    for msg in history_messages:
+                        state.append(conv_path, msg)
+                state.set("System.LastMessage", {"Text": last_user_text, "Id": last_user_id})
+                state.set("System.LastMessageText", last_user_text)
+                state.set("System.LastMessageId", last_user_id)
+            else:
+                # First turn: full initialization.
+                state.initialize({"input": last_user_text})
+
+                for msg in history_messages:
+                    state.append("Conversation.messages", msg)
+                    state.append("Conversation.history", msg)
+
+                conversation_id = state.get("System.ConversationId")
+                if conversation_id:
+                    conv_path = f"System.conversations.{conversation_id}.messages"
+                    for msg in history_messages:
+                        state.append(conv_path, msg)
+
+                state.set("System.LastMessage", {"Text": last_user_text, "Id": last_user_id})
+                state.set("System.LastMessageText", last_user_text)
+                state.set("System.LastMessageId", last_user_id)
         elif isinstance(trigger, str):
             # String input - wrap in dict and populate System.LastMessage.Text
             # so YAML expressions like =System.LastMessage.Text see the user input
@@ -895,10 +1028,11 @@ class DeclarativeActionExecutor(Executor):
             state.set("System.LastMessage", {"Text": trigger, "Id": ""})
             state.set("System.LastMessageText", trigger)
         elif not isinstance(
-            trigger, (ActionTrigger, ActionComplete, ConditionResult, LoopIterationResult, LoopControl)
+            trigger,
+            (ActionTrigger, ActionComplete, ConditionResult, LoopIterationResult, LoopControl),  # pyright: ignore[reportUnknownArgumentType]
         ):
             # Any other type - convert to string like .NET's DefaultTransform
-            input_str = str(trigger)
+            input_str = str(cast(Any, trigger))
             state.initialize({"input": input_str})
             state.set("System.LastMessage", {"Text": input_str, "Id": ""})
             state.set("System.LastMessageText", input_str)

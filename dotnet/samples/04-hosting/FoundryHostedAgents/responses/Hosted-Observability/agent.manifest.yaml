@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: hosted-observability
+displayName: "Hosted Observability Agent"
+
+description: >
+  A hosted Agent Framework agent that demonstrates how the Foundry hosting
+  pipeline emits OpenTelemetry traces, metrics and logs to Application Insights
+  with no extra wiring required.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Observability
+    - OpenTelemetry
+    - Agent Framework
+
+template:
+  name: hosted-observability
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  resources:
+    cpu: "0.25"
+    memory: 0.5Gi
+  environment_variables:
+    # Capture prompt / completion / tool argument content on GenAI spans.
+    - name: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+      value: "true"
+parameters:
+  properties: []
+resources: []

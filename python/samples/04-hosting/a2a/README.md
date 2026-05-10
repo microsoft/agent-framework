@@ -42,7 +42,32 @@ All commands below should be run from this directory:
 cd python/samples/04-hosting/a2a
 ```
 
+### 0. Install Dependencies
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```powershell
+copy .env.example .env
+```
+
+**Option A — pip (standard):**
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1      # Windows
+# source .venv/bin/activate     # macOS / Linux
+pip install -r requirements.txt
+```
+
+**Option B — uv:**
+
+```powershell
+uv run python a2a_server.py --agent-type policy
+```
+
 ### 1. Start the A2A Server
+
+> **Note (Option A — pip users):** Replace `uv run python` with `python` in all `uv run` commands below (e.g. `python a2a_server.py ...`). `uv` is not required once the virtual environment is activated.
 
 Pick an agent type and start the server (each in its own terminal):
 

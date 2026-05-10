@@ -156,8 +156,9 @@ class AgentExecutor(Executor):
                    the agent run.
                 - "custom": use the provided context_filter function to determine which messages to include
                    as context for the agent run.
-            context_filter: An optional function for filtering conversation context when context_mode is set
-                to "custom".
+            context_filter: A function that takes the full conversation (list of Messages) as input and returns
+                a filtered list of Messages to be used as context for the agent run. This is required
+                if context_mode is set to "custom".
         """
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
         exec_id = id or resolve_agent_id(agent)

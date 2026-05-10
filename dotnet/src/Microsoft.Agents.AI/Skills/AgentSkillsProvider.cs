@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Security;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -243,7 +244,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         }
 
         AIFunction scriptFunction = AIFunctionFactory.Create(
-            (string skillName, string scriptName, IDictionary<string, object?>? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default) =>
+            (string skillName, string scriptName, JsonElement? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default) =>
                 this.RunSkillScriptAsync(skills, skillName, scriptName, arguments, serviceProvider, cancellationToken),
             name: "run_skill_script",
             description: "Runs a script associated with a skill.");
@@ -340,7 +341,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         }
     }
 
-    private async Task<object?> RunSkillScriptAsync(IList<AgentSkill> skills, string skillName, string scriptName, IDictionary<string, object?>? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
+    private async Task<object?> RunSkillScriptAsync(IList<AgentSkill> skills, string skillName, string scriptName, JsonElement? arguments = null, IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(skillName))
         {
@@ -366,7 +367,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
 
         try
         {
-            return await script.RunAsync(skill, new AIFunctionArguments(arguments) { Services = serviceProvider }, cancellationToken).ConfigureAwait(false);
+            return await script.RunAsync(skill, arguments, serviceProvider, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

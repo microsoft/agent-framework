@@ -242,3 +242,7 @@ python/dotnet-ref
 # Generated filtered solution files (created by eng/scripts/New-FilteredSolution.ps1)
 dotnet/filtered-*.slnx
 **/*.lscache
+
+# Local tool state
+.omc/
+.omx/

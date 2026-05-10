@@ -11,8 +11,14 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
-public class TestReplayAgent(List<ChatMessage>? messages = null, string? id = null, string? name = null) : AIAgent
+public class TestReplayAgent(List<List<ChatMessage>> messages, string? id = null, string? name = null) : AIAgent
 {
+    public TestReplayAgent(List<ChatMessage> messages, string? id = null, string? name = null) : this([messages ?? []], id, name)
+    { }
+
+    public TestReplayAgent(string? id = null, string? name = null) : this([[]], id, name)
+    { }
+
     protected override string? IdCore => id;
     public override string? Name => name;
 
@@ -57,46 +63,55 @@ public class TestReplayAgent(List<ChatMessage>? messages = null, string? id = nu
     public static TestReplayAgent FromStrings(params string[] messages) =>
         new(ToChatMessages(messages));
 
-    public List<ChatMessage> Messages { get; } = Validate(messages) ?? [];
+    public List<List<ChatMessage>> Messages { get; } = Validate(messages) ?? [];
 
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         => this.RunStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
 
+    public int Turn { get; set; }
+
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string responseId = Guid.NewGuid().ToString("N");
-        foreach (ChatMessage message in this.Messages)
+
+        if (this.Turn < this.Messages.Count)
         {
-            foreach (AIContent content in message.Contents)
+            foreach (ChatMessage message in this.Messages[this.Turn++])
             {
-                yield return new AgentResponseUpdate()
+                foreach (AIContent content in message.Contents)
                 {
-                    AgentId = this.Id,
-                    AuthorName = this.Name,
-                    MessageId = message.MessageId,
-                    ResponseId = responseId,
-                    Contents = [content],
-                    Role = message.Role,
-                };
+                    yield return new AgentResponseUpdate()
+                    {
+                        AgentId = this.Id,
+                        AuthorName = this.Name,
+                        MessageId = message.MessageId,
+                        ResponseId = responseId,
+                        Contents = [content],
+                        Role = message.Role,
+                    };
+                }
             }
         }
     }
 
-    private static List<ChatMessage>? Validate(List<ChatMessage>? candidateMessages)
+    private static List<List<ChatMessage>>? Validate(List<List<ChatMessage>>? candidateMessages)
     {
-        string? currentMessageId = null;
+        string? lastMessageId = null;
 
-        if (candidateMessages is not null)
+        if (candidateMessages != null)
         {
-            foreach (ChatMessage message in candidateMessages)
+            foreach (List<ChatMessage> candidateMessagesTurn in candidateMessages)
             {
-                if (currentMessageId is null)
+                foreach (ChatMessage message in candidateMessagesTurn)
                 {
-                    currentMessageId = message.MessageId;
-                }
-                else if (currentMessageId == message.MessageId)
-                {
-                    throw new ArgumentException("Duplicate consecutive message ids");
+                    if (lastMessageId is null || lastMessageId != message.MessageId)
+                    {
+                        lastMessageId = message.MessageId;
+                    }
+                    else if (lastMessageId == message.MessageId)
+                    {
+                        throw new ArgumentException("Duplicate consecutive message ids");
+                    }
                 }
             }
         }

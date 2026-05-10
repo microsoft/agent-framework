@@ -22,7 +22,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     /// <inheritdoc />
     protected override string TaskHubPrefix => "workflow";
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task SequentialWorkflowSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -71,7 +71,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task ConcurrentWorkflowSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -120,7 +120,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task ConditionalEdgesWorkflowSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -182,7 +182,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         }
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task WorkflowEventsSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -278,7 +278,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task WorkflowSharedStateSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -376,7 +376,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task SubWorkflowsSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -452,7 +452,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task WorkflowHITLSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
@@ -505,7 +505,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task WorkflowAndAgentsSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);

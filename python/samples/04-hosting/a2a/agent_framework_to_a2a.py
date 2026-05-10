@@ -51,7 +51,7 @@ if __name__ == "__main__":
     agent = Agent(
         client=OpenAIChatClient(),
         name="Europe Travel Agent",
-        instructions="You are a helpful Europe Travel Agent. You can help users search and book flights and hotels across Europe."
+        instructions="You are a helpful Europe Travel Agent. You can help users search and book flights and hotels across Europe.",
     )
 
     request_handler = DefaultRequestHandler(

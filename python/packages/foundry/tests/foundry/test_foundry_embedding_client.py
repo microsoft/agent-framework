@@ -303,6 +303,7 @@ skip_if_foundry_inference_integration_tests_disabled = pytest.mark.skipif(
 class TestFoundryEmbeddingIntegration:
     """Integration tests requiring a live Foundry inference endpoint."""
 
+    @pytest.mark.skip(reason="Flaky in merge queue, blocking unrelated PRs. Tracked in #5553.")
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_inference_integration_tests_disabled

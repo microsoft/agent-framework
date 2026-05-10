@@ -32,9 +32,6 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// they are sent as server-side tool definitions in the Responses API request. The Foundry platform
 /// handles tool execution — the agent process does not invoke tools locally.
 /// </para>
-/// <para>
-/// This is the dotnet equivalent of Python's <c>FoundryChatClient.get_toolbox()</c> pattern.
-/// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class FoundryToolbox

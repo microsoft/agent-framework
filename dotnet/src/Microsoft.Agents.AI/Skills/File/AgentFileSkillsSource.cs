@@ -233,7 +233,9 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         foreach (Match kvMatch in s_yamlKeyValueRegex.Matches(yamlContent))
         {
             string key = kvMatch.Groups[1].Value;
-            string value = kvMatch.Groups[2].Success ? kvMatch.Groups[2].Value : kvMatch.Groups[3].Value;
+            string value = kvMatch.Groups[2].Success
+                ? kvMatch.Groups[2].Value
+                : ParseYamlScalarValue(yamlContent, kvMatch);
 
             if (string.Equals(key, "name", StringComparison.OrdinalIgnoreCase))
             {
@@ -538,6 +540,66 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         }
 
         return false;
+    }
+
+    private static string ParseYamlScalarValue(string yamlContent, Match kvMatch)
+    {
+        string value = kvMatch.Groups[3].Value;
+
+        if (value.Length == 0 || value[0] is not ('|' or '>'))
+        {
+            return value;
+        }
+
+        char scalarStyle = value[0];
+        bool keepTrailingNewline = value.Length > 1 && value[1] == '+';
+
+        int nextLineStart = yamlContent.IndexOf('\n', kvMatch.Index + kvMatch.Length);
+        if (nextLineStart < 0)
+        {
+            return value;
+        }
+
+        nextLineStart++;
+
+        var blockLines = new List<string>();
+        using var reader = new StringReader(yamlContent.Substring(nextLineStart));
+
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                blockLines.Add(string.Empty);
+                continue;
+            }
+
+            if (line[0] != ' ' && line[0] != '\t')
+            {
+                break;
+            }
+
+            blockLines.Add(line);
+        }
+
+        if (blockLines.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        int commonIndent = blockLines
+            .Where(line => line.Length > 0)
+            .Min(line => line.TakeWhile(ch => ch == ' ' || ch == '\t').Count());
+
+        string[] normalizedLines = blockLines
+            .Select(line => line.Length == 0 ? string.Empty : line.Substring(Math.Min(commonIndent, line.Length)))
+            .ToArray();
+
+        string parsedValue = scalarStyle == '|'
+            ? string.Join("\n", normalizedLines)
+            : string.Join(" ", normalizedLines.Where(line => line.Length > 0));
+
+        return keepTrailingNewline ? parsedValue + "\n" : parsedValue;
     }
 
     /// <summary>

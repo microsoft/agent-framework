@@ -1,10 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -46,8 +46,9 @@ public abstract class AgentSkillScript
     /// Runs the script with the given arguments.
     /// </summary>
     /// <param name="skill">The skill that owns this script.</param>
-    /// <param name="arguments">Arguments for script execution.</param>
+    /// <param name="arguments">Raw JSON arguments for script execution, preserving the original format (object or array) sent by the caller.</param>
+    /// <param name="serviceProvider">Optional service provider for dependency injection.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The script execution result.</returns>
-    public abstract Task<object?> RunAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default);
+    public abstract Task<object?> RunAsync(AgentSkill skill, JsonElement? arguments, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default);
 }

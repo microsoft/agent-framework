@@ -17,6 +17,7 @@ The key insight is that control flow becomes GRAPH STRUCTURE, not executor logic
 from typing import Any, cast
 
 from agent_framework import (
+    Message,
     WorkflowContext,
     handler,
 )
@@ -492,7 +493,13 @@ class JoinExecutor(DeclarativeActionExecutor):
     @handler
     async def handle_action(
         self,
-        trigger: dict[str, Any] | str | ActionTrigger | ActionComplete | ConditionResult | LoopIterationResult,
+        trigger: dict[str, Any]
+        | str
+        | list[Message]
+        | ActionTrigger
+        | ActionComplete
+        | ConditionResult
+        | LoopIterationResult,
         ctx: WorkflowContext[ActionComplete],
     ) -> None:
         """Simply pass through to continue the workflow."""

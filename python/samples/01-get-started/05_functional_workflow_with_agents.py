@@ -37,6 +37,8 @@ async def poem_workflow(topic: str) -> str:
     poem = (await writer.run(f"Write a poem about: {topic}")).text
     review = (await reviewer.run(f"Review this poem: {poem}")).text
     return f"Poem:\n{poem}\n\nReview: {review}"
+
+
 # </create_workflow>
 
 

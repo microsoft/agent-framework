@@ -15,9 +15,9 @@ template:
     - protocol: invocations
       version: 1.0.0
   environment_variables:
-    - name: MODEL_DEPLOYMENT_NAME
-      value: "{{MODEL_DEPLOYMENT_NAME}}"
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
 resources:
   - kind: model
     id: gpt-4.1-mini
-    name: MODEL_DEPLOYMENT_NAME
+    name: AZURE_AI_MODEL_DEPLOYMENT_NAME

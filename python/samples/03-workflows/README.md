@@ -55,7 +55,7 @@ Write workflows as plain Python async functions — no graph concepts, no execut
 | Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py)             | Wrap a workflow so it can behave like an agent (reflection pattern)                                  |
 | Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)               | Extend workflow-as-agent with human-in-the-loop capability                                           |
 | Workflow as Agent with Session         | [agents/workflow_as_agent_with_session.py](./agents/workflow_as_agent_with_session.py)                           | Use AgentSession to maintain conversation history across workflow-as-agent invocations                |
-| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
+| Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @tool tools |
 
 ### checkpoint
 

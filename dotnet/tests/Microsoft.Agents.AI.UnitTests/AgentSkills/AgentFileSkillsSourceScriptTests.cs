@@ -3,9 +3,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 
@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 {
     private static readonly string[] s_rubyExtension = new[] { ".rb" };
-    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
+    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, sp, ct) => Task.FromResult<object?>(null);
 
     private readonly string _testRoot;
 
@@ -139,7 +139,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var executorCalled = false;
         var source = new AgentFileSkillsSource(
             this._testRoot,
-            (skill, script, args, ct) =>
+            (skill, script, args, sp, ct) =>
             {
                 executorCalled = true;
                 Assert.Equal("exec-skill", skill.Frontmatter.Name);
@@ -150,7 +150,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 
         // Act
         var skills = await source.GetSkillsAsync(CancellationToken.None);
-        var scriptResult = await skills[0].Scripts![0].RunAsync(skills[0], new AIFunctionArguments(), CancellationToken.None);
+        var scriptResult = await skills[0].Scripts![0].RunAsync(skills[0], null, null, CancellationToken.None);
 
         // Assert
         Assert.True(executorCalled);
@@ -178,7 +178,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         var script = skills[0].Scripts![0];
 
         // Assert — running the script throws because no runner was provided
-        await Assert.ThrowsAsync<InvalidOperationException>(() => script.RunAsync(skills[0], new AIFunctionArguments(), CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => script.RunAsync(skills[0], null, null, CancellationToken.None));
     }
 
     [Fact]
@@ -204,10 +204,10 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
     {
         // Arrange
         CreateSkillWithScript(this._testRoot, "args-skill", "Args test", "Body.", "scripts/test.py", "print('ok')");
-        AIFunctionArguments? capturedArgs = null;
+        JsonElement? capturedArgs = null;
         var source = new AgentFileSkillsSource(
             this._testRoot,
-            (skill, script, args, ct) =>
+            (skill, script, args, sp, ct) =>
             {
                 capturedArgs = args;
                 return Task.FromResult<object?>("done");
@@ -215,17 +215,15 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 
         // Act
         var skills = await source.GetSkillsAsync(CancellationToken.None);
-        var arguments = new AIFunctionArguments
-        {
-            ["value"] = 26.2,
-            ["factor"] = 1.60934
-        };
-        await skills[0].Scripts![0].RunAsync(skills[0], arguments, CancellationToken.None);
+        using var argumentsDoc = JsonDocument.Parse("""{"value":26.2,"factor":1.60934}""");
+        var arguments = argumentsDoc.RootElement;
+        await skills[0].Scripts![0].RunAsync(skills[0], arguments, null, CancellationToken.None);
 
         // Assert
         Assert.NotNull(capturedArgs);
-        Assert.Equal(26.2, capturedArgs["value"]);
-        Assert.Equal(1.60934, capturedArgs["factor"]);
+        Assert.Equal(JsonValueKind.Object, capturedArgs!.Value.ValueKind);
+        Assert.Equal(26.2, capturedArgs.Value.GetProperty("value").GetDouble());
+        Assert.Equal(1.60934, capturedArgs.Value.GetProperty("factor").GetDouble());
     }
 
     [Fact]
