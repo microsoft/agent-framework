@@ -1828,3 +1828,171 @@ async def test_integration_web_search() -> None:
         else:
             response = await client.get_response(**content)
         assert response.text is not None
+
+
+# region Tests for #5732 — streaming chunk with null delta
+
+
+def test_streaming_chunk_with_null_delta_is_skipped(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Regression test for #5732: non-compliant providers send delta=null on finish chunks.
+
+    Some OpenAI-compatible providers (e.g. Azure OpenAI with certain configs) send
+    ``"delta": null`` instead of the spec-compliant ``"delta": {}`` on the final
+    finish-reason chunk.  This used to raise ``AttributeError: 'NoneType' object
+    has no attribute 'content'``.
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice
+
+    client = OpenAIChatCompletionClient()
+
+    # Simulate a finish chunk where delta is None (non-compliant provider behaviour).
+    mock_chunk = ChatCompletionChunk.model_construct(
+        id="test-chunk-finish",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4.1",
+        choices=[
+            Choice.model_construct(
+                index=0,
+                delta=None,
+                finish_reason="stop",
+            )
+        ],
+        usage=None,
+    )
+
+    # Should not raise AttributeError
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert update.finish_reason == "stop"
+    assert update.contents == []
+
+
+def test_streaming_chunk_with_null_delta_preserves_finish_reason(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """finish_reason must be captured even when delta is None.
+
+    Ensures the ``continue`` guard does not skip finish_reason extraction.
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice
+
+    client = OpenAIChatCompletionClient()
+
+    mock_chunk = ChatCompletionChunk.model_construct(
+        id="test-chunk-length",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4.1",
+        choices=[
+            Choice.model_construct(
+                index=0,
+                delta=None,
+                finish_reason="length",
+            )
+        ],
+        usage=None,
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert update.finish_reason == "length"
+    assert update.contents == []
+
+
+def test_streaming_chunk_with_empty_delta_is_not_skipped(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Spec-compliant finish chunks with an empty delta object must still be processed.
+
+    The OpenAI spec sends ``"delta": {}`` (not null) on finish chunks.  These
+    should pass through without error and produce no content.
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice, ChoiceDelta
+
+    client = OpenAIChatCompletionClient()
+
+    mock_chunk = ChatCompletionChunk(
+        id="test-chunk-empty-delta",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4o",
+        choices=[
+            Choice(
+                index=0,
+                delta=ChoiceDelta(),
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert update.finish_reason == "stop"
+    assert update.contents == []
+
+
+def test_streaming_chunk_with_null_delta_and_usage(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Usage data in the same chunk as a null delta must still be recorded."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice
+    from openai.types.completion_usage import CompletionUsage
+
+    client = OpenAIChatCompletionClient()
+
+    mock_chunk = ChatCompletionChunk.model_construct(
+        id="test-chunk-usage-null-delta",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4.1",
+        choices=[
+            Choice.model_construct(
+                index=0,
+                delta=None,
+                finish_reason="stop",
+            )
+        ],
+        usage=CompletionUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert update.finish_reason == "stop"
+    content_types = [c.type for c in update.contents]
+    assert "usage" in content_types
+    assert "text" not in content_types
+
+
+def test_streaming_chunk_with_null_delta_no_tool_calls_parsed(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Tool-call parsing must be skipped when delta is None."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice
+
+    client = OpenAIChatCompletionClient()
+
+    mock_chunk = ChatCompletionChunk.model_construct(
+        id="test-chunk-no-tools",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4.1",
+        choices=[
+            Choice.model_construct(
+                index=0,
+                delta=None,
+                finish_reason="tool_calls",
+            )
+        ],
+        usage=None,
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert update.finish_reason == "tool_calls"
+    assert not any(c.type == "function_call" for c in update.contents)
+
+
+# endregion
