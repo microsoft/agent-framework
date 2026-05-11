@@ -522,6 +522,19 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_WithInputResponseContentAndNullTaskId_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
+        // TaskId is null — no prior input-required response
+
+        var inputMessage = new ChatMessage(ChatRole.User, [new A2AInputResponseContent("req-1", new TextContent("response"))]);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessage, session));
+    }
+
+    [Fact]
     public async Task RunAsync_WithAgentTask_UpdatesSessionTaskIdAsync()
     {
         // Arrange
@@ -900,6 +913,24 @@ public sealed class A2AAgentTests : IDisposable
         var message = this._handler.CapturedSendMessageRequest?.Message;
         Assert.Equal("task-123", message?.TaskId);
         Assert.Null(message?.ReferenceTaskIds);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithInputResponseContentAndNullTaskId_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
+        // TaskId is null — no prior input-required response
+
+        var inputMessage = new ChatMessage(ChatRole.User, [new A2AInputResponseContent("req-1", new TextContent("response"))]);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in this._agent.RunStreamingAsync([inputMessage], session))
+            {
+            }
+        });
     }
 
     [Fact]

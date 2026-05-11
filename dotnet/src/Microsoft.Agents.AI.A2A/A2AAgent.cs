@@ -347,6 +347,16 @@ public sealed class A2AAgent : AIAgent
 
         if (messages.Any(m => m.Contents.Any(c => c is A2AInputResponseContent)))
         {
+            // If the message contains a response to a user input request,
+            // link it to the existing task, so it will be treated as a response
+            // to the user input request for that task.
+            if (typedSession.TaskId is null)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot send an {nameof(A2AInputResponseContent)} without an existing task. " +
+                    $"The {nameof(AgentSession)} must have a {nameof(A2AAgentSession.TaskId)} from a prior input-required response.");
+            }
+
             a2aMessage.TaskId = typedSession.TaskId;
         }
         else
