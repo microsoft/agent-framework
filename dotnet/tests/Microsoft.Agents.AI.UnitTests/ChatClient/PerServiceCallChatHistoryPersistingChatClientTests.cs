@@ -1362,7 +1362,7 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
         // FunctionCallContent.
         mockChatHistoryProvider
             .Protected()
-            .Verify<ValueTask>("InvokedCoreAsync", Times.AtLeastOnce(),
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
                 ItExpr.Is<ChatHistoryProvider.InvokedContext>(x =>
                     x.RequestMessages.Any(m => m.Text == "frc-input") &&
                     (x.ResponseMessages == null || !x.ResponseMessages.Any()) &&
@@ -1426,7 +1426,7 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
         // Assert — input messages should have been persisted (PersistInputOnErrorAsync).
         mockChatHistoryProvider
             .Protected()
-            .Verify<ValueTask>("InvokedCoreAsync", Times.AtLeastOnce(),
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
                 ItExpr.Is<ChatHistoryProvider.InvokedContext>(x =>
                     x.RequestMessages.Any(m => m.Text == "frc-input") &&
                     (x.ResponseMessages == null || !x.ResponseMessages.Any()) &&
@@ -1491,7 +1491,7 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
         // Assert — input messages should have been persisted (PersistInputOnErrorAsync).
         mockChatHistoryProvider
             .Protected()
-            .Verify<ValueTask>("InvokedCoreAsync", Times.AtLeastOnce(),
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
                 ItExpr.Is<ChatHistoryProvider.InvokedContext>(x =>
                     x.RequestMessages.Any(m => m.Text == "frc-input") &&
                     (x.ResponseMessages == null || !x.ResponseMessages.Any()) &&
@@ -1560,7 +1560,7 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
         // pairings).
         mockChatHistoryProvider
             .Protected()
-            .Verify<ValueTask>("InvokedCoreAsync", Times.AtLeastOnce(),
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
                 ItExpr.Is<ChatHistoryProvider.InvokedContext>(x =>
                     x.RequestMessages.Any(m => m.Text == "frc-input") &&
                     (x.ResponseMessages == null || !x.ResponseMessages.Any()) &&
@@ -1624,7 +1624,7 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
         // Assert — input messages should have been persisted with no response messages.
         mockChatHistoryProvider
             .Protected()
-            .Verify<ValueTask>("InvokedCoreAsync", Times.AtLeastOnce(),
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
                 ItExpr.Is<ChatHistoryProvider.InvokedContext>(x =>
                     x.RequestMessages.Any(m => m.Text == "frc-input") &&
                     (x.ResponseMessages == null || !x.ResponseMessages.Any()) &&

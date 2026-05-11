@@ -198,6 +198,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
         }
 
         bool loopExitedNormally = false;
+        bool inputPersisted = false;
         try
         {
             while (hasUpdates)
@@ -226,6 +227,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
                 catch (Exception ex)
                 {
                     await PersistInputOnErrorAsync(agent, session, newMessages, options, cancellationToken).ConfigureAwait(false);
+                    inputPersisted = true;
                     await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
                     throw;
                 }
@@ -238,11 +240,17 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             // stream ended without throwing but the loop did not complete normally), we still
             // need to persist the input messages — otherwise function-call/function-result
             // pairings can be lost, leaving the next iteration with dangling FunctionCallContent.
-            if (!loopExitedNormally)
+            // Skip if an inner catch already persisted, to avoid duplicate provider notifications.
+            if (!loopExitedNormally && !inputPersisted)
             {
+                // Prefer the original cancellation token so the cleanup remains responsive to
+                // cancellation; fall back to CancellationToken.None only if the caller's token
+                // has already been canceled (otherwise the persist call would observe the
+                // cancellation and rethrow, masking the original early-exit reason).
+                var persistToken = cancellationToken.IsCancellationRequested ? CancellationToken.None : cancellationToken;
                 try
                 {
-                    await PersistInputOnErrorAsync(agent, session, newMessages, options, CancellationToken.None).ConfigureAwait(false);
+                    await PersistInputOnErrorAsync(agent, session, newMessages, options, persistToken).ConfigureAwait(false);
                 }
                 catch
                 {
