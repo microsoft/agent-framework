@@ -2,8 +2,6 @@
 
 This sample shows how to use a Foundry Toolbox by pointing an `McpClient` at the toolbox's MCP endpoint. The agent discovers the toolbox's tools at runtime and invokes them locally over MCP.
 
-This is the .NET analog of the Python [`foundry_chat_client_with_toolbox.py`](../../../../../python/samples/02-agents/providers/foundry/foundry_chat_client_with_toolbox.py) sample.
-
 ## What this sample demonstrates
 
 - Connecting to a Foundry toolbox's MCP endpoint via Streamable HTTP transport
