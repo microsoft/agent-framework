@@ -8,6 +8,7 @@
 using A2A;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.A2A;
+using Microsoft.Extensions.AI;
 
 var a2aAgentHost = Environment.GetEnvironmentVariable("A2A_AGENT_HOST")
     ?? throw new InvalidOperationException("A2A_AGENT_HOST is not set.");
