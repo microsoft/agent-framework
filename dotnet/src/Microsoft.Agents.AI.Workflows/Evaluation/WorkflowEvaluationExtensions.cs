@@ -30,6 +30,9 @@ public static class WorkflowEvaluationExtensions
     /// workflow's response against a golden answer. Ground truth is only applied
     /// to the overall item; per-agent items are intentionally left without an
     /// expected output, since ground truth is defined against the final response.
+    /// When using a reference-based evaluator that requires ground truth, set
+    /// <paramref name="includePerAgent"/> to <see langword="false"/> to avoid
+    /// invoking the evaluator on per-agent items that have no expected output.
     /// </param>
     /// <param name="splitter">
     /// Optional conversation splitter to apply to all items.

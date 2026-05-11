@@ -47,10 +47,16 @@ await using Run run = await InProcessExecution.RunAsync(
 // reference-based Similarity evaluator. The 'expectedOutput' value is stamped
 // onto the overall EvalItem.ExpectedOutput and is surfaced to Foundry as
 // `ground_truth` in the underlying JSONL payload.
+//
+// Per-agent breakdown is disabled here: ground truth applies to the workflow's
+// final answer, not to each sub-agent's intermediate output. Without
+// includePerAgent: false, the evaluator would be invoked for per-agent items
+// (which have no ExpectedOutput) and Similarity would fail validation.
 FoundryEvals similarity = new(projectClient, deploymentName, FoundryEvals.Similarity);
 
 AgentEvaluationResults results = await run.EvaluateAsync(
     similarity,
+    includePerAgent: false,
     expectedOutput: GroundTruth);
 
 Console.WriteLine($"Query: {Query}");
