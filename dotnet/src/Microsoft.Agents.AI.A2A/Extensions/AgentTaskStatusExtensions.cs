@@ -26,7 +26,7 @@ internal static class AgentTaskStatusExtensions
 
         foreach (var part in status.Message.Parts)
         {
-            (contents ??= []).Add(new A2AInputRequestContent(Guid.NewGuid().ToString(), part.ToAIContent())
+            (contents ??= []).Add(new A2AInputRequestContent(Guid.NewGuid().ToString("N"), part.ToAIContent())
             {
                 RawRepresentation = part,
                 AdditionalProperties = part.Metadata.ToAdditionalProperties(),
