@@ -27,6 +27,14 @@ def test_default_policy_allows_any_nonempty_command() -> None:
         assert _decide(policy, cmd).decision == "allow", cmd
 
 
+def test_default_policy_denies_empty_command() -> None:
+    policy = ShellPolicy()
+    for cmd in ("", "   ", "\t\n"):
+        decision = _decide(policy, cmd)
+        assert decision.decision == "deny"
+        assert decision.reason and "empty" in decision.reason
+
+
 def test_explicit_denylist_allows_benign_commands() -> None:
     policy = ShellPolicy(denylist=_RM_RF_PATTERNS)
     for cmd in ("ls -la", "echo hello", "git status", "python --version", "cat file.txt"):

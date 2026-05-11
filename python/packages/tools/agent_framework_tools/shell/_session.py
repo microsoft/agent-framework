@@ -364,11 +364,16 @@ class ShellSession:
                 " }"
                 " }\n"
             )
-        # POSIX shell. Run the user command in a group to capture its exit
-        # status, then print the sentinel on a line of its own. ``errexit``
-        # is disabled around the trailer so a prior ``set -e`` in the user
-        # command cannot skip the sentinel print.
-        return f"{{ {command}\n}}; __af_rc=$?; set +e; printf '\\n{sentinel}_%s\\n' \"$__af_rc\"\n"
+        # POSIX shell. Run the user command in a brace-group so its exit
+        # status is captured even if the user previously enabled ``set -e``
+        # — we save and restore the prior errexit state around the trailer
+        # so ``set -e`` (and other shell options) persist across commands
+        # exactly as the user configured them.
+        return (
+            f"__af_e=$-; set +e; {{ {command}\n}}; __af_rc=$?;"
+            f' case "$__af_e" in *e*) set -e;; esac;'
+            f" printf '\\n{sentinel}_%s\\n' \"$__af_rc\"\n"
+        )
 
     async def _write_raw(self, text: str) -> None:
         if self._proc is None or self._proc.stdin is None:

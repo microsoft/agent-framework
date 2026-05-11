@@ -97,8 +97,15 @@ class ShellPolicy:
         self._allows = _compile_patterns(self.allowlist) if self.allowlist is not None else None
 
     def evaluate(self, request: ShellRequest) -> ShellDecision:
-        """Return an allow/deny decision for ``request``."""
+        """Return an allow/deny decision for ``request``.
+
+        Empty/whitespace-only commands are denied (there is nothing to
+        run). With default settings (no denylist, no allowlist) every
+        non-empty command is allowed.
+        """
         command = request.command.strip()
+        if not command:
+            return ShellDecision("deny", "command is empty")
         for pat in self._denies:
             if pat.search(command):
                 return ShellDecision("deny", f"matches denylist pattern: {pat.pattern}")

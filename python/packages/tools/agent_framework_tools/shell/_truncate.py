@@ -14,8 +14,14 @@ def truncate_head_tail(data: bytes, cap: int) -> tuple[str, bool]:
 
     Returns the joined (head, marker, tail) string and a boolean indicating
     whether truncation occurred.
+
+    Raises ``ValueError`` if ``cap`` is not positive — a non-positive
+    cap has no consistent meaning here and silently treating it as
+    "unlimited" would defeat output-capping assumptions in callers.
     """
-    if cap <= 0 or len(data) <= cap:
+    if cap <= 0:
+        raise ValueError(f"cap must be positive; got {cap}")
+    if len(data) <= cap:
         return data.decode("utf-8", errors="replace"), False
     head_cap = cap // 2
     tail_cap = cap - head_cap

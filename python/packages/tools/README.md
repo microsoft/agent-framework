@@ -56,11 +56,13 @@ Defenses (in priority order):
   processes (`make`, watchers, network tools) cannot survive the timeout.
 - **Output truncation** to 64 KiB (head + tail with marker).
 - **Audit hook** (`on_command=…`) for SIEM / append-only logs.
-- **Best-effort policy denylist** (`rm -rf /`, `mkfs`, `dd if=`, fork
-  bombs, `curl … | sh`, …). This is a guardrail, **not a boundary** —
-  trivial bypasses include `\rm -rf /`, `${RM:=rm} -rf /`,
-  `python -c "…"`, `eval $(echo … | base64 -d)`, `find / -delete`, and
-  PowerShell-native `Remove-Item -Recurse -Force`. See
+- **Optional command-pattern filter** via `ShellPolicy(denylist=[...],
+  allowlist=[...])`. **Empty by default.** This is a UX pre-filter, not a
+  security boundary — operators are expected to supply patterns that
+  match their workload (and they can be defeated by trivial obfuscation
+  such as `\rm -rf /`, `${RM:=rm} -rf /`, `python -c "…"`, encoded
+  payloads, or PowerShell-native equivalents). Real isolation comes from
+  approval gating and the sandbox tier (`DockerShellTool`). See
   `tests/test_security.py` for the documented residual risk surface.
 
 Override with `ShellPolicy`:

@@ -267,7 +267,7 @@ class LocalShellTool:
             try:
                 result = await self.run(command)
             except ShellCommandError as exc:
-                return f"Command blocked by policy: {exc}"
+                return str(exc)
             return result.format_for_model()
 
         _run_shell.__doc__ = description or _DEFAULT_DESCRIPTION

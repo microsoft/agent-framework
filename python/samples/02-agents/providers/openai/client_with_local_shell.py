@@ -16,8 +16,9 @@ OpenAI Chat Client with Local Shell Tool Example
 
 This sample uses ``LocalShellTool`` from ``agent-framework-tools`` — the
 framework-supplied cross-OS shell executor with safe defaults (approval
-required, deny-list of destructive commands, timeout, output truncation,
-workdir confinement).
+required, timeout, output truncation, workdir confinement). Operators
+can additionally supply a ``ShellPolicy`` with allow/deny patterns as a
+UX pre-filter; the tool ships with no default deny patterns.
 
 Currently not all models support the shell tool. Refer to the OpenAI
 documentation for the list of supported models:

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from agent_framework_tools.shell._tool import _quote_posix, _quote_powershell
 from agent_framework_tools.shell._truncate import truncate_head_tail, truncate_text_head_tail
 
@@ -44,6 +46,16 @@ def test_truncate_text_uses_utf8_byte_budget() -> None:
     out, trunc = truncate_text_head_tail(text, 20)
     assert trunc is True
     assert "truncated 20 bytes" in out
+
+
+def test_truncate_zero_cap_raises() -> None:
+    with pytest.raises(ValueError):
+        truncate_head_tail(b"abc", 0)
+
+
+def test_truncate_negative_cap_raises() -> None:
+    with pytest.raises(ValueError):
+        truncate_head_tail(b"abc", -1)
 
 
 def test_quote_posix_blocks_dollar_expansion() -> None:
