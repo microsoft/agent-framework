@@ -461,7 +461,7 @@ public sealed class A2AAgent : AIAgent
             Role = ChatRole.Assistant,
             FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
             AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
-            Contents = statusUpdateEvent.Status.GetUserInputRequests() ?? []
+            Contents = statusUpdateEvent.Status.GetUserInputRequests(),
         };
     }
 
