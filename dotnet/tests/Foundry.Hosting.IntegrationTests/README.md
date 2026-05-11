@@ -38,6 +38,8 @@ etc.).
 | `AZURE_AI_PROJECT_ENDPOINT` | Foundry project | Where to provision the agent. Must be in a region that has the Hosted Agents preview enabled (e.g. East US 2). |
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Foundry project | Model the agent uses. Defaults to `gpt-4o` inside the container. |
 | `IT_HOSTED_AGENT_IMAGE` | `scripts/it-build-image.ps1` | ACR image reference the agent points at. |
+| `AZURE_SEARCH_ENDPOINT` | Pre-provisioned Azure AI Search service | Endpoint for the `azure-search-rag` scenario. The index it points at must already exist with the schema and content described under **Azure AI Search index prerequisite** below. |
+| `AZURE_SEARCH_INDEX_NAME` | Pre-provisioned Azure AI Search service | Name of the pre-seeded index for the `azure-search-rag` scenario. |
 
 ## One-time bootstrap (per Foundry project)
 
@@ -56,6 +58,58 @@ manages versions under those existing agents, so the role grants survive across 
 The script is idempotent. It requires Owner or User Access Administrator on the project
 scope (RBAC writes). Wait ~3 minutes after first-time grants for AAD propagation before
 running the tests.
+
+### Per-scenario data-plane RBAC (manual, one time per agent)
+
+The bootstrap script grants only `Azure AI User` on the Foundry project scope, which is what
+every hosted agent needs to receive inbound inference traffic. Scenarios that read from
+external data services need an additional grant on that service to the agent's managed
+identity. Today only the `azure-search-rag` scenario falls into this category.
+
+For `it-azure-search-rag`, after the first bootstrap run, grant `Search Index Data Reader`
+on the Azure AI Search service to the agent's managed identity:
+
+```powershell
+# 1. Get the agent MI principal id
+$tok = az account get-access-token --resource "https://ai.azure.com" --query accessToken -o tsv
+$agent = Invoke-RestMethod `
+    -Headers @{Authorization="Bearer $tok"; "Foundry-Features"="HostedAgents=V1Preview"} `
+    -Uri "<project-endpoint>/agents/it-azure-search-rag?api-version=v1"
+$mi = $agent.versions.latest.instance_identity.principal_id
+
+# 2. Grant Search Index Data Reader on the search service
+az role assignment create `
+    --assignee-object-id $mi `
+    --assignee-principal-type ServicePrincipal `
+    --role "Search Index Data Reader" `
+    --scope "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Search/searchServices/<search-service>"
+```
+
+Wait ~3 minutes after the grant for RBAC propagation before running the tests.
+
+If the search service has `authOptions = apiKeyOnly` (default for older deployments), Entra
+auth will return 403 regardless of role assignments. Flip it to `aadOrApiKey` first:
+
+```powershell
+az search service update -g <rg> -n <search-service> --auth-options aadOrApiKey --aad-auth-failure-mode http403
+```
+
+### Azure AI Search index prerequisite (one time, out of band)
+
+The `azure-search-rag` scenario assumes the index pointed at by `AZURE_SEARCH_INDEX_NAME` already
+exists with the schema and Contoso Outdoors content the test asserts against. See
+`dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-AzureSearchRag/README.md` for
+the schema and copy-pasteable provisioning snippet. Provisioning the index from your user
+identity needs `Search Index Data Contributor` on the search service scope. The search service
+itself is treated as pre-existing infrastructure shared with `python-sample-validation.yml`;
+no automated provisioning script ships in this repository.
+
+### Required user/SP roles for delegating data-plane grants
+
+To self-serve the `Search Index Data Reader` grant above, you need `User Access Administrator`
+(or `Owner`) on the search service scope. To create/seed the index from your own identity, you
+need `Search Index Data Contributor`. These are typically granted once per onboarded engineer
+and reused for every new IT scenario that needs Search.
 
 ## Building and pushing the test container image
 
@@ -115,6 +169,8 @@ container, the test fixture, or their tooling changed:
 | `IT_HOSTED_AGENT_PROJECT_ENDPOINT` | `AZURE_AI_PROJECT_ENDPOINT` |
 | `IT_HOSTED_AGENT_MODEL_DEPLOYMENT_NAME` | `AZURE_AI_MODEL_DEPLOYMENT_NAME` |
 | `IT_HOSTED_AGENT_REGISTRY` | (consumed by `it-build-image.ps1`; not passed to tests) |
+| `secrets.AZURE_SEARCH_ENDPOINT` | `AZURE_SEARCH_ENDPOINT` (shared with `python-sample-validation.yml`) |
+| `secrets.AZURE_SEARCH_INDEX_NAME` | `AZURE_SEARCH_INDEX_NAME` (shared with `python-sample-validation.yml`) |
 
 Like all integration tests in this workflow, the steps run only on `push` and merge-queue
 events, never on plain `pull_request`. The path-filter list lives in the `paths-filter`
@@ -124,6 +180,10 @@ must stay in sync with `$hashedDirs` in `scripts/it-build-image.ps1`.
 The CI service principal that backs `secrets.AZURE_CLIENT_ID` needs:
 - `Azure AI User` on the hosted-agents Foundry project (to add/delete agent versions).
 - `AcrPush` on the registry referenced by `IT_HOSTED_AGENT_REGISTRY` (to push the image).
+
+The Azure AI Search index referenced by `secrets.AZURE_SEARCH_ENDPOINT` and
+`secrets.AZURE_SEARCH_INDEX_NAME` is provisioned out of band (shared with
+`python-sample-validation.yml`); CI does not need write access to the search service.
 
 The bootstrap script (and one-time `AcrPull` grants for the Foundry project's MIs) is a
 human-only operation; CI only adds and deletes versions under existing agents.
@@ -138,6 +198,7 @@ human-only operation; CI only adds and deletes versions under existing agents.
 | `ToolboxHostedAgentFixture` | `toolbox` | `it-toolbox` | Server registered toolbox tool callable; client side additions visible (placeholder). |
 | `McpToolboxHostedAgentFixture` | `mcp-toolbox` | `it-mcp-toolbox` | MCP backed tool invocation against `https://learn.microsoft.com/api/mcp` (placeholder). |
 | `CustomStorageHostedAgentFixture` | `custom-storage` | `it-custom-storage` | Round trip with custom `IResponsesStorageProvider`; multi turn reads from the custom store (placeholder). |
+| `AzureSearchRagHostedAgentFixture` | `azure-search-rag` | `it-azure-search-rag` | RAG against a real Azure AI Search index seeded with Contoso Outdoors documents; verifies the model cites the retrieved sources. |
 | `SessionFilesHostedAgentFixture` | `session-files` | `it-session-files` | End-to-end: upload via `AgentSessionFiles` (alpha) into a pinned `agent_session_id`, invoke the agent, assert it reads the file via the container's `ReadFile` tool. |
 
 The placeholder scenarios will be wired up in the test container `Program.cs` once the

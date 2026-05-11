@@ -60,6 +60,7 @@ jobs:
               - 'dotnet/src/Microsoft.Agents.AI.Workflows/**'
               - 'dotnet/tests/Foundry.Hosting.IntegrationTests/**'
               - 'dotnet/tests/Foundry.Hosting.IntegrationTests.TestContainer/**'
+              - 'dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-AzureSearchRag/**'
               - 'dotnet/Directory.Packages.props'
               - 'dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/it-build-image.ps1'
               - '.github/workflows/dotnet-build-and-test.yml'
@@ -407,6 +408,12 @@ jobs:
         env:
           AZURE_AI_PROJECT_ENDPOINT: ${{ vars.IT_HOSTED_AGENT_PROJECT_ENDPOINT }}
           AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.IT_HOSTED_AGENT_MODEL_DEPLOYMENT_NAME }}
+          # Azure AI Search (for the azure-search-rag scenario). Reuses the integration
+          # environment secrets shared with python-sample-validation.yml. The index is
+          # provisioned out of band; see dotnet/tests/Foundry.Hosting.IntegrationTests/README.md
+          # for the required schema and seed content.
+          AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
+          AZURE_SEARCH_INDEX_NAME: ${{ secrets.AZURE_SEARCH_INDEX_NAME }}
           # IT_HOSTED_AGENT_IMAGE was exported into $GITHUB_ENV by the previous step.
 
   # This final job is required to satisfy the merge queue. It must only run (or succeed) if no tests failed

@@ -1,8 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ComponentModel;
+using Azure;
 using Azure.AI.Projects;
 using Azure.Identity;
+using Azure.Search.Documents;
+using Azure.Search.Documents.Models;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
@@ -32,6 +35,7 @@ AIAgent agent = scenario switch
     "toolbox" => CreateToolboxAgent(projectClient, deployment),
     "mcp-toolbox" => CreateMcpToolboxAgent(projectClient, deployment),
     "custom-storage" => CreateCustomStorageAgent(projectClient, deployment),
+    "azure-search-rag" => CreateAzureSearchRagAgent(projectClient, deployment),
     "session-files" => CreateSessionFilesAgent(projectClient, deployment),
     _ => throw new InvalidOperationException($"Unknown IT_SCENARIO '{scenario}'.")
 };
@@ -107,6 +111,62 @@ static AIAgent CreateCustomStorageAgent(AIProjectClient client, string deploymen
         name: "custom-storage-agent",
         description: "Custom storage test agent (placeholder).");
 
+static AIAgent CreateAzureSearchRagAgent(AIProjectClient client, string deployment)
+{
+    // The fixture (AzureSearchRagHostedAgentFixture) injects AZURE_SEARCH_ENDPOINT and
+    // AZURE_SEARCH_INDEX_NAME into the hosted agent definition. The index is provisioned
+    // out of band (see dotnet/tests/Foundry.Hosting.IntegrationTests/README.md for the
+    // required schema and seed content); the container only needs read access. The
+    // agent's managed identity must hold 'Search Index Data Reader' on the search service
+    // scope.
+    var searchEndpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT")
+        ?? throw new InvalidOperationException("AZURE_SEARCH_ENDPOINT is not set for IT_SCENARIO=azure-search-rag."));
+    var indexName = Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX_NAME")
+        ?? throw new InvalidOperationException("AZURE_SEARCH_INDEX_NAME is not set for IT_SCENARIO=azure-search-rag.");
+
+    var searchClient = new SearchClient(searchEndpoint, indexName, new DefaultAzureCredential());
+
+    var options = new TextSearchProviderOptions
+    {
+        SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
+        RecentMessageMemoryLimit = 6,
+    };
+
+    return client.AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = "azure-search-rag-agent",
+        ChatOptions = new ChatOptions
+        {
+            ModelId = deployment,
+            Instructions = "You are a helpful support specialist for Contoso Outdoors. " +
+                           "Answer questions using the provided context and cite the source document when available.",
+        },
+        AIContextProviders = [new TextSearchProvider(CreateAzureSearchAdapter(searchClient), options)]
+    });
+}
+
+static Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextSearchResult>>>
+    CreateAzureSearchAdapter(SearchClient client, int top = 3) =>
+    async (query, cancellationToken) =>
+    {
+        var searchOptions = new SearchOptions { Size = top };
+        Response<SearchResults<SearchDocument>> response =
+            await client.SearchAsync<SearchDocument>(query, searchOptions, cancellationToken).ConfigureAwait(false);
+
+        var results = new List<TextSearchProvider.TextSearchResult>();
+        await foreach (SearchResult<SearchDocument> hit in response.Value.GetResultsAsync().WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            results.Add(new TextSearchProvider.TextSearchResult
+            {
+                SourceName = hit.Document.TryGetValue("sourceName", out var name) ? name?.ToString() ?? string.Empty : string.Empty,
+                SourceLink = hit.Document.TryGetValue("sourceLink", out var link) ? link?.ToString() ?? string.Empty : string.Empty,
+                Text = hit.Document.TryGetValue("content", out var content) ? content?.ToString() ?? string.Empty : string.Empty,
+                RawRepresentation = hit
+            });
+        }
+
+        return results;
+    };
 // session-files scenario: agent reads files from $HOME inside the per-session sandbox volume.
 // Mirrors the dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Files sample.
 static AIAgent CreateSessionFilesAgent(AIProjectClient client, string deployment) =>

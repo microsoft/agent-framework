@@ -20,6 +20,13 @@
   Container image reference for the placeholder version (e.g. <acr>.azurecr.io/foundry-hosting-it:<tag>).
   Use the value emitted by scripts/it-build-image.ps1.
 
+.NOTES
+  Per-scenario data-plane RBAC (e.g. `Search Index Data Reader` on the Azure AI Search service
+  for the `azure-search-rag` scenario) is intentionally NOT performed by this script. Search,
+  Cosmos, and other backing services are treated as pre-existing infrastructure. Grant the
+  scenario-specific data role to the agent's managed identity manually after the first run
+  (see dotnet/tests/Foundry.Hosting.IntegrationTests/README.md).
+
 .EXAMPLE
   ./it-bootstrap-agents.ps1 `
     -ProjectEndpoint "https://my-acct.services.ai.azure.com/api/projects/my-proj" `
@@ -39,6 +46,7 @@ $Scenarios = @(
     'toolbox',
     'mcp-toolbox',
     'custom-storage',
+    'azure-search-rag',
     'session-files'
 )
 
