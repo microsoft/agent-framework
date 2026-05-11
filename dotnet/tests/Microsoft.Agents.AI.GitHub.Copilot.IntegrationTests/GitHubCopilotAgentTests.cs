@@ -23,7 +23,7 @@ public class GitHubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig: new() { OnPermissionRequest = OnPermissionRequestAsync });
 
         // Act
         AgentResponse response = await agent.RunAsync("What is 2 + 2? Answer with just the number.");
@@ -41,7 +41,7 @@ public class GitHubCopilotAgentTests
         await using CopilotClient client = new(new CopilotClientOptions());
         await client.StartAsync();
 
-        await using GitHubCopilotAgent agent = new(client, sessionConfig: null);
+        await using GitHubCopilotAgent agent = new(client, sessionConfig: new() { OnPermissionRequest = OnPermissionRequestAsync });
 
         // Act
         List<AgentResponseUpdate> updates = [];
@@ -73,6 +73,7 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent = new(
             client,
+            OnPermissionRequestAsync,
             tools: [weatherTool],
             instructions: "You are a helpful weather agent. Use the GetWeather tool to answer weather questions.");
 
@@ -94,6 +95,7 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent = new(
             client,
+            OnPermissionRequestAsync,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
         AgentSession session = await agent.CreateSessionAsync();
@@ -121,6 +123,7 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent1 = new(
             client1,
+            OnPermissionRequestAsync,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
         AgentSession session1 = await agent1.CreateSessionAsync();
@@ -135,6 +138,7 @@ public class GitHubCopilotAgentTests
 
         await using GitHubCopilotAgent agent2 = new(
             client2,
+            OnPermissionRequestAsync,
             instructions: "You are a helpful assistant. Keep your answers short.");
 
         AgentSession session2 = await agent2.CreateSessionAsync(sessionId);

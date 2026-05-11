@@ -13,6 +13,8 @@ namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
 /// </summary>
 public sealed class GitHubCopilotAgentTests
 {
+    private static readonly PermissionRequestHandler s_testPermissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult { Kind = PermissionRequestResultKind.Approved });
+
     [Fact]
     public void Constructor_WithCopilotClient_InitializesPropertiesCorrectly()
     {
@@ -23,7 +25,7 @@ public sealed class GitHubCopilotAgentTests
         const string TestDescription = "test-description";
 
         // Act
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, name: TestName, description: TestDescription, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler, ownsClient: false, id: TestId, name: TestName, description: TestDescription);
 
         // Assert
         Assert.Equal(TestId, agent.Id);
@@ -35,7 +37,27 @@ public sealed class GitHubCopilotAgentTests
     public void Constructor_WithNullCopilotClient_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new GitHubCopilotAgent(copilotClient: null!, sessionConfig: null));
+        Assert.Throws<ArgumentNullException>(() => new GitHubCopilotAgent(copilotClient: null!, sessionConfig: new() { OnPermissionRequest = s_testPermissionHandler }));
+    }
+
+    [Fact]
+    public void Constructor_WithNullSessionConfig_ThrowsArgumentNullException()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new GitHubCopilotAgent(copilotClient, sessionConfig: null!));
+    }
+
+    [Fact]
+    public void Constructor_WithNullPermissionHandler_ThrowsArgumentNullException()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new GitHubCopilotAgent(copilotClient, onPermissionRequest: null!));
     }
 
     [Fact]
@@ -45,7 +67,7 @@ public sealed class GitHubCopilotAgentTests
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
 
         // Act
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler);
 
         // Assert
         Assert.NotNull(agent.Id);
@@ -59,7 +81,7 @@ public sealed class GitHubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler);
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -74,7 +96,7 @@ public sealed class GitHubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler);
         const string TestSessionId = "test-session-id";
 
         // Act
@@ -94,11 +116,31 @@ public sealed class GitHubCopilotAgentTests
         List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
-        var agent = new GitHubCopilotAgent(copilotClient, tools: tools);
+        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler, tools: tools);
 
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Id);
+    }
+
+    [Fact]
+    public void Constructor_WithSessionConfig_InitializesCorrectly()
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        var sessionConfig = new SessionConfig
+        {
+            OnPermissionRequest = s_testPermissionHandler,
+            Model = "gpt-4o",
+            GitHubToken = "per-session-token",
+        };
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig, id: "cfg-id", name: "Cfg Agent");
+
+        // Assert
+        Assert.Equal("cfg-id", agent.Id);
+        Assert.Equal("Cfg Agent", agent.Name);
     }
 
     [Fact]
@@ -129,6 +171,7 @@ public sealed class GitHubCopilotAgentTests
             OnUserInputRequest = userInputHandler,
             McpServers = mcpServers,
             DisabledSkills = ["skill1"],
+            GitHubToken = "test-token",
         };
 
         // Act
@@ -149,6 +192,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal("test-token", result.GitHubToken);
         Assert.True(result.Streaming);
     }
 
@@ -180,6 +224,7 @@ public sealed class GitHubCopilotAgentTests
             OnUserInputRequest = userInputHandler,
             McpServers = mcpServers,
             DisabledSkills = ["skill1"],
+            GitHubToken = "test-token",
         };
 
         // Act
@@ -200,6 +245,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal("test-token", result.GitHubToken);
         Assert.True(result.Streaming);
     }
 
@@ -235,7 +281,7 @@ public sealed class GitHubCopilotAgentTests
         };
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
         const string TestId = "agent-id";
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
+        var agent = new GitHubCopilotAgent(copilotClient, s_testPermissionHandler, id: TestId);
         AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage);
 
         // result.Text need to be empty because the content was already delivered via delta events, and we want to avoid emitting duplicate content in the response update.
