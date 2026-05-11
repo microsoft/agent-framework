@@ -93,13 +93,13 @@ public sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         A2AAgentSession typedSession = await this.GetA2ASessionAsync(session, options, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
-        if (GetContinuationToken(messages, options) is { } token)
+        if (GetContinuationToken(inputMessages, options) is { } token)
         {
             AgentTask agentTask = await this._a2aClient.GetTaskAsync(new GetTaskRequest { Id = token.TaskId }, cancellationToken).ConfigureAwait(false);
 
@@ -112,7 +112,7 @@ public sealed class A2AAgent : AIAgent
 
         SendMessageRequest sendParams = new()
         {
-            Message = CreateA2AMessage(typedSession, messages),
+            Message = CreateA2AMessage(typedSession, inputMessages),
             Metadata = options?.AdditionalProperties?.ToA2AMetadata(),
             Configuration = new SendMessageConfiguration { ReturnImmediately = options?.AllowBackgroundResponses is true }
         };
@@ -145,7 +145,7 @@ public sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         A2AAgentSession typedSession = await this.GetA2ASessionAsync(session, options, cancellationToken).ConfigureAwait(false);
 
@@ -153,7 +153,7 @@ public sealed class A2AAgent : AIAgent
 
         ConfiguredCancelableAsyncEnumerable<StreamResponse> streamEvents;
 
-        if (GetContinuationToken(messages, options) is { } token)
+        if (GetContinuationToken(inputMessages, options) is { } token)
         {
             streamEvents = this.SubscribeToTaskWithFallbackAsync(token.TaskId, cancellationToken).ConfigureAwait(false);
         }
@@ -161,7 +161,7 @@ public sealed class A2AAgent : AIAgent
         {
             SendMessageRequest sendParams = new()
             {
-                Message = CreateA2AMessage(typedSession, messages),
+                Message = CreateA2AMessage(typedSession, inputMessages),
                 Metadata = options?.AdditionalProperties?.ToA2AMetadata()
             };
 
@@ -337,7 +337,7 @@ public sealed class A2AAgent : AIAgent
         session.TaskId = taskId;
     }
 
-    private static Message CreateA2AMessage(A2AAgentSession typedSession, IEnumerable<ChatMessage> messages)
+    private static Message CreateA2AMessage(A2AAgentSession typedSession, IReadOnlyCollection<ChatMessage> messages)
     {
         var a2aMessage = messages.ToA2AMessage();
 
@@ -347,9 +347,6 @@ public sealed class A2AAgent : AIAgent
 
         if (messages.Any(m => m.Contents.Any(c => c is A2AInputResponseContent)))
         {
-            // If the message contains a response to a user input request,
-            // link it to the existing task, so it will be treated as a response
-            // to the user input request for that task.
             a2aMessage.TaskId = typedSession.TaskId;
         }
         else
