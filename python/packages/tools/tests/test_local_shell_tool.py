@@ -34,7 +34,12 @@ async def test_stateless_timeout_kills_long_command() -> None:
 
 
 async def test_policy_denies_before_execution() -> None:
-    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+    tool = LocalShellTool(
+        mode="stateless",
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        policy=ShellPolicy(denylist=[r"\brm\s+(?:-[a-zA-Z]*[rf][a-zA-Z]*\s+)+(?:/|~|\*)"]),
+    )
     with pytest.raises(ShellCommandError):
         await tool.run("rm -rf /")
 

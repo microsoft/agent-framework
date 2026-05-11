@@ -12,7 +12,7 @@ protocol.
 from __future__ import annotations
 
 import asyncio
-import subprocess  # noqa: S404  (executing user shell commands is the whole point)
+import subprocess  # noqa: S404  # nosec B404 - executing user shell commands is the whole point
 import sys
 import time
 from collections.abc import Mapping, Sequence

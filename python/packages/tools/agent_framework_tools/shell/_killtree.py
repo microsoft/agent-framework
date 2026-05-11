@@ -66,7 +66,8 @@ async def _kill_via_psutil(
     *,
     grace: float,
 ) -> None:
-    assert psutil is not None
+    if psutil is None:
+        raise RuntimeError("_kill_via_psutil called without psutil available")
     try:
         parent = psutil.Process(proc.pid)
     except psutil.NoSuchProcess:

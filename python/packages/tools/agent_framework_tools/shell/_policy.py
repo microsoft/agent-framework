@@ -1,23 +1,37 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-r"""Policy model for :class:`LocalShellTool`.
+r"""Policy model for :class:`LocalShellTool` and :class:`DockerShellTool`.
 
 ``ShellPolicy`` is evaluated *before* approval and *before* execution. It
 lets callers define allow/deny rules and an optional final custom callback.
 
 .. warning::
-   **Not a security boundary.** The denylist regexes stop accidents and
-   crude prompt-injection attempts, not adversaries. Trivial bypasses
-   include backslash insertion (``r''m -rf /``), variable expansion
-   (``${RM:=rm} -rf /``), interpreter escape hatches
-   (``python -c "import os; os.system('rm -rf /')"``), base64-encoded
-   payloads (``eval $(printf … | base64 -d)``), and absolute paths
-   (``/usr/bin/rm`` matches ``\\brm\\b`` but not all anchored patterns).
+   **Not a security boundary; not even a security feature.** ``ShellPolicy``
+   is a UX pre-filter: it gives operators a way to surface a friendly error
+   for site-specific patterns (e.g. "we don't run ``ssh`` from this agent",
+   "block our prod hostname") before approval and before execution. It is
+   **not** a defense against a malicious model or prompt-injected input.
+   Regex matching on the command spelling cannot see what the shell will
+   actually execute after expansion. Trivial bypasses include backslash
+   insertion (``r''m -rf /``), variable expansion (``${RM:=rm} -rf /``),
+   interpreter escape hatches (``python -c "import os; os.system('rm -rf /')"``),
+   base64 / hex / printf smuggling (``eval $(printf '\\x72\\x6d -rf /')``),
+   command substitution (``$(base64 -d <<<...)``), envvar splicing
+   (``$(A=r B=m; echo $A$B) -rf /``), and absolute paths
+   (``/usr/bin/rm`` matches ``\\brm\\b`` only when the pattern is loose).
+
+   **No default patterns.** ``ShellPolicy()`` constructs an empty deny-list.
+   The framework deliberately ships no built-in patterns so it does not
+   give a false impression of safety. Survey of competing agent frameworks
+   (LangChain, AutoGen, OpenAI Agents SDK, Claude Code, Goose, Continue.dev,
+   OpenHands, Open Interpreter, Aider, smolagents, LangGraph) found that
+   none use regex matching as a primary security control; AutoGen v2
+   explicitly removed their built-in deny-list.
 
    The actual security boundary is **(a) approval-in-the-loop** (default
    ``approval_mode="always_require"``) and **(b) operator trust / sandbox
-   tier**. For untrusted input use ``HyperlightCodeActProvider`` (microVM)
-   or run the agent inside a container.
+   tier**. For untrusted input use ``DockerShellTool`` or
+   ``HyperlightCodeActProvider`` (microVM); pair either with approval gating.
 """
 
 from __future__ import annotations
@@ -46,38 +60,6 @@ class ShellDecision:
     reason: str = ""
 
 
-# Default denylist. Matches a conservative set of destructive commands seen in
-# real-world prompt-injection corpora and competitor tool docs. The patterns
-# are anchored loosely so that obviously equivalent variants (extra spaces,
-# leading ``sudo``) are still rejected.
-DEFAULT_DENYLIST: tuple[str, ...] = (
-    # Recursive / force deletes at dangerous roots
-    r"\brm\s+(?:-[a-zA-Z]*[rf][a-zA-Z]*\s+)+(?:/|~|\*)",
-    r"\brmdir\s+/s",
-    r"\bdel\s+/[fs]",
-    # Filesystem wipes
-    r"\bmkfs\b",
-    r"\bdd\s+if=[^\s]+\s+of=/dev/",
-    r">\s*/dev/sd[a-z]",
-    r"\bformat\s+[a-zA-Z]:",
-    # Power / init control
-    r"\bshutdown\b",
-    r"\breboot\b",
-    r"\bhalt\b",
-    r"\bpoweroff\b",
-    r"\binit\s+[06]\b",
-    # Fork bomb
-    r":\(\)\s*\{\s*:\|:&\s*\}\s*;\s*:",
-    # Curl / wget piped straight to a shell
-    r"\b(?:curl|wget)\s+[^\n|;]*\|\s*(?:sh|bash|zsh|pwsh|powershell)\b",
-    # Windows registry deletes
-    r"\breg\s+delete\b",
-    # Chowning / chmodding the world
-    r"\bchmod\s+-R\s+777\s+/",
-    r"\bchown\s+-R\s+[^\s]+\s+/",
-)
-
-
 def _compile_patterns(patterns: Sequence[PatternLike]) -> tuple[re.Pattern[str], ...]:
     compiled: list[re.Pattern[str]] = []
     for pat in patterns:
@@ -99,9 +81,14 @@ class ShellPolicy:
     4. Otherwise the command is **allowed**.
 
     All regex patterns are compiled case-insensitively.
+
+    Defaults are empty: ``ShellPolicy()`` allows every non-empty command.
+    Supply ``denylist`` and/or ``allowlist`` explicitly to enable filtering.
+    See the module docstring for why the framework does not ship default
+    deny patterns.
     """
 
-    denylist: Sequence[PatternLike] = field(default_factory=lambda: list(DEFAULT_DENYLIST))
+    denylist: Sequence[PatternLike] = field(default_factory=tuple)
     allowlist: Sequence[PatternLike] | None = None
     custom: Callable[[ShellRequest], ShellDecision | None] | None = None
 

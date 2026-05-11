@@ -20,7 +20,7 @@ from ._environment import (
     default_instructions_formatter,
 )
 from ._executor_base import ShellExecutor
-from ._policy import DEFAULT_DENYLIST, ShellDecision, ShellPolicy, ShellRequest
+from ._policy import ShellDecision, ShellPolicy, ShellRequest
 from ._tool import LocalShellTool
 from ._types import (
     ShellCommandError,
@@ -31,7 +31,6 @@ from ._types import (
 )
 
 __all__ = [
-    "DEFAULT_DENYLIST",
     "DOCKER_DEFAULT_IMAGE",
     "DockerNotAvailableError",
     "DockerShellTool",

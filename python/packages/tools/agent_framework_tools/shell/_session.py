@@ -8,6 +8,16 @@ probe** that reports the exit status. Reading stdout until the sentinel
 appears gives a reliable command boundary without relying on job control
 or PTYs, which keeps the same code path working on bash, sh, and pwsh.
 
+**Single-owner contract.** A :class:`ShellSession` is owned by exactly one
+conversation / agent session — i.e. one user. The backing shell process
+carries mutable state (cwd, exported variables, history, background jobs)
+that every subsequent command can observe, and the internal
+``asyncio.Lock`` serializes every call onto the single stdin/stdout pipe.
+There is no per-caller isolation. The enclosing shell tool must not share
+a single session across users, tenants, or concurrent conversations; it
+must create one session per agent session and close it when the session
+ends.
+
 Notes:
 * ``pwsh -NoProfile -NoLogo -NonInteractive -Command -`` waits for a
   complete parse before executing, so multi-line ``try`` blocks stall
@@ -70,7 +80,12 @@ class ShellSession:
         self._env = dict(env) if env is not None else None
         self._max_output_bytes = max_output_bytes
         self._proc: asyncio.subprocess.Process | None = None
-        # Serialises per-command execution.
+        # Serialises per-command execution onto the single stdin/stdout
+        # pipe. This is an ordering primitive within one owning session;
+        # it is NOT a multi-tenant isolation mechanism. ShellSession is
+        # single-owner — see the module docstring. The lock just
+        # guarantees concurrent calls from the one owner queue cleanly
+        # instead of interleaving on the pipe.
         self._run_lock = asyncio.Lock()
         # Serialises start/close so concurrent first-callers don't spawn
         # multiple subprocesses.
@@ -96,7 +111,7 @@ class ShellSession:
                 return
             popen_kwargs: dict[str, object] = {}
             if sys.platform == "win32":
-                import subprocess  # noqa: S404
+                import subprocess  # noqa: S404  # nosec B404 - Win32 constants only
 
                 popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
             else:
@@ -118,7 +133,8 @@ class ShellSession:
             self._stdout_event = asyncio.Event()
             self._stdout_closed = False
 
-            assert self._proc.stdout is not None and self._proc.stderr is not None
+            if self._proc.stdout is None or self._proc.stderr is None:
+                raise RuntimeError("subprocess pipes were not created; stdout/stderr unavailable")
             self._stdout_reader = asyncio.create_task(self._reader(self._proc.stdout, self._stdout_buf, is_stdout=True))
             self._stderr_reader = asyncio.create_task(
                 self._reader(self._proc.stderr, self._stderr_buf, is_stdout=False)
@@ -152,7 +168,7 @@ class ShellSession:
                     await asyncio.wait_for(proc.wait(), timeout=_SHUTDOWN_GRACE)
                 except asyncio.TimeoutError:
                     await kill_process_tree(proc, grace=_SHUTDOWN_GRACE)
-            except Exception:
+            except Exception:  # nosec B110 - best-effort shutdown; falls through to forced kill in finally
                 pass
             finally:
                 await self._cancel_readers()
@@ -189,7 +205,8 @@ class ShellSession:
             return await self._run_locked(command, timeout=timeout)
 
     async def _run_locked(self, command: str, *, timeout: float | None) -> ShellResult:
-        assert self._proc is not None and self._proc.stdin is not None
+        if self._proc is None or self._proc.stdin is None:
+            raise RuntimeError("ShellSession is not running; call start() first")
 
         sentinel = f"__AF_END_{self._sentinel_tag}_{secrets.token_hex(4)}__"
         script = self._build_script(command, sentinel)

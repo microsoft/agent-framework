@@ -23,6 +23,20 @@ Persistent mode reuses :class:`ShellSession` by launching
 ``docker exec -i <container> bash`` as the long-lived shell — the
 sentinel protocol works unchanged because the session is still talking
 to a bash REPL over pipes.
+
+**Single-session ownership.** In persistent mode a
+:class:`DockerShellTool` owns a long-lived container plus the bash REPL
+inside it. The container's filesystem, environment, working directory,
+and any artifacts the agent has produced are visible to every subsequent
+command, and a single stdin/stdout pipe serializes every call. A
+persistent-mode tool is therefore intended to be owned by exactly one
+conversation / agent session — i.e. one user. Do not share one instance
+across users, tenants, or concurrent conversations: their state leaks
+together inside the container and commands queue behind each other.
+Create one tool per session and close it (or use ``async with``) when
+the session ends; closing stops and removes the container. If a shared
+instance is genuinely required, use ``mode="stateless"`` so each call
+gets its own throwaway ``docker run --rm``.
 """
 
 from __future__ import annotations
@@ -32,7 +46,7 @@ import logging
 import os
 import secrets
 import shutil
-import subprocess  # noqa: S404
+import subprocess  # noqa: S404  # nosec B404 - running shell commands is the whole point of this tool
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
@@ -65,7 +79,7 @@ def is_docker_available(binary: str = "docker") -> bool:
     if shutil.which(binary) is None:
         return False
     try:
-        out = subprocess.run(  # noqa: S603
+        out = subprocess.run(  # noqa: S603  # nosec B603 - argv is built from trusted binary name
             [binary, "version", "--format", "{{.Server.Version}}"],
             capture_output=True,
             timeout=5.0,
@@ -122,7 +136,7 @@ def build_run_argv(
         "--security-opt",
         "no-new-privileges",
         "--tmpfs",
-        "/tmp:rw,nosuid,nodev,size=64m",  # noqa: S108,
+        "/tmp:rw,nosuid,nodev,size=64m",  # noqa: S108,  # nosec B108 - tmpfs inside the container, not on the host
         "--workdir",
         workdir,
     ]
@@ -178,6 +192,16 @@ _DEFAULT_DESCRIPTION = (
 class DockerShellTool:
     """Shell tool that runs commands inside a Docker (or compatible) container.
 
+    **Single-session ownership.** In persistent mode this tool owns a
+    long-lived container plus the bash REPL inside it; it is intended to
+    be owned by a single conversation / agent session — i.e. one user.
+    Do not share one instance across users, tenants, or concurrent
+    conversations: state leaks together inside the container and commands
+    queue behind each other. Create one tool per session and close it
+    (or use ``async with``) when the session ends. If a shared instance
+    is genuinely required, use ``mode="stateless"``. See the module
+    docstring for more.
+
     Args:
         image: OCI image to run. Defaults to a small Microsoft-maintained
             base image. Override with anything that includes ``bash`` and
@@ -202,8 +226,9 @@ class DockerShellTool:
             passed via ``-e`` and apply to every command.
         policy: Optional :class:`ShellPolicy`. Less critical than for
             ``LocalShellTool`` since the container is the intended
-            isolation layer, but useful as a guardrail (and for audit
-            logging).
+            isolation layer, but useful as a UX pre-filter (and for audit
+            logging). Defaults to an empty policy; supply patterns
+            explicitly to enable filtering.
         timeout: Per-command timeout in seconds.
         max_output_bytes: Combined stdout/stderr byte cap before truncation.
         approval_mode: Controls the FunctionTool approval gate. Unlike
@@ -294,7 +319,7 @@ class DockerShellTool:
                 binary=self._binary,
                 container_name=self._container_name,
                 interactive=True,
-                shell=self._shell,
+                shell=self._shell,  # nosec B604 - 'shell' is the binary name kwarg, not subprocess shell=True
             )
             self._session = ShellSession(
                 argv,
@@ -342,7 +367,8 @@ class DockerShellTool:
         if self._mode == "persistent":
             if self._session is None:
                 await self.start()
-            assert self._session is not None
+            if self._session is None:
+                raise RuntimeError("DockerShellTool session failed to start")
             return await self._session.run(command, timeout=self._timeout)
 
         return await self._run_stateless(command)
@@ -372,7 +398,7 @@ class DockerShellTool:
             "--security-opt",
             "no-new-privileges",
             "--tmpfs",
-            "/tmp:rw,nosuid,nodev,size=64m",  # noqa: S108,
+            "/tmp:rw,nosuid,nodev,size=64m",  # noqa: S108,  # nosec B108 - tmpfs inside the container, not on the host
             "--workdir",
             self._workdir,
         ]

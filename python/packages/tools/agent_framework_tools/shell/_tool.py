@@ -45,8 +45,7 @@ _DEFAULT_DESCRIPTION = (
     "Execute a single shell command on the local machine and return its "
     "stdout, stderr, and exit code. Commands run in a persistent session so "
     "`cd` and environment variables from previous calls are preserved. "
-    "A configurable denylist filters obviously destructive commands and "
-    "approval is required by default."
+    "Approval is required by default."
 )
 
 
@@ -66,6 +65,18 @@ class LocalShellTool:
 
         async with LocalShellTool() as shell:
             ...
+
+    **Single-session ownership.** A persistent-mode :class:`LocalShellTool`
+    is owned by a single conversation / agent session — i.e. one user.
+    The backing shell process carries mutable state (cwd, exported
+    variables, shell history, background jobs) that every subsequent
+    command can observe, and a single stdin/stdout pipe serializes every
+    call. Do not share one instance across users, tenants, or concurrent
+    conversations: state leaks between them and commands queue behind
+    each other. Create one tool per session, close it (or use ``async
+    with``) when the session ends. If a shared instance is genuinely
+    required, construct with ``mode="stateless"`` so each call spawns a
+    fresh subprocess.
 
     Args:
         mode: ``"persistent"`` (default) keeps a single long-lived shell
@@ -90,8 +101,11 @@ class LocalShellTool:
             variables are exported before the session is used.
         clean_env: When ``True``, do **not** inherit ``os.environ``; only
             the variables supplied in ``env`` are visible to commands.
-        policy: Policy applied before approval. Defaults to
-            :class:`ShellPolicy()` which denies common destructive patterns.
+        policy: Policy applied before approval. Defaults to an empty
+            :class:`ShellPolicy()` which allows every command; supply
+            explicit ``denylist``/``allowlist`` patterns to filter. The
+            policy is a UX pre-filter, not a security boundary — approval
+            gating + sandbox tier are the real defenses.
         timeout: Per-command timeout in seconds. ``None`` disables. Default
             30 s.
         max_output_bytes: Combined stdout/stderr byte cap before truncation.
@@ -103,9 +117,9 @@ class LocalShellTool:
             boundary of this tool** — disabling it requires
             ``acknowledge_unsafe=True``.
         acknowledge_unsafe: Required to be ``True`` if you set
-            ``approval_mode="never_require"``. The denylist is a guardrail,
-            not a boundary; without approval the tool will execute any
-            command the model emits.
+            ``approval_mode="never_require"``. ``ShellPolicy`` is a UX
+            pre-filter, not a security boundary; without approval the tool
+            will execute any command the model emits.
         on_command: Optional audit hook called with the command string for
             every command that passes policy. Use for logging / telemetry.
     """
@@ -132,10 +146,10 @@ class LocalShellTool:
             raise ValueError(
                 "Setting approval_mode='never_require' disables the only built-in "
                 "security boundary of LocalShellTool. If you understand the risk "
-                "(arbitrary commands run on the host with the agent's privileges, "
-                "the policy denylist is best-effort and trivially bypassable), "
-                "pass acknowledge_unsafe=True. For untrusted input prefer a "
-                "sandboxed executor (e.g. HyperlightCodeActProvider)."
+                "(arbitrary commands run on the host with the agent's privileges; "
+                "ShellPolicy is a UX pre-filter, not a defense), pass "
+                "acknowledge_unsafe=True. For untrusted input prefer a "
+                "sandboxed executor (e.g. DockerShellTool or HyperlightCodeActProvider)."
             )
         self._mode: ShellMode = mode
         self._shell_override = shell
@@ -221,7 +235,8 @@ class LocalShellTool:
         if self._mode == "persistent":
             if self._session is None:
                 await self.start()
-            assert self._session is not None
+            if self._session is None:
+                raise RuntimeError("LocalShellTool session failed to start")
             effective = self._maybe_reanchor(command)
             return await self._session.run(effective, timeout=self._timeout)
 
