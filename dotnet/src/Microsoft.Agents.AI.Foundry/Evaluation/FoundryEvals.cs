@@ -834,15 +834,15 @@ public sealed class FoundryEvals : IAgentEvaluator
         var result = new EvalItemResult(itemId, status, scores);
 
         // Extract error info from sample
-        if (outputItem.TryGetProperty("sample", out var sample))
+        if (outputItem.TryGetProperty("sample", out var sample) && sample.ValueKind == JsonValueKind.Object)
         {
-            if (sample.TryGetProperty("error", out var errObj))
+            if (sample.TryGetProperty("error", out var errObj) && errObj.ValueKind == JsonValueKind.Object)
             {
                 result.ErrorCode = errObj.TryGetProperty("code", out var code) ? code.GetString() : null;
                 result.ErrorMessage = errObj.TryGetProperty("message", out var msg) ? msg.GetString() : null;
             }
 
-            if (sample.TryGetProperty("usage", out var usage) && usage.TryGetProperty("total_tokens", out var tt) && tt.ValueKind == JsonValueKind.Number)
+            if (sample.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object && usage.TryGetProperty("total_tokens", out var tt) && tt.ValueKind == JsonValueKind.Number)
             {
                 var tokenUsage = new Dictionary<string, int>();
                 if (usage.TryGetProperty("prompt_tokens", out var pt) && pt.ValueKind == JsonValueKind.Number)
@@ -898,7 +898,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         }
 
         // Extract response_id from datasource_item
-        if (outputItem.TryGetProperty("datasource_item", out var dsItem))
+        if (outputItem.TryGetProperty("datasource_item", out var dsItem) && dsItem.ValueKind == JsonValueKind.Object)
         {
             if (dsItem.TryGetProperty("resp_id", out var respId))
             {
