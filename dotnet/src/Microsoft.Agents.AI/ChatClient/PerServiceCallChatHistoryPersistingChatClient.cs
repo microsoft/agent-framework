@@ -155,10 +155,10 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
         // Snapshot the input messages into a private list. The caller (typically
         // FunctionInvokingChatClient) reuses a single mutable buffer across iterations,
         // and the streaming path can defer persistence until after the caller has already
-        // mutated that buffer for the next iteration (e.g. on the catch-path
-        // PersistInputOnErrorAsync). Aliasing the caller's list would then cause us to
-        // persist the wrong messages — losing FunctionResultContent and corrupting
-        // history with dangling FunctionCallContent.
+        // mutated that buffer for the next iteration (e.g. on the cooperative early-exit
+        // path NotifyProvidersOfEarlyExitInputAsync). Aliasing the caller's list would
+        // then cause us to persist the wrong messages — losing FunctionResultContent and
+        // corrupting history with dangling FunctionCallContent.
         var newMessages = messages.ToList();
 
         // When simulating, load history and prepend it. When the service manages
@@ -177,30 +177,26 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
         }
         catch (Exception ex)
         {
-            // The service call could not even be initiated. Persist the input messages
-            // (e.g. function results from a prior iteration) so that history remains
-            // consistent and a subsequent run does not see dangling FunctionCallContent.
-            await PersistInputOnErrorAsync(agent, session, newMessages, options, cancellationToken).ConfigureAwait(false);
-            await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
-            throw;
-        }
-
-        bool hasUpdates;
-        try
-        {
-            hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            await PersistInputOnErrorAsync(agent, session, newMessages, options, cancellationToken).ConfigureAwait(false);
             await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
         bool loopExitedNormally = false;
-        bool inputPersisted = false;
+        bool serviceErrorOccurred = false;
         try
         {
+            bool hasUpdates;
+            try
+            {
+                hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                serviceErrorOccurred = true;
+                await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
+                throw;
+            }
+
             while (hasUpdates)
             {
                 var update = enumerator.Current;
@@ -226,8 +222,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
                 }
                 catch (Exception ex)
                 {
-                    await PersistInputOnErrorAsync(agent, session, newMessages, options, cancellationToken).ConfigureAwait(false);
-                    inputPersisted = true;
+                    serviceErrorOccurred = true;
                     await agent.NotifyProvidersOfFailureAsync(session, ex, newMessages, options, cancellationToken).ConfigureAwait(false);
                     throw;
                 }
@@ -236,50 +231,36 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
         }
         finally
         {
-            // If the iterator was disposed early (e.g. consumer bailed out, or the underlying
-            // stream ended without throwing but the loop did not complete normally), we still
-            // need to persist the input messages — otherwise function-call/function-result
-            // pairings can be lost, leaving the next iteration with dangling FunctionCallContent.
-            // Skip if an inner catch already persisted, to avoid duplicate provider notifications.
-            if (!loopExitedNormally && !inputPersisted)
+            // If the iterator was disposed by the consumer before completing — e.g.
+            // ToolApprovalAgent does `yield break` after emitting an approval request — persist
+            // the input messages so that any in-flight FunctionResultContent paired with
+            // previously-persisted FunctionCallContent is not lost between turns. We only do
+            // this on the cooperative-pause path; service errors deliberately do NOT persist
+            // input messages (history of failed calls is the caller's responsibility, e.g.
+            // by retrying or starting from an earlier point).
+            if (!loopExitedNormally && !serviceErrorOccurred)
             {
-                // Prefer the original cancellation token so the cleanup remains responsive to
-                // cancellation; fall back to CancellationToken.None only if the caller's token
-                // has already been canceled (otherwise the persist call would observe the
-                // cancellation and rethrow, masking the original early-exit reason).
+                // Prefer the original cancellation token so cleanup remains responsive; fall
+                // back to None only if the caller's token has already been canceled (otherwise
+                // the notify call would observe the cancellation, throw, and mask the
+                // original early-exit reason).
                 var persistToken = cancellationToken.IsCancellationRequested ? CancellationToken.None : cancellationToken;
                 try
                 {
-                    await PersistInputOnErrorAsync(agent, session, newMessages, options, persistToken).ConfigureAwait(false);
+                    await NotifyProvidersOfEarlyExitInputAsync(agent, session, newMessages, options, persistToken).ConfigureAwait(false);
                 }
                 catch
                 {
-                    // Best-effort persistence on the abnormal-exit path; swallow to avoid masking the original error.
+                    // Best-effort persistence; swallow to avoid masking the original exit reason.
                 }
             }
+
+            // Always dispose the underlying enumerator on every exit path (normal completion,
+            // exception, or early consumer disposal) to release the underlying HTTP/stream.
+            await enumerator.DisposeAsync().ConfigureAwait(false);
         }
 
         var chatResponse = responseUpdates.ToChatResponse();
-
-        // If the service emitted an in-stream error (e.g. rate limit) the underlying client
-        // may complete the enumeration "normally" while leaving us with no usable assistant
-        // output. Treat that as a failure and persist the input messages without polluting
-        // history with the error content.
-        var inStreamError = chatResponse.Messages
-            .SelectMany(m => m.Contents)
-            .OfType<ErrorContent>()
-            .FirstOrDefault();
-
-        if (inStreamError is not null)
-        {
-            await PersistInputOnErrorAsync(agent, session, newMessages, options, cancellationToken).ConfigureAwait(false);
-            var errorMessage = string.IsNullOrWhiteSpace(inStreamError.Message)
-                ? "The chat service returned an in-stream error."
-                : inStreamError.Message;
-            var streamException = new InvalidOperationException(errorMessage);
-            await agent.NotifyProvidersOfFailureAsync(session, streamException, newMessages, options, cancellationToken).ConfigureAwait(false);
-            throw streamException;
-        }
 
         await agent.NotifyProvidersOfNewMessagesAsync(session, newMessages, chatResponse.Messages, options, cancellationToken).ConfigureAwait(false);
 
@@ -301,14 +282,15 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
     }
 
     /// <summary>
-    /// Persists the input messages (the new messages handed to this iteration, e.g.
-    /// <see cref="FunctionResultContent"/> entries from the previous iteration) to the
-    /// agent's chat history without any response messages. This is used on error paths
-    /// to ensure that function-call/function-result pairings are not split across
-    /// failures, which would otherwise leave dangling <see cref="FunctionCallContent"/>
-    /// in the persisted chat history and corrupt subsequent runs.
+    /// Notifies <see cref="ChatHistoryProvider"/>s of the input messages only (no response
+    /// messages) on the cooperative early-exit path — e.g. when <c>ToolApprovalAgent</c>
+    /// does <c>yield break</c> after emitting an approval request. This ensures any
+    /// in-flight <see cref="FunctionResultContent"/> paired with previously-persisted
+    /// <see cref="FunctionCallContent"/> is not orphaned in the persisted chat history.
+    /// The notification is routed through the same success channel used at the end of a
+    /// normal run; the providers themselves decide how (or whether) to persist.
     /// </summary>
-    private static async Task PersistInputOnErrorAsync(
+    private static async Task NotifyProvidersOfEarlyExitInputAsync(
         ChatClientAgent agent,
         ChatClientAgentSession session,
         List<ChatMessage> newMessages,
