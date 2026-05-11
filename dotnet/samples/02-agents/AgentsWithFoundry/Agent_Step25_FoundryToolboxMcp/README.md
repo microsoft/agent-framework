@@ -11,7 +11,6 @@ This sample shows how to use a Foundry Toolbox by pointing an `McpClient` at the
 
 ## Prerequisites
 
-- .NET 10 SDK or later
 - A Microsoft Foundry project with a toolbox configured (or let the sample create one for you)
 - Azure CLI installed and authenticated (`az login`)
 
