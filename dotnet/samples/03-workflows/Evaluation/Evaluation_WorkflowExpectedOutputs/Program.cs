@@ -21,6 +21,10 @@ AIProjectClient projectClient = new(new Uri(endpoint), new DefaultAzureCredentia
 
 // Build a two-agent workflow: a researcher writes a draft answer, then an
 // editor polishes it into the final response that we compare to ground truth.
+// EmitAgentResponseEvents is enabled so the workflow surfaces an AgentResponseEvent
+// for each agent — this is what EvaluateAsync uses to find the overall final answer.
+var hostOptions = new AIAgentHostOptions { EmitAgentResponseEvents = true };
+
 AIAgent researcher = projectClient.AsAIAgent(
     model: deploymentName,
     instructions: "You research questions and produce a short factual draft answer.",
@@ -31,8 +35,11 @@ AIAgent editor = projectClient.AsAIAgent(
     instructions: "You take a draft answer and produce the final concise response.",
     name: "editor");
 
-Workflow workflow = new WorkflowBuilder(researcher)
-    .AddEdge(researcher, editor)
+ExecutorBinding researcherExecutor = researcher.BindAsExecutor(hostOptions);
+ExecutorBinding editorExecutor = editor.BindAsExecutor(hostOptions);
+
+Workflow workflow = new WorkflowBuilder(researcherExecutor)
+    .AddEdge(researcherExecutor, editorExecutor)
     .Build();
 
 // Run the workflow against the user question.

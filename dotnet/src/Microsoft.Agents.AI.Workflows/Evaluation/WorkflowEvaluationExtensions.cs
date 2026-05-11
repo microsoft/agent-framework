@@ -65,6 +65,21 @@ public static class WorkflowEvaluationExtensions
             {
                 overallItems.Add(overallItem);
             }
+            else if (expectedOutput is not null)
+            {
+                // The user supplied a ground truth but we couldn't find a final response to
+                // compare against — almost always because the workflow's agents weren't built
+                // with EmitAgentResponseEvents enabled (so no AgentResponseEvent was emitted)
+                // and no terminal ExecutorCompletedEvent carried an AgentResponse / ChatMessage
+                // / string payload. Fail loudly instead of silently returning 0/0.
+                throw new InvalidOperationException(
+                    "Cannot evaluate the overall workflow output: no AgentResponseEvent or " +
+                    "ExecutorCompletedEvent with an AgentResponse/ChatMessage/string payload " +
+                    "was found in the run. Bind agents with " +
+                    "AIAgentHostOptions { EmitAgentResponseEvents = true } " +
+                    "(for example via agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true })) " +
+                    "so the workflow surfaces the final agent response, or set 'includeOverall: false'.");
+            }
         }
 
         // Evaluate overall
