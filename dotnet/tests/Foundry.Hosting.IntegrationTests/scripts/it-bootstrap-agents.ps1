@@ -43,7 +43,6 @@ $Scenarios = @(
     'happy-path',
     'tool-calling',
     'tool-calling-approval',
-    'toolbox',
     'mcp-toolbox',
     'custom-storage',
     'azure-search-rag',
