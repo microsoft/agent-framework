@@ -1,0 +1,34 @@
+﻿# Foundry Toolbox via MCP
+
+This sample shows how to use a Foundry Toolbox from a non-hosted agent by pointing an `McpClient` at the toolbox's MCP endpoint. The agent discovers and calls the toolbox's tools over MCP at runtime, rather than fetching individual tool specs as server-side tools.
+
+This is the .NET analog of the Python [`foundry_chat_client_with_toolbox.py`](../../../../../python/samples/02-agents/providers/foundry/foundry_chat_client_with_toolbox.py) sample.
+
+## What this sample demonstrates
+
+- Connecting to a Foundry toolbox's MCP endpoint via Streamable HTTP transport
+- Injecting a fresh Azure AI bearer token (`https://ai.azure.com/.default`) on every MCP request
+- Passing the discovered MCP tools to `AIProjectClient.AsAIAgent(...)`
+- Optional helper to create (or replace) a sample toolbox in the project so the sample is runnable end-to-end
+
+## Prerequisites
+
+- .NET 10 SDK or later
+- A Microsoft Foundry project with a toolbox configured (or let the sample create one for you)
+- Azure CLI installed and authenticated (`az login`)
+
+Set the following environment variables:
+
+```powershell
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
+$env:FOUNDRY_TOOLBOX_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project/toolsets/research_toolbox/mcp?api-version=v1"
+```
+
+The `<name>` segment of `FOUNDRY_TOOLBOX_ENDPOINT` must match the `ToolboxName` constant in `Program.cs`.
+
+## Run the sample
+
+```powershell
+dotnet run
+```
