@@ -295,6 +295,7 @@
   </Folder>
   <Folder Name="/Samples/03-workflows/Evaluation/">
     <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowEval/Evaluation_WorkflowEval.csproj" />
+    <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowExpectedOutputs/Evaluation_WorkflowExpectedOutputs.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/">
   </Folder>
@@ -373,7 +374,7 @@
     <Project Path="samples/02-agents/A2A/A2AAgent_PollingForTaskCompletion/A2AAgent_PollingForTaskCompletion.csproj" />
     <Project Path="samples/02-agents/A2A/A2AAgent_ProtocolSelection/A2AAgent_ProtocolSelection.csproj" />
     <Project Path="samples/02-agents/A2A/A2AAgent_StreamReconnection/A2AAgent_StreamReconnection.csproj" />
-  </Folder>  
+  </Folder>
   <Folder Name="/Samples/05-end-to-end/">
     <Project Path="samples/05-end-to-end/AgentWithPurview/AgentWithPurview.csproj" />
     <Project Path="samples/05-end-to-end/M365Agent/M365Agent.csproj" />

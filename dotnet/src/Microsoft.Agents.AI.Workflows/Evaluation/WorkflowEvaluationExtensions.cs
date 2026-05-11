@@ -23,6 +23,14 @@ public static class WorkflowEvaluationExtensions
     /// <param name="includeOverall">Whether to include an overall evaluation.</param>
     /// <param name="includePerAgent">Whether to include per-agent breakdowns.</param>
     /// <param name="evalName">Display name for this evaluation run.</param>
+    /// <param name="expectedOutput">
+    /// Optional ground-truth/expected output for the workflow's overall final answer.
+    /// When provided, it is stamped onto the overall <see cref="EvalItem.ExpectedOutput"/>
+    /// so reference-based evaluators (for example, similarity) can compare the
+    /// workflow's response against a golden answer. Ground truth is only applied
+    /// to the overall item; per-agent items are intentionally left without an
+    /// expected output, since ground truth is defined against the final response.
+    /// </param>
     /// <param name="splitter">
     /// Optional conversation splitter to apply to all items.
     /// Use <see cref="ConversationSplitters.LastTurn"/>, <see cref="ConversationSplitters.Full"/>,
@@ -36,6 +44,7 @@ public static class WorkflowEvaluationExtensions
         bool includeOverall = true,
         bool includePerAgent = true,
         string evalName = "Workflow Eval",
+        string? expectedOutput = null,
         IConversationSplitter? splitter = null,
         CancellationToken cancellationToken = default)
     {
@@ -48,28 +57,10 @@ public static class WorkflowEvaluationExtensions
         var overallItems = new List<EvalItem>();
         if (includeOverall)
         {
-            var finalResponse = events.OfType<AgentResponseEvent>().LastOrDefault();
-            if (finalResponse is not null)
+            var overallItem = BuildOverallItem(events, splitter, expectedOutput);
+            if (overallItem is not null)
             {
-                var firstInvoked = events.OfType<ExecutorInvokedEvent>().FirstOrDefault();
-                var query = firstInvoked?.Data switch
-                {
-                    ChatMessage cm => cm.Text ?? string.Empty,
-                    IReadOnlyList<ChatMessage> msgs => msgs.LastOrDefault(m => m.Role == ChatRole.User)?.Text ?? string.Empty,
-                    string s => s,
-                    _ => firstInvoked?.Data?.ToString() ?? string.Empty,
-                };
-                var conversation = new List<ChatMessage>
-                {
-                    new(ChatRole.User, query),
-                };
-
-                conversation.AddRange(finalResponse.Response.Messages);
-
-                overallItems.Add(new EvalItem(query, finalResponse.Response.Text, conversation)
-                {
-                    Splitter = splitter,
-                });
+                overallItems.Add(overallItem);
             }
         }
 
@@ -95,6 +86,39 @@ public static class WorkflowEvaluationExtensions
         }
 
         return overallResult;
+    }
+
+    internal static EvalItem? BuildOverallItem(
+        List<WorkflowEvent> events,
+        IConversationSplitter? splitter,
+        string? expectedOutput)
+    {
+        var finalResponse = events.OfType<AgentResponseEvent>().LastOrDefault();
+        if (finalResponse is null)
+        {
+            return null;
+        }
+
+        var firstInvoked = events.OfType<ExecutorInvokedEvent>().FirstOrDefault();
+        var query = firstInvoked?.Data switch
+        {
+            ChatMessage cm => cm.Text ?? string.Empty,
+            IReadOnlyList<ChatMessage> msgs => msgs.LastOrDefault(m => m.Role == ChatRole.User)?.Text ?? string.Empty,
+            string s => s,
+            _ => firstInvoked?.Data?.ToString() ?? string.Empty,
+        };
+        var conversation = new List<ChatMessage>
+        {
+            new(ChatRole.User, query),
+        };
+
+        conversation.AddRange(finalResponse.Response.Messages);
+
+        return new EvalItem(query, finalResponse.Response.Text, conversation)
+        {
+            Splitter = splitter,
+            ExpectedOutput = expectedOutput,
+        };
     }
 
     internal static Dictionary<string, List<EvalItem>> ExtractAgentData(

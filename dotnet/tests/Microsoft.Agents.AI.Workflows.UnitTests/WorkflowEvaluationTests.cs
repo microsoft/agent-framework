@@ -291,6 +291,70 @@ public sealed class WorkflowEvaluationTests
     }
 
     // ---------------------------------------------------------------
+    // BuildOverallItem tests (expected output / ground truth)
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void BuildOverallItem_NoAgentResponse_ReturnsNull()
+    {
+        // Arrange
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("agent-1", "query"),
+            new ExecutorCompletedEvent("agent-1", "response"),
+        };
+
+        // Act
+        var item = WorkflowEvaluationExtensions.BuildOverallItem(events, splitter: null, expectedOutput: null);
+
+        // Assert
+        Assert.Null(item);
+    }
+
+    [Fact]
+    public void BuildOverallItem_WithFinalResponseAndExpectedOutput_StampsExpectedOutput()
+    {
+        // Arrange
+        var finalResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Ofrece 41 planes"));
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("agent-1", "How many plans does Netlife offer?"),
+            new ExecutorCompletedEvent("agent-1", finalResponse),
+            new AgentResponseEvent("agent-1", finalResponse),
+        };
+
+        // Act
+        var item = WorkflowEvaluationExtensions.BuildOverallItem(
+            events, splitter: null, expectedOutput: "Ofrece 41 planes");
+
+        // Assert
+        Assert.NotNull(item);
+        Assert.Equal("How many plans does Netlife offer?", item.Query);
+        Assert.Equal("Ofrece 41 planes", item.Response);
+        Assert.Equal("Ofrece 41 planes", item.ExpectedOutput);
+    }
+
+    [Fact]
+    public void BuildOverallItem_WithFinalResponseAndNoExpectedOutput_LeavesExpectedOutputNull()
+    {
+        // Arrange
+        var finalResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "answer"));
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("agent-1", "query"),
+            new ExecutorCompletedEvent("agent-1", finalResponse),
+            new AgentResponseEvent("agent-1", finalResponse),
+        };
+
+        // Act
+        var item = WorkflowEvaluationExtensions.BuildOverallItem(events, splitter: null, expectedOutput: null);
+
+        // Assert
+        Assert.NotNull(item);
+        Assert.Null(item.ExpectedOutput);
+    }
+
+    // ---------------------------------------------------------------
     // EvaluateAsync integration test
     // ---------------------------------------------------------------
 

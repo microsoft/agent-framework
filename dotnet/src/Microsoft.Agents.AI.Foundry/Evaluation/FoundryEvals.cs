@@ -145,6 +145,7 @@ public sealed class FoundryEvals : IAgentEvaluator
 
         bool hasContext = payloads.Any(p => p.Context is not null);
         bool hasTools = payloads.Any(p => p.ToolDefinitions is { Count: > 0 });
+        bool hasGroundTruth = payloads.Any(p => p.GroundTruth is not null);
 
         // Filter out tool evaluators if no items have tools; auto-add ToolCallAccuracy if tools present
         var evaluators = FilterToolEvaluators(this._evaluatorNames, hasTools);
@@ -153,13 +154,24 @@ public sealed class FoundryEvals : IAgentEvaluator
             evaluators = [.. evaluators, ToolCallAccuracy];
         }
 
+        // Fail fast if a ground-truth evaluator (e.g. similarity) is requested but no
+        // item carries an ExpectedOutput, instead of surfacing a remote provider error.
+        var missingGroundTruth = FoundryEvalConverter.FindMissingGroundTruthEvaluators(evaluators, hasGroundTruth);
+        if (missingGroundTruth.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "The following evaluator(s) require a ground-truth/expected output but none of the items " +
+                $"provided an {nameof(EvalItem.ExpectedOutput)}: {string.Join(", ", missingGroundTruth)}. " +
+                "Provide an expected output per item (for example via the 'expectedOutput' parameter on EvaluateAsync).");
+        }
+
         // 2. Create the evaluation definition
         var createEvalPayload = new WireCreateEvalRequest
         {
             Name = evalName,
             DataSourceConfig = new WireCustomDataSourceConfig
             {
-                ItemSchema = FoundryEvalConverter.BuildItemSchema(hasContext, hasTools),
+                ItemSchema = FoundryEvalConverter.BuildItemSchema(hasContext, hasTools, hasGroundTruth),
             },
             TestingCriteria = FoundryEvalConverter.BuildTestingCriteria(
                 evaluators, this._model, includeDataMapping: true),
