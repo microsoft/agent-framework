@@ -718,6 +718,27 @@ public class OpenTelemetryAgentTests
     }
 
     [Fact]
+    public async Task AutoWireChatClient_UseProvidedChatClientAsIs_DoesNotEmitChatSpan_Async()
+    {
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var fakeChatClient = new AutoWireTestChatClient();
+        var inner = new ChatClientAgent(fakeChatClient, new ChatClientAgentOptions { UseProvidedChatClientAsIs = true });
+        using var agent = new OpenTelemetryAgent(inner, sourceName);
+
+        _ = await agent.RunAsync("hi");
+
+        // UseProvidedChatClientAsIs opts out of auto-wiring, so only the invoke_agent span should be emitted.
+        var activity = Assert.Single(activities);
+        Assert.StartsWith("invoke_agent", activity.DisplayName);
+    }
+
+    [Fact]
     public async Task AutoWireChatClient_AlreadyInstrumented_DoesNotDoubleWrap_Async()
     {
         var sourceName = Guid.NewGuid().ToString();

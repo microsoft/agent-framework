@@ -197,6 +197,12 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             return options;
         }
 
+        // Respect ChatClientAgentOptions.UseProvidedChatClientAsIs: don't decorate the chat client when the user opted out.
+        if (this.InnerAgent.GetService<ChatClientAgentOptions>()?.UseProvidedChatClientAsIs is true)
+        {
+            return options;
+        }
+
         // Capture the underlying IChatClient and check whether it is already instrumented.
         var chatClient = this.InnerAgent.GetService<IChatClient>();
         if (chatClient is null || chatClient.GetService(typeof(OpenTelemetryChatClient)) is not null)
@@ -206,9 +212,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
         string? sourceName = this._sourceName;
         IChatClient WrapWithOpenTelemetry(IChatClient cc) =>
-            cc.GetService(typeof(OpenTelemetryChatClient)) is not null
-                ? cc
-                : cc.AsBuilder().UseOpenTelemetry(sourceName: sourceName).Build();
+            cc.AsBuilder().UseOpenTelemetry(sourceName: sourceName).Build();
 
         if (options is ChatClientAgentRunOptions ccOptions)
         {
