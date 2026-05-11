@@ -89,7 +89,7 @@ public static class WorkflowEvaluationExtensions
     }
 
     internal static EvalItem? BuildOverallItem(
-        List<WorkflowEvent> events,
+        IReadOnlyList<WorkflowEvent> events,
         IConversationSplitter? splitter,
         string? expectedOutput)
     {
