@@ -1,11 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// Foundry Toolbox via MCP (Streamable HTTP) — .NET analog of the Python
-// `foundry_chat_client_with_toolbox.py` sample.
+// Foundry Toolbox via MCP (Streamable HTTP).
 //
-// Instead of fetching the toolbox and fanning out individual server-side tool
-// specs, point an `McpClient` at the toolbox's MCP endpoint. The agent
-// discovers and calls the toolbox's tools over MCP at runtime.
+// Point an `McpClient` at a Foundry Toolbox's MCP endpoint. The agent
+// discovers the toolbox's tools at runtime and invokes them locally.
 
 using System.ClientModel;
 using System.ClientModel.Primitives;
