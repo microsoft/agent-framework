@@ -295,13 +295,12 @@ public sealed class WorkflowEvaluationTests
     // ---------------------------------------------------------------
 
     [Fact]
-    public void BuildOverallItem_NoAgentResponse_ReturnsNull()
+    public void BuildOverallItem_NoCompletedExecutorWithResponse_ReturnsNull()
     {
-        // Arrange
+        // Arrange — no ExecutorCompletedEvent with usable response data and no AgentResponseEvent
         var events = new List<WorkflowEvent>
         {
             new ExecutorInvokedEvent("agent-1", "query"),
-            new ExecutorCompletedEvent("agent-1", "response"),
         };
 
         // Act
@@ -309,6 +308,30 @@ public sealed class WorkflowEvaluationTests
 
         // Assert
         Assert.Null(item);
+    }
+
+    [Fact]
+    public void BuildOverallItem_NoAgentResponseEvent_FallsBackToLastExecutorCompleted()
+    {
+        // Arrange — only ExecutorCompletedEvent (the default when EmitAgentResponseEvents is false)
+        var finalResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Paris"));
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("researcher", "What is the capital of France?"),
+            new ExecutorCompletedEvent("researcher", new AgentResponse(new ChatMessage(ChatRole.Assistant, "draft"))),
+            new ExecutorInvokedEvent("editor", "draft"),
+            new ExecutorCompletedEvent("editor", finalResponse),
+        };
+
+        // Act
+        var item = WorkflowEvaluationExtensions.BuildOverallItem(
+            events, splitter: null, expectedOutput: "Paris");
+
+        // Assert
+        Assert.NotNull(item);
+        Assert.Equal("What is the capital of France?", item.Query);
+        Assert.Equal("Paris", item.Response);
+        Assert.Equal("Paris", item.ExpectedOutput);
     }
 
     [Fact]

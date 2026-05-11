@@ -96,12 +96,6 @@ public static class WorkflowEvaluationExtensions
         IConversationSplitter? splitter,
         string? expectedOutput)
     {
-        var finalResponse = events.OfType<AgentResponseEvent>().LastOrDefault();
-        if (finalResponse is null)
-        {
-            return null;
-        }
-
         var firstInvoked = events.OfType<ExecutorInvokedEvent>().FirstOrDefault();
         var query = firstInvoked?.Data switch
         {
@@ -110,14 +104,61 @@ public static class WorkflowEvaluationExtensions
             string s => s,
             _ => firstInvoked?.Data?.ToString() ?? string.Empty,
         };
+
         var conversation = new List<ChatMessage>
         {
             new(ChatRole.User, query),
         };
 
-        conversation.AddRange(finalResponse.Response.Messages);
+        // Prefer AgentResponseEvent (only emitted when AIAgentHostOptions.EmitAgentResponseEvents
+        // is enabled). Otherwise fall back to the last ExecutorCompletedEvent that carries an
+        // AgentResponse / ChatMessage / string payload — these are always emitted by the runtime.
+        var finalResponse = events.OfType<AgentResponseEvent>().LastOrDefault();
+        string responseText;
+        if (finalResponse is not null)
+        {
+            responseText = finalResponse.Response.Text;
+            conversation.AddRange(finalResponse.Response.Messages);
+        }
+        else
+        {
+            ExecutorCompletedEvent? finalCompleted = null;
+            for (int i = events.Count - 1; i >= 0; i--)
+            {
+                if (events[i] is ExecutorCompletedEvent completed
+                    && !IsInternalExecutor(completed.ExecutorId)
+                    && completed.Data is AgentResponse or ChatMessage or string)
+                {
+                    finalCompleted = completed;
+                    break;
+                }
+            }
 
-        return new EvalItem(query, finalResponse.Response.Text, conversation)
+            if (finalCompleted is null)
+            {
+                return null;
+            }
+
+            switch (finalCompleted.Data)
+            {
+                case AgentResponse ar:
+                    responseText = ar.Text;
+                    conversation.AddRange(ar.Messages);
+                    break;
+                case ChatMessage cm:
+                    responseText = cm.Text ?? string.Empty;
+                    conversation.Add(cm);
+                    break;
+                case string s:
+                    responseText = s;
+                    conversation.Add(new ChatMessage(ChatRole.Assistant, s));
+                    break;
+                default:
+                    return null;
+            }
+        }
+
+        return new EvalItem(query, responseText, conversation)
         {
             Splitter = splitter,
             ExpectedOutput = expectedOutput,
