@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -375,6 +376,34 @@ public sealed class WorkflowEvaluationTests
         // Assert
         Assert.NotNull(item);
         Assert.Null(item.ExpectedOutput);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WithExpectedOutputButNoFinalResponse_ThrowsAsync()
+    {
+        // Arrange — build a workflow whose AIAgentHostExecutor is NOT bound with
+        // EmitAgentResponseEvents=true, so no AgentResponseEvent is emitted, and the
+        // ExecutorCompletedEvent for the host carries null Data. That is the scenario
+        // where BuildOverallItem returns null. When the caller supplies an
+        // expectedOutput we should fail fast rather than silently returning 0/0.
+        var agent = new TestEchoAgent(name: "echo");
+        var workflow = AgentWorkflowBuilder.BuildSequential(agent);
+        var input = new List<ChatMessage> { new(ChatRole.User, "Hello") };
+
+        var evaluator = new LocalEvaluator(
+            FunctionEvaluator.Create("noop", (EvalItem _) => true));
+
+        await using var run = await InProcessExecution.RunAsync(workflow, input);
+
+        // Act + Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            run.EvaluateAsync(
+                evaluator,
+                includeOverall: true,
+                includePerAgent: false,
+                expectedOutput: "expected"));
+
+        Assert.Contains("EmitAgentResponseEvents", ex.Message);
     }
 
     // ---------------------------------------------------------------

@@ -23,6 +23,11 @@ public static class WorkflowEvaluationExtensions
     /// <param name="includeOverall">Whether to include an overall evaluation.</param>
     /// <param name="includePerAgent">Whether to include per-agent breakdowns.</param>
     /// <param name="evalName">Display name for this evaluation run.</param>
+    /// <param name="splitter">
+    /// Optional conversation splitter to apply to all items.
+    /// Use <see cref="ConversationSplitters.LastTurn"/>, <see cref="ConversationSplitters.Full"/>,
+    /// or a custom <see cref="IConversationSplitter"/> implementation.
+    /// </param>
     /// <param name="expectedOutput">
     /// Optional ground-truth/expected output for the workflow's overall final answer.
     /// When provided, it is stamped onto the overall <see cref="EvalItem.ExpectedOutput"/>
@@ -34,11 +39,6 @@ public static class WorkflowEvaluationExtensions
     /// <paramref name="includePerAgent"/> to <see langword="false"/> to avoid
     /// invoking the evaluator on per-agent items that have no expected output.
     /// </param>
-    /// <param name="splitter">
-    /// Optional conversation splitter to apply to all items.
-    /// Use <see cref="ConversationSplitters.LastTurn"/>, <see cref="ConversationSplitters.Full"/>,
-    /// or a custom <see cref="IConversationSplitter"/> implementation.
-    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Evaluation results with optional per-agent sub-results.</returns>
     public static async Task<AgentEvaluationResults> EvaluateAsync(
@@ -47,8 +47,8 @@ public static class WorkflowEvaluationExtensions
         bool includeOverall = true,
         bool includePerAgent = true,
         string evalName = "Workflow Eval",
-        string? expectedOutput = null,
         IConversationSplitter? splitter = null,
+        string? expectedOutput = null,
         CancellationToken cancellationToken = default)
     {
         var events = run.OutgoingEvents.ToList();

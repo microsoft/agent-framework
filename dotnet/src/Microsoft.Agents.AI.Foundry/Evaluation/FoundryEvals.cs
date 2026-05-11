@@ -146,6 +146,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         bool hasContext = payloads.Any(p => p.Context is not null);
         bool hasTools = payloads.Any(p => p.ToolDefinitions is { Count: > 0 });
         bool hasGroundTruth = payloads.Any(p => p.GroundTruth is not null);
+        bool allHaveGroundTruth = payloads.Count > 0 && payloads.All(p => p.GroundTruth is not null);
 
         // Filter out tool evaluators if no items have tools; auto-add ToolCallAccuracy if tools present
         var evaluators = FilterToolEvaluators(this._evaluatorNames, hasTools);
@@ -154,15 +155,18 @@ public sealed class FoundryEvals : IAgentEvaluator
             evaluators = [.. evaluators, ToolCallAccuracy];
         }
 
-        // Fail fast if a ground-truth evaluator (e.g. similarity) is requested but no
-        // item carries an ExpectedOutput, instead of surfacing a remote provider error.
-        var missingGroundTruth = FoundryEvalConverter.FindMissingGroundTruthEvaluators(evaluators, hasGroundTruth);
+        // Fail fast if a ground-truth evaluator (e.g. similarity) is requested but not
+        // every item carries an ExpectedOutput. Reference-based evaluators score each
+        // item against its own ground truth, so even one missing value will surface as
+        // a provider-side validation error. Catch it here with a clearer message.
+        var missingGroundTruth = FoundryEvalConverter.FindMissingGroundTruthEvaluators(evaluators, allHaveGroundTruth);
         if (missingGroundTruth.Count > 0)
         {
             throw new InvalidOperationException(
-                "The following evaluator(s) require a ground-truth/expected output but none of the items " +
-                $"provided an {nameof(EvalItem.ExpectedOutput)}: {string.Join(", ", missingGroundTruth)}. " +
-                "Provide an expected output per item (for example via the 'expectedOutput' parameter on EvaluateAsync).");
+                "The following evaluator(s) require a ground-truth/expected output on every item but " +
+                $"at least one item is missing an {nameof(EvalItem.ExpectedOutput)}: {string.Join(", ", missingGroundTruth)}. " +
+                "Provide an expected output per item (for example via the 'expectedOutput' parameter on EvaluateAsync), " +
+                "or set 'includePerAgent: false' so the evaluator only runs on the overall item.");
         }
 
         // 2. Create the evaluation definition
