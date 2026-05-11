@@ -30,7 +30,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 string toolboxEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_ENDPOINT")
     ?? throw new InvalidOperationException(
         "FOUNDRY_TOOLBOX_ENDPOINT is not set. Example: " +
-        "https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=v1");
+        "https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=2025-05-01-preview");
 
 TokenCredential credential = new DefaultAzureCredential();
 
