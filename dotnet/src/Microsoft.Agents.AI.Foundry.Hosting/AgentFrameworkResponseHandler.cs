@@ -77,23 +77,31 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // 4. Convert input: history + current input → ChatMessage[]
         var messages = new List<ChatMessage>();
 
-        // Load conversation history if available
-        var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
-        if (history.Count > 0)
+        // Load conversation history only for fresh sessions. When a session already exists
+        // (e.g. resuming a workflow paused at an external-input port), the workflow's
+        // checkpointed state already contains the prior turns' messages — replaying history
+        // would re-drive completed actions and break HITL resume semantics.
+        var isResume = !string.IsNullOrWhiteSpace(sessionConversationId)
+            && session?.StateBag?.Count > 0;
+        if (!isResume)
         {
-            messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history));
+            var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
+            if (history.Count > 0)
+            {
+                messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag));
+            }
         }
 
         // Load and convert current input items
         var inputItems = await context.GetInputItemsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         if (inputItems.Count > 0)
         {
-            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems));
+            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems, session?.StateBag));
         }
         else
         {
             // Fall back to raw request input
-            messages.AddRange(InputConverter.ConvertInputToMessages(request));
+            messages.AddRange(InputConverter.ConvertInputToMessages(request, session?.StateBag));
         }
 
         // 5. Build chat options
@@ -191,6 +199,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var enumerator = OutputConverter.ConvertUpdatesToEventsAsync(
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
+            session?.StateBag,
             cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
         {

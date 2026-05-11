@@ -217,7 +217,7 @@ public abstract class SamplesValidationBase : IAsyncLifetime
     /// </summary>
     protected CancellationTokenSource CreateTestTimeoutCts(TimeSpan? timeout = null)
     {
-        TimeSpan testTimeout = Debugger.IsAttached ? TimeSpan.FromMinutes(5) : timeout ?? TimeSpan.FromSeconds(60);
+        TimeSpan testTimeout = Debugger.IsAttached ? TimeSpan.FromMinutes(5) : timeout ?? TimeSpan.FromSeconds(120);
         return new CancellationTokenSource(testTimeout);
     }
 

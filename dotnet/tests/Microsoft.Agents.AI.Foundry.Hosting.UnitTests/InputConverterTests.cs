@@ -207,9 +207,10 @@ public class InputConverterTests
     [Fact]
     public void ConvertOutputItemsToMessages_FunctionToolCallOutput_ReturnsToolMessage()
     {
+        // Spec-compliant payload: a JSON string literal.
         var funcOutput = new OutputItemFunctionToolCallOutput(
             callId: "call_def",
-            output: BinaryData.FromString("result data"));
+            output: BinaryData.FromString("\"result data\""));
 
         var messages = InputConverter.ConvertOutputItemsToMessages([funcOutput]);
 
@@ -218,6 +219,52 @@ public class InputConverterTests
         var result = messages[0].Contents.OfType<FunctionResultContent>().FirstOrDefault();
         Assert.NotNull(result);
         Assert.Equal("call_def", result.CallId);
+        // Round-trip: the JSON-string wire payload is unwrapped to the original tool result text.
+        Assert.Equal("result data", result.Result as string);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_FunctionToolCallOutput_LegacyRawJsonArray_PassesThrough()
+    {
+        // Legacy/non-conforming producers that emitted a raw JSON value (array/object) in
+        // `output` are tolerated: the raw text is forwarded as the FunctionResultContent.Result
+        // so the model still sees the original tool-output shape on replay.
+        var funcOutput = new OutputItemFunctionToolCallOutput(
+            callId: "call_legacy",
+            output: BinaryData.FromString("[{\"id\":1}]"));
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([funcOutput]);
+
+        var result = messages[0].Contents.OfType<FunctionResultContent>().FirstOrDefault();
+        Assert.NotNull(result);
+        Assert.Equal("[{\"id\":1}]", result.Result as string);
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FunctionCallOutput_JsonStringPayload_Unwraps()
+    {
+        // Spec-compliant inbound payload — a JSON string literal — must be unwrapped so
+        // FunctionResultContent.Result is the original tool result text, not the JSON-encoded form.
+        var input = new[]
+        {
+            new
+            {
+                type = "function_call_output",
+                id = "fc_out_002",
+                call_id = "call_456",
+                output = "sunny"
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        Assert.Single(messages);
+        var funcResult = messages[0].Contents.OfType<FunctionResultContent>().FirstOrDefault();
+        Assert.NotNull(funcResult);
+        Assert.Equal("sunny", funcResult.Result as string);
     }
 
     [Fact]
@@ -756,5 +803,519 @@ public class InputConverterTests
         Assert.Null(markers[0].Version);
         Assert.Equal("box-b", markers[1].Name);
         Assert.Equal("2025-01", markers[1].Version);
+    }
+
+    // === Tool-approval (HITL) wire-format coverage ===
+
+    [Fact]
+    public void ConvertItemsToMessages_McpApprovalRequest_ProducesToolApprovalRequest()
+    {
+        var item = new ItemMcpApprovalRequest(
+            id: "mcpr_" + new string('a', 50),
+            serverLabel: "agent_framework",
+            name: "get_weather",
+            arguments: "{\"city\":\"Seattle\"}");
+
+        var messages = InputConverter.ConvertItemsToMessages([item]);
+
+        var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal(item.Id, content.RequestId);
+        var fc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("get_weather", fc.Name);
+        Assert.NotNull(fc.Arguments);
+        Assert.Equal("Seattle", fc.Arguments!["city"]?.ToString());
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_McpApprovalResponse_ThrowsWhenNoMapping()
+    {
+        // Without a recorded ApprovalEntry the converter cannot reconstruct the original
+        // function call faithfully — any placeholder it produced would still fail downstream
+        // (FICC has no tool to invoke; Azure's stored function_call can't pair with the
+        // synthetic id). Fail fast with a clear error instead of continuing into a confusing
+        // HTTP 400 deep inside the agent loop.
+        var wireId = "mcpr_" + new string('a', 50);
+        var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: true);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => InputConverter.ConvertItemsToMessages([item]));
+        Assert.Contains(wireId, ex.Message);
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_McpApprovalResponse_ResolvesAfRequestIdFromStateBag()
+    {
+        const string AfRequestId = "ficc_call_xyz";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_xyz",
+            "issue_refund",
+            "{\"order_id\":123}");
+
+        var item = new MCPApprovalResponse(approvalRequestId: wireId, approve: false);
+
+        var messages = InputConverter.ConvertItemsToMessages([item], stateBag);
+
+        var content = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal(AfRequestId, content.RequestId);
+        Assert.False(content.Approved);
+
+        // Verify the original FunctionCallContent is reconstructed losslessly:
+        // - CallId matches the model-issued id (without FICC's "ficc_" prefix), so the
+        //   resulting function_call_output pairs with Azure's stored function_call.
+        // - Name matches the original tool, so FICC can invoke the right function on resume.
+        // - Arguments are preserved.
+        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_xyz", fcc.CallId);
+        Assert.Equal("issue_refund", fcc.Name);
+        Assert.NotNull(fcc.Arguments);
+        Assert.Equal(123, ((System.Text.Json.JsonElement)fcc.Arguments!["order_id"]!).GetInt32());
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_McpApprovalRequest_ProducesToolApprovalRequest()
+    {
+        var item = new OutputItemMcpApprovalRequest(
+            id: "mcpr_" + new string('b', 50),
+            serverLabel: "agent_framework",
+            name: "delete_file",
+            arguments: "{}");
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([item]);
+
+        var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal(item.Id, content.RequestId);
+        Assert.Equal("delete_file", Assert.IsType<FunctionCallContent>(content.ToolCall).Name);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_McpApprovalResponse_ProducesToolApprovalResponse()
+    {
+        const string AfRequestId = "ficc_call_history";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_history",
+            "delete_file",
+            "{\"path\":\"/tmp/x\"}");
+
+        var item = new OutputItemMcpApprovalResponseResource(
+            id: "ar_history_id",
+            approvalRequestId: wireId,
+            approve: true);
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([item], stateBag);
+
+        var content = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal(AfRequestId, content.RequestId);
+        Assert.True(content.Approved);
+
+        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_history", fcc.CallId);
+        Assert.Equal("delete_file", fcc.Name);
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_McpApprovalRequest_MalformedArguments_PreservesRaw()
+    {
+        var item = new ItemMcpApprovalRequest(
+            id: "mcpr_" + new string('c', 50),
+            serverLabel: "agent_framework",
+            name: "noisy",
+            arguments: "not valid json");
+
+        var messages = InputConverter.ConvertItemsToMessages([item]);
+
+        var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
+        var fc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.NotNull(fc.Arguments);
+        Assert.Equal("not valid json", fc.Arguments!["_raw"]?.ToString());
+    }
+
+    [Fact]
+    public void ToolApprovalIdMap_Record_EmptyCallId_IsNoOp()
+    {
+        var stateBag = new AgentSessionStateBag();
+        var wireId = "mcpr_" + new string('d', 50);
+
+        ToolApprovalIdMap.Record(stateBag, wireId, "ficc_x", callId: string.Empty, name: "tool", argumentsJson: "{}");
+
+        Assert.Null(ToolApprovalIdMap.ResolveEntry(stateBag, wireId));
+    }
+
+    [Fact]
+    public void ToolApprovalIdMap_Record_EmptyName_IsNoOp()
+    {
+        var stateBag = new AgentSessionStateBag();
+        var wireId = "mcpr_" + new string('e', 50);
+
+        ToolApprovalIdMap.Record(stateBag, wireId, "ficc_x", callId: "call_xyz", name: string.Empty, argumentsJson: "{}");
+
+        Assert.Null(ToolApprovalIdMap.ResolveEntry(stateBag, wireId));
+    }
+
+    // ── input_file data-URI decoding (TryDecodeTextDataUri) ──
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithTextDataUri_DecodesToTextContent()
+    {
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("hello world"));
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_text_uri",
+                status = "completed",
+                role = "user",
+                content = new[] { new { type = "input_file", file_data = $"data:text/plain;base64,{encoded}" } }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("hello world", text.Text);
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithTextDataUriAndFilename_PrefixesFilenameInDecodedText()
+    {
+        var encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("body"));
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_text_uri_name",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new
+                    {
+                        type = "input_file",
+                        filename = "notes.txt",
+                        file_data = $"data:text/plain;base64,{encoded}"
+                    }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.StartsWith("[File: notes.txt]", text.Text, StringComparison.Ordinal);
+        Assert.Contains("body", text.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithNonTextDataUri_RemainsDataContent()
+    {
+        // image/png data URIs must NOT be decoded as text — only text/* is decoded inline.
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_image_uri",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new { type = "input_file", file_data = "data:image/png;base64,iVBORw0KGgo=" }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        Assert.IsType<DataContent>(Assert.Single(messages[0].Contents));
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithMalformedDataUri_FallsBackToDataContent()
+    {
+        // Missing ;base64, marker — TryDecodeTextDataUri should return false and the
+        // original payload survives as DataContent.
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_bad_uri",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new { type = "input_file", file_data = "data:text/plain,not-base64-payload" }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        Assert.IsType<DataContent>(Assert.Single(messages[0].Contents));
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithFileUrlAndFilename_PropagatesFilename()
+    {
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_url_name",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new
+                    {
+                        type = "input_file",
+                        file_url = "https://example.com/doc.pdf",
+                        filename = "doc.pdf"
+                    }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        var uri = Assert.IsType<UriContent>(Assert.Single(messages[0].Contents));
+        Assert.NotNull(uri.AdditionalProperties);
+        Assert.Equal("doc.pdf", uri.AdditionalProperties!["filename"]);
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_FileContentWithFileIdAndFilename_PropagatesFilename()
+    {
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_id_name",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new
+                    {
+                        type = "input_file",
+                        file_id = "file_abc123",
+                        filename = "doc.pdf"
+                    }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        var hosted = Assert.IsType<HostedFileContent>(Assert.Single(messages[0].Contents));
+        Assert.NotNull(hosted.AdditionalProperties);
+        Assert.Equal("doc.pdf", hosted.AdditionalProperties!["filename"]);
+    }
+
+    // ── C2: SDK content types passing through ItemMessage / OutputItemMessage ──
+
+    [Fact]
+    public void ConvertItemsToMessages_SdkTextContent_ProducesTextContent()
+    {
+        var msg = new ItemMessage(
+            MessageRole.User,
+            new MessageContent[] { new Azure.AI.AgentServer.Responses.Models.TextContent("plain text") });
+
+        var messages = InputConverter.ConvertItemsToMessages([msg]);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("plain text", text.Text);
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_SummaryTextContent_ProducesTextContent()
+    {
+        var msg = new ItemMessage(
+            MessageRole.Assistant,
+            new MessageContent[] { new SummaryTextContent("a summary") });
+
+        var messages = InputConverter.ConvertItemsToMessages([msg]);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("a summary", text.Text);
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_ReasoningTextContent_ProducesTextReasoningContent()
+    {
+        var msg = new ItemMessage(
+            MessageRole.Assistant,
+            new MessageContent[] { new MessageContentReasoningTextContent("internal reasoning") });
+
+        var messages = InputConverter.ConvertItemsToMessages([msg]);
+
+        var reasoning = Assert.IsType<TextReasoningContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("internal reasoning", reasoning.Text);
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_ComputerScreenshotContent_HttpUrl_ProducesUriContent()
+    {
+        var screenshot = new ComputerScreenshotContent(
+            imageUrl: new Uri("https://example.com/screen.png"),
+            fileId: null!,
+            detail: default);
+        var msg = new ItemMessage(MessageRole.User, new MessageContent[] { screenshot });
+
+        var messages = InputConverter.ConvertItemsToMessages([msg]);
+
+        var uri = Assert.IsType<UriContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("https://example.com/screen.png", uri.Uri.ToString());
+    }
+
+    [Fact]
+    public void ConvertItemsToMessages_ComputerScreenshotContent_DataUri_ProducesDataContent()
+    {
+        var screenshot = new ComputerScreenshotContent(
+            imageUrl: new Uri("data:image/png;base64,iVBORw0KGgo="),
+            fileId: null!,
+            detail: default);
+        var msg = new ItemMessage(MessageRole.User, new MessageContent[] { screenshot });
+
+        var messages = InputConverter.ConvertItemsToMessages([msg]);
+
+        var data = Assert.IsType<DataContent>(Assert.Single(messages[0].Contents));
+        Assert.StartsWith("data:image", data.Uri);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_SummaryTextContent_ProducesTextContent()
+    {
+        var outputMsg = new OutputItemMessage(
+            id: "out_summary",
+            role: MessageRole.Assistant,
+            content: new MessageContent[] { new SummaryTextContent("output summary") },
+            status: MessageStatus.Completed);
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([outputMsg]);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("output summary", text.Text);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_ReasoningTextContent_ProducesTextReasoningContent()
+    {
+        var outputMsg = new OutputItemMessage(
+            id: "out_reasoning",
+            role: MessageRole.Assistant,
+            content: new MessageContent[] { new MessageContentReasoningTextContent("output reasoning") },
+            status: MessageStatus.Completed);
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([outputMsg]);
+
+        var reasoning = Assert.IsType<TextReasoningContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("output reasoning", reasoning.Text);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_ComputerScreenshotContent_ProducesUriContent()
+    {
+        var screenshot = new ComputerScreenshotContent(
+            imageUrl: new Uri("https://example.com/output-screen.png"),
+            fileId: null!,
+            detail: default);
+        var outputMsg = new OutputItemMessage(
+            id: "out_screenshot",
+            role: MessageRole.Assistant,
+            content: new MessageContent[] { screenshot },
+            status: MessageStatus.Completed);
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([outputMsg]);
+
+        var uri = Assert.IsType<UriContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("https://example.com/output-screen.png", uri.Uri.ToString());
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_SdkTextContent_ProducesTextContent()
+    {
+        var outputMsg = new OutputItemMessage(
+            id: "out_text",
+            role: MessageRole.Assistant,
+            content: new MessageContent[] { new Azure.AI.AgentServer.Responses.Models.TextContent("sdk text") },
+            status: MessageStatus.Completed);
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([outputMsg]);
+
+        var text = Assert.IsType<MeaiTextContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal("sdk text", text.Text);
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_OversizedTextDataUri_FallsBackToDataContent()
+    {
+        // The decoder must reject oversized base64 payloads so a malicious or
+        // misconfigured client cannot trigger a multi-megabyte allocation.
+        // We construct a base64 payload whose encoded length exceeds the 16 MiB cap
+        // (using a tiny but valid base64 unit repeated to keep the test fast).
+        const int OverLimit = (16 * 1024 * 1024) + 4;
+        var encoded = new string('A', OverLimit);
+        var dataUri = "data:text/plain;base64," + encoded;
+
+        var input = new[]
+        {
+            new
+            {
+                type = "message",
+                id = "msg_oversize",
+                status = "completed",
+                role = "user",
+                content = new[]
+                {
+                    new
+                    {
+                        type = "input_file",
+                        file_data = dataUri,
+                        filename = "huge.txt",
+                    }
+                }
+            }
+        };
+
+        var request = new CreateResponse();
+        request.Input = BinaryData.FromObjectAsJson(input);
+
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        // Should NOT have decoded into a TextContent (which would have allocated).
+        Assert.DoesNotContain(messages[0].Contents, c => c is MeaiTextContent t && t.Text.Length > 1024);
+        // Should have fallen back to DataContent (carrying the original opaque blob).
+        Assert.Contains(messages[0].Contents, c => c is DataContent);
     }
 }

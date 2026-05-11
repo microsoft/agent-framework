@@ -24,7 +24,7 @@ internal static class TurnExtensions
         => handoffState.TurnToken.ShouldEmitStreamingEvents(agentSetting);
 }
 
-internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
+internal class AIAgentHostExecutor : ChatProtocolExecutor
 {
     private readonly AIAgent _agent;
     private readonly AIAgentHostOptions _options;
@@ -40,7 +40,9 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         StringMessageChatRole = ChatRole.User
     };
 
-    public AIAgentHostExecutor(AIAgent agent, AIAgentHostOptions options) : base(id: agent.GetDescriptiveId(),
+    public static string IdFor(AIAgent agent) => agent.GetDescriptiveId();
+
+    public AIAgentHostExecutor(AIAgent agent, AIAgentHostOptions options) : base(id: IdFor(agent),
                                                                                  s_defaultChatProtocolOptions,
                                                                                  declareCrossRunShareable: false) // Explicitly false, because we maintain turn state on the instance
     {
@@ -67,7 +69,14 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder));
+        return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder))
+                   .ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<ResetChatSignal>(this.ResetChat));
+    }
+
+    internal void ResetChat(ResetChatSignal signal, IWorkflowContext context)
+    {
+        this._session = null;
+        this._currentTurnEmitEvents = null;
     }
 
     private ValueTask HandleUserInputResponseAsync(
@@ -181,8 +190,16 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
         AgentResponse response = await this.InvokeAgentAsync(filteredMessages, context, emitEvents, cancellationToken).ConfigureAwait(false);
 
-        await context.SendMessageAsync(response.Messages is List<ChatMessage> list ? list : response.Messages.ToList(), cancellationToken)
-                     .ConfigureAwait(false);
+        // Filter out server-side artifacts (reasoning tokens, web search calls, etc.)
+        // that are internal to this agent. Forwarding them to other agents in the workflow
+        // causes invalid request errors when the receiving agent uses the Responses API,
+        // because these item types are not valid as input items.
+        List<ChatMessage> forwardableMessages = FilterForwardableMessages(response.Messages).ToList();
+        if (forwardableMessages.Count > 0)
+        {
+            await context.SendMessageAsync(forwardableMessages, cancellationToken)
+                         .ConfigureAwait(false);
+        }
 
         // If we have no outstanding requests, we can yield a turn token back to the workflow.
         if (!this.HasOutstandingRequests)
@@ -240,5 +257,61 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         await collector.SubmitAsync(context, cancellationToken).ConfigureAwait(false);
 
         return response;
+    }
+
+    /// <summary>
+    /// Content types that represent meaningful conversational content portable across agents.
+    /// Messages containing only content types not in this set (e.g. reasoning tokens, web search
+    /// calls) are filtered out before forwarding, as they are output-only items that cause
+    /// schema validation errors when sent as input to the Responses API.
+    /// </summary>
+    private static readonly HashSet<Type> s_forwardableContentTypes =
+    [
+        typeof(TextContent),
+        typeof(DataContent),
+        typeof(UriContent),
+        typeof(FunctionCallContent),
+        typeof(FunctionResultContent),
+        typeof(ToolApprovalRequestContent),
+        typeof(ToolApprovalResponseContent),
+        typeof(HostedFileContent),
+        typeof(ErrorContent),
+    ];
+
+    /// <summary>
+    /// Filters response messages to only include those with portable conversational content,
+    /// and strips <see cref="ChatMessage.RawRepresentation"/> so that provider-specific output
+    /// items (e.g. <c>mcp_list_tools</c>, <c>reasoning</c>, <c>fabric_dataagent_preview_call</c>)
+    /// are not round-tripped by the M.E.AI library when the messages are sent to another agent.
+    /// </summary>
+    private static List<ChatMessage> FilterForwardableMessages(IList<ChatMessage> messages)
+    {
+        List<ChatMessage> result = [];
+
+        foreach (ChatMessage message in messages)
+        {
+            // Extract only the content items that are portable across agents.
+            List<AIContent> forwardableContents = message.Contents
+                .Where(c => s_forwardableContentTypes.Any(t => t.IsAssignableFrom(c.GetType())))
+                .ToList();
+
+            if (forwardableContents.Count == 0)
+            {
+                continue;
+            }
+
+            // Build a clean message without the provider-specific RawRepresentation,
+            // which would otherwise cause the M.E.AI library to round-trip the original
+            // output-only items (e.g. mcp_list_tools) as input to the next agent.
+            result.Add(new ChatMessage(message.Role, forwardableContents)
+            {
+                AuthorName = message.AuthorName,
+                MessageId = message.MessageId,
+                CreatedAt = message.CreatedAt,
+                AdditionalProperties = message.AdditionalProperties is null ? null : new(message.AdditionalProperties),
+            });
+        }
+
+        return result;
     }
 }

@@ -204,6 +204,11 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
     """Configuration for reasoning models (gpt-5, o-series).
     See: https://platform.openai.com/docs/guides/reasoning"""
 
+    verbosity: Literal["low", "medium", "high"]
+    """Output verbosity for GPT-5 family models. Lower values yield shorter responses.
+    Translated to ``text.verbosity`` when sent to the Responses API.
+    See: https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools#1-verbosity-parameter"""
+
     safety_identifier: str
     """A stable identifier for detecting policy violations.
     Recommend hashing username/email to avoid sending identifying info."""
@@ -662,7 +667,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     response = await client.responses.retrieve(continuation_token["response_id"])
                 except Exception as ex:
                     self._handle_request_error(ex)
-                return self._parse_response_from_openai(response, options=validated_options)
+                chat_response = self._parse_response_from_openai(response, options=validated_options)
+                # Once the background response completes, drop the continuation_token from
+                # the caller's options dict. FunctionInvocationLayer reuses the same dict
+                # across tool-loop iterations, so leaving it in place makes the next iteration
+                # retrieve the same completed response again instead of POSTing tool results
+                # (issue #5394). Keep `background` so subsequent iterations still create
+                # background responses.
+                if chat_response.continuation_token is None and isinstance(options, dict):
+                    options.pop("continuation_token", None)
+                return chat_response
             client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
@@ -1322,6 +1336,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         response_format, text_config = self._prepare_response_and_text_format(
             response_format=response_format, text_config=text_config
         )
+        # The Responses API nests verbosity under ``text.verbosity``; surface it as a
+        # top-level option for parity with ``reasoning`` and translate here.
+        if (verbosity := run_options.pop("verbosity", None)) is not None:
+            text_config = dict(text_config) if text_config else {}
+            text_config["verbosity"] = verbosity
         if text_config:
             run_options["text"] = text_config
         if response_format:

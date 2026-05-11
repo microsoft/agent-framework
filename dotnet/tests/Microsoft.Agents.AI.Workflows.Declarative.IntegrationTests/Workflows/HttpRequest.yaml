@@ -1,6 +1,10 @@
 #
 # This workflow tests invoking HttpRequestAction end-to-end.
-# Uses the public GitHub API (unauthenticated) to fetch repo metadata.
+# Uses the Azure ARM tenants endpoint, which is authenticated, fully static, and
+# reachable with the credentials the integration test pipeline already provides
+# (via az login). The bearer token is supplied by the test through a custom
+# HttpClient passed to DefaultHttpRequestHandler; the YAML deliberately does not
+# carry an Authorization header.
 #
 kind: Workflow
 trigger:
@@ -9,24 +13,19 @@ trigger:
   id: workflow_http_request_test
   actions:
 
-    # Set the repo owner used to form the request URL.
-    - kind: SetVariable
-      id: set_repo_owner
-      variable: Local.RepoOwner
-      value: dotnet
-
-    # Invoke the GitHub repo API.
+    # Invoke the Azure ARM tenants list API.
     - kind: HttpRequestAction
-      id: fetch_repo_info
+      id: fetch_tenants
       conversationId: =System.ConversationId
       method: GET
-      url: =Concatenate("https://api.github.com/repos/", Local.RepoOwner, "/runtime")
+      url: https://management.azure.com/tenants?api-version=2022-09-01
       headers:
-        Accept: application/vnd.github+json
-        User-Agent: agent-framework-integration-test
-      response: Local.RepoInfo
+        Accept: application/json
+      response: Local.TenantsResponse
 
-    # Surface the Repo visibility field from the parsed JSON response.
+    # Surface the first tenant id from the parsed JSON response. Every
+    # authenticated principal belongs to at least one tenant, so this path
+    # always resolves on a successful call.
     - kind: SendMessage
-      id: show_visibility
-      message: "visibility: {Local.RepoInfo.visibility}"
+      id: show_first_tenant
+      message: "{First(Local.TenantsResponse.value).tenantId}"

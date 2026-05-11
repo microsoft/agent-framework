@@ -19,7 +19,6 @@ from agent_framework_foundry import (
     FoundryEmbeddingOptions,
     FoundryEmbeddingSettings,
     FoundryEvals,
-    FoundryHostedToolType,
     FoundryMemoryProvider,
     RawFoundryAgent,
     RawFoundryAgentChatClient,
@@ -27,9 +26,6 @@ from agent_framework_foundry import (
     RawFoundryEmbeddingClient,
     evaluate_foundry_target,
     evaluate_traces,
-    get_toolbox_tool_name,
-    get_toolbox_tool_type,
-    select_toolbox_tools,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -51,7 +47,6 @@ __all__ = [
     "FoundryEmbeddingOptions",
     "FoundryEmbeddingSettings",
     "FoundryEvals",
-    "FoundryHostedToolType",
     "FoundryLocalChatOptions",
     "FoundryLocalClient",
     "FoundryLocalSettings",
@@ -63,7 +58,4 @@ __all__ = [
     "RawFoundryEmbeddingClient",
     "evaluate_foundry_target",
     "evaluate_traces",
-    "get_toolbox_tool_name",
-    "get_toolbox_tool_type",
-    "select_toolbox_tools",
 ]

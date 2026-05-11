@@ -72,6 +72,11 @@ from ._executors_http import (
     HTTP_ACTION_EXECUTORS,
     HttpRequestActionExecutor,
 )
+from ._executors_mcp import (
+    MCP_ACTION_EXECUTORS,
+    InvokeMcpToolActionExecutor,
+    MCPToolApprovalRequest,
+)
 from ._executors_tools import (
     FUNCTION_TOOL_REGISTRY_KEY,
     TOOL_ACTION_EXECUTORS,
@@ -90,6 +95,12 @@ from ._http_handler import (
     HttpRequestInfo,
     HttpRequestResult,
 )
+from ._mcp_handler import (
+    DefaultMCPToolHandler,
+    MCPToolHandler,
+    MCPToolInvocation,
+    MCPToolResult,
+)
 from ._state import WorkflowState
 
 __all__ = [
@@ -102,6 +113,7 @@ __all__ = [
     "EXTERNAL_INPUT_EXECUTORS",
     "FUNCTION_TOOL_REGISTRY_KEY",
     "HTTP_ACTION_EXECUTORS",
+    "MCP_ACTION_EXECUTORS",
     "TOOL_ACTION_EXECUTORS",
     "TOOL_APPROVAL_STATE_KEY",
     "TOOL_REGISTRY_KEY",
@@ -126,6 +138,7 @@ __all__ = [
     "DeclarativeWorkflowError",
     "DeclarativeWorkflowState",
     "DefaultHttpRequestHandler",
+    "DefaultMCPToolHandler",
     "EmitEventExecutor",
     "EndConversationExecutor",
     "EndWorkflowExecutor",
@@ -140,9 +153,14 @@ __all__ = [
     "HttpRequestResult",
     "InvokeAzureAgentExecutor",
     "InvokeFunctionToolExecutor",
+    "InvokeMcpToolActionExecutor",
     "JoinExecutor",
     "LoopControl",
     "LoopIterationResult",
+    "MCPToolApprovalRequest",
+    "MCPToolHandler",
+    "MCPToolInvocation",
+    "MCPToolResult",
     "QuestionExecutor",
     "RequestExternalInputExecutor",
     "ResetVariableExecutor",

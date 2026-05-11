@@ -24,5 +24,5 @@ public interface ICommandHandler
     /// <param name="input">The raw user input string.</param>
     /// <param name="session">The current agent session.</param>
     /// <returns><see langword="true"/> if this handler handled the input; <see langword="false"/> otherwise.</returns>
-    bool TryHandle(string input, AgentSession session);
+    ValueTask<bool> TryHandleAsync(string input, AgentSession session);
 }

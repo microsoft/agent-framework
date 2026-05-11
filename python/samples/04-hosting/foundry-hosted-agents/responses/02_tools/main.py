@@ -25,7 +25,7 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-@tool(approval_mode="never_require")
+@tool(approval_mode="always_require")
 def run_bash(command: str) -> str:
     """Execute a shell command locally and return stdout, stderr, and exit code."""
     try:

@@ -1,6 +1,6 @@
 # agent-framework-hyperlight
 
-Alpha Hyperlight-backed CodeAct integrations for Microsoft Agent Framework.
+Hyperlight-backed CodeAct integrations for Microsoft Agent Framework.
 
 ## Installation
 
@@ -121,8 +121,9 @@ codeact = HyperlightCodeActProvider(
 ## Notes
 
 - This package is intentionally separate from `agent-framework-core` so CodeAct
-  usage and installation remain optional.
-- Alpha-package samples live under `packages/hyperlight/samples/`.
+  usage and installation remain optional. With `agent-framework-core[all]` (or
+  the meta `agent-framework`) installed it is also reachable through the
+  lazy-loading namespace `agent_framework.hyperlight`.
 - `file_mounts` accepts a single string shorthand, an explicit `(host_path,
   mount_path)` pair, or a `FileMount` named tuple. The host-side path in the
   explicit forms may be a `str` or `Path`. Use the explicit two-value form when

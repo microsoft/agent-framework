@@ -196,7 +196,10 @@ async def test_raw_foundry_agent_chat_client_prepare_options_accepts_function_to
             options={"tools": [my_func]},
         )
 
-    assert result == {}
+    # agent_reference is required so the Responses API can resolve model server-side; see #5582.
+    assert result == {
+        "extra_body": {"agent_reference": {"name": "test-agent", "type": "agent_reference"}},
+    }
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_fields() -> None:
@@ -236,7 +239,128 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_
     assert "tools" not in result
     assert "tool_choice" not in result
     assert "parallel_tool_calls" not in result
-    assert result == {}
+    # agent_reference is required so the Responses API can resolve model server-side; see #5582.
+    assert result == {
+        "extra_body": {"agent_reference": {"name": "test-agent", "type": "agent_reference"}},
+    }
+
+
+async def test_raw_foundry_agent_chat_client_prepare_options_injects_agent_reference_first_turn() -> None:
+    """First-turn (no conversation_id) Prompt Agent calls must carry agent_reference in extra_body.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/5582 — without this
+    the Responses API rejects with "Missing required parameter: 'model'", because both ``model``
+    and ``agent_reference`` are absent from the request body.
+    """
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        agent_version="2",
+    )
+
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={"model": "gpt-4.1"},
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={},
+        )
+
+    assert "model" not in result
+    assert result["extra_body"] == {
+        "agent_reference": {"name": "test-agent", "type": "agent_reference", "version": "2"},
+    }
+
+
+async def test_raw_foundry_agent_chat_client_prepare_options_agent_reference_omits_version_when_unset() -> None:
+    """When agent_version is unset, agent_reference should omit the version key entirely."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+    )
+
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={"model": "gpt-4.1"},
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={},
+        )
+
+    assert result["extra_body"] == {
+        "agent_reference": {"name": "hosted-agent", "type": "agent_reference"},
+    }
+
+
+async def test_raw_foundry_agent_chat_client_prepare_options_skips_agent_reference_when_allow_preview() -> None:
+    """Hosted-agent (allow_preview=True) requests must NOT add agent_reference in the body.
+
+    The preview path injects the agent identity via ``project_client.get_openai_client(agent_name=...)``
+    at the SDK wrapper level. Adding it again in extra_body would either duplicate or conflict
+    with the wrapper's injection. Keep this gate aligned with the constructor branch in
+    ``RawFoundryAgentChatClient.__init__``.
+    """
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        agent_version="3",
+        allow_preview=True,
+    )
+
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={"model": "gpt-4.1"},
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={},
+        )
+
+    assert "model" not in result
+    # No extra_body at all is the cleanest signal — agent_reference must not be injected here.
+    assert "extra_body" not in result
+
+
+async def test_raw_foundry_agent_chat_client_prepare_options_respects_caller_agent_reference() -> None:
+    """A caller-supplied extra_body['agent_reference'] should not be overwritten."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="default-agent",
+    )
+
+    caller_reference = {"name": "override-agent", "type": "agent_reference", "version": "5"}
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={"model": "gpt-4.1", "extra_body": {"agent_reference": caller_reference}},
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"extra_body": {"agent_reference": caller_reference}},
+        )
+
+    assert result["extra_body"]["agent_reference"] == caller_reference
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_maps_agent_session_id_to_extra_body() -> None:
@@ -267,6 +391,7 @@ async def test_raw_foundry_agent_chat_client_prepare_options_maps_agent_session_
     assert result["extra_body"] == {
         "custom": "value",
         "agent_session_id": "agent-session-123",
+        "agent_reference": {"name": "test-agent", "type": "agent_reference"},
     }
     assert "previous_response_id" not in result
     assert "conversation" not in result

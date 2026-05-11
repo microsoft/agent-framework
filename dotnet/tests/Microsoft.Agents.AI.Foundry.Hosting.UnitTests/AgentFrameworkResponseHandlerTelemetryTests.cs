@@ -37,7 +37,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
     public async Task CreateAsync_DefaultAgent_EmitsInvokeAgentSpanAsync()
     {
         // Arrange
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
             .AddSource(ResponsesSourceName)
             .AddInMemoryExporter(activities)
@@ -56,7 +56,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         await foreach (var _ in handler.CreateAsync(request, context, CancellationToken.None)) { }
 
         // Assert — filter by agent name to isolate this test's span from any parallel test spans
-        var mySpan = Assert.Single(activities.Where(a => TelemetryTestAgent.AgentName.Equals(a.GetTagItem("gen_ai.agent.name"))).ToList());
+        var mySpan = Assert.Single(activities.Snapshot().Where(a => TelemetryTestAgent.AgentName.Equals(a.GetTagItem("gen_ai.agent.name"))).ToList());
         Assert.Equal("invoke_agent", mySpan.GetTagItem("gen_ai.operation.name"));
         Assert.NotNull(mySpan.GetTagItem("gen_ai.agent.id"));
     }
@@ -65,7 +65,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
     public async Task CreateAsync_KeyedAgent_EmitsInvokeAgentSpanAsync()
     {
         // Arrange
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
             .AddSource(ResponsesSourceName)
             .AddInMemoryExporter(activities)
@@ -84,7 +84,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         await foreach (var _ in handler.CreateAsync(request, context, CancellationToken.None)) { }
 
         // Assert — filter by agent name to isolate this test's span
-        var mySpan = Assert.Single(activities.Where(a => TelemetryTestAgent.AgentName.Equals(a.GetTagItem("gen_ai.agent.name"))).ToList());
+        var mySpan = Assert.Single(activities.Snapshot().Where(a => TelemetryTestAgent.AgentName.Equals(a.GetTagItem("gen_ai.agent.name"))).ToList());
         Assert.Equal("invoke_agent", mySpan.GetTagItem("gen_ai.operation.name"));
     }
 
@@ -95,8 +95,8 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         // If ApplyOpenTelemetry double-wraps, an extra span would appear on ResponsesSourceName.
         // If it correctly skips wrapping, only the pre-wrap's unique source emits spans.
         var preWrapSource = Guid.NewGuid().ToString();
-        var preWrapActivities = new List<Activity>();
-        var responsesActivities = new List<Activity>();
+        var preWrapActivities = new ConcurrentActivityList();
+        var responsesActivities = new ConcurrentActivityList();
 
         using var preWrapProvider = Sdk.CreateTracerProviderBuilder()
             .AddSource(preWrapSource)
@@ -125,18 +125,19 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         await foreach (var _ in handler.CreateAsync(request, context, CancellationToken.None)) { }
 
         // Assert — pre-wrap source emits exactly 1 span (agent ran)
-        Assert.Single(preWrapActivities);
-        Assert.Equal("invoke_agent", preWrapActivities[0].GetTagItem("gen_ai.operation.name"));
+        var preWrapSnapshot = preWrapActivities.Snapshot();
+        Assert.Single(preWrapSnapshot);
+        Assert.Equal("invoke_agent", preWrapSnapshot[0].GetTagItem("gen_ai.operation.name"));
 
         // ResponsesSourceName emits 0 spans — ApplyOpenTelemetry skipped wrapping the pre-instrumented agent
-        Assert.DoesNotContain(responsesActivities, a => TelemetryTestAgent.AgentName.Equals(a.GetTagItem("gen_ai.agent.name")));
+        Assert.DoesNotContain(responsesActivities.Snapshot(), a => TelemetryTestAgent.AgentName.Equals(a.GetTagItem("gen_ai.agent.name")));
     }
 
     [Fact]
     public async Task CreateAsync_DefaultAgent_SpanDisplayNameContainsAgentNameAsync()
     {
         // Arrange
-        var activities = new List<Activity>();
+        var activities = new ConcurrentActivityList();
         using var tracerProvider = Sdk.CreateTracerProviderBuilder()
             .AddSource(ResponsesSourceName)
             .AddInMemoryExporter(activities)
@@ -155,7 +156,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         await foreach (var _ in handler.CreateAsync(request, context, CancellationToken.None)) { }
 
         // Assert — display name follows "invoke_agent {Name}({Id})" convention; filter by agent name to isolate
-        var mySpan = Assert.Single(activities.Where(a => TelemetryTestAgent.AgentName.Equals(a.GetTagItem("gen_ai.agent.name"))).ToList());
+        var mySpan = Assert.Single(activities.Snapshot().Where(a => TelemetryTestAgent.AgentName.Equals(a.GetTagItem("gen_ai.agent.name"))).ToList());
         Assert.Contains("invoke_agent", mySpan.DisplayName, StringComparison.Ordinal);
         Assert.Contains(TelemetryTestAgent.AgentName, mySpan.DisplayName, StringComparison.Ordinal);
     }
@@ -231,4 +232,35 @@ public class AgentFrameworkResponseHandlerTelemetryTests
     }
 
     private sealed class TelemetryAgentSession : AgentSession;
+
+    /// <summary>
+    /// Thread-safe <see cref="ICollection{Activity}"/> used by OTel's InMemoryExporter to capture
+    /// activities emitted on globally-listened sources. Required because the exporter writes into
+    /// the supplied collection from background Activity completion callbacks while the test thread
+    /// may be enumerating it for assertions, and other tests in the same assembly may emit on the
+    /// same source concurrently. A plain <see cref="List{Activity}"/> trips
+    /// "Collection was modified; enumeration operation may not execute." in that scenario.
+    /// </summary>
+    private sealed class ConcurrentActivityList : ICollection<Activity>
+    {
+        private readonly List<Activity> _items = new();
+        private readonly object _gate = new();
+
+        public int Count { get { lock (this._gate) { return this._items.Count; } } }
+        public bool IsReadOnly => false;
+
+        public void Add(Activity item) { lock (this._gate) { this._items.Add(item); } }
+        public void Clear() { lock (this._gate) { this._items.Clear(); } }
+        public bool Contains(Activity item) { lock (this._gate) { return this._items.Contains(item); } }
+        public void CopyTo(Activity[] array, int arrayIndex) { lock (this._gate) { this._items.CopyTo(array, arrayIndex); } }
+        public bool Remove(Activity item) { lock (this._gate) { return this._items.Remove(item); } }
+
+        public Activity[] Snapshot()
+        {
+            lock (this._gate) { return this._items.ToArray(); }
+        }
+
+        public IEnumerator<Activity> GetEnumerator() => ((IEnumerable<Activity>)this.Snapshot()).GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => this.GetEnumerator();
+    }
 }
