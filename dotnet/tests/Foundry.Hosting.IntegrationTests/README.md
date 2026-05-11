@@ -138,6 +138,7 @@ human-only operation; CI only adds and deletes versions under existing agents.
 | `ToolboxHostedAgentFixture` | `toolbox` | `it-toolbox` | Server registered toolbox tool callable; client side additions visible (placeholder). |
 | `McpToolboxHostedAgentFixture` | `mcp-toolbox` | `it-mcp-toolbox` | MCP backed tool invocation against `https://learn.microsoft.com/api/mcp` (placeholder). |
 | `CustomStorageHostedAgentFixture` | `custom-storage` | `it-custom-storage` | Round trip with custom `IResponsesStorageProvider`; multi turn reads from the custom store (placeholder). |
+| `SessionFilesHostedAgentFixture` | `session-files` | `it-session-files` | End-to-end: upload via `AgentSessionFiles` (alpha) into a pinned `agent_session_id`, invoke the agent, assert it reads the file via the container's `ReadFile` tool. |
 
 The placeholder scenarios will be wired up in the test container `Program.cs` once the
 relevant `Microsoft.Agents.AI.Foundry.Hosting` API surfaces stabilize.

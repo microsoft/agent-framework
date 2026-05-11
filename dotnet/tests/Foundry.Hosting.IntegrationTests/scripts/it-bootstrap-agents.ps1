@@ -38,7 +38,8 @@ $Scenarios = @(
     'tool-calling-approval',
     'toolbox',
     'mcp-toolbox',
-    'custom-storage'
+    'custom-storage',
+    'session-files'
 )
 
 # Resolve project ARM scope from the endpoint.

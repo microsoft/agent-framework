@@ -20,8 +20,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.AI.Projects" VersionOverride="2.1.0-beta.1" />
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="Microsoft.Extensions.AI" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Linked from the Hosted-Files sample so the demo testdata file has a single source of truth. -->
+    <Content Include="..\..\samples\04-hosting\FoundryHostedAgents\responses\Hosted-Files\resources\contoso_q1_2026_report.txt"
+             Link="TestData\contoso_q1_2026_report.txt"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

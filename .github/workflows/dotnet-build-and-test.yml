@@ -351,7 +351,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      targetFramework: net10.0
       configuration: Release
     steps:
       - uses: actions/checkout@v6
@@ -368,31 +367,15 @@ jobs:
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
 
-      - name: Generate test solution (no samples)
-        shell: pwsh
-        run: |
-          ./dotnet/eng/scripts/New-FilteredSolution.ps1 `
-            -Solution dotnet/agent-framework-dotnet.slnx `
-            -TargetFramework $env:targetFramework `
-            -Configuration $env:configuration `
-            -ExcludeSamples `
-            -OutputPath dotnet/filtered.slnx `
-            -Verbose
-
-      - name: Generate Foundry hosted IT filtered solution
-        shell: pwsh
-        run: |
-          ./dotnet/eng/scripts/New-FilteredSolution.ps1 `
-            -Solution dotnet/filtered.slnx `
-            -TargetFramework $env:targetFramework `
-            -Configuration $env:configuration `
-            -TestProjectNameFilter "Foundry.Hosting.IntegrationTests*" `
-            -OutputPath dotnet/filtered-foundry-hosted.slnx `
-            -Verbose
-
+      # Build the test csproj directly instead of a filtered slnx + -f override.
+      # The test project pins TargetFrameworks=net10.0 and its ProjectReference closure
+      # gives MSBuild a single-rooted graph, so each multi-targeted dependency is invoked
+      # exactly once for net10.0. This avoids the MSB3026/MSB3491/MSB4018/MSB3883 file-lock
+      # collisions caused by parallel inner-builds racing on shared bin/obj output paths
+      # under the previous slnx + global TFM override approach.
       - name: Build Foundry hosted IT (and its deps)
         shell: bash
-        run: dotnet build dotnet/filtered-foundry-hosted.slnx -c "$configuration" -f "$targetFramework" --warnaserror
+        run: dotnet build dotnet/tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj -c "$configuration" --warnaserror
 
       - name: Azure CLI Login
         uses: azure/login@v2
@@ -405,13 +388,12 @@ jobs:
       # are picked up; the image tag is content-hashed across the test container source AND its
       # framework project references, so identical content is a no-op push.
       #
-      # `-UsePrebuiltProjectReferences` opts into the no-rebuild fast path: publish skips
-      # rebuilding ProjectReferences and consumes the DLLs the prior "Build Foundry hosted IT
-      # (and its deps)" step already produced. This avoids MSB3026 ("file is being used by
-      # another process") collisions caused by the previous build's shared-compilation server
-      # still holding file handles to those DLLs. Safe in CI because the prebuild step ran in
-      # the same job against the same source. Do not remove the prebuild step (the subsequent
-      # `dotnet test --no-build` step depends on it too).
+      # The script always passes --no-dependencies to dotnet publish so publish never re-touches
+      # the framework lib DLLs the prior "Build Foundry hosted IT (and its deps)" step produced.
+      # This structurally eliminates the MSB3026 collision that VBCSCompiler from the prebuild
+      # would otherwise cause by holding file handles to those DLLs. Do not remove the prebuild
+      # step: the subsequent `dotnet test --no-build` step and the publish's ProjectReference
+      # resolution both depend on the prebuilt outputs being present.
       - name: Build and push Foundry Hosted Agents test container
         id: build-foundry-hosted-image
         shell: pwsh
@@ -421,14 +403,13 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($registry)) {
             throw "IT_HOSTED_AGENT_REGISTRY not set in the integration environment."
           }
-          & "${{ github.workspace }}/dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/it-build-image.ps1" -Registry $registry -UsePrebuiltProjectReferences | Tee-Object -FilePath $env:GITHUB_ENV -Append
+          & "${{ github.workspace }}/dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/it-build-image.ps1" -Registry $registry | Tee-Object -FilePath $env:GITHUB_ENV -Append
 
       - name: Run Foundry Hosted Agents Integration Tests
         shell: pwsh
         working-directory: dotnet
         run: |
-          dotnet test --solution ./filtered-foundry-hosted.slnx `
-            -f $env:targetFramework `
+          dotnet test --project tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj `
             -c $env:configuration `
             --no-build -v Normal `
             --report-xunit-trx `
