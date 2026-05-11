@@ -20,6 +20,15 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </summary>
 /// <remarks>
 /// <para>
+/// <b>Single-owner contract.</b> A <see cref="ShellSession"/> is owned by exactly one
+/// conversation / agent session — i.e., one user. The backing shell process carries
+/// mutable state (cwd, exported variables, history, background jobs) that every
+/// subsequent command can observe, and <c>_runLock</c> serializes every call onto the
+/// single stdin/stdout pipe. There is no per-caller isolation. The enclosing executor
+/// must not share a single session across users, tenants, or concurrent conversations;
+/// it must create one session per agent session and dispose it when the session ends.
+/// </para>
+/// <para>
 /// Cross-OS implementation notes:
 /// </para>
 /// <list type="bullet">
@@ -62,6 +71,11 @@ internal sealed class ShellSession : IAsyncDisposable
     private readonly IReadOnlyDictionary<string, string?>? _environment;
     private readonly bool _cleanEnvironment;
     private readonly int _maxOutputBytes;
+    // Serializes commands onto the single stdin/stdout pipe. This is an
+    // ordering primitive within one owning session; it is NOT a multi-tenant
+    // isolation mechanism. ShellSession is single-owner — see the type-level
+    // remarks. The lock just guarantees that concurrent calls from the one
+    // owner queue cleanly instead of interleaving on the pipe.
     private readonly SemaphoreSlim _runLock = new(1, 1);
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly string _sentinelTag;

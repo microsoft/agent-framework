@@ -30,12 +30,19 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// teardown.
 /// </para>
 /// <para>
-/// <b>Concurrency.</b> A single executor instance is intended to serve a
-/// single conversation/session. Stateless mode is safe to share across
-/// concurrent callers (each <c>RunAsync</c> spawns a fresh process or
-/// container). Persistent mode is <em>not</em>: a single long-lived shell
-/// process backs every call, and concurrent commands would interleave on its
-/// stdin/stdout. Build one executor per session.
+/// <b>Concurrency and session ownership.</b> A single executor instance is
+/// intended to serve a single conversation / agent session — i.e., a single
+/// user. Stateless mode is safe to share across concurrent callers (each
+/// <c>RunAsync</c> spawns a fresh process or container, so there is no
+/// shared mutable state). Persistent mode is <em>not</em> shareable: a
+/// single long-lived shell process backs every call, it carries mutable
+/// state (working directory, exported variables, history, in-flight
+/// background jobs) that is visible to every subsequent command, and
+/// concurrent commands would interleave on its stdin/stdout. The framework
+/// does not isolate one caller's state from another's. Build one executor
+/// per session, treat it as owned by that session for its lifetime, and
+/// dispose it when the session ends. If you register an executor with a DI
+/// container, use a per-request / per-conversation scope, not a singleton.
 /// </para>
 /// </remarks>
 public abstract class ShellExecutor : IAsyncDisposable

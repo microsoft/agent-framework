@@ -29,6 +29,17 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// then runs the wrong path" failures.
 /// </para>
 /// <para>
+/// <b>Single-session ownership.</b> A persistent-mode executor is owned by a single
+/// conversation / agent session — i.e., a single user. The backing shell process carries
+/// mutable state (working directory, exported variables, shell history, background jobs)
+/// that is visible to every command run through it, and a single stdin/stdout pipe
+/// serializes every call. Do not share one instance across users, tenants, or concurrent
+/// conversations: state leaks between them and commands queue behind each other. Create
+/// one <see cref="LocalShellExecutor"/> per session, dispose it when the session ends, and
+/// in DI scenarios register it with a per-session scope (not as a singleton). If a shared
+/// instance is genuinely required, use <see cref="ShellMode.Stateless"/>.
+/// </para>
+/// <para>
 /// <b>Threat model.</b> The deny list is a guardrail, not a security boundary. Real isolation
 /// requires either (a) approval-in-the-loop, where every command is reviewed by a human via the
 /// harness <c>ToolApprovalAgent</c> (this is the default; see

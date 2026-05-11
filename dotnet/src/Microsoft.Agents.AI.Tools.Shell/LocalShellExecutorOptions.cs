@@ -11,7 +11,14 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// </summary>
 public sealed class LocalShellExecutorOptions
 {
-    /// <summary>Execution mode. Defaults to <see cref="ShellMode.Persistent"/>.</summary>
+    /// <summary>
+    /// Execution mode. Defaults to <see cref="ShellMode.Persistent"/>.
+    /// <para>
+    /// In <see cref="ShellMode.Persistent"/> the resulting executor instance is owned by
+    /// a single conversation / agent session; do not share it across users or concurrent
+    /// sessions. See <see cref="LocalShellExecutor"/> remarks.
+    /// </para>
+    /// </summary>
     public ShellMode Mode { get; set; } = ShellMode.Persistent;
 
     /// <summary>

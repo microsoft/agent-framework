@@ -42,6 +42,20 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// host process is still a bash REPL connected over pipes. Stateless mode
 /// runs each call in a fresh <c>docker run --rm</c>.
 /// </para>
+/// <para>
+/// <b>Single-session ownership.</b> In persistent mode the executor owns a long-lived
+/// container plus the bash REPL inside it. That container's filesystem, environment,
+/// working directory, and any artifacts the agent has produced are visible to every
+/// subsequent command, and a single stdin/stdout pipe serializes every call. A
+/// persistent-mode <see cref="DockerShellExecutor"/> is therefore intended to be owned by
+/// exactly one conversation / agent session — i.e., one user. Do not share one instance
+/// across users, tenants, or concurrent conversations: their state leaks together inside
+/// the container and commands queue behind each other. Create one executor per session,
+/// dispose it when the session ends (disposal stops and removes the container), and in DI
+/// scenarios register it with a per-session scope. If a shared instance is genuinely
+/// required, use <see cref="ShellMode.Stateless"/>, which gives each call its own
+/// throwaway <c>docker run --rm</c>.
+/// </para>
 /// </remarks>
 public sealed class DockerShellExecutor : ShellExecutor
 {

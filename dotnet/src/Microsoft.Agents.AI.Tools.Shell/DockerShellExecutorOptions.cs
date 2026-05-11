@@ -17,7 +17,15 @@ public sealed class DockerShellExecutorOptions
     /// <summary>Optional container name. When <see langword="null"/>, a unique name is generated.</summary>
     public string? ContainerName { get; set; }
 
-    /// <summary>Execution mode. Defaults to <see cref="ShellMode.Persistent"/>.</summary>
+    /// <summary>
+    /// Execution mode. Defaults to <see cref="ShellMode.Persistent"/>.
+    /// <para>
+    /// In <see cref="ShellMode.Persistent"/> the resulting executor instance owns a
+    /// long-lived container plus the bash REPL inside it, and is intended to be owned
+    /// by a single conversation / agent session; do not share it across users or
+    /// concurrent sessions. See <see cref="DockerShellExecutor"/> remarks.
+    /// </para>
+    /// </summary>
     public ShellMode Mode { get; set; } = ShellMode.Persistent;
 
     /// <summary>Optional host directory mounted at <see cref="ContainerWorkdir"/>.</summary>
