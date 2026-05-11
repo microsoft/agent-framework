@@ -522,7 +522,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         # NOTE: session is created after providers run so that future provider-contributed
         # tools/config could be folded into runtime_options before session creation.
-        copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
+        copilot_session = await self._get_or_create_session(
+            session,
+            streaming=False,
+            runtime_options=opts,
+            context_tools=session_context.tools,
+        )
 
         # Build the prompt from the full set of messages in the session context,
         # so that any context/history provider-injected messages are included.
@@ -607,7 +612,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         # NOTE: session is created after providers run so that future provider-contributed
         # tools/config could be folded into runtime_options before session creation.
-        copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
+        copilot_session = await self._get_or_create_session(
+            session,
+            streaming=True,
+            runtime_options=opts,
+            context_tools=session_context.tools,
+        )
 
         if _ctx_holder is not None:
             _ctx_holder["session_context"] = session_context
@@ -777,6 +787,15 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         return copilot_tools
 
+    def _prepare_session_tools(
+        self,
+        context_tools: Sequence[Any] | None = None,
+    ) -> list[CopilotTool] | None:
+        tools = list(self._tools)
+        if context_tools:
+            tools.extend(normalize_tools(context_tools))  # type: ignore[arg-type]
+        return self._prepare_tools(tools) if tools else None
+
     def _tool_to_copilot_tool(self, ai_func: FunctionTool) -> CopilotTool:
         """Convert an FunctionTool to a Copilot SDK tool."""
         approval_handler = self._function_approval_handler
@@ -841,6 +860,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         agent_session: AgentSession,
         streaming: bool = False,
         runtime_options: dict[str, Any] | None = None,
+        context_tools: Sequence[Any] | None = None,
     ) -> CopilotSession:
         """Get an existing session or create a new one for the session.
 
@@ -848,6 +868,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             agent_session: The conversation session.
             streaming: Whether to enable streaming for the session.
             runtime_options: Runtime options from run that take precedence.
+            context_tools: Tools contributed by context providers for this run.
 
         Returns:
             A CopilotSession instance.
@@ -860,9 +881,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         try:
             if agent_session.service_session_id:
-                return await self._resume_session(agent_session.service_session_id, streaming, runtime_options)
+                return await self._resume_session(
+                    agent_session.service_session_id,
+                    streaming,
+                    runtime_options,
+                    context_tools=context_tools,
+                )
 
-            session = await self._create_session(streaming, runtime_options)
+            session = await self._create_session(streaming, runtime_options, context_tools=context_tools)
             agent_session.service_session_id = session.session_id
             return session
         except Exception as ex:
@@ -872,12 +898,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self,
         streaming: bool,
         runtime_options: dict[str, Any] | None = None,
+        context_tools: Sequence[Any] | None = None,
     ) -> CopilotSession:
         """Create a new Copilot session.
 
         Args:
             streaming: Whether to enable streaming for the session.
             runtime_options: Runtime options that take precedence over default_options.
+            context_tools: Tools contributed by context providers for this run.
         """
         if not self._client:
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
@@ -891,7 +919,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
         instruction_directories = opts.get("instruction_directories", self._instruction_directories)
-        tools = self._prepare_tools(self._tools) if self._tools else None
+        tools = self._prepare_session_tools(context_tools)
 
         return await self._client.create_session(
             on_permission_request=permission_handler,
@@ -909,6 +937,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         session_id: str,
         streaming: bool,
         runtime_options: dict[str, Any] | None = None,
+        context_tools: Sequence[Any] | None = None,
     ) -> CopilotSession:
         """Resume an existing Copilot session by ID.
 
@@ -916,6 +945,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session_id: The session ID to resume.
             streaming: Whether to enable streaming for the session.
             runtime_options: Runtime options that take precedence over default_options.
+            context_tools: Tools contributed by context providers for this run.
         """
         if not self._client:
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
@@ -929,7 +959,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
         instruction_directories = opts.get("instruction_directories", self._instruction_directories)
-        tools = self._prepare_tools(self._tools) if self._tools else None
+        tools = self._prepare_session_tools(context_tools)
 
         return await self._client.resume_session(
             session_id,
