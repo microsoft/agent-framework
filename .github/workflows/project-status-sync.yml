@@ -57,12 +57,18 @@ jobs:
             // Remove existing status labels
             for (const label of existingLabels) {
               if (allStatusLabels.includes(label)) {
-                await github.rest.issues.removeLabel({
-                  owner: repo.owner,
-                  repo: repo.repo,
-                  issue_number,
-                  name: label
-                }).catch(() => {});
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner: repo.owner,
+                    repo: repo.repo,
+                    issue_number,
+                    name: label
+                  });
+                } catch (error) {
+                  if (error.status !== 404) {
+                    throw error;
+                  }
+                }
               }
             }
 
