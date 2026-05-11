@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -165,7 +165,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
         // history (real ConversationId) or this is a continuation/background run,
         // just forward the input messages as-is.
         var messagesForService = skipSimulation
-            ? (IEnumerable<ChatMessage>)newMessages
+            ? newMessages
             : await agent.LoadChatHistoryAsync(session, newMessages, options, cancellationToken).ConfigureAwait(false);
 
         List<ChatResponseUpdate> responseUpdates = [];
