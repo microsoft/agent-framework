@@ -1,0 +1,75 @@
+name: Sync Project Status to Labels
+
+on:
+  project_v2_item:
+    types: [edited]
+
+jobs:
+  sync-status:
+    runs-on: ubuntu-latest
+
+    permissions:
+      issues: write
+
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const item = context.payload.projects_v2_item;
+
+            console.log(item.project_node_id);
+
+            // Ignore non-issue items
+            if (!item.content || item.content.type !== "Issue") {
+              return;
+            }
+
+            const issue_number = item.content.number;
+            const repo = context.repo;
+
+            const fieldValues = item.field_values || [];
+            const statusField = fieldValues.find(f => f.field.name === "Status");
+
+            if (!statusField) return;
+
+            const status = statusField.name;
+
+            const labelMap = {
+              "Planned": "status:planned",
+              "In Progress": "status:in-progress",
+              "In Review": "status:in-review",
+              "Done": "status:done"
+            };
+
+            const targetLabel = labelMap[status];
+            if (!targetLabel) return;
+
+            const { data: issue } = await github.rest.issues.get({
+              owner: repo.owner,
+              repo: repo.repo,
+              issue_number
+            });
+
+            const existingLabels = issue.labels.map(l => l.name);
+            const allStatusLabels = Object.values(labelMap);
+
+            // Remove existing status labels
+            for (const label of existingLabels) {
+              if (allStatusLabels.includes(label)) {
+                await github.rest.issues.removeLabel({
+                  owner: repo.owner,
+                  repo: repo.repo,
+                  issue_number,
+                  name: label
+                }).catch(() => {});
+              }
+            }
+
+            // Add new label
+            await github.rest.issues.addLabels({
+              owner: repo.owner,
+              repo: repo.repo,
+              issue_number,
+              labels: [targetLabel]
+            });
