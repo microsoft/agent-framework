@@ -157,7 +157,15 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
         except Exception as transport_error:
             # Transport negotiation failed - fall back to minimal agent card with JSONRPC
-            fallback_url = agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else url or ""
+            fallback_url = (
+                agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else url
+            )
+            if not fallback_url:
+                raise ValueError(
+                    "A2A transport negotiation failed and no fallback URL is available. "
+                    "Provide a 'url' argument or ensure 'agent_card.supported_interfaces' "
+                    "contains at least one interface with a URL."
+                ) from transport_error
             fallback_card = minimal_agent_card(fallback_url, ["JSONRPC"])
             try:
                 self.client = factory.create(fallback_card, interceptors=interceptors)  # type: ignore
@@ -388,7 +396,6 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     yield update
             elif payload_type == "status_update":
                 status_event = item.status_update
-                task_id = status_event.task_id
                 updates = self._updates_from_task_update_event(status_event)
                 if emit_intermediate:
                     for update in updates:
@@ -396,10 +403,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         yield update
             elif payload_type == "artifact_update":
                 artifact_event = item.artifact_update
-                task_id = artifact_event.task_id
                 updates = self._updates_from_task_update_event(artifact_event)
                 if updates:
-                    streamed_artifact_ids_by_task.setdefault(task_id, set()).add(artifact_event.artifact.artifact_id)
+                    streamed_artifact_ids_by_task.setdefault(artifact_event.task_id, set()).add(
+                        artifact_event.artifact.artifact_id
+                    )
                 if emit_intermediate:
                     for update in updates:
                         all_updates.append(update)
