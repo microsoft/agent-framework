@@ -556,8 +556,8 @@ def test_prepare_message_for_a2a_uses_fallback_context_id() -> None:
     assert result.context_id == "session-ctx-1"
 
 
-def test_prepare_message_for_a2a_message_context_id_takes_precedence() -> None:
-    """Test that message.additional_properties context_id wins over the fallback."""
+def test_prepare_message_for_a2a_session_context_id_takes_precedence() -> None:
+    """Test that context_id kwarg (from session) takes precedence over additional_properties."""
 
     agent = A2AAgent(client=MagicMock(), http_client=None)
 
@@ -569,7 +569,7 @@ def test_prepare_message_for_a2a_message_context_id_takes_precedence() -> None:
 
     result = agent._prepare_message_for_a2a(message, context_id="session-ctx-1")
 
-    assert result.context_id == "explicit-ctx"
+    assert result.context_id == "session-ctx-1"
 
 
 def test_parse_contents_from_a2a_with_data_part() -> None:
@@ -918,8 +918,8 @@ async def test_run_passes_session_service_session_id_as_context_id(mock_a2a_clie
 
 
 @mark.asyncio
-async def test_run_message_context_id_takes_precedence_over_session(mock_a2a_client: MockA2AClient) -> None:
-    """Test that an explicit context_id on the message wins over session.service_session_id."""
+async def test_run_session_context_id_takes_precedence_over_message(mock_a2a_client: MockA2AClient) -> None:
+    """Test that session.service_session_id takes precedence over message additional_properties context_id."""
     agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
     mock_a2a_client.add_message_response("msg-ctx2", "reply")
 
@@ -932,7 +932,60 @@ async def test_run_message_context_id_takes_precedence_over_session(mock_a2a_cli
     await agent.run(messages=[message], session=session)
 
     assert mock_a2a_client.last_message is not None
-    assert mock_a2a_client.last_message.context_id == "explicit-ctx"
+    assert mock_a2a_client.last_message.context_id == "svc-session-42"
+
+
+@mark.asyncio
+async def test_run_message_context_id_used_when_no_session(mock_a2a_client: MockA2AClient) -> None:
+    """Test that message additional_properties context_id is used as fallback when no session is provided."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    mock_a2a_client.add_message_response("msg-ctx3", "reply")
+
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Hello")],
+        additional_properties={"context_id": "fallback-ctx"},
+    )
+    await agent.run(messages=[message])
+
+    assert mock_a2a_client.last_message is not None
+    assert mock_a2a_client.last_message.context_id == "fallback-ctx"
+
+
+@mark.asyncio
+async def test_run_message_context_id_used_when_session_has_no_service_id(mock_a2a_client: MockA2AClient) -> None:
+    """Test fallback to additional_properties context_id when session exists but service_session_id is None."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    mock_a2a_client.add_message_response("msg-ctx4", "reply")
+
+    session = AgentSession()
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Hello")],
+        additional_properties={"context_id": "fallback-ctx"},
+    )
+    await agent.run(messages=[message], session=session)
+
+    assert mock_a2a_client.last_message is not None
+    assert mock_a2a_client.last_message.context_id == "fallback-ctx"
+
+
+@mark.asyncio
+async def test_run_empty_service_session_id_preserved(mock_a2a_client: MockA2AClient) -> None:
+    """Test that empty string service_session_id is preserved and not overridden by additional_properties."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    mock_a2a_client.add_message_response("msg-ctx5", "reply")
+
+    session = AgentSession(service_session_id="")
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Hello")],
+        additional_properties={"context_id": "fallback-ctx"},
+    )
+    await agent.run(messages=[message], session=session)
+
+    assert mock_a2a_client.last_message is not None
+    assert mock_a2a_client.last_message.context_id == ""
 
 
 # endregion
