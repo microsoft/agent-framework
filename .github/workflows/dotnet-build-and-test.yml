@@ -71,6 +71,7 @@ jobs:
               - 'dotnet/tests/Microsoft.Agents.AI.DurableTask.IntegrationTests/**'
               - 'dotnet/tests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests/**'
               - '.github/actions/azure-functions-integration-setup/**'
+              - '.github/workflows/dotnet-build-and-test.yml'
             core:
               - 'dotnet/src/Microsoft.Agents.AI/**'
               - 'dotnet/src/Microsoft.Agents.AI.Abstractions/**'
@@ -81,6 +82,7 @@ jobs:
               - 'dotnet/tests/Directory.Build.props'
               - 'dotnet/Directory.Packages.props'
               - 'dotnet/global.json'
+              - '.github/workflows/dotnet-build-and-test.yml'
       # run only if 'dotnet' files were changed
       - name: dotnet tests
         if: steps.filter.outputs.dotnet == 'true'
