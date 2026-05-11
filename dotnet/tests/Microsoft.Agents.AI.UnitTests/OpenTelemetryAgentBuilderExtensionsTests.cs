@@ -123,4 +123,59 @@ public class OpenTelemetryAgentBuilderExtensionsTests
         Assert.True(configureWasCalled);
         Assert.IsType<OpenTelemetryAgent>(result);
     }
+
+    /// <summary>
+    /// Verify that UseOpenTelemetry with autoWireChatClient parameter works correctly.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void UseOpenTelemetry_WithAutoWireChatClientFlag_ReturnsOpenTelemetryAgent(bool autoWireChatClient)
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var builder = new AIAgentBuilder(mockAgent.Object);
+
+        // Act
+        var result = builder.UseOpenTelemetry(autoWireChatClient: autoWireChatClient).Build();
+
+        // Assert
+        Assert.IsType<OpenTelemetryAgent>(result);
+    }
+
+    /// <summary>
+    /// Verify that UseOpenTelemetry with autoWireChatClient and all parameters works correctly.
+    /// </summary>
+    [Fact]
+    public void UseOpenTelemetry_WithAutoWireChatClientAndAllParameters_CallsConfigureAction()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var builder = new AIAgentBuilder(mockAgent.Object);
+        var configureWasCalled = false;
+
+        // Act
+        var result = builder.UseOpenTelemetry(
+            autoWireChatClient: false,
+            sourceName: "TestSource",
+            configure: agent =>
+            {
+                configureWasCalled = true;
+                Assert.NotNull(agent);
+            }).Build();
+
+        // Assert
+        Assert.True(configureWasCalled);
+        Assert.IsType<OpenTelemetryAgent>(result);
+    }
+
+    /// <summary>
+    /// Verify that UseOpenTelemetry with autoWireChatClient throws ArgumentNullException when builder is null.
+    /// </summary>
+    [Fact]
+    public void UseOpenTelemetry_WithAutoWireChatClient_WithNullBuilder_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>("builder", () => ((AIAgentBuilder)null!).UseOpenTelemetry(autoWireChatClient: true));
+    }
 }

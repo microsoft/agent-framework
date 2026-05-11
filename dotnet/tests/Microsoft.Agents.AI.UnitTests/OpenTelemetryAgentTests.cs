@@ -627,4 +627,166 @@ public class OpenTelemetryAgentTests
     }
 
     private static string ReplaceWhitespace(string? input) => Regex.Replace(input ?? "", @"\s+", "").Trim();
+
+    #region AutoWireChatClient
+
+    [Fact]
+    public async Task AutoWireChatClient_DefaultsToEnabled_EmitsChatSpan_Async()
+    {
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var fakeChatClient = new AutoWireTestChatClient();
+        var inner = new ChatClientAgent(fakeChatClient);
+        using var agent = new OpenTelemetryAgent(inner, sourceName);
+
+        _ = await agent.RunAsync("hi");
+
+        // Expect 2 activities: the inner chat span (from auto-wired OpenTelemetryChatClient) and the invoke_agent span.
+        Assert.Equal(2, activities.Count);
+        Assert.Contains(activities, a => a.DisplayName.StartsWith("invoke_agent", StringComparison.Ordinal));
+        Assert.Contains(activities, a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AutoWireChatClient_Streaming_EmitsChatSpan_Async()
+    {
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var fakeChatClient = new AutoWireTestChatClient();
+        var inner = new ChatClientAgent(fakeChatClient);
+        using var agent = new OpenTelemetryAgent(inner, sourceName);
+
+        await foreach (var _ in agent.RunStreamingAsync("hi"))
+        {
+        }
+
+        Assert.Equal(2, activities.Count);
+        Assert.Contains(activities, a => a.DisplayName.StartsWith("invoke_agent", StringComparison.Ordinal));
+        Assert.Contains(activities, a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AutoWireChatClient_Disabled_DoesNotEmitChatSpan_Async()
+    {
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var fakeChatClient = new AutoWireTestChatClient();
+        var inner = new ChatClientAgent(fakeChatClient);
+        using var agent = new OpenTelemetryAgent(inner, sourceName, autoWireChatClient: false);
+
+        _ = await agent.RunAsync("hi");
+
+        // Only the invoke_agent activity should be emitted; no chat span.
+        var activity = Assert.Single(activities);
+        Assert.StartsWith("invoke_agent", activity.DisplayName);
+    }
+
+    [Fact]
+    public async Task AutoWireChatClient_NonChatClientAgent_NoOp_Async()
+    {
+        // Inner is not a ChatClientAgent — auto-wiring must be a no-op and options must remain null.
+        AgentRunOptions? observedOptions = null;
+        var inner = new TestAIAgent
+        {
+            RunAsyncFunc = (messages, session, options, ct) =>
+            {
+                observedOptions = options;
+                return Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "ok")));
+            },
+        };
+
+        using var agent = new OpenTelemetryAgent(inner);
+
+        _ = await agent.RunAsync("hi");
+
+        Assert.Null(observedOptions);
+    }
+
+    [Fact]
+    public async Task AutoWireChatClient_AlreadyInstrumented_DoesNotDoubleWrap_Async()
+    {
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var fakeChatClient = new AutoWireTestChatClient();
+        // Pre-wrap with OpenTelemetryChatClient on the same source so spans flow through the tracer.
+        IChatClient preWrapped = fakeChatClient.AsBuilder().UseOpenTelemetry(sourceName: sourceName).Build();
+        var inner = new ChatClientAgent(preWrapped);
+        using var agent = new OpenTelemetryAgent(inner, sourceName);
+
+        _ = await agent.RunAsync("hi");
+
+        // Expect exactly 2 activities (one invoke_agent + one chat from the pre-existing wrapper). If we had double-wrapped, we would see 3.
+        Assert.Equal(2, activities.Count);
+    }
+
+    [Fact]
+    public async Task AutoWireChatClient_PreservesUserChatClientFactory_Async()
+    {
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        bool userFactoryCalled = false;
+        var fakeChatClient = new AutoWireTestChatClient();
+        var inner = new ChatClientAgent(fakeChatClient);
+        using var agent = new OpenTelemetryAgent(inner, sourceName);
+
+        var runOptions = new ChatClientAgentRunOptions
+        {
+            ChatClientFactory = cc =>
+            {
+                userFactoryCalled = true;
+                return cc;
+            },
+        };
+
+        _ = await agent.RunAsync("hi", options: runOptions);
+
+        Assert.True(userFactoryCalled);
+        // Auto-wiring should still produce a chat span on top of the user's factory.
+        Assert.Equal(2, activities.Count);
+        Assert.Contains(activities, a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
+    }
+
+    private sealed class AutoWireTestChatClient : IChatClient
+    {
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok")));
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok");
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) =>
+            serviceType?.IsInstanceOfType(this) == true ? this : null;
+
+        public void Dispose() { }
+    }
+
+    #endregion
 }
