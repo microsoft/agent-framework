@@ -96,17 +96,32 @@ public readonly struct ShellPolicyOutcome : IEquatable<ShellPolicyOutcome>
 }
 
 /// <summary>
-/// Layered allow/deny policy for shell commands.
+/// Layered allow/deny pattern filter for shell commands.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>This is a guardrail, not a security boundary.</b> Pattern-based filters
-/// are routinely bypassed via variable expansion (<c>${RM:=rm} -rf /</c>),
-/// interpreter escapes (<c>python -c "…"</c>), base64 smuggling, alternative
-/// tools (<c>find / -delete</c>), or PowerShell-native verbs
-/// (<c>Remove-Item -Recurse -Force</c>). The actual security boundary is
-/// approval-in-the-loop (see <see cref="LocalShellExecutor"/>) or container
-/// isolation (Docker/Firecracker, planned in a follow-up).
+/// <b>This is not a security control.</b> It is a regex-based pre-filter
+/// that operators can use to fast-fail literal commands they would rather
+/// see rejected with a clear error than run (e.g. site-specific patterns
+/// like a production hostname, or obviously-destructive shapes like
+/// <c>rm -rf /</c>). Pattern-based filters are trivially bypassed by
+/// variable expansion (<c>${RM:=rm} -rf /</c>), interpreter escapes
+/// (<c>python -c "…"</c>), command substitution
+/// (<c>$(base64 -d &lt;&lt;&lt; …)</c>, <c>$(echo -e "\xNN…")</c>),
+/// envvar splicing (<c>$(A=r B=m; echo $A$B)</c>), alternative tools
+/// (<c>find / -delete</c>), or PowerShell-native verbs
+/// (<c>Remove-Item -Recurse -Force</c>). The real security boundary is
+/// approval-in-the-loop (see <see cref="LocalShellExecutor"/>,
+/// <see cref="DockerShellExecutor"/>) and container isolation (Docker).
+/// No major agent framework relies on pattern matching as a primary
+/// shell-command defense for these reasons.
+/// </para>
+/// <para>
+/// <b>No default patterns.</b> A <see cref="ShellPolicy"/> constructed
+/// with no arguments has an empty deny list and an empty allow list —
+/// it will allow any non-empty command. Operators who want pre-execution
+/// rejection of specific shapes must supply their own
+/// <paramref>denyList</paramref>.
 /// </para>
 /// <para>
 /// <b>Evaluation order — allow short-circuits deny.</b> Allow patterns are
@@ -119,41 +134,6 @@ public readonly struct ShellPolicyOutcome : IEquatable<ShellPolicyOutcome>
 /// </remarks>
 public sealed class ShellPolicy
 {
-    /// <summary>
-    /// Gets a conservative default deny list. Documented as a guardrail only.
-    /// </summary>
-    public static IReadOnlyList<string> DefaultDenyList { get; } =
-    [
-        // rm -rf / and friends: recursive remove with the root or any
-        // absolute path as the target.
-        @"\brm\s+(?:-[a-zA-Z]*r[a-zA-Z]*\s+)?-?\s*-?-?\s*[\/]",
-        // rm -rf ~: recursive remove of the user's home directory.
-        @"\brm\s+-rf?\s+~",
-        // ":(){…}": classic bash fork-bomb prologue.
-        @":\(\)\s*\{",
-        // dd if=… of=/dev/…: writing raw bytes to a block device (disk wipe).
-        @"\bdd\s+if=.*\bof=/dev/",
-        // mkfs / mkfs.ext4 / mkfs.xfs / …: filesystem format.
-        @"\bmkfs(\.\w+)?\b",
-        // System power-state changes.
-        @"\bshutdown\b",
-        @"\breboot\b",
-        @"\bhalt\b",
-        @"\bpoweroff\b",
-        // Redirect to /dev/sda* — direct write to a primary disk device.
-        @">\s*/dev/sda",
-        // chmod -R 777 /: world-writable on the entire filesystem.
-        @"\bchmod\s+-R\s+777\s+/",
-        // chown -R …: recursive ownership change (commonly paired with /).
-        @"\bchown\s+-R\s+",
-        // curl … | sh / wget … | sh: classic untrusted-pipe-to-shell.
-        @"\bcurl\s+[^|]*\|\s*sh\b",
-        @"\bwget\s+[^|]*\|\s*sh\b",
-        // PowerShell equivalents of rm -rf / and Format-Volume.
-        @"\bRemove-Item\s+(?:-Path\s+)?[/\\]\s+-Recurse",
-        @"\bFormat-Volume\b",
-    ];
-
     private readonly IReadOnlyList<Regex> _denies;
     private readonly IReadOnlyList<Regex> _allows;
 
@@ -161,9 +141,8 @@ public sealed class ShellPolicy
     /// Initializes a new instance of the <see cref="ShellPolicy"/> class.
     /// </summary>
     /// <param name="denyList">
-    /// Patterns that trigger a deny outcome. <see langword="null"/> selects
-    /// <see cref="DefaultDenyList"/>; pass an empty collection to disable
-    /// the deny list entirely.
+    /// Patterns that trigger a deny outcome. <see langword="null"/> or an
+    /// empty collection disables the deny list entirely.
     /// </param>
     /// <param name="allowList">
     /// Optional explicit-allow patterns. A match here short-circuits the
@@ -172,9 +151,12 @@ public sealed class ShellPolicy
     public ShellPolicy(IEnumerable<string>? denyList = null, IEnumerable<string>? allowList = null)
     {
         var deny = new List<Regex>();
-        foreach (var pattern in denyList ?? DefaultDenyList)
+        if (denyList is not null)
         {
-            deny.Add(new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase));
+            foreach (var pattern in denyList)
+            {
+                deny.Add(new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase));
+            }
         }
         this._denies = deny;
 

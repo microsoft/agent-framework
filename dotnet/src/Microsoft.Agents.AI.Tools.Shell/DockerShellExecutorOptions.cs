@@ -51,9 +51,11 @@ public sealed class DockerShellExecutorOptions
     public IReadOnlyDictionary<string, string>? Environment { get; set; }
 
     /// <summary>
-    /// Optional <see cref="ShellPolicy"/>. Less critical than for
-    /// <see cref="LocalShellExecutor"/> since the container provides
-    /// isolation; <see langword="null"/> selects a default policy.
+    /// Optional <see cref="ShellPolicy"/>. When <see langword="null"/>,
+    /// a default (empty) policy is used that allows any non-empty command.
+    /// Container isolation is the security boundary for Docker mode; a
+    /// <see cref="ShellPolicy"/> here is a UX pre-filter for shapes you
+    /// would rather see rejected with a clear error than run.
     /// </summary>
     public ShellPolicy? Policy { get; set; }
 

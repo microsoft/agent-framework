@@ -12,10 +12,25 @@ namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 /// </summary>
 public sealed class LocalShellExecutorTests
 {
+    // ShellPolicy ships with no default patterns. Tests that exercise
+    // the deny-list mechanism supply their own patterns; this mirrors how
+    // an operator would configure the policy in practice.
+    private static readonly string[] s_destructiveRmPatterns =
+    [
+        @"\brm\s+-rf?\s+[\/]",
+        @"\bmkfs(\.\w+)?\b",
+        @"\bcurl\s+[^|]*\|\s*sh\b",
+        @"\bwget\s+[^|]*\|\s*sh\b",
+        @"\bRemove-Item\s+.*-Recurse",
+        @"\bshutdown\b",
+        @"\breboot\b",
+        @"\bFormat-Volume\b",
+    ];
+
     [Fact]
     public void Policy_DenyList_BlocksDestructiveRm()
     {
-        var policy = new ShellPolicy();
+        var policy = new ShellPolicy(denyList: s_destructiveRmPatterns);
         var decision = policy.Evaluate(new ShellRequest("rm -rf /"));
         Assert.False(decision.Allowed);
         Assert.Contains("deny pattern", decision.Reason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
@@ -39,15 +54,25 @@ public sealed class LocalShellExecutorTests
     }
 
     [Fact]
+    public void Policy_DefaultConstruction_AllowsAnyNonEmptyCommand()
+    {
+        // ShellPolicy ships with no default patterns. The security
+        // controls are approval gating and Docker isolation, not regex.
+        var policy = new ShellPolicy();
+        Assert.True(policy.Evaluate(new ShellRequest("rm -rf /")).Allowed);
+        Assert.True(policy.Evaluate(new ShellRequest("echo hello")).Allowed);
+    }
+
+    [Fact]
     public void Policy_DenyList_IsGuardrailNotBoundary_KnownBypass()
     {
-        // This test codifies that the policy is a guardrail — a small change
-        // to the command (variable indirection) bypasses the literal `rm -rf /`
+        // Even with an operator-supplied deny-list, a small change to the
+        // command (variable indirection) bypasses the literal `rm -rf /`
         // pattern. Documented as expected behavior; the real boundary is
-        // approval-in-the-loop.
-        var policy = new ShellPolicy();
+        // approval-in-the-loop and Docker isolation.
+        var policy = new ShellPolicy(denyList: s_destructiveRmPatterns);
         var decision = policy.Evaluate(new ShellRequest("${RM:=rm} -rf /"));
-        Assert.True(decision.Allowed, "Policy is intentionally a guardrail; this bypass is documented in ADR 0026.");
+        Assert.True(decision.Allowed, "Pattern matching is a UX guardrail; this bypass is documented on ShellPolicy.");
     }
 
     [Fact]
@@ -64,7 +89,11 @@ public sealed class LocalShellExecutorTests
     [Fact]
     public async Task RunAsync_RejectedCommand_ThrowsShellCommandRejectedAsync()
     {
-        await using var shell = new LocalShellExecutor(new() { Mode = ShellMode.Stateless });
+        await using var shell = new LocalShellExecutor(new()
+        {
+            Mode = ShellMode.Stateless,
+            Policy = new ShellPolicy(denyList: s_destructiveRmPatterns),
+        });
         await Assert.ThrowsAsync<ShellCommandRejectedException>(
             () => shell.RunAsync("rm -rf /"));
     }
@@ -370,7 +399,7 @@ public sealed class LocalShellExecutorTests
     [InlineData("Format-Volume -DriveLetter C")]
     public void Policy_DenyList_BlocksRepresentativeDestructivePatterns(string command)
     {
-        var policy = new ShellPolicy();
+        var policy = new ShellPolicy(denyList: s_destructiveRmPatterns);
         var decision = policy.Evaluate(new ShellRequest(command));
         Assert.False(decision.Allowed, $"Expected deny for: {command}");
     }

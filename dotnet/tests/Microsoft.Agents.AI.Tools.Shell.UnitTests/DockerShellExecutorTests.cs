@@ -203,7 +203,11 @@ public sealed class DockerShellExecutorTests
     {
         // Pure policy path: the policy check runs before any docker invocation,
         // so this exercises rejection without needing a Docker daemon.
-        await using var t = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
+        await using var t = new DockerShellExecutor(new()
+        {
+            Mode = ShellMode.Stateless,
+            Policy = new ShellPolicy(denyList: [@"\brm\s+-rf?\s+[\/]"]),
+        });
         await Assert.ThrowsAsync<ShellCommandRejectedException>(
             () => t.RunAsync("rm -rf /"));
     }

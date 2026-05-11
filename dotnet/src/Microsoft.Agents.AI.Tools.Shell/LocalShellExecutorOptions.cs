@@ -56,9 +56,12 @@ public sealed class LocalShellExecutorOptions
     public bool CleanEnvironment { get; set; }
 
     /// <summary>
-    /// Optional <see cref="ShellPolicy"/>. When <see langword="null"/>, a
-    /// default policy seeded with <see cref="ShellPolicy.DefaultDenyList"/>
-    /// is used.
+    /// Optional <see cref="ShellPolicy"/>. When <see langword="null"/>,
+    /// a default (empty) policy is used that allows any non-empty command.
+    /// Supply a <see cref="ShellPolicy"/> with explicit deny/allow
+    /// patterns if you want pre-execution rejection of specific command
+    /// shapes; note that pattern matching is a UX pre-filter, not a
+    /// security control (see <see cref="ShellPolicy"/> remarks).
     /// </summary>
     public ShellPolicy? Policy { get; set; }
 
