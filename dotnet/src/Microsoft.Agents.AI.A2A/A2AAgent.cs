@@ -345,9 +345,19 @@ public sealed class A2AAgent : AIAgent
         // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#group-related-interactions
         a2aMessage.ContextId = typedSession.ContextId;
 
-        // Link the message as a follow-up to an existing task, if any.
-        // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#task-refinements
-        a2aMessage.ReferenceTaskIds = typedSession.TaskId is null ? null : [typedSession.TaskId];
+        if (messages.Any(m => m.Contents.Any(c => c is A2AInputResponseContent)))
+        {
+            // If the message contains a response to a user input request,
+            // link it to the existing task, so it will be treated as a response
+            // to the user input request for that task.
+            a2aMessage.TaskId = typedSession.TaskId;
+        }
+        else
+        {
+            // Link the message as a follow-up to an existing task, if any.
+            // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#task-refinements
+            a2aMessage.ReferenceTaskIds = typedSession.TaskId is not null ? [typedSession.TaskId] : null;
+        }
 
         return a2aMessage;
     }
@@ -444,6 +454,7 @@ public sealed class A2AAgent : AIAgent
             Role = ChatRole.Assistant,
             FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
             AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
+            Contents = statusUpdateEvent.Status.GetUserInputRequests() ?? []
         };
     }
 

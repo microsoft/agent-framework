@@ -1,4 +1,4 @@
-﻿<Solution>
+<Solution>
   <Configurations>
     <BuildType Name="Debug" />
     <BuildType Name="Publish" />
@@ -364,6 +364,9 @@
     <File Path="samples/02-agents/A2A/README.md" />
     <Project Path="samples/02-agents/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
     <Project Path="samples/02-agents/A2A/A2AAgent_PollingForTaskCompletion/A2AAgent_PollingForTaskCompletion.csproj" />
+    <Project Path="samples/02-agents/A2A/A2AAgent_HumanInTheLoop/A2AAgent_HumanInTheLoop.csproj">
+      <Build Solution="Debug|*" Project="false" />
+    </Project>
     <Project Path="samples/02-agents/A2A/A2AAgent_ProtocolSelection/A2AAgent_ProtocolSelection.csproj" />
     <Project Path="samples/02-agents/A2A/A2AAgent_StreamReconnection/A2AAgent_StreamReconnection.csproj" />
   </Folder>  
