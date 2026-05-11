@@ -163,6 +163,8 @@ app.MapA2AHttpJson(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves");
 app.MapDevUI();
 
 app.MapOpenAIResponses();
+app.MapOpenAIResponses(pirateAgentBuilder);
+app.MapOpenAIResponses(knightsKnavesAgentBuilder);
 app.MapOpenAIConversations();
 
 app.MapOpenAIChatCompletions(pirateAgentBuilder);

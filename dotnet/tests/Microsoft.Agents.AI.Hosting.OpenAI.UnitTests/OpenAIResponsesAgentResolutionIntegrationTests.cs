@@ -267,7 +267,9 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
         Assert.Equal(System.Net.HttpStatusCode.BadRequest, httpResponse.StatusCode);
 
         string responseJson = await httpResponse.Content.ReadAsStringAsync();
-        Assert.Contains("agent.name", responseJson, StringComparison.OrdinalIgnoreCase);
+        using JsonDocument errorDoc1 = JsonDocument.Parse(responseJson);
+        string? errorCode = errorDoc1.RootElement.GetProperty("error").GetProperty("code").GetString();
+        Assert.Equal("missing_required_parameter", errorCode);
     }
 
     /// <summary>
@@ -299,7 +301,9 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
         Assert.Equal(System.Net.HttpStatusCode.BadRequest, httpResponse.StatusCode);
 
         string responseJson = await httpResponse.Content.ReadAsStringAsync();
-        Assert.Contains("agent.name", responseJson, StringComparison.OrdinalIgnoreCase);
+        using JsonDocument errorDoc2 = JsonDocument.Parse(responseJson);
+        string? errorCode = errorDoc2.RootElement.GetProperty("error").GetProperty("code").GetString();
+        Assert.Equal("missing_required_parameter", errorCode);
     }
 
     /// <summary>
