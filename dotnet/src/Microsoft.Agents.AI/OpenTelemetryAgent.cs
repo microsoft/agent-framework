@@ -46,8 +46,24 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// An optional source name that will be used to identify telemetry data from this agent.
     /// If not provided, a default source name will be used for telemetry identification.
     /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="innerAgent"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The constructor automatically extracts provider metadata from the inner agent and configures
+    /// telemetry collection according to OpenTelemetry semantic conventions for AI systems.
+    /// </remarks>
+    public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName = null)
+        : this(innerAgent, sourceName, autoWireChatClient: true)
+    {
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="OpenTelemetryAgent"/> class.</summary>
+    /// <param name="innerAgent">The underlying <see cref="AIAgent"/> to be augmented with telemetry capabilities.</param>
+    /// <param name="sourceName">
+    /// An optional source name that will be used to identify telemetry data from this agent.
+    /// If not provided, a default source name will be used for telemetry identification.
+    /// </param>
     /// <param name="autoWireChatClient">
-    /// When <see langword="true"/> (the default) and the inner agent is a <see cref="ChatClientAgent"/>, the underlying
+    /// When <see langword="true"/> and the inner agent is a <see cref="ChatClientAgent"/>, the underlying
     /// <see cref="IChatClient"/> is automatically wrapped with <see cref="OpenTelemetryChatClient"/> for each invocation
     /// so that chat-level telemetry flows alongside agent-level telemetry. If the underlying chat client is already
     /// instrumented, no additional wrapping is applied. Set to <see langword="false"/> to opt-out of this behavior.
@@ -57,7 +73,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// The constructor automatically extracts provider metadata from the inner agent and configures
     /// telemetry collection according to OpenTelemetry semantic conventions for AI systems.
     /// </remarks>
-    public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName = null, bool autoWireChatClient = true) : base(innerAgent)
+    public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName, bool autoWireChatClient) : base(innerAgent)
     {
         this._providerName = innerAgent.GetService<AIAgentMetadata>()?.ProviderName;
         this._sourceName = sourceName;
