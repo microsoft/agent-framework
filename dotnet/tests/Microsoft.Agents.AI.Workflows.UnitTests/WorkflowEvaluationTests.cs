@@ -379,13 +379,14 @@ public sealed class WorkflowEvaluationTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_WithExpectedOutputButNoFinalResponse_ThrowsAsync()
+    public async Task EvaluateAsync_WithIncludeOverallButNoFinalResponse_ThrowsAsync()
     {
         // Arrange — build a workflow whose AIAgentHostExecutor is NOT bound with
         // EmitAgentResponseEvents=true, so no AgentResponseEvent is emitted, and the
         // ExecutorCompletedEvent for the host carries null Data. That is the scenario
-        // where BuildOverallItem returns null. When the caller supplies an
-        // expectedOutput we should fail fast rather than silently returning 0/0.
+        // where BuildOverallItem returns null. When the caller asks for an overall
+        // evaluation (includeOverall: true), we should fail fast rather than silently
+        // returning empty results — regardless of whether expectedOutput was supplied.
         var agent = new TestEchoAgent(name: "echo");
         var workflow = AgentWorkflowBuilder.BuildSequential(agent);
         var input = new List<ChatMessage> { new(ChatRole.User, "Hello") };
@@ -395,13 +396,12 @@ public sealed class WorkflowEvaluationTests
 
         await using var run = await InProcessExecution.RunAsync(workflow, input);
 
-        // Act + Assert
+        // Act + Assert — throws even without expectedOutput
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             run.EvaluateAsync(
                 evaluator,
                 includeOverall: true,
-                includePerAgent: false,
-                expectedOutput: "expected"));
+                includePerAgent: false));
 
         Assert.Contains("EmitAgentResponseEvents", ex.Message);
     }

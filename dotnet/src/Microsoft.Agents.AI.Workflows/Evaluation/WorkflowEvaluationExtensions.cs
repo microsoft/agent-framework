@@ -65,13 +65,14 @@ public static class WorkflowEvaluationExtensions
             {
                 overallItems.Add(overallItem);
             }
-            else if (expectedOutput is not null)
+            else
             {
-                // The user supplied a ground truth but we couldn't find a final response to
-                // compare against — almost always because the workflow's agents weren't built
-                // with EmitAgentResponseEvents enabled (so no AgentResponseEvent was emitted)
-                // and no terminal ExecutorCompletedEvent carried an AgentResponse / ChatMessage
-                // / string payload. Fail loudly instead of silently returning 0/0.
+                // The caller asked for an overall evaluation but we couldn't find a final
+                // response to score — almost always because the workflow's agents weren't
+                // built with EmitAgentResponseEvents enabled (so no AgentResponseEvent was
+                // emitted) and no terminal ExecutorCompletedEvent carried an AgentResponse
+                // / ChatMessage / string payload. Fail loudly instead of silently returning
+                // 0/0 (or skipping evaluation against a supplied expectedOutput).
                 throw new InvalidOperationException(
                     "Cannot evaluate the overall workflow output: no AgentResponseEvent or " +
                     "ExecutorCompletedEvent with an AgentResponse/ChatMessage/string payload " +
@@ -169,7 +170,13 @@ public static class WorkflowEvaluationExtensions
                     conversation.Add(new ChatMessage(ChatRole.Assistant, s));
                     break;
                 default:
-                    return null;
+                    // Unreachable — the for-loop above already constrains Data to one of the
+                    // three handled types. Throw if the contract drifts so the bug is visible
+                    // instead of silently dropping the overall item.
+                    throw new InvalidOperationException(
+                        "BuildOverallItem: unexpected ExecutorCompletedEvent.Data type " +
+                        $"'{finalCompleted.Data?.GetType().FullName ?? "null"}'. Expected " +
+                        $"{nameof(AgentResponse)}, {nameof(ChatMessage)}, or string.");
             }
         }
 
