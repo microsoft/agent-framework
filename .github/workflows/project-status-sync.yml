@@ -1,81 +1,159 @@
 name: Sync Project Status to Labels
 
 on:
-  project_v2_item:
+  projects_v2_item:
     types: [edited]
 
-jobs:
-  sync-status:
-    runs-on: ubuntu-latest
+# Prevent race conditions when status changes rapidly.
+# Key by project item (node_id) so updates for the same card serialize.
+concurrency:
+  group: status-sync-${{ github.event.projects_v2_item.node_id }}
+  cancel-in-progress: true
 
+jobs:
+  sync_status:
+    runs-on: ubuntu-latest
     permissions:
       issues: write
 
     steps:
       - uses: actions/github-script@v8
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Use PAT/App token because Projects GraphQL often requires project scope.
+          # GITHUB_TOKEN is repo-scoped and may not access org Projects. 【4-75ee64】【5-e66679】
+          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
           script: |
             const item = context.payload.projects_v2_item;
+            const changes = context.payload.changes || {};
 
-            console.log(item.project_node_id);
+            // 1) Logging project id so that we can filter out by project in next revision.
+            console.log(`Processing issue from project: ${item.project_node_id}`);
 
-            // Ignore non-issue items
-            if (!item.content || item.content.type !== "Issue") {
-              return;
-            }
+            // 2) Only act on Issues
+            if (item.content_type !== "Issue") return;
 
-            const issue_number = item.content.number;
-            const repo = context.repo;
-
-            const fieldValues = item.field_values || [];
-            const statusField = fieldValues.find(f => f.field.name === "Status");
-
-            if (!statusField) return;
-
-            const status = statusField.name;
-
+            // 3) Map project Status values to labels
             const labelMap = {
               "Planned": "status:planned",
               "In Progress": "status:in-progress",
               "In Review": "status:in-review",
               "Done": "status:done"
             };
-
-            const targetLabel = labelMap[status];
-            if (!targetLabel) return;
-
-            const { data: issue } = await github.rest.issues.get({
-              owner: repo.owner,
-              repo: repo.repo,
-              issue_number
-            });
-
-            const existingLabels = issue.labels.map(l => l.name);
             const allStatusLabels = Object.values(labelMap);
 
-            // Remove existing status labels
-            for (const label of existingLabels) {
-              if (allStatusLabels.includes(label)) {
-                try {
-                  await github.rest.issues.removeLabel({
-                    owner: repo.owner,
-                    repo: repo.repo,
-                    issue_number,
-                    name: label
-                  });
-                } catch (error) {
-                  if (error.status !== 404) {
-                    throw error;
-                  }
-                }
-              }
+            // 4) Fast path: If this edit is a Status change and the payload includes "to.name", use it.
+            // Some payloads include field_value.to with { name, ... } for single-select fields. 【6-4092ed】【3-e3ddba】
+            let statusValue = null;
+            const fv = changes.field_value;
+            if (fv && fv.field_name === "Status" && fv.to && fv.to.name) {
+              statusValue = fv.to.name;
+              console.log(`Fast path: Status changed to "${statusValue}"`);
             }
 
-            // Add new label
-            await github.rest.issues.addLabels({
-              owner: repo.owner,
-              repo: repo.repo,
-              issue_number,
-              labels: [targetLabel]
-            });
+            // 5) Otherwise, query GraphQL once to get both Issue number and Status field value.
+            if (!statusValue) {
+              try {
+                const result = await github.graphql(
+                  `query($id: ID!) {
+                    node(id: $id) {
+                      ... on ProjectV2Item {
+                        content { ... on Issue { number } }
+                        fieldValues(first: 50) {
+                          nodes {
+                            ... on ProjectV2ItemFieldSingleSelectValue {
+                              name
+                              field { ... on ProjectV2SingleSelectField { name } }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }`,
+                  { id: item.node_id }
+                );
+
+                const node = result?.node;
+                const values = node?.fieldValues?.nodes ?? [];
+                statusValue = values.find(v => v.field?.name === "Status")?.name;
+
+                // If no status found, nothing to do.
+                if (!statusValue) {
+                  console.log("No Status field value found in project item");
+                  return;
+                }
+
+                // Fetch issue number from GraphQL content if present
+                var issue_number = node?.content?.number;
+                if (!issue_number) {
+                  console.error("Could not extract issue number from GraphQL response");
+                  return;
+                }
+              } catch (graphqlError) {
+                console.error(`GraphQL query failed: ${graphqlError.message}`);
+                throw graphqlError;
+              }
+            } else {
+              // If we used fast-path for status, we still need issue_number:
+              try {
+                const result = await github.graphql(
+                  `query($id: ID!) { node(id: $id) { ... on Issue { number } } }`,
+                  { id: item.content_node_id }
+                );
+                var issue_number = result?.node?.number;
+              } catch (graphqlError) {
+                console.error(`Failed to fetch issue number: ${graphqlError.message}`);
+                throw graphqlError;
+              }
+              if (!issue_number) return;
+            }
+
+            const targetLabel = labelMap[statusValue];
+            if (!targetLabel) {
+              console.warn(`Status "${statusValue}" has no mapped label. Skipping.`);
+              return;
+            }
+            console.log(`Mapped status "${statusValue}" to label "${targetLabel}"`);
+
+            // 6) Get existing labels
+            let issue;
+            try {
+              const response = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number
+              });
+              issue = response.data;
+            } catch (restError) {
+              console.error(`Failed to fetch issue #${issue_number}: ${restError.message}`);
+              throw restError;
+            }
+
+            const existingLabels = issue.labels.map(l => l.name);
+
+            // If already correct, exit (reduces churn)
+            if (existingLabels.includes(targetLabel) &&
+                existingLabels.filter(l => allStatusLabels.includes(l)).length === 1) {
+              console.log(`Issue #${issue_number} already has correct label "${targetLabel}". No changes needed.`);
+              return;
+            }
+
+            // 7) Avoid "remove then add" partial failure by using setLabels once.
+            // This preserves all non-status labels and ensures exactly one status label.
+            const nextLabels = existingLabels
+              .filter(l => !allStatusLabels.includes(l))
+              .concat([targetLabel]);
+
+            const removedLabels = existingLabels.filter(l => allStatusLabels.includes(l) && l !== targetLabel);
+            try {
+              await github.rest.issues.setLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                labels: nextLabels
+              });
+              console.log(`Updated issue #${issue_number}: removed [${removedLabels.join(", ")}], added "${targetLabel}"`);
+            } catch (updateError) {
+              console.error(`Failed to update labels for issue #${issue_number}: ${updateError.message}`);
+              throw updateError;
+            }
+            
