@@ -792,6 +792,75 @@ public class OpenTelemetryAgentTests
         Assert.Contains(activities, a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task AutoWireChatClient_PlainAgentRunOptions_PreservesBaseProperties_Async()
+    {
+        // Auto-wiring converts a plain AgentRunOptions into a ChatClientAgentRunOptions. The base
+        // properties (ContinuationToken, AllowBackgroundResponses, AdditionalProperties, ResponseFormat)
+        // must be preserved so they reach the inner agent.
+        AgentRunOptions? observedOptions = null;
+        var fakeChatClient = new AutoWireTestChatClient();
+        var innerChatClientAgent = new ChatClientAgent(fakeChatClient);
+
+        // Wrapping agent: surfaces the ChatClientAgent via GetService (so auto-wiring activates),
+        // but captures the AgentRunOptions passed to RunAsync by the OpenTelemetryAgent.
+        var wrapper = new TestAIAgent
+        {
+            GetServiceFunc = (type, key) =>
+                type == typeof(ChatClientAgent) ? innerChatClientAgent : null,
+            RunAsyncFunc = (messages, session, options, ct) =>
+            {
+                observedOptions = options;
+                return Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "ok")));
+            },
+        };
+
+        using var agent = new OpenTelemetryAgent(wrapper);
+
+        var additionalProps = new AdditionalPropertiesDictionary { ["customKey"] = "customValue" };
+        var inputOptions = new AgentRunOptions
+        {
+            AllowBackgroundResponses = true,
+            AdditionalProperties = additionalProps,
+            ResponseFormat = ChatResponseFormat.Json,
+        };
+
+        _ = await agent.RunAsync("hi", options: inputOptions);
+
+        Assert.NotNull(observedOptions);
+        Assert.IsType<ChatClientAgentRunOptions>(observedOptions);
+        Assert.Equal(true, observedOptions!.AllowBackgroundResponses);
+        Assert.Same(ChatResponseFormat.Json, observedOptions.ResponseFormat);
+        Assert.NotNull(observedOptions.AdditionalProperties);
+        Assert.Equal("customValue", observedOptions.AdditionalProperties!["customKey"]);
+    }
+
+    [Fact]
+    public async Task AutoWireChatClient_UserFactoryReturnsInstrumentedClient_DoesNotDoubleWrap_Async()
+    {
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var fakeChatClient = new AutoWireTestChatClient();
+        var inner = new ChatClientAgent(fakeChatClient);
+        using var agent = new OpenTelemetryAgent(inner, sourceName);
+
+        // User factory wraps the chat client with OpenTelemetryChatClient itself.
+        var runOptions = new ChatClientAgentRunOptions
+        {
+            ChatClientFactory = cc => cc.AsBuilder().UseOpenTelemetry(sourceName: sourceName).Build(),
+        };
+
+        _ = await agent.RunAsync("hi", options: runOptions);
+
+        // Expect 2 activities (invoke_agent + a single chat span). If we double-wrapped, we would see 3.
+        Assert.Equal(2, activities.Count);
+    }
+
     private sealed class AutoWireTestChatClient : IChatClient
     {
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>

@@ -229,23 +229,45 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
 
         string? sourceName = this._sourceName;
-        IChatClient WrapWithOpenTelemetry(IChatClient cc) =>
-            cc.AsBuilder().UseOpenTelemetry(sourceName: sourceName).Build();
+        static IChatClient WrapIfNeeded(IChatClient cc, string? sourceName) =>
+            cc.GetService(typeof(OpenTelemetryChatClient)) is not null
+                ? cc
+                : cc.AsBuilder().UseOpenTelemetry(sourceName: sourceName).Build();
 
         if (options is ChatClientAgentRunOptions ccOptions)
         {
             // Don't mutate the caller's options; clone and chain any caller-provided factory.
+            // If the user factory already returns an OpenTelemetry-instrumented client, don't double-wrap.
             var clone = (ChatClientAgentRunOptions)ccOptions.Clone();
             var userFactory = clone.ChatClientFactory;
-            clone.ChatClientFactory = cc => WrapWithOpenTelemetry(userFactory is null ? cc : userFactory(cc));
+            clone.ChatClientFactory = cc => WrapIfNeeded(userFactory is null ? cc : userFactory(cc), sourceName);
             return clone;
         }
 
-        return new ChatClientAgentRunOptions
+        // For a plain AgentRunOptions (or null), create a ChatClientAgentRunOptions and preserve
+        // any base AgentRunOptions properties from the caller so they reach the inner agent.
+        var newOptions = new ChatClientAgentRunOptions
         {
-            ChatClientFactory = WrapWithOpenTelemetry,
+            ChatClientFactory = cc => WrapIfNeeded(cc, sourceName),
         };
+
+        if (options is not null)
+        {
+            CopyBaseAgentRunOptions(options, newOptions);
+        }
+
+        return newOptions;
     }
+
+#pragma warning disable MEAI001 // ContinuationToken is experimental; copy it through to preserve caller-provided value.
+    private static void CopyBaseAgentRunOptions(AgentRunOptions source, AgentRunOptions target)
+    {
+        target.ContinuationToken = source.ContinuationToken;
+        target.AllowBackgroundResponses = source.AllowBackgroundResponses;
+        target.AdditionalProperties = source.AdditionalProperties?.Clone();
+        target.ResponseFormat = source.ResponseFormat;
+    }
+#pragma warning restore MEAI001
 
     /// <summary>The stub <see cref="IChatClient"/> used to delegate from the <see cref="OpenTelemetryChatClient"/> into the inner <see cref="AIAgent"/>.</summary>
     /// <param name="parentAgent"></param>
