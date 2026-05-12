@@ -32,7 +32,6 @@ AIAgent agent = scenario switch
     "happy-path" => CreateHappyPathAgent(projectClient, deployment),
     "tool-calling" => CreateToolCallingAgent(projectClient, deployment),
     "tool-calling-approval" => CreateToolCallingApprovalAgent(projectClient, deployment),
-    "toolbox" => CreateToolboxAgent(projectClient, deployment),
     "mcp-toolbox" => CreateMcpToolboxAgent(projectClient, deployment),
     "custom-storage" => CreateCustomStorageAgent(projectClient, deployment),
     "azure-search-rag" => CreateAzureSearchRagAgent(projectClient, deployment),
@@ -82,17 +81,6 @@ static AIAgent CreateToolCallingApprovalAgent(AIProjectClient client, string dep
         description: "Approval flow test agent (placeholder).",
         tools: [
             AIFunctionFactory.Create(SendEmail)
-        ]);
-
-static AIAgent CreateToolboxAgent(AIProjectClient client, string deployment) =>
-    // TODO: wire Foundry toolbox host once API surface is finalized for hosted agents.
-    client.AsAIAgent(
-        model: deployment,
-        instructions: "You are a toolbox enabled assistant. Use GetEnvironmentName when asked.",
-        name: "toolbox-agent",
-        description: "Toolbox test agent (placeholder).",
-        tools: [
-            AIFunctionFactory.Create(GetEnvironmentName)
         ]);
 
 static AIAgent CreateMcpToolboxAgent(AIProjectClient client, string deployment) =>
@@ -202,9 +190,6 @@ static string SendEmail(
     [Description("Recipient address")] string to,
     [Description("Email subject")] string subject) =>
     $"Email sent to {to} with subject '{subject}'.";
-
-[Description("Returns the deployment environment name.")]
-static string GetEnvironmentName() => "integration-test";
 
 // session-files tools: resolve paths against $HOME (the per-session sandbox volume).
 [Description("Get the absolute path of the session home directory ($HOME).")]
