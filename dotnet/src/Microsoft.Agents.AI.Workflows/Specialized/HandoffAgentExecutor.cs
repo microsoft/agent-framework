@@ -53,7 +53,8 @@ internal sealed class HandoffAgentExecutorOptions
     public string AutonomousModePrompt { get; set; }
 
     /// <summary>
-    /// Gets or sets the maximum number of autonomous turns before control is returned to the user.
+    /// Gets or sets the maximum number of autonomous turns per incoming turn.
+    /// The counter is reset at the start of every new <see cref="HandoffState"/> turn.
     /// </summary>
     public int AutonomousModeTurnLimit { get; set; }
 }
@@ -342,6 +343,9 @@ internal sealed class HandoffAgentExecutor :
             }
 
             // Reset the counter when ending the turn (handoff requested or turn limit reached).
+            // This also covers the case where the turn is interrupted by outstanding requests:
+            // the counter is reset at the start of the next HandleAsync call, but we still
+            // clean up here on a normal turn exit for clarity.
             this._autonomousModeTurnCount = 0;
 
             HandoffState outgoingState = new(state.IncomingState.TurnToken, result.HandoffTargetId, this._agent.Id);
@@ -387,6 +391,11 @@ internal sealed class HandoffAgentExecutor :
                 cancellationToken).ConfigureAwait(false);
 
             state = state with { IncomingState = message, ConversationBookmark = newConversationBookmark };
+
+            // Reset the autonomous turn counter at the start of each new HandoffState turn so that
+            // the limit is applied fresh for every incoming message, regardless of how the previous
+            // turn ended (e.g. outstanding external requests that prevented an earlier reset).
+            this._autonomousModeTurnCount = 0;
 
             return await this.ContinueTurnAsync(state, newConversationMessages.ToList(), context, cancellationToken, skipAddIncoming: true)
                              .ConfigureAwait(false);

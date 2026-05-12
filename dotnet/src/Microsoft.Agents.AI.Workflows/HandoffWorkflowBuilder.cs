@@ -160,7 +160,8 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     /// If <see langword="null"/>, a default prompt is used.
     /// </param>
     /// <param name="turnLimit">
-    /// The maximum number of autonomous continuation turns per agent per user message.
+    /// The maximum number of autonomous continuation turns per agent per incoming turn.
+    /// The counter resets at the beginning of each new turn (each incoming <see cref="HandoffState"/>).
     /// If <see langword="null"/>, the default limit is used.
     /// </param>
     /// <returns>The updated builder instance.</returns>
