@@ -316,8 +316,6 @@ internal sealed class HandoffAgentExecutor :
             // turn by injecting a synthetic user message instead of returning control to the user.
             if (this._options.AutonomousMode && !result.IsHandoffRequested && this._autonomousModeTurnCount < this._options.AutonomousModeTurnLimit)
             {
-                this._autonomousModeTurnCount++;
-
                 ChatMessage autonomousMessage = new(ChatRole.User, this._options.AutonomousModePrompt)
                 {
                     CreatedAt = DateTimeOffset.UtcNow,
@@ -333,6 +331,10 @@ internal sealed class HandoffAgentExecutor :
                     },
                     context,
                     cancellationToken).ConfigureAwait(false);
+
+                // Increment only after successfully adding the autonomous message to shared state.
+                // This ensures the counter remains accurate if the state write throws an exception.
+                this._autonomousModeTurnCount++;
 
                 return await this.ContinueTurnAsync(
                     state with { ConversationBookmark = autonomousBookmark },

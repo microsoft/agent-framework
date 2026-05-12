@@ -239,13 +239,12 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(3)]
-    public async Task Test_HandoffAgentExecutor_AutonomousMode_InvokesAgentUpToTurnLimitPlusOne(int turnLimit)
+    public async Task Test_HandoffAgentExecutor_AutonomousMode_InvokesAgentExactlyOnePlusTurnLimitTimes(int turnLimit)
     {
         // Arrange: agent with many prepared turns; no handoff ever requested; autonomous mode ON
-        // We prepare (turnLimit + 2) turns so that if the implementation over-invokes by one,
-        // TestReplayAgent.Turn will be (turnLimit + 2) rather than the expected (turnLimit + 1).
-        // TestReplayAgent does NOT increment Turn when it runs out of prepared messages, so preparing
-        // exactly (turnLimit + 1) would make an extra invocation silently undetectable.
+        // We prepare (turnLimit + 2) turns to detect off-by-one errors. TestReplayAgent stops
+        // incrementing Turn when prepared messages are exhausted, so preparing exactly (turnLimit + 1)
+        // turns would fail to detect if the implementation invokes the agent one extra time.
         int totalTurns = turnLimit + 2;
         TestReplayAgent agent = new(
             Enumerable.Range(0, totalTurns)
