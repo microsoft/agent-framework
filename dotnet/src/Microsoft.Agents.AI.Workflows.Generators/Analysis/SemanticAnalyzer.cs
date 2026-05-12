@@ -69,6 +69,7 @@ internal static class SemanticAnalyzer
         bool isPartialClass = IsPartialClass(classSymbol, cancellationToken);
         bool derivesFromExecutor = DerivesFromExecutor(classSymbol);
         bool hasManualConfigureProtocol = HasConfigureProtocolDefined(classSymbol);
+        bool baseIsGenericExecutor = DerivesFromGenericExecutor(classSymbol);
 
         // Extract class metadata
         string? @namespace = classSymbol.ContainingNamespace?.IsGlobalNamespace == true
@@ -85,6 +86,11 @@ internal static class SemanticAnalyzer
         // Get class location for class-level diagnostics
         DiagnosticLocationInfo? classLocation = GetClassLocation(classSymbol, cancellationToken);
 
+        // Get method location for diagnostics
+        DiagnosticLocationInfo? methodLocation = methodSyntax != null
+            ? DiagnosticLocationInfo.FromLocation(methodSyntax.Identifier.GetLocation())
+            : null;
+
         // Analyze the handler method (method-level validation only)
         // Skip method analysis if class doesn't derive from Executor (class-level diagnostic will be reported later)
         var methodDiagnostics = ImmutableArray.CreateBuilder<DiagnosticInfo>();
@@ -97,8 +103,9 @@ internal static class SemanticAnalyzer
         return new MethodAnalysisResult(
             classKey, @namespace, className, genericParameters, isNested, containingTypeChain,
             baseHasConfigureProtocol, classSendTypes, classYieldTypes,
-            isPartialClass, derivesFromExecutor, hasManualConfigureProtocol,
+            isPartialClass, derivesFromExecutor, hasManualConfigureProtocol, baseIsGenericExecutor,
             classLocation,
+            methodLocation,
             handler,
             Diagnostics: new ImmutableEquatableArray<DiagnosticInfo>(methodDiagnostics.ToImmutable()));
     }
@@ -151,8 +158,11 @@ internal static class SemanticAnalyzer
 
         if (first.HasManualConfigureProtocol)
         {
+            var configureProtocolDescriptor = first.BaseIsGenericExecutor
+                ? DiagnosticDescriptors.ConfigureProtocolAlreadyDefinedWarning
+                : DiagnosticDescriptors.ConfigureProtocolAlreadyDefined;
             allDiagnostics.Add(Diagnostic.Create(
-                DiagnosticDescriptors.ConfigureProtocolAlreadyDefined,
+                configureProtocolDescriptor,
                 classLocation,
                 first.ClassName));
             return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
@@ -163,6 +173,26 @@ internal static class SemanticAnalyzer
             .Where(m => m.Handler is not null)
             .Select(m => m.Handler!)
             .ToImmutableArray();
+
+        // Detect duplicate input types across all handlers (including partial class merges)
+        var handlersByInputType = methods
+            .Where(m => m.Handler is not null)
+            .GroupBy(m => m.Handler!.InputTypeName);
+        foreach (var group in handlersByInputType)
+        {
+            if (group.Count() > 1)
+            {
+                foreach (var duplicate in group)
+                {
+                    Location methodLoc = duplicate.MethodLocation?.ToRoslynLocation() ?? classLocation;
+                    allDiagnostics.Add(Diagnostic.Create(
+                        DiagnosticDescriptors.DuplicateInputTypeHandler,
+                        methodLoc,
+                        first.ClassName,
+                        group.Key));
+                }
+            }
+        }
 
         if (handlers.Length == 0)
         {
@@ -400,6 +430,31 @@ internal static class SemanticAnalyzer
     }
 
     /// <summary>
+    /// Checks if the class derives from a generic Executor variant (Executor&lt;T&gt; or Executor&lt;T,U&gt;).
+    /// </summary>
+    private static bool DerivesFromGenericExecutor(INamedTypeSymbol classSymbol)
+    {
+        INamedTypeSymbol? current = classSymbol.BaseType;
+        while (current != null)
+        {
+            string fullName = current.OriginalDefinition.ToDisplayString();
+            if (fullName.StartsWith(ExecutorTypeName + "<", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (fullName == ExecutorTypeName)
+            {
+                return false;
+            }
+
+            current = current.BaseType;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Checks if this class directly defines ConfigureProtocol (not inherited).
     /// If so, we skip generation to avoid conflicting with user's manual implementation.
     /// </summary>
@@ -480,6 +535,12 @@ internal static class SemanticAnalyzer
             return null;
         }
 
+        if (methodSymbol.Parameters.Length > 3)
+        {
+            diagnostics.Add(DiagnosticInfo.Create("MAFGENWF009", location, methodSymbol.Name, methodSymbol.Parameters.Length.ToString()));
+            return null;
+        }
+
         // Check second parameter is IWorkflowContext
         IParameterSymbol secondParam = methodSymbol.Parameters[1];
         if (secondParam.Type.ToDisplayString() != WorkflowContextTypeName)
@@ -491,6 +552,12 @@ internal static class SemanticAnalyzer
         // Check for optional CancellationToken as third parameter
         bool hasCancellationToken = methodSymbol.Parameters.Length >= 3 &&
             methodSymbol.Parameters[2].Type.ToDisplayString() == CancellationTokenTypeName;
+
+        if (methodSymbol.Parameters.Length >= 3 && !hasCancellationToken)
+        {
+            diagnostics.Add(DiagnosticInfo.Create("MAFGENWF010", location,
+                methodSymbol.Name, methodSymbol.Parameters[2].Type.ToDisplayString()));
+        }
 
         // Analyze return type
         ITypeSymbol returnType = methodSymbol.ReturnType;

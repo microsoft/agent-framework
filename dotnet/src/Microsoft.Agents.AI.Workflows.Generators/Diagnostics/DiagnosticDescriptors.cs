@@ -104,4 +104,48 @@ internal static class DiagnosticDescriptors
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true));
+
+    /// <summary>
+    /// MAFGENWF006 (Warning): ConfigureProtocol already defined on a class deriving from Executor&lt;T&gt;.
+    /// </summary>
+    public static readonly DiagnosticDescriptor ConfigureProtocolAlreadyDefinedWarning = new(
+        id: "MAFGENWF006",
+        title: "ConfigureProtocol already defined",
+        messageFormat: "Class '{0}' already defines ConfigureProtocol; [MessageHandler] methods will be ignored",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
+
+    /// <summary>
+    /// MAFGENWF008: Duplicate handler input type.
+    /// </summary>
+    public static readonly DiagnosticDescriptor DuplicateInputTypeHandler = Register(new(
+        id: "MAFGENWF008",
+        title: "Duplicate input type handler",
+        messageFormat: "Class '{0}' has multiple [MessageHandler] methods for input type '{1}'. Only one handler per input type is allowed; at runtime, RouteBuilder.AddHandler throws ArgumentException for duplicates.",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true));
+
+    /// <summary>
+    /// MAFGENWF009: Handler has too many parameters.
+    /// </summary>
+    public static readonly DiagnosticDescriptor TooManyParameters = Register(new(
+        id: "MAFGENWF009",
+        title: "Handler has too many parameters",
+        messageFormat: "Method '{0}' marked with [MessageHandler] has {1} parameters; maximum 3 allowed (message, IWorkflowContext, optional CancellationToken)",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true));
+
+    /// <summary>
+    /// MAFGENWF010: Handler third parameter must be CancellationToken.
+    /// </summary>
+    public static readonly DiagnosticDescriptor NonCancellationTokenThirdParameter = Register(new(
+        id: "MAFGENWF010",
+        title: "Handler third parameter must be CancellationToken",
+        messageFormat: "Method '{0}' has third parameter of type '{1}'; expected CancellationToken or omit the third parameter",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true));
 }

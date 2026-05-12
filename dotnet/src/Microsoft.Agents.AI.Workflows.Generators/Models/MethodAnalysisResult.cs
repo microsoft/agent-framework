@@ -30,9 +30,13 @@ internal sealed record MethodAnalysisResult(
     bool IsPartialClass,
     bool DerivesFromExecutor,
     bool HasManualConfigureProtocol,
+    bool BaseIsGenericExecutor,
 
     // Class location for diagnostics (value-equatable)
     DiagnosticLocationInfo? ClassLocation,
+
+    // Method location for diagnostics (value-equatable)
+    DiagnosticLocationInfo? MethodLocation,
 
     // Method-level info (null if method validation failed)
     HandlerInfo? Handler,
@@ -46,6 +50,6 @@ internal sealed record MethodAnalysisResult(
     public static MethodAnalysisResult Empty { get; } = new(
         string.Empty, null, string.Empty, null, false, string.Empty,
         false, ImmutableEquatableArray<string>.Empty, ImmutableEquatableArray<string>.Empty,
-        false, false, false,
-        null, null, ImmutableEquatableArray<DiagnosticInfo>.Empty);
+        false, false, false, false,
+        null, null, null, ImmutableEquatableArray<DiagnosticInfo>.Empty);
 }
