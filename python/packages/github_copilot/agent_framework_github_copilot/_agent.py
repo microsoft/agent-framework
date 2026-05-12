@@ -522,10 +522,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         # Merge provider-contributed tools into runtime_options before session creation.
         if session_context.tools:
-            if opts.get("tools") is not None:
-                opts["tools"].extend(session_context.tools)
-            else:
-                opts["tools"] = list(session_context.tools)
+            existing = list(opts.get("tools") or [])
+            opts["tools"] = existing + list(session_context.tools)
 
         copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
 
@@ -612,10 +610,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         # Merge provider-contributed tools into runtime_options before session creation.
         if session_context.tools:
-            if opts.get("tools") is not None:
-                opts["tools"].extend(session_context.tools)
-            else:
-                opts["tools"] = list(session_context.tools)
+            existing = list(opts.get("tools") or [])
+            opts["tools"] = existing + list(session_context.tools)
 
         copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
 

@@ -2612,3 +2612,96 @@ class TestGitHubCopilotAgentContextProviders:
         assert call_kwargs.get("tools") is not None
         tool_names = [t.name for t in call_kwargs["tools"]]
         assert "load_skill" in tool_names
+
+    async def test_provider_tools_forwarded_to_resume_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that provider tools are forwarded when resuming an existing session."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="tool-injector")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                from agent_framework._tools import normalize_tools
+
+                def load_skill(skill_name: str) -> str:
+                    """Load a skill by name."""
+                    return f"Loaded: {skill_name}"
+
+                context.extend_tools(self.source_id, normalize_tools([load_skill]))
+
+        provider = ToolInjectingProvider()
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[provider])
+        session = agent.create_session()
+        session.service_session_id = "existing-id"
+        await agent.run("Hello", session=session)
+
+        mock_client.create_session.assert_not_called()
+        mock_client.resume_session.assert_called_once()
+        call_kwargs = mock_client.resume_session.call_args.kwargs
+        assert call_kwargs.get("tools") is not None
+        tool_names = [t.name for t in call_kwargs["tools"]]
+        assert "load_skill" in tool_names
+
+    async def test_provider_tools_forwarded_to_resume_session_streaming(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that provider tools are forwarded when resuming an existing session in streaming mode."""
+        events = [assistant_delta_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="tool-injector")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                from agent_framework._tools import normalize_tools
+
+                def load_skill(skill_name: str) -> str:
+                    """Load a skill by name."""
+                    return f"Loaded: {skill_name}"
+
+                context.extend_tools(self.source_id, normalize_tools([load_skill]))
+
+        provider = ToolInjectingProvider()
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[provider])
+        session = agent.create_session()
+        session.service_session_id = "existing-id"
+        async for _ in agent.run("Hello", stream=True, session=session):
+            pass
+
+        mock_client.create_session.assert_not_called()
+        mock_client.resume_session.assert_called_once()
+        call_kwargs = mock_client.resume_session.call_args.kwargs
+        assert call_kwargs.get("tools") is not None
+        tool_names = [t.name for t in call_kwargs["tools"]]
+        assert "load_skill" in tool_names
