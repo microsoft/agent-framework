@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <RootNamespace>Microsoft.Agents.AI</RootNamespace>
-    <NoWarn>$(NoWarn);MEAI001;RT0003</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
     <IsReleased>true</IsReleased>
   </PropertyGroup>
 
