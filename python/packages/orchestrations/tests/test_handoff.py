@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
+    AgentResponse,
+    AgentResponseUpdate,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -856,10 +858,15 @@ async def test_autonomous_mode_yields_output_without_user_request():
     outputs = [ev for ev in events if ev.type == "output"]
     assert outputs, "Autonomous mode should yield a workflow output"
 
-    final_conversation = outputs[-1].data
-    assert isinstance(final_conversation, list)
-    conversation_list = cast(list[Message], final_conversation)
-    assert any(msg.role == "assistant" and (msg.text or "").startswith("specialist reply") for msg in conversation_list)
+    # Per-agent activity surfaces as `output` events from each HandoffAgentExecutor as they
+    # speak. Handoff has no orchestrator that produces a separate "answer" — the conversation
+    # IS the result. In streaming mode payloads are AgentResponseUpdate; combined text should
+    # contain the specialist's reply.
+    payloads = [ev.data for ev in outputs if isinstance(ev.data, (AgentResponse, AgentResponseUpdate))]
+    combined = " ".join(
+        getattr(p, "text", None) or " ".join(m.text for m in getattr(p, "messages", [])) for p in payloads
+    )
+    assert "specialist reply" in combined
 
 
 async def test_autonomous_mode_resumes_user_input_on_turn_limit():
@@ -923,14 +930,10 @@ async def test_handoff_async_termination_condition() -> None:
             stream=True, responses={requests[-1].request_id: [Message(role="user", contents=["Second user message"])]}
         )
     )
-    outputs = [ev for ev in events if ev.type == "output"]
-    assert len(outputs) == 1
-
-    final_conversation = outputs[0].data
-    assert isinstance(final_conversation, list)
-    final_conv_list = cast(list[Message], final_conversation)
-    user_messages = [msg for msg in final_conv_list if msg.role == "user"]
-    assert len(user_messages) == 2
+    # Resume run terminates without further agent activity once the second user message
+    # satisfies the termination condition. The workflow returns to idle cleanly.
+    idle_states = [ev for ev in events if ev.type == "status" and ev.state == WorkflowRunState.IDLE]
+    assert idle_states, "Workflow should become idle after termination"
     assert termination_call_count > 0
 
 
@@ -990,8 +993,9 @@ async def test_handoff_terminates_without_request_info_when_latest_response_meet
 
     outputs = [event for event in events if event.type == "output"]
     assert outputs
-    conversation_outputs = [event for event in outputs if isinstance(event.data, list)]
-    assert len(conversation_outputs) == 1
+    # Per-agent activity surfaces as output events (AgentResponseUpdate in streaming mode).
+    agent_payloads = [event for event in outputs if isinstance(event.data, (AgentResponse, AgentResponseUpdate))]
+    assert len(agent_payloads) >= 1
 
 
 async def test_tool_choice_preserved_from_agent_config():

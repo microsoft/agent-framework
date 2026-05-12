@@ -112,6 +112,16 @@ public static class FoundryAITool
     public static AITool CreateA2ATool(Uri baseUri, string? agentCardPath = null)
         => ProjectsAgentTool.CreateA2ATool(baseUri, agentCardPath).AsAITool();
 
+    /// <summary>
+    /// Creates an <see cref="AITool"/> marker that references a Foundry Toolbox by name so
+    /// the hosted server side can resolve and expose its MCP tools for a single request.
+    /// </summary>
+    /// <param name="toolboxName">The Foundry toolbox name.</param>
+    /// <param name="version">Optional pinned toolbox version. When <see langword="null"/>, the project's default version is used.</param>
+    /// <returns>An <see cref="AITool"/> marker backed by <see cref="HostedMcpToolboxAITool"/>.</returns>
+    public static AITool CreateHostedMcpToolbox(string toolboxName, string? version = null)
+        => new HostedMcpToolboxAITool(toolboxName, version);
+
     // --- OpenAI SDK ResponseTool factories ---
 
     /// <summary>

@@ -1,6 +1,6 @@
 # agent-framework-hyperlight
 
-Alpha Hyperlight-backed CodeAct integrations for Microsoft Agent Framework.
+Hyperlight-backed CodeAct integrations for Microsoft Agent Framework.
 
 ## Installation
 
@@ -121,8 +121,9 @@ codeact = HyperlightCodeActProvider(
 ## Notes
 
 - This package is intentionally separate from `agent-framework-core` so CodeAct
-  usage and installation remain optional.
-- Alpha-package samples live under `packages/hyperlight/samples/`.
+  usage and installation remain optional. With `agent-framework-core[all]` (or
+  the meta `agent-framework`) installed it is also reachable through the
+  lazy-loading namespace `agent_framework.hyperlight`.
 - `file_mounts` accepts a single string shorthand, an explicit `(host_path,
   mount_path)` pair, or a `FileMount` named tuple. The host-side path in the
   explicit forms may be a `str` or `Path`. Use the explicit two-value form when
@@ -130,3 +131,9 @@ codeact = HyperlightCodeActProvider(
 - `allowed_domains` accepts a single string target such as `"github.com"` to
   allow all backend-supported methods, an explicit `(target, method_or_methods)`
   tuple such as `("github.com", "GET")`, or an `AllowedDomain` named tuple.
+- Tools registered with the sandbox return their native Python value
+  (`dict`, `list`, primitives, or custom objects) directly to the guest via the
+  Hyperlight FFI. Any `result_parser` configured on a `FunctionTool` is
+  intended for LLM-facing consumers and does not run on the sandbox path —
+  apply formatting inside the tool function itself if you need it for
+  in-sandbox consumers.

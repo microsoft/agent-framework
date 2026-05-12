@@ -1,0 +1,13 @@
+{
+  "id": "synthetic-audio-001",
+  "status": "Succeeded",
+  "analyzer_id": "prebuilt-audioSearch",
+  "api_version": "2025-05-01-preview",
+  "created_at": "2026-03-21T10:05:00Z",
+  "contents": [
+    {
+      "markdown": "## Call Center Recording\n\n**Duration:** 2 minutes 15 seconds\n**Speakers:** 2\n\n### Transcript\n\n**Speaker 1 (Agent):** Thank you for calling Contoso support. My name is Sarah. How can I help you today?\n\n**Speaker 2 (Customer):** Hi Sarah, I'm calling about my recent order number ORD-5678. It was supposed to arrive yesterday but I haven't received it.\n\n**Speaker 1 (Agent):** I'm sorry to hear that. Let me look up your order. Can you confirm your name and email address?\n\n**Speaker 2 (Customer):** Sure, it's John Smith, john.smith@example.com.\n\n**Speaker 1 (Agent):** Thank you, John. I can see your order was shipped on March 18th. It looks like there was a delay with the carrier. The updated delivery estimate is March 22nd.\n\n**Speaker 2 (Customer):** That's helpful, thank you. Is there anything I can do to track it?\n\n**Speaker 1 (Agent):** Yes, I'll send you a tracking link to your email right away. Is there anything else I can help with?\n\n**Speaker 2 (Customer):** No, that's all. Thanks for your help.\n\n**Speaker 1 (Agent):** You're welcome! Have a great day.",
+      "fields": {}
+    }
+  ]
+}

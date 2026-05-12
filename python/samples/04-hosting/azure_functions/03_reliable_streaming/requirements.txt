@@ -13,3 +13,6 @@
 
 # Azure authentication
 azure-identity
+
+# Redis client with asyncio support (used by redis_stream_response_handler.py)
+redis[asyncio]

@@ -22,7 +22,13 @@ from agent_framework import (
     Message,
 )
 from agent_framework.exceptions import AgentException
-from copilot.generated.session_events import Data, ErrorClass, Result, SessionEvent, SessionEventType
+from copilot.generated.session_events import (
+    Data,
+    SessionEvent,
+    SessionEventType,
+    ToolExecutionCompleteError,
+    ToolExecutionCompleteResult,
+)
 from copilot.tools import ToolInvocation, ToolResult
 
 from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
@@ -189,6 +195,41 @@ class TestGitHubCopilotAgentInit:
             "content": "Direct instructions",
         }
 
+    def test_default_options_includes_model_for_telemetry(self) -> None:
+        """Test that default_options merges model from settings for AgentTelemetryLayer span attributes."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            default_options={"model": "claude-sonnet-4-5", "timeout": 120}
+        )
+        opts = agent.default_options
+        assert opts["model"] == "claude-sonnet-4-5"
+        assert "timeout" not in opts  # timeout is extracted into _settings, not returned in default_options
+
+    def test_default_options_without_model_configured(self) -> None:
+        """Test that default_options works correctly when no model is configured."""
+        agent = GitHubCopilotAgent(instructions="Helper")
+        opts = agent.default_options
+        assert "model" not in opts
+        assert opts.get("system_message") == {"mode": "append", "content": "Helper"}
+
+    def test_default_options_returns_independent_copy(self) -> None:
+        """Test that mutating the returned dict does not affect internal state."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(default_options={"model": "gpt-5.1-mini"})
+        opts = agent.default_options
+        opts["model"] = "mutated"
+        assert agent._settings.get("model") == "gpt-5.1-mini"
+
+    def test_init_stores_instruction_directories(self) -> None:
+        """Test that instruction_directories are stored on the agent instance."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            default_options={"instruction_directories": ["/my/instructions"]}
+        )
+        assert agent._instruction_directories == ["/my/instructions"]  # type: ignore
+
+    def test_init_without_instruction_directories(self) -> None:
+        """Test that instruction_directories default to None when not provided."""
+        agent = GitHubCopilotAgent()
+        assert agent._instruction_directories is None  # type: ignore
+
 
 class TestGitHubCopilotAgentLifecycle:
     """Test cases for agent lifecycle management."""
@@ -270,6 +311,50 @@ class TestGitHubCopilotAgentLifecycle:
             call_args = MockClient.call_args[0][0]
             assert call_args.cli_path == "/custom/path"
             assert call_args.log_level == "debug"
+
+    async def test_start_passes_copilot_home_to_subprocess_config(self) -> None:
+        """Test that copilot_home is passed through to SubprocessConfig."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+                default_options={"copilot_home": "/custom/copilot/home"}
+            )
+            await agent.start()
+
+            call_args = MockClient.call_args[0][0]
+            assert call_args.copilot_home == "/custom/copilot/home"
+
+    async def test_start_copilot_home_not_set_when_unspecified(self) -> None:
+        """Test that copilot_home is not included in SubprocessConfig when not specified."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            call_args = MockClient.call_args[0][0]
+            assert call_args.copilot_home is None
+
+    async def test_start_copilot_home_from_env_variable(self) -> None:
+        """Test that copilot_home can be set via GITHUB_COPILOT_COPILOT_HOME env variable."""
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_COPILOT_HOME": "/env/copilot/home"}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            call_args = MockClient.call_args[0][0]
+            assert call_args.copilot_home == "/env/copilot/home"
 
 
 class TestGitHubCopilotAgentRun:
@@ -514,7 +599,7 @@ class TestGitHubCopilotAgentRunStreaming:
         """Test that TOOL_EXECUTION_COMPLETE events produce function_result content."""
         tool_event_data = MagicMock()
         tool_event_data.tool_call_id = "call_abc123"
-        tool_event_data.result = Result(content="Sunny, 72°F")
+        tool_event_data.result = ToolExecutionCompleteResult(content="Sunny, 72°F")
         tool_event_data.success = True
         tool_event_data.error = None
 
@@ -629,9 +714,9 @@ class TestGitHubCopilotAgentRunStreaming:
         """Test that a failed tool result surfaces the error as exception."""
         tool_event_data = MagicMock()
         tool_event_data.tool_call_id = "call_fail"
-        tool_event_data.result = Result(content="Error: connection timeout")
+        tool_event_data.result = ToolExecutionCompleteResult(content="Error: connection timeout")
         tool_event_data.success = False
-        tool_event_data.error = ErrorClass(message="connection timeout")
+        tool_event_data.error = ToolExecutionCompleteError(message="connection timeout")
 
         tool_event = SessionEvent(
             data=tool_event_data,
@@ -668,7 +753,7 @@ class TestGitHubCopilotAgentRunStreaming:
         """Test that a failed tool result with a string error is surfaced."""
         tool_event_data = MagicMock()
         tool_event_data.tool_call_id = "call_fail2"
-        tool_event_data.result = Result(content="")
+        tool_event_data.result = ToolExecutionCompleteResult(content="")
         tool_event_data.success = False
         tool_event_data.error = "something went wrong"
 
@@ -706,7 +791,7 @@ class TestGitHubCopilotAgentRunStreaming:
         """Test that a successful tool result with error field does not propagate exception."""
         tool_event_data = MagicMock()
         tool_event_data.tool_call_id = "call_ok"
-        tool_event_data.result = Result(content="partial result")
+        tool_event_data.result = ToolExecutionCompleteResult(content="partial result")
         tool_event_data.success = True
         tool_event_data.error = "some warning"
 
@@ -794,7 +879,7 @@ class TestGitHubCopilotAgentRunStreaming:
         # Tool result event
         result_data = MagicMock()
         result_data.tool_call_id = "call_001"
-        result_data.result = Result(content="72°F and sunny")
+        result_data.result = ToolExecutionCompleteResult(content="72°F and sunny")
         result_data.success = True
         result_data.error = None
         tool_result_event = SessionEvent(
@@ -859,9 +944,12 @@ class TestGitHubCopilotAgentSessionManagement:
             mock_session.session_id,
             on_permission_request=unittest.mock.ANY,
             streaming=unittest.mock.ANY,
+            model=unittest.mock.ANY,
+            system_message=unittest.mock.ANY,
             tools=unittest.mock.ANY,
             mcp_servers=unittest.mock.ANY,
             provider=unittest.mock.ANY,
+            instruction_directories=unittest.mock.ANY,
         )
 
     async def test_session_config_includes_model(
@@ -992,6 +1080,100 @@ class TestGitHubCopilotAgentSessionManagement:
         config = call_args.kwargs
         assert "tools" in config
         assert "on_permission_request" in config
+
+    async def test_instruction_directories_passed_to_create_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that instruction_directories are passed through to create_session."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"instruction_directories": ["/path/to/instructions", "/other/path"]},
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] == ["/path/to/instructions", "/other/path"]
+
+    async def test_instruction_directories_runtime_override(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that runtime instruction_directories take precedence over defaults."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"instruction_directories": ["/default/path"]},
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {"instruction_directories": ["/runtime/path"]}
+        await agent._get_or_create_session(AgentSession(), runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] == ["/runtime/path"]
+
+    async def test_instruction_directories_none_when_not_specified(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that instruction_directories is None when not specified."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] is None
+
+    async def test_instruction_directories_empty_list_clears_defaults(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that an explicit empty list at runtime clears the agent-level defaults."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"instruction_directories": ["/default/path"]},
+        )
+        await agent.start()
+
+        runtime_options: GitHubCopilotOptions = {"instruction_directories": []}
+        await agent._get_or_create_session(AgentSession(), runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] == []
+
+    async def test_instruction_directories_override_on_resumed_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that instruction_directories override works on resumed sessions."""
+        agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"instruction_directories": ["/default/path"]},
+        )
+        await agent.start()
+
+        # Simulate a session that already has a service_session_id (resume path)
+        session = AgentSession()
+        session.service_session_id = "existing-session-id"
+
+        runtime_options: GitHubCopilotOptions = {"instruction_directories": ["/override/path"]}
+        await agent._get_or_create_session(session, runtime_options=runtime_options)  # type: ignore
+
+        call_args = mock_client.resume_session.call_args
+        config = call_args.kwargs
+        assert config["instruction_directories"] == ["/override/path"]
 
 
 class TestGitHubCopilotAgentMCPServers:
@@ -1458,6 +1640,183 @@ class TestGitHubCopilotAgentToolConversion:
         assert result[0].name == "my_function"
         # Second tool is CopilotTool passthrough
         assert result[1] == copilot_tool
+
+
+class TestGitHubCopilotAgentFunctionApproval:
+    """Tests that ``approval_mode='always_require'`` is enforced at the agent boundary."""
+
+    async def test_handler_denies_when_no_callback_configured(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Approval-required tool must be denied without executing when no callback is set."""
+        from agent_framework import tool
+
+        invocations: list[Any] = []
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        copilot_tool = agent._tool_to_copilot_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"path": "/critical"}))
+
+        assert invocations == []
+        assert result.result_type == "failure"
+        assert result.error == "approval_denied"
+        assert "no on_function_approval callback is configured" in result.text_result_for_llm
+
+    async def test_handler_denies_when_callback_returns_false(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Falsy callback return value must deny the call and skip execution."""
+        from agent_framework import Content, tool
+
+        invocations: list[Any] = []
+        seen: list[Content] = []
+
+        def deny(call: Content) -> bool:
+            seen.append(call)
+            return False
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"on_function_approval": deny},
+        )
+        copilot_tool = agent._tool_to_copilot_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"path": "/critical"}))
+
+        assert invocations == []
+        assert len(seen) == 1
+        assert seen[0].type == "function_call"
+        assert seen[0].name == "dangerous"  # type: ignore[attr-defined]
+        assert seen[0].arguments == {"path": "/critical"}  # type: ignore[attr-defined]
+        assert result.result_type == "failure"
+        assert result.error == "approval_denied"
+
+    async def test_handler_executes_when_callback_returns_true(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Truthy callback return value must allow the tool to execute normally."""
+        from agent_framework import Content, tool
+
+        def approve(call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"result={x}"
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"on_function_approval": approve},
+        )
+        copilot_tool = agent._tool_to_copilot_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"x": 42}))
+
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "result=42"
+
+    async def test_handler_supports_async_callback(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Async callback must be awaited and respected."""
+        from agent_framework import Content, tool
+
+        async def approve(call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"async={x}"
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"on_function_approval": approve},
+        )
+        copilot_tool = agent._tool_to_copilot_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"x": 7}))
+
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "async=7"
+
+    async def test_callback_failure_denies_safely(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A callback that raises must result in denial, not in tool execution."""
+        from agent_framework import Content, tool
+
+        invocations: list[Any] = []
+
+        def boom(call: Content) -> bool:
+            raise RuntimeError("nope")
+
+        @tool(approval_mode="always_require")
+        def dangerous(x: int) -> str:
+            """A tool that requires human approval."""
+            invocations.append(x)
+            return f"x={x}"
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"on_function_approval": boom},
+        )
+        copilot_tool = agent._tool_to_copilot_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"x": 1}))
+
+        assert invocations == []
+        assert result.result_type == "failure"
+        assert result.error == "approval_denied"
+
+    async def test_handler_does_not_invoke_callback_for_never_require(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Tools without approval_mode='always_require' must not trigger the callback."""
+        from agent_framework import Content, tool
+
+        callback_calls: list[Any] = []
+
+        def approve(call: Content) -> bool:
+            callback_calls.append(call)
+            return True
+
+        @tool
+        def safe(x: int) -> str:
+            """A tool that does not require approval."""
+            return f"safe={x}"
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options={"on_function_approval": approve},
+        )
+        copilot_tool = agent._tool_to_copilot_tool(safe)  # type: ignore[reportPrivateUsage]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={"x": 5}))
+
+        assert callback_calls == []
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "safe=5"
 
 
 class TestGitHubCopilotAgentErrorHandling:
@@ -2105,3 +2464,16 @@ class TestGitHubCopilotAgentContextProviders:
         await agent.run("Hello", session=session, options={"timeout": 120})
 
         assert observed_options.get("timeout") == 120
+
+    async def test_runtime_on_function_approval_rejected(self, mock_client: MagicMock) -> None:
+        """Passing on_function_approval at runtime must raise rather than be silently ignored."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        with pytest.raises(ValueError, match="on_function_approval"):
+            await agent.run("hello", options={"on_function_approval": lambda _c: True})
+
+    async def test_runtime_on_function_approval_rejected_streaming(self, mock_client: MagicMock) -> None:
+        """Passing on_function_approval at runtime must raise on the streaming path too."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        with pytest.raises(ValueError, match="on_function_approval"):
+            async for _ in agent.run("hello", stream=True, options={"on_function_approval": lambda _c: True}):
+                pass

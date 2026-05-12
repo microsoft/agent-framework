@@ -65,6 +65,53 @@ Workflow orchestration started for CancelOrder. Orchestration runId: abc123def45
 >
 > If not provided, a unique run ID is auto-generated.
 
+### Wait for the Workflow Result
+
+By default, the HTTP endpoint returns `202 Accepted` immediately with the run ID. If you want to wait for the workflow to complete and get the result in the response, add the `x-ms-wait-for-response: true` header:
+
+Bash (Linux/macOS/WSL):
+
+```bash
+curl -X POST http://localhost:7071/api/workflows/CancelOrder/run \
+    -H "Content-Type: text/plain" \
+    -H "x-ms-wait-for-response: true" \
+    -d "12345"
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post `
+    -Uri http://localhost:7071/api/workflows/CancelOrder/run `
+    -ContentType text/plain `
+    -Headers @{ "x-ms-wait-for-response" = "true" } `
+    -Body "12345"
+```
+
+The response will contain the workflow result as plain text (200 OK):
+
+```text
+Cancellation email sent for order 12345 to jerry@example.com.
+```
+
+To get the result as JSON, also include the `Accept: application/json` header:
+
+```bash
+curl -X POST http://localhost:7071/api/workflows/CancelOrder/run \
+    -H "Content-Type: text/plain" \
+    -H "x-ms-wait-for-response: true" \
+    -H "Accept: application/json" \
+    -d "12345"
+```
+
+```json
+{
+    "runId": "abc123def456",
+    "workflowStatus": "Completed",
+    "result": "Cancellation email sent for order 12345 to jerry@example.com."
+}
+```
+
 In the function app logs, you will see the sequential execution of each executor:
 
 ```text

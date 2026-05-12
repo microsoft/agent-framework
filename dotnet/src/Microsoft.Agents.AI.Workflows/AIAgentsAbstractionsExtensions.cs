@@ -9,17 +9,6 @@ namespace Microsoft.Agents.AI.Workflows;
 
 internal static class AIAgentsAbstractionsExtensions
 {
-    public static ChatMessage ToChatMessage(this AgentResponseUpdate update) =>
-        new()
-        {
-            AuthorName = update.AuthorName,
-            Contents = update.Contents,
-            Role = update.Role ?? ChatRole.User,
-            CreatedAt = update.CreatedAt,
-            MessageId = update.MessageId,
-            RawRepresentation = update.RawRepresentation ?? update,
-        };
-
     public static ChatMessage ChatAssistantToUserIfNotFromNamed(this ChatMessage message, string agentName)
         => message.ChatAssistantToUserIfNotFromNamed(agentName, out _, false);
 

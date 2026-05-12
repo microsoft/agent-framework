@@ -150,6 +150,12 @@ def hello_world(arg1: str) -> str:
     return "Hello World"
 
 
+@tool(approval_mode="never_require")
+def greet() -> str:
+    """Say hello to the world. No-arg tool for integration tests to avoid argument parsing flakiness."""
+    return "Hello World"
+
+
 def test_init(ollama_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
     ollama_chat_client = OllamaChatClient()
@@ -500,10 +506,10 @@ async def test_cmc_with_invalid_content_type(
 async def test_cmc_integration_with_tool_call(
     chat_history: list[Message],
 ) -> None:
-    chat_history.append(Message(contents=["Call the hello world function and repeat what it says"], role="user"))
+    chat_history.append(Message(contents=["Call the greet function and repeat what it says"], role="user"))
 
     ollama_client = OllamaChatClient()
-    result = await ollama_client.get_response(messages=chat_history, options={"tools": [hello_world]})
+    result = await ollama_client.get_response(messages=chat_history, options={"tools": [greet]})
 
     assert "hello" in result.text.lower() and "world" in result.text.lower()
     assert result.messages[-2].contents[0].type == "function_result"
@@ -531,11 +537,11 @@ async def test_cmc_integration_with_chat_completion(
 async def test_cmc_streaming_integration_with_tool_call(
     chat_history: list[Message],
 ) -> None:
-    chat_history.append(Message(contents=["Call the hello world function and repeat what it says"], role="user"))
+    chat_history.append(Message(contents=["Call the greet function and repeat what it says"], role="user"))
 
     ollama_client = OllamaChatClient()
     result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_response(
-        messages=chat_history, stream=True, options={"tools": [hello_world]}
+        messages=chat_history, stream=True, options={"tools": [greet]}
     )
 
     chunks: list[ChatResponseUpdate] = []
@@ -549,7 +555,7 @@ async def test_cmc_streaming_integration_with_tool_call(
                 assert tool_result.result == "Hello World"
             if c.contents[0].type == "function_call":
                 tool_call = c.contents[0]
-                assert tool_call.name == "hello_world"
+                assert tool_call.name == "greet"
 
 
 @pytest.mark.flaky

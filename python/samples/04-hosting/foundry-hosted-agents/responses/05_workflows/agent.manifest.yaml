@@ -1,0 +1,23 @@
+name: agent-framework-workflows-responses
+description: >
+  An Agent Framework workflow hosted by Foundry.
+metadata:
+  tags:
+    - Agent Framework
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Streaming
+template:
+  name: agent-framework-workflows-responses
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  environment_variables:
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
+resources:
+  - kind: model
+    id: gpt-5.4
+    name: AZURE_AI_MODEL_DEPLOYMENT_NAME

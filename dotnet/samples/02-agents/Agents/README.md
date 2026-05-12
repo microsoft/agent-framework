@@ -46,6 +46,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Providing additional AI Context to an agent using multiple AIContextProviders](./Agent_Step17_AdditionalAIContext/)|This sample demonstrates how to inject additional AI context into a ChatClientAgent using multiple custom AIContextProvider components that are attached to the agent.|
 |[Using compaction pipeline with an agent](./Agent_Step18_CompactionPipeline/)|This sample demonstrates how to use a compaction pipeline to efficiently limit the size of the conversation history for an agent.|
 |[In-function-loop checkpointing](./Agent_Step19_InFunctionLoopCheckpointing/)|This sample demonstrates how to persist chat history after each service call during a tool-calling loop, enabling crash recovery and mid-run observability.|
+|[Dynamic function tools](./Agent_Step20_DynamicFunctionTools/)|This sample demonstrates how to dynamically expand the set of function tools available to an agent during a function-calling loop using the ambient FunctionInvocationContext.|
 
 ## Running the samples from the console
 

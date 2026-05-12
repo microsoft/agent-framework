@@ -9,6 +9,7 @@
       "src\\Microsoft.Agents.AI.GitHub.Copilot\\Microsoft.Agents.AI.GitHub.Copilot.csproj",
       "src\\Microsoft.Agents.AI.AzureAI.Persistent\\Microsoft.Agents.AI.AzureAI.Persistent.csproj",
       "src\\Microsoft.Agents.AI.Foundry\\Microsoft.Agents.AI.Foundry.csproj",
+      "src\\Microsoft.Agents.AI.Foundry.Hosting\\Microsoft.Agents.AI.Foundry.Hosting.csproj",
       "src\\Microsoft.Agents.AI.CopilotStudio\\Microsoft.Agents.AI.CopilotStudio.csproj",
       "src\\Microsoft.Agents.AI.CosmosNoSql\\Microsoft.Agents.AI.CosmosNoSql.csproj",
       "src\\Microsoft.Agents.AI.Declarative\\Microsoft.Agents.AI.Declarative.csproj",
@@ -29,7 +30,8 @@
       "src\\Microsoft.Agents.AI.Workflows.Generators\\Microsoft.Agents.AI.Workflows.Generators.csproj",
       "src\\Microsoft.Agents.AI.Workflows\\Microsoft.Agents.AI.Workflows.csproj",
       "src\\Microsoft.Agents.AI\\Microsoft.Agents.AI.csproj",
-      "src\\Aspire.Hosting.AgentFramework.DevUI\\Aspire.Hosting.AgentFramework.DevUI.csproj"
+      "src\\Aspire.Hosting.AgentFramework.DevUI\\Aspire.Hosting.AgentFramework.DevUI.csproj",
+      "src\\Microsoft.Agents.AI.Hyperlight\\Microsoft.Agents.AI.Hyperlight.csproj"
     ]
   }
 }

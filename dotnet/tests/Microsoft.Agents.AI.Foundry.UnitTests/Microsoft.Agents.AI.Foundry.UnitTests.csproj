@@ -1,18 +1,24 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+    <NoWarn>$(NoWarn);NU1605;NU1903</NoWarn>
+  </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Azure.AI.Projects" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
   </ItemGroup>
 
-  <!-- Evaluation tests require net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->
+  <!-- FoundryEval tests require net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->
   <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <Compile Remove="FoundryEvalConverterTests.cs" />
     <Compile Remove="FoundryEvalsTests.cs" />
+    <Compile Remove="ClientHeadersExtensionsTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

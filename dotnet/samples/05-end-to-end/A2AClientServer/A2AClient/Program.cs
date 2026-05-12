@@ -62,12 +62,10 @@ public static class Program
                 }
 
                 var agentResponse = await hostAgent.Agent!.RunAsync(message, session, cancellationToken: cancellationToken);
-                foreach (var chatMessage in agentResponse.Messages)
-                {
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine($"\nAgent: {chatMessage.Text}");
-                    Console.ResetColor();
-                }
+
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine($"\nAgent: {agentResponse.Text}");
+                Console.ResetColor();
             }
         }
         catch (Exception ex)

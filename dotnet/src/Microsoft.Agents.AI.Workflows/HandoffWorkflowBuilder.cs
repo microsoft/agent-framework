@@ -20,6 +20,7 @@ internal static class DiagnosticConstants
 }
 
 /// <inheritdoc/>
+[ExcludeFromCodeCoverage] // This is obsolete, and 1:1 equivalent to HandoffWorkflowBuilder (no "s")
 [Obsolete("Prefer HandoffWorkflowBuilder (no 's') instead, which has the same API but the preferred name. This will be removed in a future release before GA.")]
 #pragma warning disable MAAIW001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 public sealed class HandoffsWorkflowBuilder(AIAgent initialAgent) : HandoffWorkflowBuilderCore<HandoffsWorkflowBuilder>(initialAgent)

@@ -7,8 +7,8 @@ from __future__ import annotations
 import logging
 from typing import Any, TypedDict
 
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._telemetry import get_user_agent
 from agent_framework._workflows._checkpoint import CheckpointID, WorkflowCheckpoint
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from agent_framework.exceptions import WorkflowCheckpointException
@@ -194,7 +194,7 @@ class CosmosCheckpointStorage:
             self._cosmos_client = CosmosClient(
                 url=settings["endpoint"],  # type: ignore[arg-type]
                 credential=credential or settings["key"].get_secret_value(),  # type: ignore[arg-type,union-attr]
-                user_agent_suffix=AGENT_FRAMEWORK_USER_AGENT,
+                user_agent_suffix=get_user_agent(),
             )
             self._owns_client = True
 

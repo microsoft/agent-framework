@@ -2,42 +2,45 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import copy
 import mimetypes
 import shutil
 import threading
 import time
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
+from copy import copy
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
-from typing import Annotated, Any, Protocol, TypeGuard, cast
+from typing import Any, Protocol, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import Content, FunctionTool
 from agent_framework._tools import ApprovalMode, normalize_tools
-from pydantic import BaseModel, Field
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountHostPath, FileMountInput
 
 DEFAULT_HYPERLIGHT_BACKEND = "wasm"
 DEFAULT_HYPERLIGHT_MODULE = "python_guest.path"
-EXECUTE_CODE_INPUT_DESCRIPTION = "Python code to execute in an isolated Hyperlight sandbox."
+EXECUTE_CODE_TOOL_DESCRIPTION = "Execute Python in an isolated Hyperlight sandbox."
 OUTPUT_FILE_RETRY_ATTEMPTS = 10
 OUTPUT_FILE_RETRY_DELAY_SECONDS = 0.1
 
-
-class _ExecuteCodeInput(BaseModel):
-    code: Annotated[str, Field(description=EXECUTE_CODE_INPUT_DESCRIPTION)]
-
-
-@dataclass(frozen=True, slots=True)
-class _StoredFileMount:
-    host_path: Path
-    mount_path: str
+EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "title": "_ExecuteCodeInput",
+    "properties": {
+        "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Python code to execute in an isolated Hyperlight sandbox.",
+        },
+    },
+    "required": ["code"],
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,13 +88,212 @@ class SandboxRuntime(Protocol):
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]: ...
 
 
+_T = TypeVar("_T")
+
+
+class _SandboxWorker:
+    """Thread-confined actor that owns a sandbox + snapshot.
+
+    The Hyperlight ``WasmSandbox`` is declared ``unsendable`` in PyO3: it can only be
+    accessed *and dropped* from the OS thread that created it. Touching or
+    releasing it on any other thread triggers a Rust panic
+    (``"_native_wasm::WasmSandbox is unsendable, but is being dropped on another thread"``)
+    that cannot be caught from Python.
+
+    To make this guarantee airtight, this class is an actor: the underlying
+    sandbox and snapshot are stored ONLY as worker-local state and are never
+    exposed to or returned to other threads. Public methods submit closures to
+    the dedicated single-thread executor and return only sendable results.
+    Because no caller can ever obtain a strong reference to the unsendable
+    objects, no caller can ever cause them to be dropped on the wrong thread.
+
+    Exception isolation: exceptions raised inside worker closures carry a
+    ``__traceback__`` whose frames retain references to local variables --
+    including PyO3 unsendable sandbox/native_result objects. Letting such an
+    exception propagate to the calling thread would defeat the actor model:
+    when the calling thread GCs the exception, the traceback's frame locals
+    are dropped on the wrong thread and PyO3 panics. To prevent this, every
+    exception raised inside a worker closure is caught on the worker, the
+    traceback is dropped while still on the worker thread, and a sanitized
+    copy (preserving message and exception type) is re-raised on the caller.
+    """
+
+    __slots__ = ("_executor", "_initialized", "_sandbox", "_snapshot")
+
+    def __init__(self, *, name: str = "hl-sandbox") -> None:
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
+        # _sandbox/_snapshot are accessed/mutated ONLY from worker-side closures.
+        self._sandbox: Any = None
+        self._snapshot: Any = None
+        self._initialized = False
+
+    def _run_on_worker(self, fn: Callable[[], _T]) -> _T:
+        """Run ``fn`` on the worker thread; sanitize any exception's traceback there.
+
+        If ``fn`` raises, the exception's ``__traceback__`` is dropped on the worker
+        thread (so any PyO3 unsendable locals captured in frame locals are released
+        on the owner thread) and a fresh exception of the same type is raised on
+        the caller's thread carrying only the original message.
+        """
+
+        def _wrapped() -> tuple[bool, Any]:
+            try:
+                return True, fn()
+            except BaseException as exc:
+                exc_type = type(exc)
+                # Capture args (usually (message,)) so the re-raised exception keeps the
+                # original shape for types whose constructor doesn't accept a single str.
+                # Coerce each arg to ``str`` on the worker thread: if a caller-supplied
+                # callback (or an underlying SDK) constructed the exception with a PyO3
+                # unsendable object in args, forwarding it as-is would re-introduce the
+                # same cross-thread Drop hazard the traceback nulling avoids. Strings
+                # are always sendable. Fall back to the str() form if args is empty.
+                exc_args: tuple[str, ...] = tuple(str(a) for a in exc.args) if exc.args else (str(exc),)
+                # Drop the traceback on the worker thread so frame locals (which
+                # may include PyO3 unsendable objects) are released here, not on
+                # the caller thread that will receive the wrapped exception.
+                exc.__traceback__ = None
+                del exc
+                return False, (exc_type, exc_args)
+
+        ok, payload = self._executor.submit(_wrapped).result()
+        if ok:
+            return cast(_T, payload)
+        exc_type, exc_args = cast(tuple[type[BaseException], tuple[str, ...]], payload)
+        # Re-raise a fresh instance with no chained traceback frames from the worker.
+        # If the exception type's constructor rejects the captured args (rare), fall
+        # back to a RuntimeError carrying the string form so we never lose the signal.
+        try:
+            raise exc_type(*exc_args)
+        except TypeError:
+            raise RuntimeError(f"{exc_type.__name__}: {exc_args}") from None
+
+    def initialize(self, build_fn: Callable[[], tuple[Any, Any]]) -> None:
+        """Build and install the sandbox+snapshot on the worker thread.
+
+        ``build_fn`` is invoked with no arguments on the worker thread. It must
+        return ``(sandbox, snapshot)``. Both references are retained as worker-
+        local attributes; they do not escape this thread.
+        """
+
+        def _init_on_worker() -> None:
+            sandbox, snapshot = build_fn()
+            self._sandbox = sandbox
+            self._snapshot = snapshot
+            self._initialized = True
+            # Locals fall out of scope on the worker thread; the worker-local
+            # attributes hold the only strong refs from now on.
+
+        self._run_on_worker(_init_on_worker)
+
+    def execute(
+        self,
+        *,
+        code: str,
+        output_dir: TemporaryDirectory[str] | None,
+        build_contents: Callable[..., list[Content]],
+    ) -> list[Content]:
+        """Restore + run + build sendable contents — all on the worker thread.
+
+        Returns a plain ``list[Content]`` whose elements never carry strong
+        references to the underlying sandbox or snapshot.
+        """
+
+        def _on_worker() -> list[Content]:
+            sandbox = self._sandbox
+            snapshot = self._snapshot
+            sandbox.restore(snapshot)
+            _clear_directory(output_dir)
+            result = sandbox.run(code=code)
+            try:
+                return build_contents(
+                    result=result,
+                    sandbox=sandbox,
+                    output_dir=output_dir,
+                    code=code,
+                )
+            finally:
+                # ``result`` may carry a back-reference to the sandbox. Force its
+                # final dec_ref on this thread so Drop runs here, not on whatever
+                # thread later GCs the ``Content`` list.
+                del result
+
+        return self._run_on_worker(_on_worker)
+
+    def is_alive(self) -> bool:
+        """Return ``True`` while the worker thread can still accept new submissions.
+
+        Useful for tests/observability; returns ``False`` after ``dispose()``.
+        """
+        try:
+            self._executor.submit(lambda: None).result(timeout=1.0)
+        except RuntimeError:
+            return False
+        return True
+
+    def dispose(self) -> None:
+        """Release the sandbox+snapshot on the owner worker thread, then shut down.
+
+        Safe to call multiple times. After ``dispose`` returns, the sandbox/
+        snapshot are guaranteed to have been released on the worker thread; any
+        remaining references held elsewhere have already been impossible (they
+        never leaked out of this object).
+        """
+
+        def _dispose_on_worker() -> None:
+            sandbox = self._sandbox
+            snapshot = self._snapshot
+            self._sandbox = None
+            self._snapshot = None
+            close_hook = (
+                (getattr(sandbox, "close", None) or getattr(sandbox, "shutdown", None)) if sandbox is not None else None
+            )
+            if callable(close_hook):
+                with suppress(Exception):
+                    close_hook()
+            # ``sandbox`` and ``snapshot`` are local on the worker thread and
+            # will be dec_ref'd here when this frame returns -> Drop on worker.
+            del sandbox, snapshot
+
+        if self._initialized:
+            try:
+                # Use the bare executor here -- _dispose_on_worker swallows its
+                # own errors and never raises, so traceback sanitization is not
+                # needed and we want dispose to remain robust during teardown.
+                self._executor.submit(_dispose_on_worker).result()
+            except RuntimeError:
+                # Worker already shut down; sandbox/snapshot will leak rather
+                # than panic on the wrong thread. This is the safest fallback.
+                pass
+            finally:
+                self._initialized = False
+        # Do not block on shutdown; stop accepting new tasks, but allow any
+        # already-queued task (including the dispose closure above) to finish.
+        self._executor.shutdown(wait=False, cancel_futures=False)
+
+
 @dataclass
 class _SandboxEntry:
-    sandbox: Any
-    snapshot: Any
+    """Per-config cached sandbox handle.
+
+    The unsendable sandbox/snapshot live inside ``worker`` and never appear as
+    Python attributes on this object. Anything stored here is sendable and
+    safe to GC on any thread.
+    """
+
+    worker: _SandboxWorker
     input_dir: TemporaryDirectory[str] | None
     output_dir: TemporaryDirectory[str] | None
-    lock: threading.RLock
+
+    def dispose(self) -> None:
+        """Release the sandbox+snapshot on the worker thread and clean up temp dirs."""
+        self.worker.dispose()
+        for tmp_dir in (self.input_dir, self.output_dir):
+            if tmp_dir is not None:
+                with suppress(Exception):
+                    tmp_dir.cleanup()
+        self.input_dir = None
+        self.output_dir = None
 
 
 def _load_sandbox_class() -> type[Any]:
@@ -104,10 +306,6 @@ def _load_sandbox_class() -> type[Any]:
         ) from exc
 
     return Sandbox
-
-
-def _passthrough_result_parser(result: Any) -> str:
-    return repr(result)
 
 
 def _collect_tools(*tool_groups: Any) -> list[FunctionTool]:
@@ -166,7 +364,7 @@ def _is_file_mount_pair(value: Any) -> TypeGuard[FileMount | tuple[FileMountHost
     return isinstance(host_path, (str, Path)) and isinstance(mount_path, str)
 
 
-def _normalize_file_mount_input(file_mount: FileMountInput) -> _StoredFileMount:
+def _normalize_file_mount_input(file_mount: FileMountInput) -> FileMount:
     host_path: FileMountHostPath
     mount_path: str
     if isinstance(file_mount, str):
@@ -176,7 +374,7 @@ def _normalize_file_mount_input(file_mount: FileMountInput) -> _StoredFileMount:
         host_path = file_mount[0]
         mount_path = file_mount[1]
 
-    return _StoredFileMount(
+    return FileMount(
         host_path=_resolve_existing_path(host_path),
         mount_path=_normalize_mount_path(mount_path),
     )
@@ -403,6 +601,23 @@ def _parse_output_files(
     return []
 
 
+def _result_snapshot(result: Any) -> dict[str, Any]:
+    """Return a sendable plain-dict snapshot of a sandbox.run() result.
+
+    The Hyperlight ``WasmSandbox.run()`` return value is a PyO3 ``unsendable`` object that
+    can carry a back-reference to the sandbox itself. Storing it on
+    ``Content.raw_representation`` lets it ride out of the owner thread and be garbage
+    collected elsewhere, which trips the PyO3 ``Drop`` panic. Build a thread-safe summary
+    of the fields we actually surface and forward that instead, so the original result can
+    be released on the worker thread that produced it.
+    """
+    return {
+        "success": bool(getattr(result, "success", False)),
+        "stdout": str(getattr(result, "stdout", "") or ""),
+        "stderr": str(getattr(result, "stderr", "") or ""),
+    }
+
+
 def _build_execution_contents(
     *,
     result: Any,
@@ -413,10 +628,11 @@ def _build_execution_contents(
     success = bool(getattr(result, "success", False))
     stdout = str(getattr(result, "stdout", "") or "").replace("\r\n", "\n") or None
     stderr = str(getattr(result, "stderr", "") or "").replace("\r\n", "\n") or None
+    snapshot = _result_snapshot(result)
     outputs: list[Content] = []
 
     if stdout is not None:
-        outputs.append(Content.from_text(stdout, raw_representation=result))
+        outputs.append(Content.from_text(stdout, raw_representation=snapshot))
 
     outputs.extend(
         _parse_output_files(
@@ -428,7 +644,7 @@ def _build_execution_contents(
 
     if success:
         if stderr is not None:
-            outputs.append(Content.from_text(stderr, raw_representation=result))
+            outputs.append(Content.from_text(stderr, raw_representation=snapshot))
         if not outputs:
             outputs.append(Content.from_text("Code executed successfully without output."))
         return outputs
@@ -438,25 +654,20 @@ def _build_execution_contents(
         Content.from_error(
             message="Execution error",
             error_details=error_details,
-            raw_representation=result,
+            raw_representation=snapshot,
         )
     )
     return outputs
 
 
 def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
-    sandbox_tool = copy.copy(tool_obj)
-    # Auto-assign a passthrough parser so the raw return value round-trips through
-    # `ast.literal_eval` in the sandbox callback below. User-supplied parsers are
-    # left in place so callers can customize how results are exposed to the guest.
-    if sandbox_tool.result_parser is None:
-        sandbox_tool.result_parser = _passthrough_result_parser
+    sandbox_tool = copy(tool_obj)
 
     def _callback(**kwargs: Any) -> Any:
-        async def _invoke() -> list[Content]:
-            return await sandbox_tool.invoke(arguments=kwargs)
+        async def _invoke() -> Any:
+            return await sandbox_tool.invoke(arguments=kwargs, skip_parsing=True)
 
-        # FunctionTool.invoke() is always async. The real Hyperlight backend invokes
+        # FunctionTool.invoke() is async. The real Hyperlight backend invokes
         # registered callbacks synchronously via FFI, so this must be a sync function.
         # We run the async call on a dedicated thread to avoid conflicts with any
         # event loop that may be running on the current thread.
@@ -474,22 +685,11 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
         worker.join()
         if error_box:
             raise error_box[0]
-        contents: list[Content] = result_box[0]
-
-        values: list[Any] = []
-        for content in contents:
-            if content.type == "text" and content.text is not None:
-                try:
-                    values.append(ast.literal_eval(content.text))
-                except (SyntaxError, ValueError):
-                    values.append(content.text)
-                continue
-
-            values.append(content.to_dict())
-
-        if len(values) == 1:
-            return values[0]
-        return values
+        # Return the raw value. The Hyperlight FFI marshals primitives (dict, list,
+        # str, int, float, bool, None) natively into the guest, and falls back to
+        # repr()/str() for unsupported types — so the guest receives real Python
+        # objects without a lossy host-side serialization round-trip.
+        return result_box[0]
 
     return _callback
 
@@ -509,7 +709,7 @@ def _clear_directory(output_dir: TemporaryDirectory[str] | None) -> None:
             pass
 
 
-class _SandboxRegistry:
+class _SandboxRegistry(SandboxRuntime):
     def __init__(self) -> None:
         self._entries: dict[tuple[Any, ...], _SandboxEntry] = {}
         self._entries_lock = threading.RLock()
@@ -517,28 +717,44 @@ class _SandboxRegistry:
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]:
         """Execute code in a cached sandbox matching the given config.
 
-        Entries are keyed by ``config.cache_key()``. Concurrent calls with the same
-        key are serialized by the entry lock so they never race, but they share the
-        same sandbox instance. For true parallel execution, use distinct provider
-        instances or configs that produce different cache keys.
+        Entries are keyed by ``config.cache_key()``. All operations against the underlying
+        sandbox object are routed through the entry's dedicated single-threaded worker, which
+        both serializes concurrent callers and satisfies the PyO3 ``unsendable`` invariant
+        that the sandbox can only be touched from the thread that created it. The unsendable
+        objects never escape the worker; this method returns only sendable plain Python data.
         """
+        entry = self._get_or_create_entry(config)
+        return entry.worker.execute(
+            code=code,
+            output_dir=entry.output_dir,
+            build_contents=_build_execution_contents,
+        )
+
+    def _get_or_create_entry(self, config: _RunConfig) -> _SandboxEntry:
         cache_key = config.cache_key()
         with self._entries_lock:
             entry = self._entries.get(cache_key)
             if entry is None:
                 entry = self._create_entry(config)
                 self._entries[cache_key] = entry
+            return entry
 
-        with entry.lock:
-            entry.sandbox.restore(entry.snapshot)
-            _clear_directory(entry.output_dir)
-            result = entry.sandbox.run(code=code)
-            return _build_execution_contents(
-                result=result,
-                sandbox=entry.sandbox,
-                output_dir=entry.output_dir,
-                code=code,
-            )
+    def close(self) -> None:
+        """Shut down all per-entry worker threads and release per-entry resources.
+
+        Safe to call multiple times. Each entry's sandbox/snapshot is disposed on the
+        worker thread that created it to honor the PyO3 ``unsendable`` invariant.
+        """
+        with self._entries_lock:
+            entries = list(self._entries.values())
+            self._entries.clear()
+        try:
+            for entry in entries:
+                entry.dispose()
+        finally:
+            # Drop our local strong references; entries' own refs to sandbox/snapshot
+            # were already moved into the per-worker disposal closure inside dispose().
+            del entries
 
     def _create_entry(self, config: _RunConfig) -> _SandboxEntry:
         input_dir_handle = TemporaryDirectory() if config.filesystem_enabled else None
@@ -578,26 +794,34 @@ class _SandboxRegistry:
                         methods=list(allowed_domain.methods) if allowed_domain.methods is not None else None,
                     )
 
-        sandbox = _create_sandbox()
-        _configure_sandbox(sandbox=sandbox, expand_missing_scheme=False)
-
-        try:
-            sandbox.run("None")
-        except RuntimeError as exc:
-            if not _should_retry_allowed_domain_registration(error=exc, allowed_domains=config.allowed_domains):
-                raise
-
+        def _build_sandbox() -> tuple[Any, Any]:
             sandbox = _create_sandbox()
-            _configure_sandbox(sandbox=sandbox, expand_missing_scheme=True)
-            sandbox.run("None")
+            _configure_sandbox(sandbox=sandbox, expand_missing_scheme=False)
 
-        snapshot = sandbox.snapshot()
+            try:
+                sandbox.run("None")
+            except RuntimeError as exc:
+                if not _should_retry_allowed_domain_registration(error=exc, allowed_domains=config.allowed_domains):
+                    raise
+
+                sandbox = _create_sandbox()
+                _configure_sandbox(sandbox=sandbox, expand_missing_scheme=True)
+                sandbox.run("None")
+
+            snapshot = sandbox.snapshot()
+            return sandbox, snapshot
+
+        worker = _SandboxWorker()
+        try:
+            worker.initialize(_build_sandbox)
+        except BaseException:
+            worker.dispose()
+            raise
+
         return _SandboxEntry(
-            sandbox=sandbox,
-            snapshot=snapshot,
+            worker=worker,
             input_dir=input_dir_handle,
             output_dir=output_dir_handle,
-            lock=threading.RLock(),
         )
 
 
@@ -619,10 +843,10 @@ class HyperlightExecuteCodeTool(FunctionTool):
     ) -> None:
         super().__init__(
             name="execute_code",
-            description=EXECUTE_CODE_INPUT_DESCRIPTION,
+            description=EXECUTE_CODE_TOOL_DESCRIPTION,
             approval_mode="never_require",
             func=self._run_code,
-            input_model=_ExecuteCodeInput,
+            input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
         self._state_lock = threading.RLock()
         self._registry = _registry or _SandboxRegistry()
@@ -632,7 +856,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         self._module: str | None = module
         self._module_path: str | None = module_path
         self._managed_tools: list[FunctionTool] = []
-        self._file_mounts: dict[str, _StoredFileMount] = {}
+        self._file_mounts: dict[str, FileMount] = {}
         self._allowed_domains: dict[str, AllowedDomain] = {}
 
         if tools is not None:
@@ -648,7 +872,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
     def description(self) -> str:
         state_lock = getattr(self, "_state_lock", None)
         if state_lock is None:
-            return str(self.__dict__.get("description", EXECUTE_CODE_INPUT_DESCRIPTION))
+            return str(self.__dict__.get("description", EXECUTE_CODE_TOOL_DESCRIPTION))
 
         with state_lock:
             allowed_domains = sorted(self._allowed_domains.values(), key=lambda value: value.target)
@@ -841,9 +1065,9 @@ class HyperlightExecuteCodeTool(FunctionTool):
         workspace_signature = _path_tree_signature(workspace_root) if workspace_root is not None else ()
         normalized_mounts = tuple(
             _NormalizedFileMount(
-                host_path=mount.host_path,
+                host_path=Path(mount.host_path),
                 mount_path=mount.mount_path,
-                path_signature=_path_tree_signature(mount.host_path),
+                path_signature=_path_tree_signature(Path(mount.host_path)),
             )
             for mount in stored_mounts
         )

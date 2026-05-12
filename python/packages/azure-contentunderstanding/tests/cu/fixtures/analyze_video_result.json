@@ -1,0 +1,51 @@
+{
+  "id": "synthetic-video-001",
+  "status": "Succeeded",
+  "analyzer_id": "prebuilt-videoSearch",
+  "api_version": "2025-05-01-preview",
+  "created_at": "2026-03-21T10:15:00Z",
+  "contents": [
+    {
+      "kind": "audioVisual",
+      "startTimeMs": 1000,
+      "endTimeMs": 14000,
+      "width": 640,
+      "height": 480,
+      "markdown": "# Video: 00:01.000 => 00:14.000\n\nTranscript\n```\nWEBVTT\n\n00:01.000 --> 00:05.000\n<Speaker 1>Welcome to the Contoso Product Demo.\n\n00:05.000 --> 00:14.000\n<Speaker 1>Today we'll be showcasing our latest cloud infrastructure management tool.\n```",
+      "fields": {
+        "Summary": {
+          "type": "string",
+          "valueString": "Introduction to the Contoso Product Demo showcasing the latest cloud infrastructure management tool."
+        }
+      }
+    },
+    {
+      "kind": "audioVisual",
+      "startTimeMs": 15000,
+      "endTimeMs": 35000,
+      "width": 640,
+      "height": 480,
+      "markdown": "# Video: 00:15.000 => 00:35.000\n\nTranscript\n```\nWEBVTT\n\n00:15.000 --> 00:25.000\n<Speaker 1>As you can see on the dashboard, the system provides real-time monitoring of all deployed resources.\n\n00:25.000 --> 00:35.000\n<Speaker 1>Key features include automated scaling, cost optimization, and security compliance monitoring.\n```",
+      "fields": {
+        "Summary": {
+          "type": "string",
+          "valueString": "Dashboard walkthrough covering real-time monitoring, automated scaling, cost optimization, and security compliance."
+        }
+      }
+    },
+    {
+      "kind": "audioVisual",
+      "startTimeMs": 36000,
+      "endTimeMs": 42000,
+      "width": 640,
+      "height": 480,
+      "markdown": "# Video: 00:36.000 => 00:42.000\n\nTranscript\n```\nWEBVTT\n\n00:36.000 --> 00:42.000\n<Speaker 1>Visit contoso.com/cloud-manager to learn more and start your free trial.\n```",
+      "fields": {
+        "Summary": {
+          "type": "string",
+          "valueString": "Call to action directing viewers to contoso.com/cloud-manager for more information and a free trial."
+        }
+      }
+    }
+  ]
+}

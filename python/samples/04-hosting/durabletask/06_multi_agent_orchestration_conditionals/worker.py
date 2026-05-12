@@ -70,7 +70,7 @@ def create_spam_agent() -> "Agent":
     return Agent(
         client=OpenAIChatCompletionClient(
             model=os.environ["AZURE_OPENAI_MODEL"],
-            api_key=get_async_bearer_token_provider(
+            credential=get_async_bearer_token_provider(
                 AsyncAzureCliCredential(), "https://cognitiveservices.azure.com/.default"
             ),
         ),
@@ -88,7 +88,7 @@ def create_email_agent() -> "Agent":
     return Agent(
         client=OpenAIChatCompletionClient(
             model=os.environ["AZURE_OPENAI_MODEL"],
-            api_key=get_async_bearer_token_provider(
+            credential=get_async_bearer_token_provider(
                 AsyncAzureCliCredential(), "https://cognitiveservices.azure.com/.default"
             ),
         ),

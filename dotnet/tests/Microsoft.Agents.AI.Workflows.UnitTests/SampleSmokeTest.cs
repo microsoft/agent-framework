@@ -269,6 +269,29 @@ public class SampleSmokeTest
         _ = await Step9EntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment());
     }
 
+    /// <summary>
+    /// Stress regression for the off-thread run-status race: after
+    /// <c>Run.ResumeAsync</c> returns at a halt boundary,
+    /// callers must observe a stable terminal status and never a transient
+    /// <see cref="RunStatus.Running"/>. Step9 is the canonical multi-response resume
+    /// sample; prior to the fix in <see cref="Execution.StreamingRunEventStream"/>,
+    /// its `runStatus.Should().Be(RunStatus.Idle)` assertion failed intermittently
+    /// on roughly 1-in-10 iterations under InProcess_OffThread.
+    /// </summary>
+    [Fact]
+    internal async Task Test_RunSample_Step9_OffThread_MultiResponseResume_StatusIsStableAsync()
+    {
+        const int Iterations = 50;
+
+        for (int i = 0; i < Iterations; i++)
+        {
+            using StringWriter writer = new();
+            _ = await Step9EntryPoint.RunAsync(
+                writer,
+                ExecutionEnvironment.InProcess_OffThread.ToWorkflowExecutionEnvironment());
+        }
+    }
+
     [Theory]
     [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
     [InlineData(ExecutionEnvironment.InProcess_OffThread)]

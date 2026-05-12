@@ -2,11 +2,12 @@
 
 """Evaluate a multi-agent workflow using Azure AI Foundry evaluators.
 
-This sample demonstrates two patterns:
+This sample demonstrates three patterns:
 1. Post-hoc: Run the workflow, then evaluate the result you already have.
 2. Run + evaluate: Pass queries and let evaluate_workflow() run the workflow for you.
+3. Similarity: Evaluate the workflow's final output against ground-truth reference answers.
 
-Both patterns return a list of results (one per provider), each with a per-agent
+Patterns 1 & 2 return a list of results (one per provider), each with a per-agent
 breakdown in sub_results so you can identify which agent is underperforming.
 
 Prerequisites:
@@ -79,7 +80,6 @@ async def main() -> None:
 
     # 4. Create the evaluator — provider config goes here, once
     evals = FoundryEvals(client=client)
-
     # =========================================================================
     # Pattern 1: Post-hoc — evaluate a workflow run you already did
     # =========================================================================
@@ -143,6 +143,43 @@ async def main() -> None:
             if agent_eval.report_url:
                 print(f"    Portal: {agent_eval.report_url}")
 
+    # =========================================================================
+    # Pattern 3: Similarity — compare workflow output to ground-truth answers
+    # =========================================================================
+    # Build a fresh workflow to avoid stale session state from Pattern 2.
+    workflow3 = SequentialBuilder(participants=[researcher, planner]).build()
+
+    print()
+    print("=" * 60)
+    print("Pattern 3: Similarity evaluation with ground truth")
+    print("=" * 60)
+
+    # Similarity compares the final workflow output against a reference answer,
+    # so per-agent breakdown is disabled — individual agents don't have their
+    # own ground-truth targets.
+    eval_results = await evaluate_workflow(
+        workflow=workflow3,
+        queries=[
+            "Plan a trip from Seattle to Paris",
+            "Plan a trip from London to Tokyo",
+        ],
+        expected_output=[
+            "Pack layers and an umbrella for Paris. Flights from Seattle are around $450 round-trip.",
+            "Bring warm clothing for Tokyo in spring. Flights from London are around $500 round-trip.",
+        ],
+        evaluators=FoundryEvals(
+            client=client,
+            evaluators=[FoundryEvals.SIMILARITY],
+        ),
+        include_per_agent=False,
+    )
+
+    for r in eval_results:
+        print(f"\nOverall: {r.status}")
+        print(f"  Passed: {r.passed}/{r.total}")
+        if r.report_url:
+            print(f"  Portal: {r.report_url}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -173,4 +210,12 @@ Overall: completed
 Per-agent breakdown:
   researcher: 2/2 passed
   planner: 2/2 passed
+
+============================================================
+Pattern 3: Similarity evaluation with ground truth
+============================================================
+
+Overall: completed
+  Passed: 2/2
+  Portal: https://ai.azure.com/...
 """

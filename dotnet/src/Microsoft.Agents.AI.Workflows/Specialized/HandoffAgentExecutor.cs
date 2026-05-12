@@ -426,7 +426,7 @@ internal sealed class HandoffAgentExecutor :
                     {
                         AgentId = this._agent.Id,
                         AuthorName = this._agent.Name ?? this._agent.Id,
-                        Contents = [new FunctionResultContent(handoffRequest.CallId, "Transferred.")],
+                        Contents = [CreateHandoffResult(handoffRequest.CallId)],
                         CreatedAt = DateTimeOffset.UtcNow,
                         MessageId = Guid.NewGuid().ToString("N"),
                         Role = ChatRole.Tool,
@@ -459,4 +459,6 @@ internal sealed class HandoffAgentExecutor :
              ? this._handoffFunctionToAgentId.TryGetValue(requestedHandoff, out string? targetId) ? targetId : null
              : null;
     }
+
+    internal static FunctionResultContent CreateHandoffResult(string requestCallId) => new(requestCallId, "Transferred.");
 }

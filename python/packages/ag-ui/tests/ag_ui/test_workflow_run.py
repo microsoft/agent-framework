@@ -1672,3 +1672,210 @@ async def test_workflow_run_non_terminal_status_emits_custom():
     custom = [e for e in events if e.type == "CUSTOM" and e.name == "status"]
     assert len(custom) == 1
     assert custom[0].value == {"state": "running"}
+
+
+async def test_workflow_run_passes_forwarded_props_as_function_invocation_kwargs() -> None:
+    """forwarded_props from input_data is forwarded to workflow.run() via function_invocation_kwargs."""
+
+    class CapturingWorkflow:
+        def __init__(self) -> None:
+            self.captured_kwargs: dict[str, Any] = {}
+
+        def run(self, **kwargs: Any):
+            self.captured_kwargs = dict(kwargs)
+
+            async def _stream():
+                yield SimpleNamespace(type="started")
+
+            return _stream()
+
+    workflow = CapturingWorkflow()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [{"role": "user", "content": "hello"}],
+                "forwarded_props": {"custom_flag": True, "source": "copilotkit"},
+            },
+            cast(Any, workflow),
+        )
+    ]
+
+    event_types = [event.type for event in events]
+    assert "RUN_STARTED" in event_types
+    assert "RUN_FINISHED" in event_types
+
+    assert workflow.captured_kwargs["stream"] is True
+    assert "function_invocation_kwargs" in workflow.captured_kwargs
+    assert workflow.captured_kwargs["function_invocation_kwargs"] == {
+        "forwarded_props": {"custom_flag": True, "source": "copilotkit"},
+    }
+
+
+async def test_workflow_run_omits_function_invocation_kwargs_when_no_forwarded_props() -> None:
+    """function_invocation_kwargs is not passed when forwarded_props is absent."""
+
+    class CapturingWorkflow:
+        def __init__(self) -> None:
+            self.captured_kwargs: dict[str, Any] = {}
+
+        def run(self, **kwargs: Any):
+            self.captured_kwargs = dict(kwargs)
+
+            async def _stream():
+                yield SimpleNamespace(type="started")
+
+            return _stream()
+
+    workflow = CapturingWorkflow()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "hello"}]},
+            cast(Any, workflow),
+        )
+    ]
+
+    event_types = [event.type for event in events]
+    assert "RUN_STARTED" in event_types
+    assert workflow.captured_kwargs["stream"] is True
+    assert "function_invocation_kwargs" not in workflow.captured_kwargs
+
+
+async def test_workflow_run_accepts_camel_case_forwarded_props() -> None:
+    """forwardedProps (camelCase) is accepted as an alternative key."""
+
+    class CapturingWorkflow:
+        def __init__(self) -> None:
+            self.captured_kwargs: dict[str, Any] = {}
+
+        def run(self, **kwargs: Any):
+            self.captured_kwargs = dict(kwargs)
+
+            async def _stream():
+                yield SimpleNamespace(type="started")
+
+            return _stream()
+
+    workflow = CapturingWorkflow()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [{"role": "user", "content": "hello"}],
+                "forwardedProps": {"source": "frontend"},
+            },
+            cast(Any, workflow),
+        )
+    ]
+
+    event_types = [event.type for event in events]
+    assert "RUN_STARTED" in event_types
+
+    assert workflow.captured_kwargs["stream"] is True
+    assert "function_invocation_kwargs" in workflow.captured_kwargs
+    assert workflow.captured_kwargs["function_invocation_kwargs"] == {
+        "forwarded_props": {"source": "frontend"},
+    }
+
+
+async def test_workflow_run_passes_empty_dict_forwarded_props() -> None:
+    """An empty dict forwarded_props={} should still be forwarded (not dropped by truthiness)."""
+
+    class CapturingWorkflow:
+        def __init__(self) -> None:
+            self.captured_kwargs: dict[str, Any] = {}
+
+        def run(self, **kwargs: Any):
+            self.captured_kwargs = dict(kwargs)
+
+            async def _stream():
+                yield SimpleNamespace(type="started")
+
+            return _stream()
+
+    workflow = CapturingWorkflow()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [{"role": "user", "content": "hello"}],
+                "forwarded_props": {},
+            },
+            cast(Any, workflow),
+        )
+    ]
+
+    event_types = [event.type for event in events]
+    assert "RUN_STARTED" in event_types
+    assert "RUN_FINISHED" in event_types
+
+    assert workflow.captured_kwargs["stream"] is True
+    assert "function_invocation_kwargs" in workflow.captured_kwargs
+    assert workflow.captured_kwargs["function_invocation_kwargs"] == {
+        "forwarded_props": {},
+    }
+
+
+async def test_workflow_run_stream_true_always_passed() -> None:
+    """stream=True is always passed to workflow.run()."""
+
+    class CapturingWorkflow:
+        def __init__(self) -> None:
+            self.captured_kwargs: dict[str, Any] = {}
+
+        def run(self, **kwargs: Any):
+            self.captured_kwargs = dict(kwargs)
+
+            async def _stream():
+                yield SimpleNamespace(type="started")
+
+            return _stream()
+
+    workflow = CapturingWorkflow()
+    _ = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [{"role": "user", "content": "hello"}],
+                "forwarded_props": {"key": "val"},
+            },
+            cast(Any, workflow),
+        )
+    ]
+
+    assert workflow.captured_kwargs["stream"] is True
+
+
+async def test_workflow_run_drops_fwd_kwargs_when_run_lacks_param() -> None:
+    """function_invocation_kwargs is silently dropped if workflow.run() does not accept it."""
+
+    class StrictWorkflow:
+        def __init__(self) -> None:
+            self.captured_kwargs: dict[str, Any] = {}
+
+        def run(self, *, message: Any = None, responses: Any = None, stream: bool = False):
+            self.captured_kwargs = {"message": message, "responses": responses, "stream": stream}
+
+            async def _stream():
+                yield SimpleNamespace(type="started")
+
+            return _stream()
+
+    workflow = StrictWorkflow()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [{"role": "user", "content": "hello"}],
+                "forwarded_props": {"custom": True},
+            },
+            cast(Any, workflow),
+        )
+    ]
+
+    event_types = [event.type for event in events]
+    assert "RUN_STARTED" in event_types
+    assert "RUN_FINISHED" in event_types
+    # No TypeError raised, and function_invocation_kwargs was not passed
+    assert "function_invocation_kwargs" not in workflow.captured_kwargs

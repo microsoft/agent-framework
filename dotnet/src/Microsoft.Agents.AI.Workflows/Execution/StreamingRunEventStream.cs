@@ -77,11 +77,12 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
         try
         {
-            // Wait for the first input before starting
-            // The consumer will call EnqueueMessageAsync which signals the run loop
+            // Wait for the first input before starting.
+            // The consumer will call EnqueueMessageAsync which signals the run loop.
+            // Note: AsyncRunHandle also signals here on checkpoint resume when there are
+            // already pending requests, so the first iteration can emit a PendingRequests
+            // halt signal even without unprocessed messages.
             await this._inputWaiter.WaitForInputAsync(cancellationToken: linkedSource.Token).ConfigureAwait(false);
-
-            this._runStatus = RunStatus.Running;
 
             while (!linkedSource.Token.IsCancellationRequested)
             {
@@ -95,6 +96,13 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 // Events are streamed out in real-time as they happen via the event handler
                 if (this._stepRunner.HasUnprocessedMessages)
                 {
+                    // Flip to Running only when there's actual work to process.
+                    // This is intentionally inside the HasUnprocessedMessages branch so
+                    // that stale input signals cannot transiently flip status back to
+                    // Running after a prior halt has already been observed by callers
+                    // (e.g. Run.ResumeAsync returning after reading an Idle halt signal).
+                    this._runStatus = RunStatus.Running;
+
                     // Emit WorkflowStartedEvent only when there's actual work to process
                     // This avoids spurious events on timeout-only loop iterations
                     await this._eventChannel.Writer.WriteAsync(new WorkflowStartedEvent(), linkedSource.Token).ConfigureAwait(false);
@@ -129,9 +137,6 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 // Wait for next input from the consumer
                 // Works for both Idle (no work) and PendingRequests (waiting for responses)
                 await this._inputWaiter.WaitForInputAsync(linkedSource.Token).ConfigureAwait(false);
-
-                // When signaled, resume running
-                this._runStatus = RunStatus.Running;
             }
         }
         catch (OperationCanceledException)

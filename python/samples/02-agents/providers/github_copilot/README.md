@@ -23,6 +23,23 @@ The following environment variables can be configured:
 | `GITHUB_COPILOT_MODEL` | Model to use (e.g., "gpt-5", "claude-sonnet-4") | Server default |
 | `GITHUB_COPILOT_TIMEOUT` | Request timeout in seconds | `60` |
 | `GITHUB_COPILOT_LOG_LEVEL` | CLI log level | `info` |
+| `GITHUB_COPILOT_COPILOT_HOME` | Directory for CLI session state and config | `~/.copilot` |
+
+## Observability
+
+`GitHubCopilotAgent` has OpenTelemetry tracing built-in. To enable it, call `configure_otel_providers()` before running the agent:
+
+```python
+from agent_framework.observability import configure_otel_providers
+from agent_framework.github import GitHubCopilotAgent
+
+configure_otel_providers(enable_console_exporters=True)
+
+async with GitHubCopilotAgent() as agent:
+    response = await agent.run("Hello!")
+```
+
+See the [observability samples](../../../02-agents/observability/) for full examples with OTLP exporters.
 
 ## Examples
 
@@ -34,4 +51,5 @@ The following environment variables can be configured:
 | [`github_copilot_with_file_operations.py`](github_copilot_with_file_operations.py) | Shows how to enable file read and write permissions. Demonstrates reading file contents and creating new files. |
 | [`github_copilot_with_url.py`](github_copilot_with_url.py) | Shows how to enable URL fetching permissions. Demonstrates fetching and processing web content. |
 | [`github_copilot_with_mcp.py`](github_copilot_with_mcp.py) | Shows how to configure MCP (Model Context Protocol) servers, including local (stdio) and remote (HTTP) servers. |
+| [`github_copilot_with_instruction_directories.py`](github_copilot_with_instruction_directories.py) | Shows how to configure custom instruction directories for project-specific or team-shared guidelines. |
 | [`github_copilot_with_multiple_permissions.py`](github_copilot_with_multiple_permissions.py) | Shows how to combine multiple permission types for complex tasks that require shell, read, and write access. |
