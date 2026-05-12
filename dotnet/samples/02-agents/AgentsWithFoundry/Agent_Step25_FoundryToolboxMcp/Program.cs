@@ -20,22 +20,18 @@ using OpenAI.Responses;
 #pragma warning disable OPENAI001 // Experimental API
 #pragma warning disable AAIP001  // AgentToolboxes is experimental
 
-// Must match the `<name>` segment of FOUNDRY_TOOLBOX_ENDPOINT.
+// Name of the toolbox to create and connect to.
 const string ToolboxName = "research_toolbox";
 const string Query = "What tools do you have access to?";
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
-string toolboxEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_TOOLBOX_ENDPOINT")
-    ?? throw new InvalidOperationException(
-        "FOUNDRY_TOOLBOX_ENDPOINT is not set. Example: " +
-        "https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=2025-05-01-preview");
 
 TokenCredential credential = new DefaultAzureCredential();
 
 // Comment out if the toolbox already exists in your Foundry project.
-await CreateSampleToolboxAsync(ToolboxName, endpoint, credential);
+var toolboxEndpoint = await CreateSampleToolboxAsync(ToolboxName, endpoint, credential);
 
 // Inject a fresh Azure AI bearer token on every MCP request.
 using var httpClient = new HttpClient(new BearerTokenHandler(credential, "https://ai.azure.com/.default")
@@ -51,6 +47,11 @@ await using McpClient mcpClient = await McpClient.CreateAsync(
         {
             Endpoint = new Uri(toolboxEndpoint),
             Name = "foundry_toolbox",
+            TransportMode = HttpTransportMode.StreamableHttp,
+            AdditionalHeaders = new Dictionary<string, string>
+            {
+                ["Foundry-Features"] = "Toolboxes=V1Preview",
+            },
         },
         httpClient));
 
@@ -74,7 +75,7 @@ Console.WriteLine($"Assistant: {await agent.RunAsync(Query)}");
 // ---------------------------------------------------------------------------
 // Helper: create (or replace) a sample toolbox so the sample runs end-to-end
 // ---------------------------------------------------------------------------
-static async Task CreateSampleToolboxAsync(string name, string endpoint, TokenCredential credential)
+static async Task<string> CreateSampleToolboxAsync(string name, string endpoint, TokenCredential credential)
 {
     // Toolboxes are normally configured in the Foundry portal or a deployment
     // script, not the application itself. This helper exists so the sample can
@@ -103,12 +104,13 @@ static async Task CreateSampleToolboxAsync(string name, string endpoint, TokenCr
         serverUri: new Uri("https://gitmcp.io/Azure/azure-rest-api-specs"),
         toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval)));
 
-    var created = (await toolboxClient.CreateToolboxVersionAsync(
+    ToolboxVersion created = (await toolboxClient.CreateToolboxVersionAsync(
         name: name,
         tools: [mcpTool],
         description: "Sample toolbox with an MCP tool — created by Agent_Step25 sample.")).Value;
 
     Console.WriteLine($"Created toolbox '{created.Name}' v{created.Version} ({created.Tools.Count} tool(s))");
+    return $"{endpoint}/toolboxes/{created.Name}/mcp?api-version=v{created.Version}";
 }
 
 // ---------------------------------------------------------------------------
