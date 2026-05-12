@@ -134,7 +134,7 @@ Supporting types: MethodAnalysisResult, ClassProtocolInfo, AnalysisResult, Proto
 | Finding Source | Finding | Conflicts With | Nature | Resolution |
 |---------------|---------|----------------|--------|------------|
 | Elevation | Frame correct; no lift needed | Dimensions (all recommend status quo) | No conflict — aligned | Both perspectives confirm current design is sound |
-| Gap Analysis (Gap 4) | Duplicate handlers cause runtime crash | Dimensions (API recommends current diagnostics) | Tension: API analysis did not flag this gap | Add MAFGENWF008 diagnostic for duplicate input types |
+| Gap Analysis (Gap 4) | Duplicate handlers cause runtime crash — `RouteBuilder.AddHandler<T>` throws `ArgumentException` ("An item with the same key has already been added") when two handlers register the same input type, producing an unhandled exception during executor construction | Dimensions (API recommends current diagnostics) | Tension: API analysis did not flag this gap | Add MAFGENWF008 diagnostic for duplicate input types. Diagnostic message should reference the specific `ArgumentException` users would otherwise encounter at runtime |
 | Gap Analysis (Gap 9) | Info-level for ConfigureProtocol override on Executor<T> subclasses | Dimensions (UX recommends current diagnostic levels) | Tension: Info severity masks user intent | Upgrade MAFGENWF006 to Warning when base is Executor<T>/Executor<T,TOut> |
 | Gap Analysis (Gap 7) | No behavioral equivalence tests | Dimensions (Integration notes test coverage adequate) | Tension: structural tests insufficient for migration validation | Add curated equivalence verification test set |
 | Decision History | commit 0756c457 (Config→ExecutorConfig, RouteBuilder explicit) | All dimensions respect this | No conflict | Dimensions correctly avoid reversing this change |
@@ -159,6 +159,7 @@ Supporting types: MethodAnalysisResult, ClassProtocolInfo, AnalysisResult, Proto
 | Roslyn API behavior changes in future SDK versions | Medium | Low | Pin to 4.4.0 minimum; test against multiple SDK versions in CI | Integration | Gap 1 |
 | Multi-file partial class edge cases in incremental caching | Low | Low | Add explicit multi-file test case (Gap 13) | Data | Gap 13 |
 | Method-level [SendsMessage]/[YieldsOutput] on non-handler methods silently ignored | Low | Low | Document limitation in API docs | API | Gap 12 |
+| New diagnostics (MAFGENWF008, upgraded MAFGENWF006) break consumer CI builds | Medium | Medium | Ship MAFGENWF008 as Warning (not Error) initially; document new diagnostics in release notes. Consumers with TreatWarningsAsErrors will see build breaks — mitigate by upgrading to Error only in the next major version | API | Cross-review H3 |
 
 ## Six-Sigma Caveats
 
@@ -170,7 +171,7 @@ Supporting types: MethodAnalysisResult, ClassProtocolInfo, AnalysisResult, Proto
 | Gap 4 | escape path | High | Feasible | Duplicate input type detection in CombineHandlerMethodResults |
 | Gap 5 | scope gap | Low | Feasible | Documentation naming clarification |
 | Gap 6 | unstated assumption | Medium | Feasible | Document AutoYield runtime dependency |
-| Gap 7 | test type mismatch | High | Partially feasible | Requires in-memory compilation test infrastructure |
+| Gap 7 | test type mismatch | High | Partially feasible | Blocker: structural tests (source text comparison) cannot verify runtime behavioral equivalence. The test project has CSharpCompilation infrastructure for generator output verification, but proving generated routes match reflected routes requires runtime execution of generated code against actual `RouteBuilder`/`ProtocolBuilder` instances — this needs an integration test host that compiles, loads, and executes generated assemblies. Structural baseline comparisons (Phase 2 deliverable) are feasible; full runtime equivalence is not without additional test infrastructure |
 | Gap 8 | sibling vulnerability | Low | Feasible | Document auto-send/yield delegation |
 | Gap 9 | escape path | High | Feasible | Upgrade diagnostic severity for Executor<T> case |
 | Gap 10 | version drift | Very Low | Feasible | Replace hint name approximation with precise count |
@@ -187,7 +188,7 @@ Supporting types: MethodAnalysisResult, ClassProtocolInfo, AnalysisResult, Proto
 ### Phase 1: High-Impact Gap Closure (Effort: Small)
 
 **Deliverables:**
-1. New diagnostic `MAFGENWF008` for duplicate input type handlers on same executor
+1. New diagnostic `MAFGENWF008` for duplicate input type handlers on same executor (ship as Warning initially to avoid breaking consumer CI with TreatWarningsAsErrors; upgrade to Error in next major version)
 2. Upgrade `MAFGENWF006` severity to Warning when base class is `Executor<TInput>` or `Executor<TInput, TOutput>`
 3. New diagnostic for handler methods with 4+ parameters
 4. New diagnostic for non-CancellationToken third parameter
