@@ -617,6 +617,7 @@ class RawAnthropicClient(
 
         # betas
         run_options["betas"] = self._prepare_betas(options)
+        run_options.pop("additional_beta_flags", None)
 
         # extra headers
         run_options["extra_headers"] = {"User-Agent": get_user_agent()}
