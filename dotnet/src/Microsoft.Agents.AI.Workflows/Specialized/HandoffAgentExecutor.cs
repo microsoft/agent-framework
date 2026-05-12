@@ -266,7 +266,33 @@ internal sealed class HandoffAgentExecutor :
                     sharedState.Conversation.AddMessages(incomingMessages);
                 }
 
-                newConversationBookmark = sharedState.Conversation.AddMessages(result.Response.Messages);
+                if (result.IsHandoffRequested)
+                {
+                    int preHandoffMessageCount = result.Response.Messages.Count - 1;
+                    newConversationBookmark = sharedState.Conversation.AddMessages(result.Response.Messages.Take(preHandoffMessageCount));
+
+                    // The following message contains the Handoff FunctionCallResult which should be added to the conversation history with
+                    // the caveat that we need to get it back next time _this_ agent is invoked because we need to feed the FunctionCallResult
+                    // back to the agent. So ignore the bookmark update.
+                    ChatMessage handoffCallResultMessage = result.Response.Messages[preHandoffMessageCount];
+
+                    if (handoffCallResultMessage.Role != ChatRole.Tool)
+                    {
+                        throw new InvalidOperationException("The last message in a handoff response must be a Tool message containing the Handoff FunctionCallResult.");
+                    }
+
+                    if (handoffCallResultMessage.Contents.Count != 1 ||
+                        handoffCallResultMessage.Contents[0] is not FunctionResultContent)
+                    {
+                        throw new InvalidOperationException("The Tool message in a handoff response must contain exactly one content item of type FunctionResultContent.");
+                    }
+
+                    _ = sharedState.Conversation.AddMessage(handoffCallResultMessage);
+                }
+                else
+                {
+                    newConversationBookmark = sharedState.Conversation.AddMessages(result.Response.Messages);
+                }
 
                 return new ValueTask();
             },
@@ -376,39 +402,28 @@ internal sealed class HandoffAgentExecutor :
         List<AgentResponseUpdate> updates = [];
         List<FunctionCallContent> candidateRequests = [];
 
-        await this.InvokeWithStateAsync(
-            async (state, ctx, ct) =>
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        IAsyncEnumerable<AgentResponseUpdate> agentStream =
+            this._agent.RunStreamingAsync(messages, this._session, this._agentOptions, cancellationToken);
+
+        await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
+        {
+            await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
+
+            collector.ProcessAgentResponseUpdate(update, CollectHandoffRequestsFilter);
+
+            bool CollectHandoffRequestsFilter(FunctionCallContent candidateHandoffRequest)
             {
-                this._session ??= await this._agent.CreateSessionAsync(ct).ConfigureAwait(false);
-
-                IAsyncEnumerable<AgentResponseUpdate> agentStream =
-                    this._agent.RunStreamingAsync(messages,
-                                                  this._session,
-                                                  options: this._agentOptions,
-                                                  cancellationToken: ct);
-
-                await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
+                bool isHandoffRequest = this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
+                if (isHandoffRequest)
                 {
-                    await AddUpdateAsync(update, ct).ConfigureAwait(false);
-
-                    collector.ProcessAgentResponseUpdate(update, CollectHandoffRequestsFilter);
-
-                    bool CollectHandoffRequestsFilter(FunctionCallContent candidateHandoffRequest)
-                    {
-                        bool isHandoffRequest = this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
-                        if (isHandoffRequest)
-                        {
-                            candidateRequests.Add(candidateHandoffRequest);
-                        }
-
-                        return !isHandoffRequest;
-                    }
+                    candidateRequests.Add(candidateHandoffRequest);
                 }
 
-                return state;
-            },
-            context,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+                return !isHandoffRequest;
+            }
+        }
 
         if (candidateRequests.Count > 1)
         {

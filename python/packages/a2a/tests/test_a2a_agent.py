@@ -9,16 +9,13 @@ import httpx
 from a2a.types import (
     AgentCard,
     Artifact,
-    DataPart,
-    FilePart,
-    FileWithUri,
     Part,
+    StreamResponse,
     Task,
     TaskArtifactUpdateEvent,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
-    TextPart,
 )
 from a2a.types import Message as A2AMessage
 from a2a.types import Role as A2ARole
@@ -43,59 +40,42 @@ class MockA2AClient:
 
     def __init__(self) -> None:
         self.call_count: int = 0
-        self.responses: list[Any] = []
-        self.resubscribe_responses: list[Any] = []
+        self.responses: list[StreamResponse] = []
+        self.subscribe_responses: list[StreamResponse] = []
         self.get_task_response: Task | None = None
         self.last_message: Any = None
 
     def add_message_response(self, message_id: str, text: str, role: str = "agent") -> None:
         """Add a mock Message response."""
-
-        # Create actual TextPart instance and wrap it in Part
-        text_part = Part(root=TextPart(text=text))
-
-        # Create actual Message instance
         message = A2AMessage(
-            message_id=message_id, role=A2ARole.agent if role == "agent" else A2ARole.user, parts=[text_part]
+            message_id=message_id,
+            role=A2ARole.ROLE_AGENT if role == "agent" else A2ARole.ROLE_USER,
+            parts=[Part(text=text)],
         )
-        self.responses.append(message)
+        self.responses.append(StreamResponse(message=message))
 
     def add_task_response(self, task_id: str, artifacts: list[dict[str, Any]]) -> None:
         """Add a mock Task response."""
-        # Create mock artifacts
         mock_artifacts = []
         for artifact_data in artifacts:
-            # Create actual TextPart instance and wrap it in Part
-            text_part = Part(root=TextPart(text=artifact_data.get("content", "Test content")))
-
             artifact = Artifact(
                 artifact_id=artifact_data.get("id", str(uuid4())),
                 name=artifact_data.get("name", "test-artifact"),
-                description=artifact_data.get("description", "Test artifact"),
-                parts=[text_part],
+                parts=[Part(text=artifact_data.get("content", "Test content"))],
             )
             mock_artifacts.append(artifact)
 
-        # Create task status
-        status = TaskStatus(state=TaskState.completed, message=None)
-
-        # Create actual Task instance
-        task = Task(
-            id=task_id, context_id="test-context", status=status, artifacts=mock_artifacts if mock_artifacts else None
-        )
-
-        # Mock the ClientEvent tuple format
-        update_event = None  # No specific update event for completed tasks
-        client_event = (task, update_event)
-        self.responses.append(client_event)
+        status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED)
+        task = Task(id=task_id, context_id="test-context", status=status, artifacts=mock_artifacts)
+        self.responses.append(StreamResponse(task=task))
 
     def add_in_progress_task_response(
         self,
         task_id: str,
         context_id: str = "test-context",
-        state: TaskState = TaskState.working,
+        state: TaskState = TaskState.TASK_STATE_WORKING,
         text: str | None = None,
-        role: A2ARole = A2ARole.agent,
+        role: A2ARole = A2ARole.ROLE_AGENT,
     ) -> None:
         """Add a mock in-progress Task response (non-terminal)."""
         message = None
@@ -103,30 +83,28 @@ class MockA2AClient:
             message = A2AMessage(
                 message_id=str(uuid4()),
                 role=role,
-                parts=[Part(root=TextPart(text=text))],
+                parts=[Part(text=text)],
             )
         status = TaskStatus(state=state, message=message)
         task = Task(id=task_id, context_id=context_id, status=status)
-        client_event = (task, None)
-        self.responses.append(client_event)
+        self.responses.append(StreamResponse(task=task))
 
-    async def send_message(self, message: Any) -> AsyncIterator[Any]:
+    async def send_message(self, request: Any) -> AsyncIterator[StreamResponse]:
         """Mock send_message method that yields responses."""
-        self.last_message = message
+        self.last_message = getattr(request, "message", request)
         self.call_count += 1
 
-        # All queued responses are delivered as a single streaming batch per call.
         for response in self.responses:
             yield response
         self.responses.clear()
 
-    async def resubscribe(self, request: Any) -> AsyncIterator[Any]:
-        """Mock resubscribe method that yields responses."""
+    async def subscribe(self, request: Any) -> AsyncIterator[StreamResponse]:
+        """Mock subscribe method that yields responses."""
         self.call_count += 1
 
-        for response in self.resubscribe_responses:
+        for response in self.subscribe_responses:
             yield response
-        self.resubscribe_responses.clear()
+        self.subscribe_responses.clear()
 
     async def get_task(self, request: Any) -> Task:
         """Mock get_task method that returns a task."""
@@ -282,16 +260,16 @@ async def test_run_with_task_response_no_artifacts(a2a_agent: A2AAgent, mock_a2a
 
 async def test_run_with_unknown_response_type_raises_error(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test run() method with unknown response type raises NotImplementedError."""
-    mock_a2a_client.responses.append("invalid_response")
+    # An empty StreamResponse has no payload set (WhichOneof returns None)
+    mock_a2a_client.responses.append(StreamResponse())
 
-    with raises(NotImplementedError, match="Only Message and Task responses are supported"):
+    with raises(NotImplementedError, match="Unsupported StreamResponse payload"):
         await a2a_agent.run("Test message")
 
 
 def test_parse_messages_from_task_empty_artifacts(a2a_agent: A2AAgent) -> None:
     """Test _parse_messages_from_task with task containing no artifacts."""
-    task = MagicMock()
-    task.artifacts = None
+    task = Task(id="test", context_id="test", status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED))
 
     result = a2a_agent._parse_messages_from_task(task)
 
@@ -300,28 +278,14 @@ def test_parse_messages_from_task_empty_artifacts(a2a_agent: A2AAgent) -> None:
 
 def test_parse_messages_from_task_with_artifacts(a2a_agent: A2AAgent) -> None:
     """Test _parse_messages_from_task with task containing artifacts."""
-    task = MagicMock()
-
-    # Create mock artifacts
-    artifact1 = MagicMock()
-    artifact1.artifact_id = "art-1"
-    text_part1 = MagicMock()
-    text_part1.root = MagicMock()
-    text_part1.root.kind = "text"
-    text_part1.root.text = "Content 1"
-    text_part1.root.metadata = None
-    artifact1.parts = [text_part1]
-
-    artifact2 = MagicMock()
-    artifact2.artifact_id = "art-2"
-    text_part2 = MagicMock()
-    text_part2.root = MagicMock()
-    text_part2.root.kind = "text"
-    text_part2.root.text = "Content 2"
-    text_part2.root.metadata = None
-    artifact2.parts = [text_part2]
-
-    task.artifacts = [artifact1, artifact2]
+    artifact1 = Artifact(artifact_id="art-1", parts=[Part(text="Content 1")])
+    artifact2 = Artifact(artifact_id="art-2", parts=[Part(text="Content 2")])
+    task = Task(
+        id="test",
+        context_id="test",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+        artifacts=[artifact1, artifact2],
+    )
 
     result = a2a_agent._parse_messages_from_task(task)
 
@@ -333,16 +297,7 @@ def test_parse_messages_from_task_with_artifacts(a2a_agent: A2AAgent) -> None:
 
 def test_parse_message_from_artifact(a2a_agent: A2AAgent) -> None:
     """Test _parse_message_from_artifact conversion."""
-    artifact = MagicMock()
-    artifact.artifact_id = "test-artifact"
-
-    text_part = MagicMock()
-    text_part.root = MagicMock()
-    text_part.root.kind = "text"
-    text_part.root.text = "Artifact content"
-    text_part.root.metadata = None
-
-    artifact.parts = [text_part]
+    artifact = Artifact(artifact_id="test-artifact", parts=[Part(text="Artifact content")])
 
     result = a2a_agent._parse_message_from_artifact(artifact)
 
@@ -373,7 +328,7 @@ def test_parse_contents_from_a2a_conversion(a2a_agent: A2AAgent) -> None:
     agent = A2AAgent(name="Test Agent", client=MockA2AClient(), http_client=None)
 
     # Create A2A parts
-    parts = [Part(root=TextPart(text="First part")), Part(root=TextPart(text="Second part"))]
+    parts = [Part(text="First part"), Part(text="Second part")]
 
     # Convert to contents
     contents = agent._parse_contents_from_a2a(parts)
@@ -398,7 +353,7 @@ def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None
 
     # Verify conversion
     assert len(a2a_message.parts) == 1
-    assert a2a_message.parts[0].root.text == "Test error message"
+    assert a2a_message.parts[0].text == "Test error message"
 
 
 def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
@@ -413,8 +368,8 @@ def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
 
     # Verify conversion
     assert len(a2a_message.parts) == 1
-    assert a2a_message.parts[0].root.file.uri == "http://example.com/file.pdf"
-    assert a2a_message.parts[0].root.file.mime_type == "application/pdf"
+    assert a2a_message.parts[0].url == "http://example.com/file.pdf"
+    assert a2a_message.parts[0].media_type == "application/pdf"
 
 
 def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
@@ -429,8 +384,8 @@ def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
 
     # Verify conversion
     assert len(a2a_message.parts) == 1
-    assert a2a_message.parts[0].root.file.bytes == "SGVsbG8gV29ybGQ="
-    assert a2a_message.parts[0].root.file.mime_type == "text/plain"
+    assert a2a_message.parts[0].raw == b"Hello World"
+    assert a2a_message.parts[0].media_type == "text/plain"
 
 
 def test_prepare_message_for_a2a_empty_contents_raises_error(a2a_agent: A2AAgent) -> None:
@@ -518,10 +473,10 @@ def test_prepare_message_for_a2a_with_multiple_contents() -> None:
     assert len(result.parts) == 4
 
     # Check each part type
-    assert result.parts[0].root.kind == "text"  # Regular text
-    assert result.parts[1].root.kind == "file"  # Binary data
-    assert result.parts[2].root.kind == "file"  # URI content
-    assert result.parts[3].root.kind == "text"  # JSON text remains as text (no parsing)
+    assert result.parts[0].WhichOneof("content") == "text"  # Regular text
+    assert result.parts[1].WhichOneof("content") == "raw"  # Binary data
+    assert result.parts[2].WhichOneof("content") == "url"  # URI content
+    assert result.parts[3].WhichOneof("content") == "text"  # JSON text remains as text (no parsing)
 
 
 def test_prepare_message_for_a2a_forwards_context_id() -> None:
@@ -573,19 +528,29 @@ def test_prepare_message_for_a2a_message_context_id_takes_precedence() -> None:
 
 
 def test_parse_contents_from_a2a_with_data_part() -> None:
-    """Test conversion of A2A DataPart."""
+    """Test conversion of A2A data Part."""
+    from google.protobuf.json_format import ParseDict
+    from google.protobuf.struct_pb2 import Struct, Value
 
     agent = A2AAgent(client=MagicMock(), http_client=None)
 
-    # Create DataPart
-    data_part = Part(root=DataPart(data={"key": "value", "number": 42}, metadata={"source": "test"}))
+    # Create Part with data (protobuf Value containing a struct)
+    value = ParseDict({"key": "value", "number": 42}, Value())
+    metadata = Struct()
+    metadata.update({"source": "test"})
+    data_part = Part(data=value, metadata=metadata)
 
     contents = agent._parse_contents_from_a2a([data_part])
 
     assert len(contents) == 1
 
     assert contents[0].type == "text"
-    assert contents[0].text == '{"key": "value", "number": 42}'
+    # MessageToJson may format slightly differently — verify the parsed structure
+    import json
+
+    parsed = json.loads(contents[0].text)
+    assert parsed["key"] == "value"
+    assert parsed["number"] == 42
     assert contents[0].additional_properties == {"source": "test"}
 
 
@@ -593,12 +558,11 @@ def test_parse_contents_from_a2a_unknown_part_kind() -> None:
     """Test error handling for unknown A2A part kind."""
     agent = A2AAgent(client=MagicMock(), http_client=None)
 
-    # Create a mock part with unknown kind
-    mock_part = MagicMock()
-    mock_part.root.kind = "unknown_kind"
+    # Create a Part with no content field set (WhichOneof returns None)
+    empty_part = Part()
 
-    with raises(ValueError, match="Unknown Part kind: unknown_kind"):
-        agent._parse_contents_from_a2a([mock_part])
+    with raises(ValueError, match="Unknown Part content type"):
+        agent._parse_contents_from_a2a([empty_part])
 
 
 def test_prepare_message_for_a2a_with_hosted_file() -> None:
@@ -617,14 +581,8 @@ def test_prepare_message_for_a2a_with_hosted_file() -> None:
     # Verify the conversion
     assert len(result.parts) == 1
     part = result.parts[0]
-    assert part.root.kind == "file"
-
-    # Verify it's a FilePart with FileWithUri
-
-    assert isinstance(part.root, FilePart)
-    assert isinstance(part.root.file, FileWithUri)
-    assert part.root.file.uri == "hosted://storage/document.pdf"
-    assert part.root.file.mime_type is None  # HostedFileContent doesn't specify media_type
+    assert part.WhichOneof("content") == "url"
+    assert part.url == "hosted://storage/document.pdf"
 
 
 def test_parse_contents_from_a2a_with_hosted_file_uri() -> None:
@@ -632,15 +590,8 @@ def test_parse_contents_from_a2a_with_hosted_file_uri() -> None:
 
     agent = A2AAgent(client=MagicMock(), http_client=None)
 
-    # Create FilePart with hosted file URI (simulating what A2A would send back)
-    file_part = Part(
-        root=FilePart(
-            file=FileWithUri(
-                uri="hosted://storage/document.pdf",
-                mime_type=None,
-            )
-        )
-    )
+    # Create Part with hosted file URL (simulating what A2A would send back)
+    file_part = Part(url="hosted://storage/document.pdf")
 
     contents = agent._parse_contents_from_a2a([file_part])  # noqa: SLF001
 
@@ -671,9 +622,11 @@ def test_auth_interceptor_parameter() -> None:
 
 def test_transport_negotiation_both_fail() -> None:
     """Test that RuntimeError is raised when both primary and fallback transport negotiation fail."""
-    # Create a mock agent card
+    # Create a mock agent card with supported_interfaces
     mock_agent_card = MagicMock(spec=AgentCard)
-    mock_agent_card.url = "http://test-agent.example.com"
+    mock_interface = MagicMock()
+    mock_interface.url = "http://test-agent.example.com"
+    mock_agent_card.supported_interfaces = [mock_interface]
     mock_agent_card.name = "Test Agent"
     mock_agent_card.description = "A test agent"
 
@@ -751,7 +704,7 @@ def test_a2a_agent_initialization_with_timeout_parameter() -> None:
 
 async def test_working_task_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test that a working (non-terminal) task yields an update with a continuation token when background=True."""
-    mock_a2a_client.add_in_progress_task_response("task-wip", context_id="ctx-1", state=TaskState.working)
+    mock_a2a_client.add_in_progress_task_response("task-wip", context_id="ctx-1", state=TaskState.TASK_STATE_WORKING)
 
     response = await a2a_agent.run("Start long task", background=True)
 
@@ -763,7 +716,7 @@ async def test_working_task_emits_continuation_token(a2a_agent: A2AAgent, mock_a
 
 async def test_submitted_task_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test that a submitted task yields a continuation token when background=True."""
-    mock_a2a_client.add_in_progress_task_response("task-sub", state=TaskState.submitted)
+    mock_a2a_client.add_in_progress_task_response("task-sub", state=TaskState.TASK_STATE_SUBMITTED)
 
     response = await a2a_agent.run("Submit task", background=True)
 
@@ -775,7 +728,7 @@ async def test_input_required_task_emits_continuation_token(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
     """Test that an input_required task yields a continuation token when background=True."""
-    mock_a2a_client.add_in_progress_task_response("task-input", state=TaskState.input_required)
+    mock_a2a_client.add_in_progress_task_response("task-input", state=TaskState.TASK_STATE_INPUT_REQUIRED)
 
     response = await a2a_agent.run("Need input", background=True)
 
@@ -785,7 +738,7 @@ async def test_input_required_task_emits_continuation_token(
 
 async def test_working_task_no_token_without_background(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test that background=False (default) does not emit continuation tokens for in-progress tasks."""
-    mock_a2a_client.add_in_progress_task_response("task-fg", context_id="ctx-fg", state=TaskState.working)
+    mock_a2a_client.add_in_progress_task_response("task-fg", context_id="ctx-fg", state=TaskState.TASK_STATE_WORKING)
 
     response = await a2a_agent.run("Foreground task")
 
@@ -805,7 +758,7 @@ async def test_completed_task_has_no_continuation_token(a2a_agent: A2AAgent, moc
 
 async def test_streaming_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test that streaming with background=True yields updates with continuation tokens."""
-    mock_a2a_client.add_in_progress_task_response("task-stream", context_id="ctx-s", state=TaskState.working)
+    mock_a2a_client.add_in_progress_task_response("task-stream", context_id="ctx-s", state=TaskState.TASK_STATE_WORKING)
 
     updates: list[AgentResponseUpdate] = []
     async for update in a2a_agent.run("Stream task", stream=True, background=True):
@@ -820,14 +773,14 @@ async def test_streaming_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_
 async def test_resume_via_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test that run() with continuation_token uses resubscribe instead of send_message."""
     # Set up the resubscribe response (completed task)
-    status = TaskStatus(state=TaskState.completed, message=None)
+    status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=None)
     artifact = Artifact(
         artifact_id="art-resume",
         name="result",
-        parts=[Part(root=TextPart(text="Resumed result"))],
+        parts=[Part(text="Resumed result")],
     )
     task = Task(id="task-resume", context_id="ctx-r", status=status, artifacts=[artifact])
-    mock_a2a_client.resubscribe_responses.append((task, None))
+    mock_a2a_client.subscribe_responses.append(StreamResponse(task=task))
 
     token = A2AContinuationToken(task_id="task-resume", context_id="ctx-r")
     response = await a2a_agent.run(continuation_token=token)
@@ -841,17 +794,17 @@ async def test_resume_via_continuation_token(a2a_agent: A2AAgent, mock_a2a_clien
 async def test_resume_streaming_via_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test that streaming run() with continuation_token and background=True uses resubscribe."""
     # Still working
-    status_wip = TaskStatus(state=TaskState.working, message=None)
+    status_wip = TaskStatus(state=TaskState.TASK_STATE_WORKING, message=None)
     task_wip = Task(id="task-rs", context_id="ctx-rs", status=status_wip)
     # Then completed
-    status_done = TaskStatus(state=TaskState.completed, message=None)
+    status_done = TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=None)
     artifact = Artifact(
         artifact_id="art-rs",
         name="result",
-        parts=[Part(root=TextPart(text="Stream resumed"))],
+        parts=[Part(text="Stream resumed")],
     )
     task_done = Task(id="task-rs", context_id="ctx-rs", status=status_done, artifacts=[artifact])
-    mock_a2a_client.resubscribe_responses.extend([(task_wip, None), (task_done, None)])
+    mock_a2a_client.subscribe_responses.extend([StreamResponse(task=task_wip), StreamResponse(task=task_done)])
 
     token = A2AContinuationToken(task_id="task-rs", context_id="ctx-rs")
     updates: list[AgentResponseUpdate] = []
@@ -868,7 +821,7 @@ async def test_resume_streaming_via_continuation_token(a2a_agent: A2AAgent, mock
 
 async def test_poll_task_in_progress(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test poll_task returns continuation token when task is still in progress."""
-    status = TaskStatus(state=TaskState.working, message=None)
+    status = TaskStatus(state=TaskState.TASK_STATE_WORKING, message=None)
     mock_a2a_client.get_task_response = Task(id="task-poll", context_id="ctx-p", status=status)
 
     token = A2AContinuationToken(task_id="task-poll", context_id="ctx-p")
@@ -880,11 +833,11 @@ async def test_poll_task_in_progress(a2a_agent: A2AAgent, mock_a2a_client: MockA
 
 async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test poll_task returns result with no continuation token when task is complete."""
-    status = TaskStatus(state=TaskState.completed, message=None)
+    status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=None)
     artifact = Artifact(
         artifact_id="art-poll",
         name="result",
-        parts=[Part(root=TextPart(text="Poll result"))],
+        parts=[Part(text="Poll result")],
     )
     mock_a2a_client.get_task_response = Task(
         id="task-poll-done", context_id="ctx-pd", status=status, artifacts=[artifact]
@@ -1105,9 +1058,9 @@ async def test_run_with_continuation_token_does_not_require_messages(mock_a2a_cl
     task = Task(
         id="task-cont",
         context_id="ctx-cont",
-        status=TaskStatus(state=TaskState.completed, message=None),
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=None),
     )
-    mock_a2a_client.resubscribe_responses.append((task, None))
+    mock_a2a_client.subscribe_responses.append(StreamResponse(task=task))
 
     agent = A2AAgent(
         name="Test Agent",
@@ -1176,8 +1129,10 @@ async def test_streaming_working_update_without_message_is_skipped(
 
 
 async def test_streaming_working_update_user_role_mapping(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
-    """Test that A2ARole.user in status message maps to role='user'."""
-    mock_a2a_client.add_in_progress_task_response("task-u", context_id="ctx-u", text="User echo", role=A2ARole.user)
+    """Test that A2ARole.ROLE_USER in status message maps to role='user'."""
+    mock_a2a_client.add_in_progress_task_response(
+        "task-u", context_id="ctx-u", text="User echo", role=A2ARole.ROLE_USER
+    )
     mock_a2a_client.add_task_response("task-u", [{"id": "art-u", "content": "Done"}])
 
     updates: list[AgentResponseUpdate] = []
@@ -1224,9 +1179,9 @@ async def test_terminal_no_artifacts_after_working_with_content(
     """Test that a terminal task with no artifacts after working-state messages does not re-emit the working content."""
     mock_a2a_client.add_in_progress_task_response("task-t", context_id="ctx-t", text="Working on it...")
     # Terminal task with no artifacts and no history
-    status = TaskStatus(state=TaskState.completed, message=None)
+    status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=None)
     task = Task(id="task-t", context_id="ctx-t", status=status)
-    mock_a2a_client.responses.append((task, None))
+    mock_a2a_client.responses.append(StreamResponse(task=task))
 
     updates: list[AgentResponseUpdate] = []
     async for update in a2a_agent.run("Hello", stream=True):
@@ -1245,12 +1200,12 @@ async def test_streaming_working_update_with_empty_parts_is_skipped(
     # Construct a message with an empty parts list (distinct from message=None)
     message = A2AMessage(
         message_id=str(uuid4()),
-        role=A2ARole.agent,
+        role=A2ARole.ROLE_AGENT,
         parts=[],
     )
-    status = TaskStatus(state=TaskState.working, message=message)
+    status = TaskStatus(state=TaskState.TASK_STATE_WORKING, message=message)
     task = Task(id="task-ep", context_id="ctx-ep", status=status)
-    mock_a2a_client.responses.append((task, None))
+    mock_a2a_client.responses.append(StreamResponse(task=task))
     mock_a2a_client.add_task_response("task-ep", [{"id": "art-ep", "content": "Result"}])
 
     updates: list[AgentResponseUpdate] = []
@@ -1265,13 +1220,12 @@ async def test_streaming_artifact_update_event_yields_content(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
     """Test that streaming artifact update events yield incremental content."""
-    task = Task(id="task-art", context_id="ctx-art", status=TaskStatus(state=TaskState.working, message=None))
     artifact = Artifact(
         artifact_id="artifact-1",
-        parts=[Part(root=TextPart(text="Hello"))],
+        parts=[Part(text="Hello")],
     )
     update_event = TaskArtifactUpdateEvent(task_id="task-art", context_id="ctx-art", artifact=artifact, append=False)
-    mock_a2a_client.responses.append((task, update_event))
+    mock_a2a_client.responses.append(StreamResponse(artifact_update=update_event))
 
     updates: list[AgentResponseUpdate] = []
     async for update in a2a_agent.run("Hello", stream=True):
@@ -1291,17 +1245,15 @@ async def test_streaming_status_update_event_yields_content(
         task_id="task-status",
         context_id="ctx-status",
         status=TaskStatus(
-            state=TaskState.working,
+            state=TaskState.TASK_STATE_WORKING,
             message=A2AMessage(
                 message_id=str(uuid4()),
-                role=A2ARole.agent,
-                parts=[Part(root=TextPart(text="Still working"))],
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Still working")],
             ),
         ),
-        final=False,
     )
-    task = Task(id="task-status", context_id="ctx-status", status=TaskStatus(state=TaskState.working, message=None))
-    mock_a2a_client.responses.append((task, update_event))
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
 
     updates: list[AgentResponseUpdate] = []
     async for update in a2a_agent.run("Hello", stream=True):
@@ -1317,13 +1269,12 @@ async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
     """Test that streamed artifact chunks are not re-emitted from the final terminal task."""
-    working_task = Task(id="task-art-dup", context_id="ctx-art-dup", status=TaskStatus(state=TaskState.working))
     first_chunk = TaskArtifactUpdateEvent(
         task_id="task-art-dup",
         context_id="ctx-art-dup",
         artifact=Artifact(
             artifact_id="artifact-dup",
-            parts=[Part(root=TextPart(text="Hello "))],
+            parts=[Part(text="Hello ")],
         ),
         append=False,
     )
@@ -1332,32 +1283,26 @@ async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_
         context_id="ctx-art-dup",
         artifact=Artifact(
             artifact_id="artifact-dup",
-            parts=[Part(root=TextPart(text="world"))],
+            parts=[Part(text="world")],
         ),
         append=True,
     )
     terminal_task = Task(
         id="task-art-dup",
         context_id="ctx-art-dup",
-        status=TaskStatus(state=TaskState.completed, message=None),
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
         artifacts=[
             Artifact(
                 artifact_id="artifact-dup",
-                parts=[Part(root=TextPart(text="Hello world"))],
+                parts=[Part(text="Hello world")],
             )
         ],
     )
-    terminal_event = TaskStatusUpdateEvent(
-        task_id="task-art-dup",
-        context_id="ctx-art-dup",
-        status=TaskStatus(state=TaskState.completed, message=None),
-        final=True,
-    )
 
     mock_a2a_client.responses.extend([
-        (working_task, first_chunk),
-        (working_task, second_chunk),
-        (terminal_task, terminal_event),
+        StreamResponse(artifact_update=first_chunk),
+        StreamResponse(artifact_update=second_chunk),
+        StreamResponse(task=terminal_task),
     ])
 
     stream = a2a_agent.run("Hello", stream=True)
@@ -1378,21 +1323,15 @@ async def test_streaming_terminal_task_artifacts_are_emitted_when_terminal_event
     terminal_task = Task(
         id="task-art-final",
         context_id="ctx-art-final",
-        status=TaskStatus(state=TaskState.completed, message=None),
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
         artifacts=[
             Artifact(
                 artifact_id="artifact-final",
-                parts=[Part(root=TextPart(text="Final artifact"))],
+                parts=[Part(text="Final artifact")],
             )
         ],
     )
-    terminal_event = TaskStatusUpdateEvent(
-        task_id="task-art-final",
-        context_id="ctx-art-final",
-        status=TaskStatus(state=TaskState.completed, message=None),
-        final=True,
-    )
-    mock_a2a_client.responses.append((terminal_task, terminal_event))
+    mock_a2a_client.responses.append(StreamResponse(task=terminal_task))
 
     updates: list[AgentResponseUpdate] = []
     async for update in a2a_agent.run("Hello", stream=True):
@@ -1407,41 +1346,34 @@ async def test_streaming_terminal_task_only_emits_unstreamed_artifacts(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
     """Test that the terminal task only emits artifacts that were not already streamed incrementally."""
-    working_task = Task(id="task-art-mixed", context_id="ctx-art-mixed", status=TaskStatus(state=TaskState.working))
     streamed_chunk = TaskArtifactUpdateEvent(
         task_id="task-art-mixed",
         context_id="ctx-art-mixed",
         artifact=Artifact(
             artifact_id="artifact-streamed",
-            parts=[Part(root=TextPart(text="Hello"))],
+            parts=[Part(text="Hello")],
         ),
         append=False,
     )
     terminal_task = Task(
         id="task-art-mixed",
         context_id="ctx-art-mixed",
-        status=TaskStatus(state=TaskState.completed, message=None),
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
         artifacts=[
             Artifact(
                 artifact_id="artifact-streamed",
-                parts=[Part(root=TextPart(text="Hello"))],
+                parts=[Part(text="Hello")],
             ),
             Artifact(
                 artifact_id="artifact-final",
-                parts=[Part(root=TextPart(text="Goodbye"))],
+                parts=[Part(text="Goodbye")],
             ),
         ],
     )
-    terminal_event = TaskStatusUpdateEvent(
-        task_id="task-art-mixed",
-        context_id="ctx-art-mixed",
-        status=TaskStatus(state=TaskState.completed, message=None),
-        final=True,
-    )
 
     mock_a2a_client.responses.extend([
-        (working_task, streamed_chunk),
-        (terminal_task, terminal_event),
+        StreamResponse(artifact_update=streamed_chunk),
+        StreamResponse(task=terminal_task),
     ])
 
     stream = a2a_agent.run("Hello", stream=True)
@@ -1463,11 +1395,11 @@ async def test_message_metadata_propagated(a2a_agent: A2AAgent, mock_a2a_client:
     """A2AMessage.metadata should appear on response.additional_properties."""
     msg = A2AMessage(
         message_id="msg-meta",
-        role=A2ARole.agent,
-        parts=[Part(root=TextPart(text="hi"))],
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="hi")],
         metadata={"source": "server", "trace_id": "abc"},
     )
-    mock_a2a_client.responses.append(msg)
+    mock_a2a_client.responses.append(StreamResponse(message=msg))
 
     response = await a2a_agent.run("hello")
     assert response.additional_properties["a2a_metadata"]["source"] == "server"
@@ -1479,16 +1411,16 @@ async def test_artifact_metadata_propagated(a2a_agent: A2AAgent, mock_a2a_client
     task = Task(
         id="task-art-meta",
         context_id="ctx",
-        status=TaskStatus(state=TaskState.completed),
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
         artifacts=[
             Artifact(
                 artifact_id="a1",
-                parts=[Part(root=TextPart(text="result"))],
+                parts=[Part(text="result")],
                 metadata={"artifact_key": "artifact_value"},
             ),
         ],
     )
-    mock_a2a_client.responses.append((task, None))
+    mock_a2a_client.responses.append(StreamResponse(task=task))
 
     response = await a2a_agent.run("go")
     assert response.additional_properties["a2a_metadata"]["artifact_key"] == "artifact_value"
@@ -1499,13 +1431,13 @@ async def test_task_metadata_propagated_to_response(a2a_agent: A2AAgent, mock_a2
     task = Task(
         id="task-meta",
         context_id="ctx",
-        status=TaskStatus(state=TaskState.completed),
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
         artifacts=[
-            Artifact(artifact_id="a1", parts=[Part(root=TextPart(text="done"))]),
+            Artifact(artifact_id="a1", parts=[Part(text="done")]),
         ],
         metadata={"task_key": "task_value"},
     )
-    mock_a2a_client.responses.append((task, None))
+    mock_a2a_client.responses.append(StreamResponse(task=task))
 
     response = await a2a_agent.run("go")
     assert response.additional_properties["a2a_metadata"]["task_key"] == "task_value"
@@ -1518,33 +1450,22 @@ async def test_task_artifact_update_event_metadata_merged(a2a_agent: A2AAgent, m
         context_id="ctx",
         artifact=Artifact(
             artifact_id="a1",
-            parts=[Part(root=TextPart(text="chunk"))],
+            parts=[Part(text="chunk")],
             metadata={"from_artifact": True},
         ),
         metadata={"from_event": True},
     )
-    working_task = Task(
-        id="task-ae",
-        context_id="ctx",
-        status=TaskStatus(state=TaskState.working),
-    )
     terminal_task = Task(
         id="task-ae",
         context_id="ctx",
-        status=TaskStatus(state=TaskState.completed),
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
         artifacts=[
-            Artifact(artifact_id="a1", parts=[Part(root=TextPart(text="chunk"))]),
+            Artifact(artifact_id="a1", parts=[Part(text="chunk")]),
         ],
     )
-    terminal_event = TaskStatusUpdateEvent(
-        task_id="task-ae",
-        context_id="ctx",
-        status=TaskStatus(state=TaskState.completed),
-        final=True,
-    )
     mock_a2a_client.responses.extend([
-        (working_task, artifact_event),
-        (terminal_task, terminal_event),
+        StreamResponse(artifact_update=artifact_event),
+        StreamResponse(task=terminal_task),
     ])
 
     stream = a2a_agent.run("hello", stream=True)
@@ -1563,39 +1484,27 @@ async def test_task_status_update_event_metadata_merged(a2a_agent: A2AAgent, moc
         task_id="task-se",
         context_id="ctx",
         status=TaskStatus(
-            state=TaskState.working,
+            state=TaskState.TASK_STATE_WORKING,
             message=A2AMessage(
                 message_id="m1",
-                role=A2ARole.agent,
-                parts=[Part(root=TextPart(text="working..."))],
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="working...")],
                 metadata={"msg_key": "msg_val"},
             ),
         ),
-        final=False,
         metadata={"event_key": "event_val"},
-    )
-    working_task = Task(
-        id="task-se",
-        context_id="ctx",
-        status=TaskStatus(state=TaskState.working),
     )
     terminal_task = Task(
         id="task-se",
         context_id="ctx",
-        status=TaskStatus(state=TaskState.completed),
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
         artifacts=[
-            Artifact(artifact_id="a1", parts=[Part(root=TextPart(text="done"))]),
+            Artifact(artifact_id="a1", parts=[Part(text="done")]),
         ],
     )
-    terminal_event = TaskStatusUpdateEvent(
-        task_id="task-se",
-        context_id="ctx",
-        status=TaskStatus(state=TaskState.completed),
-        final=True,
-    )
     mock_a2a_client.responses.extend([
-        (working_task, status_event),
-        (terminal_task, terminal_event),
+        StreamResponse(status_update=status_event),
+        StreamResponse(task=terminal_task),
     ])
 
     stream = a2a_agent.run("hello", stream=True)
@@ -1613,17 +1522,17 @@ async def test_history_message_metadata_propagated(a2a_agent: A2AAgent, mock_a2a
     task = Task(
         id="task-hist",
         context_id="ctx",
-        status=TaskStatus(state=TaskState.completed),
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
         history=[
             A2AMessage(
                 message_id="h1",
-                role=A2ARole.agent,
-                parts=[Part(root=TextPart(text="reply"))],
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="reply")],
                 metadata={"history_key": "history_value"},
             ),
         ],
     )
-    mock_a2a_client.responses.append((task, None))
+    mock_a2a_client.responses.append(StreamResponse(task=task))
 
     response = await a2a_agent.run("go")
     assert response.additional_properties["a2a_metadata"]["history_key"] == "history_value"
@@ -1636,10 +1545,10 @@ async def test_continuation_token_update_carries_task_metadata(
     task = Task(
         id="task-cont",
         context_id="ctx",
-        status=TaskStatus(state=TaskState.working),
+        status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
         metadata={"bg_key": "bg_value"},
     )
-    mock_a2a_client.responses.append((task, None))
+    mock_a2a_client.responses.append(StreamResponse(task=task))
 
     response = await a2a_agent.run("go", background=True)
     assert response.continuation_token is not None
@@ -1652,10 +1561,10 @@ async def test_none_metadata_leaves_additional_properties_empty(
     """When A2A types have no metadata, additional_properties should remain empty/default."""
     msg = A2AMessage(
         message_id="msg-none",
-        role=A2ARole.agent,
-        parts=[Part(root=TextPart(text="no meta"))],
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="no meta")],
     )
-    mock_a2a_client.responses.append(msg)
+    mock_a2a_client.responses.append(StreamResponse(message=msg))
 
     response = await a2a_agent.run("hello")
     assert not response.additional_properties

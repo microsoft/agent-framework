@@ -33,7 +33,7 @@ public class DevUIIntegrationTests
         var agent = new ChatClientAgent(mockChatClient.Object, "Test", "agent-name");
 
         builder.Services.AddKeyedSingleton<AIAgent>("registration-key", agent);
-        builder.Services.AddDevUI();
+        builder.Services.AddDevUI(o => o.AllowRemoteAccess = true);
 
         using WebApplication app = builder.Build();
         app.MapDevUI();
@@ -66,7 +66,7 @@ public class DevUIIntegrationTests
         builder.Services.AddKeyedSingleton<AIAgent>("key-1", agent1);
         builder.Services.AddKeyedSingleton<AIAgent>("key-2", agent2);
         builder.Services.AddKeyedSingleton<AIAgent>("key-3", agent3);
-        builder.Services.AddDevUI();
+        builder.Services.AddDevUI(o => o.AllowRemoteAccess = true);
 
         using WebApplication app = builder.Build();
         app.MapDevUI();
@@ -102,7 +102,7 @@ public class DevUIIntegrationTests
         builder.Services.AddKeyedSingleton<AIAgent>("key-1", agentKeyed1);
         builder.Services.AddKeyedSingleton<AIAgent>("key-2", agentKeyed2);
         builder.Services.AddSingleton<AIAgent>(agentDefault);
-        builder.Services.AddDevUI();
+        builder.Services.AddDevUI(o => o.AllowRemoteAccess = true);
 
         using WebApplication app = builder.Build();
         app.MapDevUI();
@@ -151,7 +151,7 @@ public class DevUIIntegrationTests
         builder.Services.AddKeyedSingleton("key-1", workflow1);
         builder.Services.AddKeyedSingleton("key-2", workflow2);
         builder.Services.AddKeyedSingleton("key-3", workflow3);
-        builder.Services.AddDevUI();
+        builder.Services.AddDevUI(o => o.AllowRemoteAccess = true);
 
         using WebApplication app = builder.Build();
         app.MapDevUI();
@@ -197,7 +197,7 @@ public class DevUIIntegrationTests
         builder.Services.AddKeyedSingleton("key-1", workflowKeyed1);
         builder.Services.AddKeyedSingleton("key-2", workflowKeyed2);
         builder.Services.AddSingleton(workflowDefault);
-        builder.Services.AddDevUI();
+        builder.Services.AddDevUI(o => o.AllowRemoteAccess = true);
 
         using WebApplication app = builder.Build();
         app.MapDevUI();
@@ -255,7 +255,7 @@ public class DevUIIntegrationTests
         builder.Services.AddKeyedSingleton("workflow-key-1", workflow1);
         builder.Services.AddKeyedSingleton("workflow-key-2", workflow2);
         builder.Services.AddSingleton(workflowDefault);
-        builder.Services.AddDevUI();
+        builder.Services.AddDevUI(o => o.AllowRemoteAccess = true);
 
         using WebApplication app = builder.Build();
         app.MapDevUI();

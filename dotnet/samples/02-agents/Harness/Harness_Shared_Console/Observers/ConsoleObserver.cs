@@ -25,28 +25,28 @@ public abstract class ConsoleObserver
     /// <summary>
     /// Called for each <see cref="AIContent"/> item in the response stream.
     /// </summary>
-    /// <param name="writer">The console writer for rendering output.</param>
+    /// <param name="ux">The harness UX container, used for rendering output and interacting with the user.</param>
     /// <param name="content">The content item from the stream.</param>
-    public virtual Task OnContentAsync(ConsoleWriter writer, AIContent content) => Task.CompletedTask;
+    public virtual Task OnContentAsync(HarnessUXContainer ux, AIContent content) => Task.CompletedTask;
 
     /// <summary>
     /// Called for each text update in the response stream.
     /// </summary>
-    /// <param name="writer">The console writer for rendering output.</param>
+    /// <param name="ux">The harness UX container, used for rendering output and interacting with the user.</param>
     /// <param name="text">The text from the update.</param>
-    public virtual Task OnTextAsync(ConsoleWriter writer, string text) => Task.CompletedTask;
+    public virtual Task OnTextAsync(HarnessUXContainer ux, string text) => Task.CompletedTask;
 
     /// <summary>
     /// Called after the response stream completes. Returns messages to include in the
     /// next agent invocation, or <see langword="null"/> if no re-invocation is needed.
     /// </summary>
-    /// <param name="writer">The console writer for rendering output.</param>
+    /// <param name="ux">The harness UX container, used for rendering output and interacting with the user.</param>
     /// <param name="agent">The agent being interacted with.</param>
     /// <param name="session">The current agent session.</param>
     /// <param name="options">The console options.</param>
     /// <returns>Messages to send to the agent, or <see langword="null"/> if no action is needed.</returns>
     public virtual Task<IList<ChatMessage>?> OnStreamCompleteAsync(
-        ConsoleWriter writer,
+        HarnessUXContainer ux,
         AIAgent agent,
         AgentSession session,
         HarnessConsoleOptions options) => Task.FromResult<IList<ChatMessage>?>(null);

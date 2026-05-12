@@ -98,7 +98,10 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return base.ConfigureProtocol(protocolBuilder).ConfigureRoutes(ConfigureRoutes);
+        return base.ConfigureProtocol(protocolBuilder)
+                   .SendsMessage<ChatMessage>()
+                   .SendsMessage<ResetChatSignal>()
+                   .ConfigureRoutes(ConfigureRoutes);
 
         void ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder.AddPortHandler<MagenticPlanReviewRequest, MagenticPlanReviewResponse>(
                 "RequestPlanReview",

@@ -22,6 +22,7 @@
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" VersionOverride="2.1.0-beta.1" />
     <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Azure.Search.Documents" />
     <PackageReference Include="Microsoft.Extensions.AI" />
   </ItemGroup>
 

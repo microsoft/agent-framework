@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, Final, Literal, TypeAlias, overload
@@ -14,17 +13,14 @@ from a2a.client.auth.interceptor import AuthInterceptor
 from a2a.types import (
     AgentCard,
     Artifact,
-    FilePart,
-    FileWithBytes,
-    FileWithUri,
+    GetTaskRequest,
+    SendMessageRequest,
+    StreamResponse,
+    SubscribeToTaskRequest,
     Task,
     TaskArtifactUpdateEvent,
-    TaskIdParams,
-    TaskQueryParams,
     TaskState,
     TaskStatusUpdateEvent,
-    TextPart,
-    TransportProtocol,
 )
 from a2a.types import Message as A2AMessage
 from a2a.types import Part as A2APart
@@ -45,6 +41,7 @@ from agent_framework import (
 )
 from agent_framework._types import AgentRunInputs
 from agent_framework.observability import AgentTelemetryLayer
+from google.protobuf.json_format import MessageToDict
 
 __all__ = ["A2AAgent", "A2AContinuationToken"]
 
@@ -61,20 +58,19 @@ class A2AContinuationToken(ContinuationToken):
 
 
 TERMINAL_TASK_STATES = [
-    TaskState.completed,
-    TaskState.failed,
-    TaskState.canceled,
-    TaskState.rejected,
+    TaskState.TASK_STATE_COMPLETED,
+    TaskState.TASK_STATE_FAILED,
+    TaskState.TASK_STATE_CANCELED,
+    TaskState.TASK_STATE_REJECTED,
 ]
 IN_PROGRESS_TASK_STATES = [
-    TaskState.submitted,
-    TaskState.working,
-    TaskState.input_required,
-    TaskState.auth_required,
+    TaskState.TASK_STATE_SUBMITTED,
+    TaskState.TASK_STATE_WORKING,
+    TaskState.TASK_STATE_INPUT_REQUIRED,
+    TaskState.TASK_STATE_AUTH_REQUIRED,
 ]
 
-A2AClientEvent: TypeAlias = tuple[Task, TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None]
-A2AStreamItem: TypeAlias = A2AMessage | A2AClientEvent
+A2AStreamItem: TypeAlias = StreamResponse
 
 
 class A2AAgent(AgentTelemetryLayer, BaseAgent):
@@ -139,7 +135,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if url is None:
                 raise ValueError("Either agent_card or url must be provided")
             # Create minimal agent card from URL
-            agent_card = minimal_agent_card(url, [TransportProtocol.jsonrpc])
+            agent_card = minimal_agent_card(url, ["JSONRPC"])
 
         # Create or use provided httpx client
         if http_client is None:
@@ -151,7 +147,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         # Create A2A client using factory
         config = ClientConfig(
             httpx_client=http_client,
-            supported_transports=[TransportProtocol.jsonrpc],
+            supported_protocol_bindings=["JSONRPC"],
         )
         factory = ClientFactory(config)
         interceptors = [auth_interceptor] if auth_interceptor is not None else None
@@ -161,7 +157,16 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
         except Exception as transport_error:
             # Transport negotiation failed - fall back to minimal agent card with JSONRPC
-            fallback_card = minimal_agent_card(agent_card.url, [TransportProtocol.jsonrpc])
+            fallback_url = (
+                agent_card.supported_interfaces[0].url if agent_card.supported_interfaces else url
+            )
+            if not fallback_url:
+                raise ValueError(
+                    "A2A transport negotiation failed and no fallback URL is available. "
+                    "Provide a 'url' argument or ensure 'agent_card.supported_interfaces' "
+                    "contains at least one interface with a URL."
+                ) from transport_error
+            fallback_card = minimal_agent_card(fallback_url, ["JSONRPC"])
             try:
                 self.client = factory.create(fallback_card, interceptors=interceptors)  # type: ignore
             except Exception as fallback_error:
@@ -280,8 +285,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         normalized_messages = normalize_messages(messages)
 
         if continuation_token is not None:
-            a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
-                TaskIdParams(id=continuation_token["task_id"])
+            a2a_stream: AsyncIterable[A2AStreamItem] = self.client.subscribe(
+                SubscribeToTaskRequest(id=continuation_token["task_id"])
             )
         else:
             if not normalized_messages:
@@ -290,7 +295,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 normalized_messages[-1],
                 context_id=session.service_session_id if session else None,
             )
-            a2a_stream = self.client.send_message(a2a_message)
+            a2a_stream = self.client.send_message(SendMessageRequest(message=a2a_message))
 
         provider_session = session
         if provider_session is None and self.context_providers:
@@ -361,38 +366,54 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         all_updates: list[AgentResponseUpdate] = []
         streamed_artifact_ids_by_task: dict[str, set[str]] = {}
         async for item in a2a_stream:
-            if isinstance(item, A2AMessage):
+            payload_type = item.WhichOneof("payload")
+            if payload_type == "message":
                 # Process A2A Message
-                contents = self._parse_contents_from_a2a(item.parts)
+                msg = item.message
+                contents = self._parse_contents_from_a2a(msg.parts)
+                metadata = MessageToDict(msg.metadata) if msg.metadata else None
                 update = AgentResponseUpdate(
                     contents=contents,
-                    role="assistant" if item.role == A2ARole.agent else "user",
-                    response_id=str(getattr(item, "message_id", uuid.uuid4())),
-                    additional_properties={"a2a_metadata": item.metadata} if item.metadata else None,
-                    raw_representation=item,
+                    role="assistant" if msg.role == A2ARole.ROLE_AGENT else "user",
+                    response_id=msg.message_id or str(uuid.uuid4()),
+                    additional_properties={"a2a_metadata": metadata} if metadata else None,
+                    raw_representation=msg,
                 )
                 all_updates.append(update)
                 yield update
-            elif isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], Task):
-                task, update_event = item
+            elif payload_type == "task":
+                task = item.task
                 updates = self._updates_from_task(
                     task,
-                    update_event=update_event,
                     background=background,
                     emit_intermediate=emit_intermediate,
                     streamed_artifact_ids=streamed_artifact_ids_by_task.get(task.id),
                 )
-                if isinstance(update_event, TaskArtifactUpdateEvent) and any(
-                    update.raw_representation is update_event for update in updates
-                ):
-                    streamed_artifact_ids_by_task.setdefault(task.id, set()).add(update_event.artifact.artifact_id)
                 if task.status.state in TERMINAL_TASK_STATES:
                     streamed_artifact_ids_by_task.pop(task.id, None)
                 for update in updates:
                     all_updates.append(update)
                     yield update
+            elif payload_type == "status_update":
+                status_event = item.status_update
+                updates = self._updates_from_task_update_event(status_event)
+                if emit_intermediate:
+                    for update in updates:
+                        all_updates.append(update)
+                        yield update
+            elif payload_type == "artifact_update":
+                artifact_event = item.artifact_update
+                updates = self._updates_from_task_update_event(artifact_event)
+                if updates:
+                    streamed_artifact_ids_by_task.setdefault(artifact_event.task_id, set()).add(
+                        artifact_event.artifact.artifact_id
+                    )
+                if emit_intermediate:
+                    for update in updates:
+                        all_updates.append(update)
+                        yield update
             else:
-                raise NotImplementedError("Only Message and Task responses are supported")
+                raise NotImplementedError(f"Unsupported StreamResponse payload: {payload_type}")
 
         # Set the response on the context for after_run providers
         if all_updates:
@@ -408,7 +429,6 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         self,
         task: Task,
         *,
-        update_event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None = None,
         background: bool = False,
         emit_intermediate: bool = False,
         streamed_artifact_ids: set[str] | None = None,
@@ -424,17 +444,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         completion.
         """
         status = task.status
-
-        if (
-            emit_intermediate
-            and update_event is not None
-            and (event_updates := self._updates_from_task_update_event(update_event))
-        ):
-            return event_updates
+        task_metadata = MessageToDict(task.metadata) if task.metadata else None
 
         if status.state in TERMINAL_TASK_STATES:
             task_messages = self._parse_messages_from_task(task)
-            if task.artifacts is not None and streamed_artifact_ids:
+            if task.artifacts and streamed_artifact_ids:
                 task_messages = [
                     message
                     for message in task_messages
@@ -448,20 +462,20 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         response_id=task.id,
                         message_id=getattr(message.raw_representation, "artifact_id", None),
                         additional_properties={"a2a_metadata": merged}
-                        if (merged := {**message.additional_properties, **(task.metadata or {})})
+                        if (merged := {**message.additional_properties, **(task_metadata or {})})
                         else None,
                         raw_representation=task,
                     )
                     for message in task_messages
                 ]
-            if task.artifacts is not None:
+            if task.artifacts:
                 return []
             return [
                 AgentResponseUpdate(
                     contents=[],
                     role="assistant",
                     response_id=task.id,
-                    additional_properties={"a2a_metadata": task.metadata} if task.metadata else None,
+                    additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
                     raw_representation=task,
                 )
             ]
@@ -474,18 +488,16 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     role="assistant",
                     response_id=task.id,
                     continuation_token=token,
-                    additional_properties={"a2a_metadata": task.metadata} if task.metadata else None,
+                    additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
                     raw_representation=task,
                 )
             ]
 
         # Surface message content from in-progress status updates (e.g. working state)
-        # Only emitted when the caller opts in (streaming), so non-streaming
-        # consumers keep receiving only terminal task outputs.
         if (
             emit_intermediate
             and status.state in IN_PROGRESS_TASK_STATES
-            and status.message is not None
+            and status.HasField("message")
             and status.message.parts
         ):
             contents = self._parse_contents_from_a2a(status.message.parts)
@@ -493,9 +505,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 return [
                     AgentResponseUpdate(
                         contents=contents,
-                        role="assistant" if status.message.role == A2ARole.agent else "user",
+                        role="assistant" if status.message.role == A2ARole.ROLE_AGENT else "user",
                         response_id=task.id,
-                        additional_properties={"a2a_metadata": task.metadata} if task.metadata else None,
+                        additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
                         raw_representation=task,
                     )
                 ]
@@ -510,10 +522,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             contents = self._parse_contents_from_a2a(update_event.artifact.parts)
             if not contents:
                 return []
-            merged_metadata = {
-                **(update_event.artifact.metadata or {}),
-                **(update_event.metadata or {}),
-            } or None
+            artifact_meta = MessageToDict(update_event.artifact.metadata) if update_event.artifact.metadata else {}
+            event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
+            merged_metadata = {**artifact_meta, **event_meta} or None
             return [
                 AgentResponseUpdate(
                     contents=contents,
@@ -528,22 +539,21 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if not isinstance(update_event, TaskStatusUpdateEvent):
             return []
 
-        message = update_event.status.message
-        if message is None or not message.parts:
+        if not update_event.status.HasField("message") or not update_event.status.message.parts:
             return []
 
+        message = update_event.status.message
         contents = self._parse_contents_from_a2a(message.parts)
         if not contents:
             return []
 
-        merged_metadata = {
-            **(message.metadata or {}),
-            **(update_event.metadata or {}),
-        } or None
+        msg_meta = MessageToDict(message.metadata) if message.metadata else {}
+        event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
+        merged_metadata = {**msg_meta, **event_meta} or None
         return [
             AgentResponseUpdate(
                 contents=contents,
-                role="assistant" if message.role == A2ARole.agent else "user",
+                role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
                 response_id=update_event.task_id,
                 additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
                 raw_representation=update_event,
@@ -572,7 +582,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             is still in progress, or ``None`` when it has reached a terminal state.
         """
         task_id = continuation_token["task_id"]
-        task = await self.client.get_task(TaskQueryParams(id=task_id))
+        task = await self.client.get_task(GetTaskRequest(id=task_id))
         updates = self._updates_from_task(task, background=True)
         if updates:
             return AgentResponse.from_updates(updates)
@@ -607,19 +617,15 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         raise ValueError("Text content requires a non-null text value")
                     parts.append(
                         A2APart(
-                            root=TextPart(
-                                text=content.text,
-                                metadata=content.additional_properties,
-                            )
+                            text=content.text,
+                            metadata=content.additional_properties or {},
                         )
                     )
                 case "error":
                     parts.append(
                         A2APart(
-                            root=TextPart(
-                                text=content.message or "An error occurred.",
-                                metadata=content.additional_properties,
-                            )
+                            text=content.message or "An error occurred.",
+                            metadata=content.additional_properties or {},
                         )
                     )
                 case "uri":
@@ -627,27 +633,20 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         raise ValueError("URI content requires a non-null uri value")
                     parts.append(
                         A2APart(
-                            root=FilePart(
-                                file=FileWithUri(
-                                    uri=content.uri,
-                                    mime_type=content.media_type,
-                                ),
-                                metadata=content.additional_properties,
-                            )
+                            url=content.uri,
+                            media_type=content.media_type or "",
+                            metadata=content.additional_properties or {},
                         )
                     )
                 case "data":
                     if content.uri is None:
                         raise ValueError("Data content requires a non-null uri value")
+                    base64_data = get_uri_data(content.uri)
                     parts.append(
                         A2APart(
-                            root=FilePart(
-                                file=FileWithBytes(
-                                    bytes=get_uri_data(content.uri),
-                                    mime_type=content.media_type,
-                                ),
-                                metadata=content.additional_properties,
-                            )
+                            raw=base64.b64decode(base64_data),
+                            media_type=content.media_type or "",
+                            metadata=content.additional_properties or {},
                         )
                     )
                 case "hosted_file":
@@ -655,93 +654,91 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         raise ValueError("Hosted file content requires a non-null file_id value")
                     parts.append(
                         A2APart(
-                            root=FilePart(
-                                file=FileWithUri(
-                                    uri=content.file_id,
-                                    mime_type=None,  # HostedFileContent doesn't specify media_type
-                                ),
-                                metadata=content.additional_properties,
-                            )
+                            url=content.file_id,
+                            metadata=content.additional_properties or {},
                         )
                     )
                 case _:
                     raise ValueError(f"Unknown content type: {content.type}")
 
-        metadata = message.additional_properties.get("a2a_metadata")
+        a2a_metadata = message.additional_properties.get("a2a_metadata")
 
         return A2AMessage(
-            role=A2ARole("user"),
+            role=A2ARole.ROLE_USER,
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
             context_id=message.additional_properties.get("context_id") or context_id,
-            metadata=metadata,
+            metadata=a2a_metadata or {},
         )
 
     def _parse_contents_from_a2a(self, parts: Sequence[A2APart]) -> list[Content]:
         """Parse A2A Parts into Agent Framework Content.
 
         Transforms A2A protocol Parts into framework-native Content objects,
-        handling text, file (URI/bytes), and data parts with metadata preservation.
+        handling text, url, raw, and data parts with metadata preservation.
         """
         contents: list[Content] = []
         for part in parts:
-            inner_part = part.root
-            match inner_part.kind:
+            part_metadata = MessageToDict(part.metadata) if part.metadata else None
+            content_type = part.WhichOneof("content")
+            match content_type:
                 case "text":
                     contents.append(
                         Content.from_text(
-                            text=inner_part.text,
-                            additional_properties=inner_part.metadata,
-                            raw_representation=inner_part,
+                            text=part.text,
+                            additional_properties=part_metadata,
+                            raw_representation=part,
                         )
                     )
-                case "file":
-                    if isinstance(inner_part.file, FileWithUri):
-                        contents.append(
-                            Content.from_uri(
-                                uri=inner_part.file.uri,
-                                media_type=inner_part.file.mime_type or "",
-                                additional_properties=inner_part.metadata,
-                                raw_representation=inner_part,
-                            )
+                case "url":
+                    contents.append(
+                        Content.from_uri(
+                            uri=part.url,
+                            media_type=part.media_type or "",
+                            additional_properties=part_metadata,
+                            raw_representation=part,
                         )
-                    elif isinstance(inner_part.file, FileWithBytes):
-                        contents.append(
-                            Content.from_data(
-                                data=base64.b64decode(inner_part.file.bytes),
-                                media_type=inner_part.file.mime_type or "",
-                                additional_properties=inner_part.metadata,
-                                raw_representation=inner_part,
-                            )
+                    )
+                case "raw":
+                    contents.append(
+                        Content.from_data(
+                            data=part.raw,
+                            media_type=part.media_type or "",
+                            additional_properties=part_metadata,
+                            raw_representation=part,
                         )
+                    )
                 case "data":
+                    from google.protobuf.json_format import MessageToJson
+
                     contents.append(
                         Content.from_text(
-                            text=json.dumps(inner_part.data),
-                            additional_properties=inner_part.metadata,
-                            raw_representation=inner_part,
+                            text=MessageToJson(part.data),
+                            additional_properties=part_metadata,
+                            raw_representation=part,
                         )
                     )
                 case _:
-                    raise ValueError(f"Unknown Part kind: {inner_part.kind}")
+                    raise ValueError(f"Unknown Part content type: {content_type}")
         return contents
 
     def _parse_messages_from_task(self, task: Task) -> list[Message]:
         """Parse A2A Task artifacts into Messages with ASSISTANT role."""
         messages: list[Message] = []
 
-        if task.artifacts is not None:
+        if task.artifacts:
             for artifact in task.artifacts:
                 messages.append(self._parse_message_from_artifact(artifact))
-        elif task.history is not None and len(task.history) > 0:
+        elif task.history:
             # Include the last history item as the agent response
             history_item = task.history[-1]
             contents = self._parse_contents_from_a2a(history_item.parts)
+            history_metadata = MessageToDict(history_item.metadata) if history_item.metadata else None
             messages.append(
                 Message(
-                    role="assistant" if history_item.role == A2ARole.agent else "user",
+                    role="assistant" if history_item.role == A2ARole.ROLE_AGENT else "user",
                     contents=contents,
-                    additional_properties=history_item.metadata,
+                    additional_properties=history_metadata,
                     raw_representation=history_item,
                 )
             )
@@ -751,9 +748,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     def _parse_message_from_artifact(self, artifact: Artifact) -> Message:
         """Parse A2A Artifact into Message using part contents."""
         contents = self._parse_contents_from_a2a(artifact.parts)
+        artifact_metadata = MessageToDict(artifact.metadata) if artifact.metadata else None
         return Message(
             role="assistant",
             contents=contents,
-            additional_properties=artifact.metadata,
+            additional_properties=artifact_metadata,
             raw_representation=artifact,
         )

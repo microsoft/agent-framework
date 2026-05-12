@@ -18,6 +18,7 @@ namespace AnthropicChatCompletion.IntegrationTests;
 /// Integration tests for Anthropic Skills functionality.
 /// These tests are designed to be run locally with a valid Anthropic API key.
 /// </summary>
+[Trait("Category", "Integration")]
 public sealed class AnthropicSkillsIntegrationTests
 {
     [Fact]

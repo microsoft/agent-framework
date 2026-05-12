@@ -1,12 +1,8 @@
 name: Issue Triage
 
 on:
-  workflow_dispatch:
-    inputs:
-      issue_number:
-        description: Issue number to triage
-        required: true
-        type: string
+  issues:
+    types: [opened, labeled]
 
 permissions:
   contents: read
@@ -14,7 +10,13 @@ permissions:
   id-token: write
 
 concurrency:
-  group: issue-triage-${{ github.repository }}-${{ github.event.issue.number || inputs.issue_number || github.run_id }}
+  group: >-
+    issue-triage-${{ github.repository }}-${{
+      ((github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'bug'))
+       || (github.event.action == 'labeled' && github.event.label.name == 'bug'))
+      && github.event.issue.number
+      || github.run_id
+    }}
   cancel-in-progress: true
 
 env:
@@ -26,6 +28,7 @@ env:
 jobs:
   team_check:
     runs-on: ubuntu-latest
+    if: ${{ (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'bug')) || (github.event.action == 'labeled' && github.event.label.name == 'bug') }}
     outputs:
       is_team_member: ${{ steps.check.outputs.is_team_member }}
       issue_number: ${{ steps.issue.outputs.issue_number }}
@@ -36,18 +39,13 @@ jobs:
         shell: bash
         env:
           ISSUE_NUMBER_EVENT: ${{ github.event.issue.number }}
-          ISSUE_NUMBER_INPUT: ${{ inputs.issue_number }}
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_EVENT_NAME}" == "issues" ]]; then
-            issue_number="${ISSUE_NUMBER_EVENT}"
-          else
-            issue_number="${ISSUE_NUMBER_INPUT}"
-          fi
+          issue_number="${ISSUE_NUMBER_EVENT}"
 
           if [[ ! "$issue_number" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Could not determine issue number; for workflow_dispatch runs, the 'issue_number' input is required." >&2
+            echo "Could not determine issue number from event payload." >&2
             exit 1
           fi
 
@@ -166,6 +164,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_COPILOT_TOKEN: ${{ secrets.GH_COPILOT_TOKEN }}
+          # Not seen by the agent prompt; used only to push a paper-trail
+          # branch back to maf-dashboard at run end.
+          DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}
           SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           ISSUE_REPO: ${{ needs.team_check.outputs.repo }}

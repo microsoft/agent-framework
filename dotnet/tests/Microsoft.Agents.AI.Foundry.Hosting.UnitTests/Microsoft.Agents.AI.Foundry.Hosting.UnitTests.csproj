@@ -20,16 +20,4 @@
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Update="TestData\ToolboxRecordResponse.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="TestData\ToolboxVersionResponse.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="TestData\ToolboxVersionWithDecorationFields.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
 </Project>
