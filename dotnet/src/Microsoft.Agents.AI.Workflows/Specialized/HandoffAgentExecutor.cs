@@ -342,12 +342,6 @@ internal sealed class HandoffAgentExecutor :
                     skipAddIncoming: true).ConfigureAwait(false);
             }
 
-            // Reset the counter when ending the turn (handoff requested or turn limit reached).
-            // This also covers the case where the turn is interrupted by outstanding requests:
-            // the counter is reset at the start of the next HandleAsync call, but we still
-            // clean up here on a normal turn exit for clarity.
-            this._autonomousModeTurnCount = 0;
-
             HandoffState outgoingState = new(state.IncomingState.TurnToken, result.HandoffTargetId, this._agent.Id);
 
             await context.SendMessageAsync(outgoingState, cancellationToken).ConfigureAwait(false);
