@@ -68,7 +68,7 @@ async def main():
         credential=credential,
     )
 
-    async with Agent(
+    agent = Agent(
         client=client,
         instructions="You are a friendly assistant. Keep your answers brief.",
         tools=toolbox,
@@ -76,9 +76,10 @@ async def main():
         # is no need to store history by the service. Learn more at:
         # https://developers.openai.com/api/reference/resources/responses/methods/create
         default_options={"store": False},
-    ) as agent:
-        server = ResponsesHostServer(agent)
-        await server.run_async()
+    )
+
+    server = ResponsesHostServer(agent)
+    await server.run_async()
 
 
 if __name__ == "__main__":
