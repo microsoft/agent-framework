@@ -2061,7 +2061,10 @@ class TestExtractFrontmatterSpecFields:
         assert result.metadata["version"] == "1.0"
 
     def test_metadata_with_quoted_values(self) -> None:
-        content = "---\nname: test-skill\ndescription: A skill.\nmetadata:\n  author: 'John Doe'\n  org: \"Contoso\"\n---\nBody."
+        content = (
+            "---\nname: test-skill\ndescription: A skill.\nmetadata:\n"
+            "  author: 'John Doe'\n  org: \"Contoso\"\n---\nBody."
+        )
         result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
         assert result.metadata is not None
