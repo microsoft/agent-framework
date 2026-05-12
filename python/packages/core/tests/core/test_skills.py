@@ -1887,12 +1887,12 @@ class TestExtractFrontmatterEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Skill spec fields (flat on Skill)
+# Tests: Skill spec fields (via SkillFrontmatter)
 # ---------------------------------------------------------------------------
 
 
 class TestSkillSpecFields:
-    """Tests for agentskills.io spec fields directly on Skill."""
+    """Tests for agentskills.io spec fields on SkillFrontmatter exposed via Skill.frontmatter."""
 
     def test_basic_construction_defaults(self) -> None:
         skill = InlineSkill(
