@@ -34,42 +34,55 @@ public static class HarnessConsole
                 nameof(options));
         }
 
-        System.Console.WriteLine($"=== {title} ===");
-        System.Console.WriteLine(userPrompt);
-
         var todoProvider = agent.GetService<TodoProvider>();
         var modeProvider = agent.GetService<AgentModeProvider>();
+        var messageInjector = agent.GetService<MessageInjectingChatClient>();
 
-        // Build command handlers.
-        var commandHandlers = new List<ICommandHandler>
+        var commandHandlers = new List<CommandHandler>
         {
             new TodoCommandHandler(todoProvider),
             new ModeCommandHandler(modeProvider, options.ModeColors),
         };
 
-        var commands = commandHandlers
+        AgentSession session = await agent.CreateSessionAsync();
+
+        using var ux = new HarnessUXContainer(
+            placeholder: userPrompt,
+            initialMode: modeProvider?.GetMode(session),
+            inputEnabled: messageInjector is not null,
+            modeColors: options.ModeColors);
+
+        // Streaming-mode submissions are enqueued for injection; the queued display
+        // is then refreshed from the injector's current pending list.
+        ux.StreamingInputReceived += (sender, e) =>
+        {
+            if (messageInjector is null)
+            {
+                return;
+            }
+
+            messageInjector.EnqueueMessages(session, [new ChatMessage(ChatRole.User, e.Text)]);
+            ux.ShowQueuedMessages(messageInjector.GetPendingMessages(session));
+        };
+
+        var commandHelp = commandHandlers
             .Select(h => h.GetHelpText())
             .Where(t => t is not null)
-            .Append("exit (quit)");
+            .Append("exit (quit)")!;
 
-        System.Console.WriteLine($"Commands: {string.Join(", ", commands)}");
-        System.Console.WriteLine();
+        ux.Initialize(title, commandHelp!, messageInjector is not null);
 
-        AgentSession session = await agent.CreateSessionAsync();
-        using var writer = new ConsoleWriter(options.ModeColors);
-        writer.CurrentMode = modeProvider?.GetMode(session);
+        string userInput = await ux.WaitForInputAsync();
 
-        string prompt = BuildUserPrompt(modeProvider, session);
-        string? userInput = await writer.ReadLineAsync(prompt);
-
-        // Main loop to run a command or agent and get the next user command/input.
         while (!string.IsNullOrWhiteSpace(userInput) && !userInput.Equals("exit", StringComparison.OrdinalIgnoreCase))
         {
+            ux.WriteUserInputEcho(userInput);
+
             // Check command handlers first — first one to handle wins.
             bool handled = false;
             foreach (var handler in commandHandlers)
             {
-                if (await handler.TryHandleAsync(userInput, session).ConfigureAwait(false))
+                if (await handler.TryHandleAsync(userInput, session, ux).ConfigureAwait(false))
                 {
                     handled = true;
                     break;
@@ -78,14 +91,14 @@ public static class HarnessConsole
 
             if (!handled)
             {
-                await RunAgentTurnAsync(agent, session, modeProvider, options, writer, userInput);
+                await RunAgentTurnAsync(agent, session, modeProvider, messageInjector, options, ux, userInput);
             }
 
-            writer.CurrentMode = modeProvider?.GetMode(session);
-            prompt = BuildUserPrompt(modeProvider, session);
-            userInput = await writer.ReadLineAsync(prompt);
+            ux.CurrentMode = modeProvider?.GetMode(session);
+            userInput = await ux.WaitForInputAsync();
         }
 
+        ux.Deactivate();
         System.Console.ResetColor();
         System.Console.WriteLine("Goodbye!");
     }
@@ -99,27 +112,27 @@ public static class HarnessConsole
         AIAgent agent,
         AgentSession session,
         AgentModeProvider? modeProvider,
+        MessageInjectingChatClient? messageInjector,
         HarnessConsoleOptions options,
-        ConsoleWriter writer,
+        HarnessUXContainer ux,
         string userInput)
     {
         IList<ChatMessage>? nextMessages = [new ChatMessage(ChatRole.User, userInput)];
+        IReadOnlyList<ChatMessage> lastPendingMessages = messageInjector?.GetPendingMessages(session) ?? [];
 
         while (nextMessages is not null)
         {
-            // Build observers for this invocation (may change between iterations due to mode changes).
             var observers = CreateObservers(options, modeProvider, session);
 
-            // Build run options — observers may inject ResponseFormat, etc.
             var runOptions = new AgentRunOptions();
             foreach (var observer in observers)
             {
                 observer.ConfigureRunOptions(runOptions);
             }
 
-            // Stream the response, fanning out to all observers.
-            writer.CurrentMode = modeProvider?.GetMode(session);
-            writer.WriteResponseHeader();
+            ux.CurrentMode = modeProvider?.GetMode(session);
+            ux.BeginStreaming();
+            ux.BeginStreamingOutput();
 
             try
             {
@@ -129,9 +142,9 @@ public static class HarnessConsole
                     if (modeProvider is not null)
                     {
                         string currentMode = modeProvider.GetMode(session);
-                        if (currentMode != writer.CurrentMode)
+                        if (currentMode != ux.CurrentMode)
                         {
-                            writer.CurrentMode = currentMode;
+                            ux.CurrentMode = currentMode;
                         }
                     }
 
@@ -139,7 +152,7 @@ public static class HarnessConsole
                     {
                         foreach (var observer in observers)
                         {
-                            await observer.OnContentAsync(writer, content);
+                            await observer.OnContentAsync(ux, content);
                         }
                     }
 
@@ -147,22 +160,32 @@ public static class HarnessConsole
                     {
                         foreach (var observer in observers)
                         {
-                            await observer.OnTextAsync(writer, update.Text);
+                            await observer.OnTextAsync(ux, update.Text);
                         }
                     }
+
+                    SyncQueuedMessageDisplay(messageInjector, session, ux, ref lastPendingMessages);
                 }
             }
             catch (Exception ex)
             {
-                await writer.WriteInfoLineAsync($"❌ Stream error: {ex.GetType().Name}:\n{ex}", ConsoleColor.Red);
+                await ux.WriteInfoLineAsync($"❌ Stream error: {ex.GetType().Name}:\n{ex}", ConsoleColor.Red);
             }
 
-            // Collect messages from all observers.
+            // Final sync after streaming — messages may have been consumed during the last iteration.
+            SyncQueuedMessageDisplay(messageInjector, session, ux, ref lastPendingMessages);
+
+            // Stop spinner before observer completions (which may prompt for input).
+            ux.StopSpinner();
+
+            // Close the streaming output to provide visual separation from observer output.
+            await ux.EndStreamingOutputAsync();
+
             var combinedMessages = new List<ChatMessage>();
             bool hasObserverMessages = false;
             foreach (var observer in observers)
             {
-                var messages = await observer.OnStreamCompleteAsync(writer, agent, session, options);
+                var messages = await observer.OnStreamCompleteAsync(ux, agent, session, options);
                 if (messages is { Count: > 0 })
                 {
                     combinedMessages.AddRange(messages);
@@ -170,9 +193,42 @@ public static class HarnessConsole
                 }
             }
 
-            await writer.WriteStreamFooterAsync(hasFollowUpMessages: hasObserverMessages);
+            await ux.WriteNoTextWarningAsync(hasFollowUpMessages: hasObserverMessages);
+
+            ux.EndStreaming();
+
             nextMessages = combinedMessages.Count > 0 ? combinedMessages : null;
         }
+    }
+
+    /// <summary>
+    /// Synchronizes the queued items display with the message injector's pending messages.
+    /// Messages that have been consumed (drained by the service) are echoed to the output
+    /// area as regular user-input entries.
+    /// </summary>
+    private static void SyncQueuedMessageDisplay(
+        MessageInjectingChatClient? messageInjector,
+        AgentSession session,
+        HarnessUXContainer ux,
+        ref IReadOnlyList<ChatMessage> lastPendingMessages)
+    {
+        if (messageInjector is null)
+        {
+            return;
+        }
+
+        var pending = messageInjector.GetPendingMessages(session);
+
+        // If previously pending messages exceed current pending count, some were consumed.
+        int consumedCount = lastPendingMessages.Count - pending.Count;
+        for (int i = 0; i < consumedCount && i < lastPendingMessages.Count; i++)
+        {
+            string text = lastPendingMessages[i].Text ?? string.Empty;
+            ux.WriteUserInputEcho(text);
+        }
+
+        lastPendingMessages = pending;
+        ux.ShowQueuedMessages(pending);
     }
 
     private static List<ConsoleObserver> CreateObservers(HarnessConsoleOptions options, AgentModeProvider? modeProvider, AgentSession session)
@@ -186,7 +242,6 @@ public static class HarnessConsole
             new UsageDisplayObserver(options.MaxContextWindowTokens, options.MaxOutputTokens),
         };
 
-        // Add the appropriate output observer based on the current mode.
         if (options.EnablePlanningUx
             && modeProvider is not null
             && string.Equals(modeProvider.GetMode(session), options.PlanningModeName, StringComparison.OrdinalIgnoreCase))
@@ -199,16 +254,5 @@ public static class HarnessConsole
         }
 
         return observers;
-    }
-
-    private static string BuildUserPrompt(AgentModeProvider? modeProvider, AgentSession session)
-    {
-        if (modeProvider is not null)
-        {
-            string mode = modeProvider.GetMode(session);
-            return $"[{mode}] You: ";
-        }
-
-        return "You: ";
     }
 }

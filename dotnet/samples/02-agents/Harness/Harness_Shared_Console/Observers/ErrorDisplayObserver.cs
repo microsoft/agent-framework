@@ -10,7 +10,7 @@ namespace Harness.Shared.Console.Observers;
 internal sealed class ErrorDisplayObserver : ConsoleObserver
 {
     /// <inheritdoc/>
-    public override async Task OnContentAsync(ConsoleWriter writer, AIContent content)
+    public override async Task OnContentAsync(HarnessUXContainer ux, AIContent content)
     {
         if (content is ErrorContent errorContent)
         {
@@ -25,7 +25,7 @@ internal sealed class ErrorDisplayObserver : ConsoleObserver
                 errorText += $" details: {errorContent.Details}";
             }
 
-            await writer.WriteInfoLineAsync(errorText, ConsoleColor.Red);
+            await ux.WriteInfoLineAsync(errorText, ConsoleColor.Red);
         }
     }
 }

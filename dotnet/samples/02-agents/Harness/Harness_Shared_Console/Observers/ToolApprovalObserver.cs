@@ -15,7 +15,7 @@ internal sealed class ToolApprovalObserver : ConsoleObserver
     private readonly List<ToolApprovalRequestContent> _approvalRequests = [];
 
     /// <inheritdoc/>
-    public override async Task OnContentAsync(ConsoleWriter writer, AIContent content)
+    public override async Task OnContentAsync(HarnessUXContainer ux, AIContent content)
     {
         if (content is ToolApprovalRequestContent approvalRequest)
         {
@@ -23,13 +23,13 @@ internal sealed class ToolApprovalObserver : ConsoleObserver
             string toolName = approvalRequest.ToolCall is FunctionCallContent fc
                 ? ToolCallFormatter.Format(fc)
                 : approvalRequest.ToolCall?.ToString() ?? "unknown";
-            await writer.WriteInfoLineAsync($"⚠️ Approval needed: {toolName}", ConsoleColor.Yellow);
+            await ux.WriteInfoLineAsync($"⚠️ Approval needed: {toolName}", ConsoleColor.Yellow);
         }
     }
 
     /// <inheritdoc/>
     public override async Task<IList<ChatMessage>?> OnStreamCompleteAsync(
-        ConsoleWriter writer,
+        HarnessUXContainer ux,
         AIAgent agent,
         AgentSession session,
         HarnessConsoleOptions options)
@@ -39,12 +39,12 @@ internal sealed class ToolApprovalObserver : ConsoleObserver
             return null;
         }
 
-        var messages = await PromptForApprovalsAsync(writer, this._approvalRequests);
+        var messages = await PromptForApprovalsAsync(ux, this._approvalRequests);
         this._approvalRequests.Clear();
         return messages;
     }
 
-    private static async Task<List<ChatMessage>?> PromptForApprovalsAsync(ConsoleWriter writer, List<ToolApprovalRequestContent> approvalRequests)
+    private static async Task<List<ChatMessage>?> PromptForApprovalsAsync(HarnessUXContainer ux, List<ToolApprovalRequestContent> approvalRequests)
     {
         if (approvalRequests.Count == 0)
         {
@@ -66,7 +66,7 @@ internal sealed class ToolApprovalObserver : ConsoleObserver
                 "Deny",
             };
 
-            string selection = await writer.ReadSelectionAsync($"🔐 Tool approval: {toolName}", choices);
+            string selection = await ux.ReadSelectionAsync($"🔐 Tool approval: {toolName}", choices);
             AIContent response = selection switch
             {
                 "Always approve this tool (any arguments)" => request.CreateAlwaysApproveToolResponse("User chose to always approve this tool"),
@@ -82,7 +82,7 @@ internal sealed class ToolApprovalObserver : ConsoleObserver
                 "Deny" => "❌ Denied",
                 _ => "✅ Approved",
             };
-            await writer.WriteInfoLineAsync($"   {action}", ConsoleColor.DarkGray);
+            await ux.WriteInfoLineAsync($"   {action}", ConsoleColor.DarkGray);
 
             responses.Add(response);
         }

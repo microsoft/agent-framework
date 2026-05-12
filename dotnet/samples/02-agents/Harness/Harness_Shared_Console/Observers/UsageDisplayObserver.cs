@@ -24,19 +24,21 @@ internal sealed class UsageDisplayObserver : ConsoleObserver
     }
 
     /// <inheritdoc/>
-    public override async Task OnContentAsync(ConsoleWriter writer, AIContent content)
+    public override Task OnContentAsync(HarnessUXContainer ux, AIContent content)
     {
         if (content is UsageContent usage)
         {
             if (usage.Details is not null)
             {
-                await writer.WriteInfoLineAsync(this.FormatUsageBreakdown(usage.Details), ConsoleColor.DarkGray);
+                ux.SetUsageText(this.FormatUsageBreakdown(usage.Details));
             }
             else
             {
-                await writer.WriteInfoLineAsync("📊 Tokens —", ConsoleColor.DarkGray);
+                ux.SetUsageText("📊 Tokens —");
             }
         }
+
+        return Task.CompletedTask;
     }
 
     private string FormatUsageBreakdown(UsageDetails details)

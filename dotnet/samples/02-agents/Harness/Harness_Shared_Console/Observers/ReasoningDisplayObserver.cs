@@ -10,11 +10,11 @@ namespace Harness.Shared.Console.Observers;
 internal sealed class ReasoningDisplayObserver : ConsoleObserver
 {
     /// <inheritdoc/>
-    public override async Task OnContentAsync(ConsoleWriter writer, AIContent content)
+    public override async Task OnContentAsync(HarnessUXContainer ux, AIContent content)
     {
         if (content is TextReasoningContent reasoning && !string.IsNullOrEmpty(reasoning.Text))
         {
-            await writer.WriteTextAsync(reasoning.Text, ConsoleColor.DarkMagenta);
+            await ux.WriteTextAsync(reasoning.Text, ConsoleColor.DarkMagenta);
         }
     }
 }

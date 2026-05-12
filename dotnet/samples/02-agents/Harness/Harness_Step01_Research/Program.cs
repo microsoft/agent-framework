@@ -135,6 +135,7 @@ AIAgent agent =
     // Build a ChatClient Pipeline
     .AsBuilder()
     .UseFunctionInvocation()                                // We are building our own stack from scratch so we need to include Function Invocation ourselves.
+    .UseMessageInjection()                                  // Allow message injection during the function call loop.
     .UsePerServiceCallChatHistoryPersistence()              // Save chat history updates to the session after each service call, rather than only at the end of the run.
     .UseAIContextProviders(new CompactionProvider(compactionStrategy))  // Add Compaction before each service call to responses so that long function invocation loops don't overflow the context.
 
