@@ -25,6 +25,12 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <para>
 /// The containing class must be <c>partial</c> and derive from <see cref="Executor"/>.
 /// </para>
+/// <para>
+/// At runtime, <see cref="ExecutorOptions.AutoYieldOutputHandlerResultObject"/> and
+/// <see cref="ExecutorOptions.AutoSendMessageHandlerResultObject"/> (both default <see langword="true"/>)
+/// cause handler return types to be automatically added to the yield/send type sets, beyond any
+/// explicit <see cref="Yield"/> or <see cref="Send"/> property values declared on this attribute.
+/// </para>
 /// </remarks>
 /// <example>
 /// <code>

@@ -18,6 +18,10 @@ namespace Microsoft.Agents.AI.Workflows;
 /// This attribute can be applied multiple times to declare multiple output types.
 /// It is inherited by derived classes, allowing base executors to declare common output types.
 /// </para>
+/// <para>
+/// This attribute is named <c>YieldsOutputAttribute</c> (not <c>YieldsMessageAttribute</c>) to align
+/// with the <see cref="ProtocolBuilder.YieldsOutput{T}()"/> fluent API.
+/// </para>
 /// </remarks>
 /// <example>
 /// <code>

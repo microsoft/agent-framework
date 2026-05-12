@@ -18,6 +18,11 @@ namespace Microsoft.Agents.AI.Workflows;
 /// This attribute can be applied multiple times to declare multiple message types.
 /// It is inherited by derived classes, allowing base executors to declare common message types.
 /// </para>
+/// <para>
+/// When applied at the method level, this attribute only has effect on methods marked with
+/// <see cref="MessageHandlerAttribute"/>. Method-level usage on non-handler methods has no effect
+/// and is silently ignored by the source generator.
+/// </para>
 /// </remarks>
 /// <example>
 /// <code>
