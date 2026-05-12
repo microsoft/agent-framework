@@ -110,28 +110,33 @@ None
 **File 2: `dotnet/src/Microsoft.Agents.AI.Workflows.Generators/Analysis/SemanticAnalyzer.cs`**
 - **After L480 (param count check)**: Add validation for `Parameters.Length > 3` — report MAFGENWF009 and return null.
 - **After L493 (CancellationToken detection)**: Add validation: if `Parameters.Length >= 3` and third param is NOT CancellationToken, report MAFGENWF010. Do NOT return null (this is a warning; the handler can still be used with 2 effective params).
-- **After L165 (handler collection in CombineHandlerMethodResults)**: Add duplicate input type detection. Group collected handlers by `InputTypeName`; for each group with count > 1, emit MAFGENWF008 diagnostic. Requires tracking method locations — either extend `HandlerInfo` with a location field, or use a parallel data structure in `MethodAnalysisResult`.
+- **After L165 (handler collection in CombineHandlerMethodResults)**: Add duplicate input type detection. Group collected handlers by `InputTypeName`; for each group with count > 1, emit MAFGENWF008 diagnostic. Use method locations from `MethodAnalysisResult` (already available in the input `ImmutableArray<MethodAnalysisResult>`). **DO NOT modify `HandlerInfo`** — it is an immutable record used for incremental caching; adding location fields would change its value equality semantics and cause unnecessary re-generation.
 - **L152-159 (MAFGENWF006 reporting)**: Add base type detection. Check if the class's base type's `OriginalDefinition` matches `Executor<T>` or `Executor<T,U>` (can check `OriginalDefinition.ToDisplayString()` or generic arity). If so, use Warning-severity descriptor; otherwise keep Info.
 
-**File 3: `dotnet/src/Microsoft.Agents.AI.Workflows.Generators/Models/HandlerInfo.cs`** (possibly)
-- **L34-47**: May need to add a `MethodLocation` field (e.g., `DiagnosticLocationInfo`) to `HandlerInfo` so that duplicate diagnostics can reference the specific method. Alternatively, track locations separately in `CombineHandlerMethodResults` via the `MethodAnalysisResult` input.
+**Validation order in `AnalyzeHandler()` (IMPORTANT — must follow this sequence):**
+1. Static check → MAFGENWF007 (existing, L470-473)
+2. `Parameters.Length < 2` → MAFGENWF005 (existing, L477-480)
+3. `Parameters.Length > 3` → MAFGENWF009 (**new**, insert after L480)
+4. IWorkflowContext at position 1 → MAFGENWF001 (existing, L484-488)
+5. CancellationToken detection at position 2 (existing, L492-493)
+6. Non-CancellationToken third param → MAFGENWF010 (**new**, insert after L493)
 
 ### Acceptance Criteria
 ```bash
 # 1. MAFGENWF008 fires for duplicate input types
-cd dotnet && dotnet test tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/ --filter "DuplicateInputType" --no-build 2>&1 | grep -c "PASS"
+cd dotnet && dotnet test tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/ --filter "DuplicateInputType" 2>&1 | grep -c "PASS"
 # Expected: >= 1
 
 # 2. MAFGENWF006 severity is Warning for Executor<TInput> base
-cd dotnet && dotnet test tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/ --filter "ConfigureProtocolWarning" --no-build 2>&1 | grep -c "PASS"
+cd dotnet && dotnet test tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/ --filter "ConfigureProtocolWarning" 2>&1 | grep -c "PASS"
 # Expected: >= 1
 
 # 3. Handler with 4+ parameters produces MAFGENWF009
-cd dotnet && dotnet test tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/ --filter "TooManyParameters" --no-build 2>&1 | grep -c "PASS"
+cd dotnet && dotnet test tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/ --filter "TooManyParameters" 2>&1 | grep -c "PASS"
 # Expected: >= 1
 
 # 4. Non-CancellationToken third parameter produces MAFGENWF010
-cd dotnet && dotnet test tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/ --filter "NonCancellationTokenThirdParam" --no-build 2>&1 | grep -c "PASS"
+cd dotnet && dotnet test tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/ --filter "NonCancellationTokenThirdParam" 2>&1 | grep -c "PASS"
 # Expected: >= 1
 
 # 5. All existing tests still pass (no regressions)
@@ -144,9 +149,8 @@ cd dotnet && dotnet build src/Microsoft.Agents.AI.Workflows.Generators/ 2>&1 | g
 ```
 
 ### Gotchas (from codebase investigation)
-- `TreatWarningsAsErrors=true` in `dotnet/Directory.Build.props` means any new Warning-level diagnostic (MAFGENWF008, MAFGENWF010, upgraded MAFGENWF006) will immediately fail builds for consumers. The design-doc risk registry addresses this: ship as Warning initially, upgrade to Error in the next major version. This is already the plan.
-- `HandlerInfo` is an immutable record used for incremental caching (Roslyn IIncrementalGenerator pipeline). Adding a `DiagnosticLocationInfo` field to it will change its value equality semantics. Evaluate whether this causes unnecessary re-generation. The `ImmutableEquatableArray<T>` wrapper uses structural equality. Consider whether location info should be excluded from equality comparison.
-- `CombineHandlerMethodResults()` receives `ImmutableArray<MethodAnalysisResult>` grouped by class key. `MethodAnalysisResult` already contains location info via the syntax node. Use this existing location data for duplicate diagnostics rather than modifying `HandlerInfo`.
+- `TreatWarningsAsErrors=true` in `dotnet/Directory.Build.props` means any new Warning-level diagnostic (MAFGENWF008, MAFGENWF010, upgraded MAFGENWF006) will immediately fail builds for consumers. The design-doc risk registry addresses this: ship as Warning initially, upgrade to Error in the next major version. **Rollback strategy**: if MAFGENWF008/010 cause excessive consumer CI failures, they can be downgraded to Info severity in a patch release with a one-line change per diagnostic descriptor in DiagnosticDescriptors.cs — no behavioral change, only severity reduction.
+- `HandlerInfo` is an immutable record used for incremental caching (Roslyn IIncrementalGenerator pipeline). DO NOT add location fields to it — this would change its value equality semantics and cause unnecessary re-generation. Instead, use method locations from `MethodAnalysisResult` (already available in `CombineHandlerMethodResults` input) for duplicate diagnostics.
 - The MAFGENWF006 severity upgrade requires knowing the base type at the `CombineHandlerMethodResults` level. The `MethodAnalysisResult` contains `HasManualConfigureProtocol` but not the base type classification. You'll need to add a `BaseIsGenericExecutor` boolean (or similar) to `MethodAnalysisResult` during `AnalyzeHandlerMethod`, by checking if the class's base type's `OriginalDefinition` is `Executor<T>` or `Executor<T,U>`. The `DerivesFromExecutor()` method (lines 385-400) already walks the base type chain — extend it.
 - The existing CancellationToken detection at L492-493 checks `Parameters.Length >= 3` then checks the type. The new 4+ parameter check (MAFGENWF009) should run BEFORE the CancellationToken check. Order: (1) check < 2 params → MAFGENWF005, (2) check > 3 params → MAFGENWF009, (3) check IWorkflowContext at position 1, (4) check CancellationToken at position 2 and non-CT third param → MAFGENWF010.
 - The non-CT third parameter diagnostic (MAFGENWF010) should NOT prevent handler registration. The handler is still valid with its first two parameters. Only emit the warning and continue processing.
@@ -156,7 +160,7 @@ cd dotnet && dotnet build src/Microsoft.Agents.AI.Workflows.Generators/ 2>&1 | g
 ## Phase 2: Test Coverage Improvements
 
 ### Objective
-Add baseline comparison tests that verify the source generator produces the expected ConfigureProtocol code patterns for common executor configurations, closing the behavioral equivalence gap.
+Add baseline comparison tests that verify the source generator produces the expected ConfigureProtocol code patterns for common executor configurations, closing the behavioral equivalence gap. (Note: the multi-file partial class test deliverable from design-doc Phase 2 is **pre-satisfied** — tests already exist at ExecutorRouteGeneratorTests.cs L541-704. This phase focuses on the baseline comparison tests only.)
 
 ### Prerequisites
 Phase 1 (new diagnostics should be testable)
