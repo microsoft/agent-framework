@@ -32,6 +32,7 @@ from azure.ai.agentserver.responses import (
     ResponseProviderProtocol,
     ResponsesServerOptions,
 )
+from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import (
     ApplyPatchToolCallItemParam,
@@ -431,22 +432,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         except Exception as ex:
             if consent_url := is_consent_error(ex):
                 logger.warning("OAuth consent required for Foundry MCP gateway.")
-                # oauth_item = OAuthConsentRequestOutputItem(
-                #     id=IdGenerator.new_id("oacr"),
-                #     consent_link=consent_url,
-                #     server_label="Foundry Toolbox",
-                # )
-                # builder = response_event_stream.add_output_item(oauth_item.id)
-                # yield builder.emit_added(oauth_item)
-                # yield builder.emit_done(oauth_item)
-                message_item = response_event_stream.add_output_item_message()
-                yield message_item.emit_added()
-                for event in message_item.text_content(
-                    f"OAuth consent is required before this agent's tools can be used. "
-                    f"Please open the following URL in a browser to authorize access: {consent_url}"
-                ):
-                    yield event
-                yield message_item.emit_done()
+                oauth_item = OAuthConsentRequestOutputItem(
+                    id=IdGenerator.new_id("oacr"),
+                    consent_link=consent_url,
+                    server_label="Foundry Toolbox",
+                )
+                builder = response_event_stream.add_output_item(oauth_item.id)
+                yield builder.emit_added(oauth_item)
+                yield builder.emit_done(oauth_item)
                 yield response_event_stream.emit_completed()
                 return
             else:
