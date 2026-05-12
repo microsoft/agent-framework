@@ -3,10 +3,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -52,7 +54,9 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// telemetry collection according to OpenTelemetry semantic conventions for AI systems.
     /// </remarks>
     public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName = null)
+#pragma warning disable MAAI001 // Delegating to the experimental autoWireChatClient overload with the default-on value preserves the original behavior.
         : this(innerAgent, sourceName, autoWireChatClient: true)
+#pragma warning restore MAAI001
     {
     }
 
@@ -73,6 +77,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// The constructor automatically extracts provider metadata from the inner agent and configures
     /// telemetry collection according to OpenTelemetry semantic conventions for AI systems.
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName, bool autoWireChatClient) : base(innerAgent)
     {
         this._providerName = innerAgent.GetService<AIAgentMetadata>()?.ProviderName;
