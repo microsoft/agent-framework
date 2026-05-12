@@ -494,7 +494,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_WithInputResponseContent_SetsTaskIdOnMessageAsync()
+    public async Task RunAsync_WithInputRequiredTaskState_SetsTaskIdOnMessageAsync()
     {
         // Arrange
         this._handler.ResponseToReturn = new SendMessageResponse
@@ -509,8 +509,9 @@ public sealed class A2AAgentTests : IDisposable
 
         var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
         session.TaskId = "task-123";
+        session.TaskState = TaskState.InputRequired;
 
-        var inputMessage = new ChatMessage(ChatRole.User, [new A2AInputResponseContent("req-1", new TextContent("New York to London"))]);
+        var inputMessage = new ChatMessage(ChatRole.User, [new TextContent("New York to London")]);
 
         // Act
         await this._agent.RunAsync(inputMessage, session);
@@ -519,19 +520,6 @@ public sealed class A2AAgentTests : IDisposable
         var message = this._handler.CapturedSendMessageRequest?.Message;
         Assert.Equal("task-123", message?.TaskId);
         Assert.Null(message?.ReferenceTaskIds);
-    }
-
-    [Fact]
-    public async Task RunAsync_WithInputResponseContentAndNullTaskId_ThrowsInvalidOperationExceptionAsync()
-    {
-        // Arrange
-        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
-        // TaskId is null — no prior input-required response
-
-        var inputMessage = new ChatMessage(ChatRole.User, [new A2AInputResponseContent("req-1", new TextContent("response"))]);
-
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessage, session));
     }
 
     [Fact]
@@ -885,7 +873,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithInputResponseContent_SetsTaskIdOnMessageAsync()
+    public async Task RunStreamingAsync_WithInputRequiredTaskState_SetsTaskIdOnMessageAsync()
     {
         // Arrange
         this._handler.StreamingResponseToReturn = new StreamResponse
@@ -900,8 +888,9 @@ public sealed class A2AAgentTests : IDisposable
 
         var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
         session.TaskId = "task-123";
+        session.TaskState = TaskState.InputRequired;
 
-        var inputMessage = new ChatMessage(ChatRole.User, [new A2AInputResponseContent("req-1", new TextContent("New York to London"))]);
+        var inputMessage = new ChatMessage(ChatRole.User, [new TextContent("New York to London")]);
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync([inputMessage], session))
@@ -913,24 +902,6 @@ public sealed class A2AAgentTests : IDisposable
         var message = this._handler.CapturedSendMessageRequest?.Message;
         Assert.Equal("task-123", message?.TaskId);
         Assert.Null(message?.ReferenceTaskIds);
-    }
-
-    [Fact]
-    public async Task RunStreamingAsync_WithInputResponseContentAndNullTaskId_ThrowsInvalidOperationExceptionAsync()
-    {
-        // Arrange
-        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
-        // TaskId is null — no prior input-required response
-
-        var inputMessage = new ChatMessage(ChatRole.User, [new A2AInputResponseContent("req-1", new TextContent("response"))]);
-
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await foreach (var _ in this._agent.RunStreamingAsync([inputMessage], session))
-            {
-            }
-        });
     }
 
     [Fact]
@@ -1096,7 +1067,7 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithInputRequiredStatusUpdate_YieldsInputRequestContentAsync()
+    public async Task RunStreamingAsync_WithInputRequiredStatusUpdate_YieldsStatusContentsAsync()
     {
         // Arrange
         const string TaskId = "task-input-123";
@@ -1135,8 +1106,8 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(TaskId, update0.ResponseId);
         Assert.Null(update0.FinishReason);
 
-        var inputRequest = Assert.Single(update0.Contents.OfType<A2AInputRequestContent>());
-        Assert.Equal("Where would you like to fly?", ((TextContent)inputRequest.Request).Text);
+        var textContent = Assert.Single(update0.Contents.OfType<TextContent>());
+        Assert.Equal("Where would you like to fly?", textContent.Text);
     }
 
     [Fact]

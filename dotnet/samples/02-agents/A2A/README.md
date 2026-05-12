@@ -17,7 +17,6 @@ See the README.md for each sample for the prerequisites for that sample.
 |[A2A Agent Polling For Task Completion](./A2AAgent_PollingForTaskCompletion/)|This sample demonstrates how to poll for long-running task completion using continuation tokens with an A2A agent.|
 |[A2A Agent Stream Reconnection](./A2AAgent_StreamReconnection/)|This sample demonstrates how to reconnect to an A2A agent's streaming response using continuation tokens, allowing recovery from stream interruptions.|
 |[A2A Agent Protocol Selection](./A2AAgent_ProtocolSelection/)|This sample demonstrates how to select the A2A protocol binding (HTTP+JSON vs JSON-RPC) when creating an AIAgent from an A2A agent card using A2AClientOptions.|
-|[A2A Agent Human In The Loop](./A2AAgent_HumanInTheLoop/)|This sample demonstrates how to handle user input requests from an A2A agent when it needs additional information to complete a task.|
 
 ## Running the samples from the console
 

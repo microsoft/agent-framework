@@ -2,7 +2,6 @@
 
 using System.Collections.Generic;
 using A2A;
-using Microsoft.Agents.AI.A2A;
 
 namespace Microsoft.Extensions.AI;
 
@@ -22,12 +21,6 @@ internal static class A2AAIContentExtensions
 
         foreach (var content in contents)
         {
-            if (content is A2AInputResponseContent inputResponseContent && inputResponseContent.Response.ToPart() is { } responsePart)
-            {
-                (parts ??= []).Add(responsePart);
-                continue;
-            }
-
             if (content.ToPart() is { } part)
             {
                 (parts ??= []).Add(part);

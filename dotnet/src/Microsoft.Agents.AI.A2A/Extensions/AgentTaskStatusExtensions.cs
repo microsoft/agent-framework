@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
-using Microsoft.Agents.AI.A2A;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -26,11 +24,10 @@ internal static class AgentTaskStatusExtensions
 
         foreach (var part in status.Message.Parts)
         {
-            (contents ??= []).Add(new A2AInputRequestContent(Guid.NewGuid().ToString("N"), part.ToAIContent())
-            {
-                RawRepresentation = part,
-                AdditionalProperties = part.Metadata.ToAdditionalProperties(),
-            });
+            var aiContent = part.ToAIContent();
+            aiContent.RawRepresentation = part;
+            aiContent.AdditionalProperties = part.Metadata.ToAdditionalProperties();
+            (contents ??= []).Add(aiContent);
         }
 
         return contents;

@@ -105,7 +105,7 @@ public sealed class A2AAgent : AIAgent
 
             this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
 
-            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id);
+            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id, agentTask.Status.State);
 
             return this.ConvertToAgentResponse(agentTask);
         }
@@ -134,7 +134,7 @@ public sealed class A2AAgent : AIAgent
         {
             var agentTask = a2aResponse.Task!;
 
-            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id);
+            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id, agentTask.Status.State);
 
             return this.ConvertToAgentResponse(agentTask);
         }
@@ -172,6 +172,7 @@ public sealed class A2AAgent : AIAgent
 
         string? contextId = null;
         string? taskId = null;
+        TaskState? taskState = null;
 
         await foreach (var streamResponse in streamEvents)
         {
@@ -187,6 +188,7 @@ public sealed class A2AAgent : AIAgent
                     var task = streamResponse.Task!;
                     contextId = task.ContextId;
                     taskId = task.Id;
+                    taskState = task.Status.State;
                     yield return this.ConvertToAgentResponseUpdate(task);
                     break;
 
@@ -194,6 +196,7 @@ public sealed class A2AAgent : AIAgent
                     var statusUpdate = streamResponse.StatusUpdate!;
                     contextId = statusUpdate.ContextId;
                     taskId = statusUpdate.TaskId;
+                    taskState = statusUpdate.Status.State;
                     yield return this.ConvertToAgentResponseUpdate(statusUpdate);
                     break;
 
@@ -209,7 +212,7 @@ public sealed class A2AAgent : AIAgent
             }
         }
 
-        UpdateSession(typedSession, contextId, taskId);
+        UpdateSession(typedSession, contextId, taskId, taskState);
     }
 
     /// <inheritdoc/>
@@ -317,7 +320,7 @@ public sealed class A2AAgent : AIAgent
         }
     }
 
-    private static void UpdateSession(A2AAgentSession? session, string? contextId, string? taskId = null)
+    private static void UpdateSession(A2AAgentSession? session, string? contextId, string? taskId = null, TaskState? taskState = null)
     {
         if (session is null)
         {
@@ -335,6 +338,7 @@ public sealed class A2AAgent : AIAgent
         // Assign a server-generated context Id to the session if it's not already set.
         session.ContextId ??= contextId;
         session.TaskId = taskId;
+        session.TaskState = taskState;
     }
 
     private static Message CreateA2AMessage(A2AAgentSession typedSession, IReadOnlyCollection<ChatMessage> messages)
@@ -345,18 +349,11 @@ public sealed class A2AAgent : AIAgent
         // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#group-related-interactions
         a2aMessage.ContextId = typedSession.ContextId;
 
-        if (messages.Any(m => m.Contents.Any(c => c is A2AInputResponseContent)))
+        if (typedSession.TaskState == TaskState.InputRequired)
         {
-            // If the message contains a response to a user input request,
-            // link it to the existing task, so it will be treated as a response
-            // to the user input request for that task.
-            if (typedSession.TaskId is null)
-            {
-                throw new InvalidOperationException(
-                    $"Cannot send an {nameof(A2AInputResponseContent)} without an existing task. " +
-                    $"The {nameof(AgentSession)} must have a {nameof(A2AAgentSession.TaskId)} from a prior input-required response.");
-            }
-
+            // If the session indicates the task is waiting for user input,
+            // link the response to the existing task so it is treated as input
+            // for that task.
             a2aMessage.TaskId = typedSession.TaskId;
         }
         else

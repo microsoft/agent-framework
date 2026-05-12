@@ -169,7 +169,7 @@ public sealed class A2AAgentTaskExtensionsTests
     }
 
     [Fact]
-    public void ToChatMessages_WithInputRequiredStatus_IncludesInputRequestContent()
+    public void ToChatMessages_WithInputRequiredStatus_IncludesStatusContents()
     {
         // Arrange
         var agentTask = new AgentTask
@@ -190,12 +190,12 @@ public sealed class A2AAgentTaskExtensionsTests
         Assert.NotNull(result);
         Assert.Single(result);
         Assert.Equal(ChatRole.Assistant, result[0].Role);
-        var inputRequest = Assert.Single(result[0].Contents.OfType<A2AInputRequestContent>());
-        Assert.Equal("What is your destination?", ((TextContent)inputRequest.Request).Text);
+        var textContent = Assert.Single(result[0].Contents.OfType<TextContent>());
+        Assert.Equal("What is your destination?", textContent.Text);
     }
 
     [Fact]
-    public void ToAIContents_WithInputRequiredStatus_IncludesInputRequestContent()
+    public void ToAIContents_WithInputRequiredStatus_IncludesStatusContents()
     {
         // Arrange
         var agentTask = new AgentTask
@@ -214,8 +214,8 @@ public sealed class A2AAgentTaskExtensionsTests
 
         // Assert
         Assert.NotNull(result);
-        var inputRequest = Assert.Single(result.OfType<A2AInputRequestContent>());
-        Assert.Equal("What is your destination?", ((TextContent)inputRequest.Request).Text);
+        var textContent = Assert.Single(result.OfType<TextContent>());
+        Assert.Equal("What is your destination?", textContent.Text);
     }
 
     [Fact]
@@ -240,6 +240,6 @@ public sealed class A2AAgentTaskExtensionsTests
         Assert.NotNull(result);
         Assert.Equal(2, result.Count);
         Assert.Equal("partial result", result[0].Text);
-        Assert.Single(result[1].Contents.OfType<A2AInputRequestContent>());
+        Assert.Single(result[1].Contents.OfType<TextContent>());
     }
 }

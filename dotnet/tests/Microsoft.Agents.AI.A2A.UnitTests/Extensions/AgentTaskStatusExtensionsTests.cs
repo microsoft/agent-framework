@@ -69,9 +69,9 @@ public sealed class AgentTaskStatusExtensionsTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal(3, result.Count);
-        Assert.Equal("First request", ((TextContent)((A2AInputRequestContent)result[0]).Request).Text);
-        Assert.Equal("Second request", ((TextContent)((A2AInputRequestContent)result[1]).Request).Text);
-        Assert.Equal("Third request", ((TextContent)((A2AInputRequestContent)result[2]).Request).Text);
+        Assert.Equal("First request", Assert.IsType<TextContent>(result[0]).Text);
+        Assert.Equal("Second request", Assert.IsType<TextContent>(result[1]).Text);
+        Assert.Equal("Third request", Assert.IsType<TextContent>(result[2]).Text);
     }
 
     [Fact]
@@ -95,7 +95,7 @@ public sealed class AgentTaskStatusExtensionsTests
 
         // Assert
         Assert.NotNull(result);
-        var content = Assert.IsType<A2AInputRequestContent>(result[0]);
+        var content = Assert.IsType<TextContent>(result[0]);
         Assert.Equal(textPart, content.RawRepresentation);
         Assert.NotNull(content.AdditionalProperties);
         Assert.True(content.AdditionalProperties.ContainsKey("key1"));
@@ -117,33 +117,5 @@ public sealed class AgentTaskStatusExtensionsTests
 
         // Assert
         Assert.Null(result);
-    }
-
-    [Fact]
-    public void GetUserInputRequests_GeneratesUniqueIds()
-    {
-        // Arrange
-        var status = new TaskStatus
-        {
-            State = TaskState.InputRequired,
-            Message = new Message
-            {
-                Parts =
-                [
-                    Part.FromText("First"),
-                    Part.FromText("Second"),
-                ],
-            },
-        };
-
-        // Act
-        IList<AIContent>? result = status.GetUserInputRequests();
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(2, result.Count);
-        var id1 = ((A2AInputRequestContent)result[0]).RequestId;
-        var id2 = ((A2AInputRequestContent)result[1]).RequestId;
-        Assert.NotEqual(id1, id2);
     }
 }
