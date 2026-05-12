@@ -932,6 +932,7 @@ class MCPTool:
         reload_name = f"mcp-reload:{self.name}:{coro.__qualname__}"
         for existing in list(self._pending_reload_tasks):
             if existing.get_name() == reload_name and not existing.done():
+                logger.debug("Cancelling in-flight reload %s; superseded by new notification", reload_name)
                 existing.cancel()
 
         async def _safe_reload() -> None:
