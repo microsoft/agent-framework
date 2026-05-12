@@ -350,3 +350,85 @@ grep -c "non-handler\|silently ignored\|no effect" dotnet/src/Microsoft.Agents.A
 - Plan-vs-implementation deviations are already documented in the design-doc (lines 126-131, 144-149). The migration guide should reference these but frame them from a user perspective ("you may see `YieldsOutputAttribute` instead of `YieldsMessageAttribute`") rather than an internal design perspective.
 
 ---
+
+## Rootcause Peer Review
+
+**Reviewer**: design-v7 (Designer)
+**Date**: 2026-05-12
+**Document Reviewed**: `.designs/1/implementation-plan/implementation_plan_outline.md`
+
+### Review Methodology
+
+This review examines whether the implementation plan addresses root causes (not symptoms) of the 13 identified gaps, whether the proposed changes could introduce new failure modes, and whether the causal chains from gap → fix → verification are complete.
+
+---
+
+### CRITICAL
+
+No critical issues found. The three-phase structure correctly sequences dependent work (Phase 1 diagnostics → Phase 2 tests → Phase 3 docs), and each phase targets root causes rather than symptoms.
+
+---
+
+### HIGH
+
+#### RH1: Phase 1 Diagnostic Insertion Points Assume Stable Line Numbers
+
+The Required Changes for File 2 (SemanticAnalyzer.cs) specify exact line numbers ("After L480", "After L493", "After L165"). These line numbers are snapshot values from the codebase-snapshot taken at 2026-05-12T03:32Z. If any PR merges to main before Phase 1 implementation begins that modifies SemanticAnalyzer.cs, these line numbers will shift and an implementer following the plan literally could insert code at wrong locations.
+
+**Root cause**: The plan uses absolute line references instead of structural anchors.
+
+**Recommendation**: The plan already includes structural descriptions alongside line numbers (e.g., "param count check", "CancellationToken detection", "handler collection in CombineHandlerMethodResults"). These structural anchors are sufficient — implementers should locate the described code pattern, not count to line N. Add a note: "Line numbers are from snapshot; locate by described code pattern if lines have shifted."
+
+#### RH2: Duplicate Input Type Detection Scope May Be Too Narrow
+
+The plan specifies duplicate detection in `CombineHandlerMethodResults` by grouping handlers by `InputTypeName`. This catches duplicates within a single class. However, partial classes split across files (already tested at L541-704) merge their handlers in `CombineHandlerMethodResults`. The plan doesn't explicitly state whether duplicate detection should run before or after partial-class handler merging. If duplicates are checked per-file before merging, a handler defined in File A and duplicated in File B would be missed.
+
+**Root cause**: The detection scope (per-class vs per-file) isn't specified.
+
+**Recommendation**: Confirm that duplicate detection runs after `CombineHandlerMethodResults` merges handlers from all partial class files, not within individual `AnalyzeHandler` calls. The current plan text ("Group collected handlers by InputTypeName") implies post-merge, but an explicit note would prevent misimplementation.
+
+---
+
+### MEDIUM
+
+#### RM1: MAFGENWF006 Severity Upgrade Requires Base Type Classification Not Currently in Pipeline
+
+The plan correctly identifies (Gotcha line 154) that `MethodAnalysisResult` lacks base type classification and suggests extending `DerivesFromExecutor()`. However, the plan's Required Changes section for File 2 says to check `OriginalDefinition` at the `CombineHandlerMethodResults` level. The root cause issue is that `DerivesFromExecutor()` (lines 385-400) walks the base type chain but returns a boolean — it doesn't distinguish between `Executor`, `Executor<T>`, and `Executor<T,U>`. The implementer needs to either modify `DerivesFromExecutor()` to return a classification enum, or add a separate check in `CombineHandlerMethodResults`.
+
+**Recommendation**: Specify which approach to take. Adding `BaseIsGenericExecutor` to `MethodAnalysisResult` (as mentioned in Gotchas) is the cleaner path — it keeps the classification close to where the semantic model is available.
+
+#### RM2: Phase 2 Baseline Tests Need Exact Expected Output Specification
+
+The plan says baseline tests should use `GetText()` for "full-text comparison" but doesn't provide the expected output strings. The expected output depends on the exact formatting in `SourceBuilder.cs:27-127`. If the implementer constructs expected strings by reading SourceBuilder and hand-crafting output, any misunderstanding of the template (e.g., nullable annotations, using directives, spacing) will cause false test failures.
+
+**Recommendation**: The safest approach is to first run the generator with a known input and capture the actual output as the baseline, then write the test to assert against that captured output. State this approach explicitly.
+
+---
+
+### LOW
+
+#### RL1: Phase 3 Migration Guide File Location
+
+The plan creates `dotnet/src/Microsoft.Agents.AI.Workflows/MIGRATION.md` inside the source project directory. NuGet package consumers won't see this file unless it's included in the package content. The `.csproj` would need a `<Content>` or `<None Pack="true">` item to include it. Alternative: place it in `dotnet/docs/` which is more conventional for developer docs.
+
+#### RL2: No Verification That Phase 1 Diagnostics Have Unique Message Templates
+
+All existing diagnostics (MAFGENWF001-007) have distinct message templates with unique format strings. The plan adds MAFGENWF008-010 with specific messages. No acceptance criterion verifies that message templates don't overlap or confuse users. Minor risk since the messages are explicit in the plan.
+
+---
+
+### Causal Chain Verification
+
+| Gap | Root Cause | Plan Fix | Fix Addresses Root Cause? | Verification |
+|-----|-----------|----------|--------------------------|--------------|
+| Gap 2 (4+ params) | No upper bound check in `AnalyzeHandler` | Add `> 3` check → MAFGENWF009 | YES — adds the missing validation | AC: test filter "TooManyParameters" |
+| Gap 3 (non-CT 3rd param) | Silent `hasCancellationToken = false` | Add type check → MAFGENWF010 | YES — replaces silent fallthrough with diagnostic | AC: test filter "NonCancellationTokenThirdParam" |
+| Gap 4 (duplicate inputs) | No uniqueness check in `CombineHandlerMethodResults` | HashSet grouping → MAFGENWF008 | YES — catches at source (handler collection) | AC: test filter "DuplicateInputType" |
+| Gap 6 (auto-yield assumption) | Undocumented runtime dependency | Document in ExecutorOptions XML | YES — makes implicit explicit | AC: grep for "AutoYield" count |
+| Gap 7 (behavioral equiv.) | No runtime comparison tests | Baseline comparison tests | PARTIAL — structural not behavioral | AC: 3+ baseline tests with GetText() |
+| Gap 9 (Info severity on Executor\<T>) | Missing base type classification | Conditional Warning severity | YES — escalates severity for the specific dangerous case | AC: test filter "ConfigureProtocolWarning" |
+| Gap 11 (no migration guide) | No document exists | Create MIGRATION.md | YES — directly fills the gap | AC: file existence check |
+
+### Summary
+
+The implementation plan is well-grounded in codebase reality and addresses root causes for all targeted gaps. The two HIGH findings (RH1: line number fragility, RH2: duplicate detection scope) are clarification items, not plan defects. The plan's codebase investigation depth (exact file:line references, gotchas from reading actual code) significantly reduces implementation risk. All causal chains from gap → fix → verification are traceable.
