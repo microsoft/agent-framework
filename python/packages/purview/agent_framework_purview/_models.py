@@ -89,7 +89,7 @@ def deserialize_flag(
         try:
             return enum_cls(value)
         except Exception:
-            logger.warning("Failed to convert int %s to %s", value, enum_cls.__name__)
+            logger.warning("Failed to convert int %s to %s", value, enum_cls.__name__, exc_info=True)
             return None
 
     flag_value = enum_cls(0)
@@ -113,7 +113,7 @@ def deserialize_flag(
                 try:
                     flag_value |= enum_cls(item)
                 except Exception:
-                    logger.warning(f"Failed to convert int {item} to {enum_cls.__name__}")
+                    logger.warning(f"Failed to convert int {item} to {enum_cls.__name__}", exc_info=True)
 
     for part in parts:
         member = mapping.get(part)
