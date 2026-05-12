@@ -15,12 +15,22 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal sealed class HandoffAgentExecutorOptions
 {
-    public HandoffAgentExecutorOptions(string? handoffInstructions, bool emitAgentResponseEvents, bool? emitAgentResponseUpdateEvents, HandoffToolCallFilteringBehavior toolCallFilteringBehavior)
+    public HandoffAgentExecutorOptions(
+        string? handoffInstructions,
+        bool emitAgentResponseEvents,
+        bool? emitAgentResponseUpdateEvents,
+        HandoffToolCallFilteringBehavior toolCallFilteringBehavior,
+        bool autonomousMode = false,
+        string? autonomousModePrompt = null,
+        int? autonomousModeTurnLimit = null)
     {
         this.HandoffInstructions = handoffInstructions;
         this.EmitAgentResponseEvents = emitAgentResponseEvents;
         this.EmitAgentResponseUpdateEvents = emitAgentResponseUpdateEvents;
         this.ToolCallFilteringBehavior = toolCallFilteringBehavior;
+        this.AutonomousMode = autonomousMode;
+        this.AutonomousModePrompt = autonomousModePrompt ?? HandoffAgentExecutor.DefaultAutonomousModePrompt;
+        this.AutonomousModeTurnLimit = autonomousModeTurnLimit ?? HandoffAgentExecutor.DefaultAutonomousModeTurnLimit;
     }
 
     public string? HandoffInstructions { get; set; }
@@ -30,6 +40,22 @@ internal sealed class HandoffAgentExecutorOptions
     public bool? EmitAgentResponseUpdateEvents { get; set; }
 
     public HandoffToolCallFilteringBehavior ToolCallFilteringBehavior { get; set; } = HandoffToolCallFilteringBehavior.HandoffOnly;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the agent operates in autonomous mode.
+    /// In autonomous mode, the agent continues responding without user input until a handoff is requested or the turn limit is reached.
+    /// </summary>
+    public bool AutonomousMode { get; set; }
+
+    /// <summary>
+    /// Gets or sets the prompt to inject as a user message when continuing in autonomous mode.
+    /// </summary>
+    public string AutonomousModePrompt { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum number of autonomous turns before control is returned to the user.
+    /// </summary>
+    public int AutonomousModeTurnLimit { get; set; }
 }
 
 internal struct AgentInvocationResult(AgentResponse agentResponse, string? handoffTargetId)
@@ -74,6 +100,12 @@ internal sealed record StateRef<TState>(string Key, string? ScopeName)
 internal sealed class HandoffAgentExecutor :
     StatefulExecutor<HandoffAgentHostState, HandoffState>
 {
+    /// <summary>The default prompt injected as a user message when operating in autonomous mode and no handoff has been requested.</summary>
+    internal const string DefaultAutonomousModePrompt = "User did not respond. Continue assisting autonomously.";
+
+    /// <summary>The default maximum number of autonomous turns before control is returned to the user.</summary>
+    internal const int DefaultAutonomousModeTurnLimit = 50;
+
     private static readonly JsonElement s_handoffSchema = AIFunctionFactory.Create(
         ([Description("The reason for the handoff")] string? reasonForHandoff) => { }).JsonSchema;
 
@@ -86,6 +118,8 @@ internal sealed class HandoffAgentExecutor :
 
     private readonly HashSet<string> _handoffFunctionNames = [];
     private readonly Dictionary<string, string> _handoffFunctionToAgentId = [];
+
+    private int _autonomousModeTurnCount;
 
     private readonly StateRef<HandoffSharedState> _sharedStateRef = new(HandoffConstants.HandoffSharedStateKey,
                                                                         HandoffConstants.HandoffSharedStateScope);
@@ -277,6 +311,39 @@ internal sealed class HandoffAgentExecutor :
         // happens if we have no outstanding requests.
         if (!this.HasOutstandingRequests)
         {
+            // In autonomous mode, if no handoff was requested and we haven't hit the turn limit, continue the agent's
+            // turn by injecting a synthetic user message instead of returning control to the user.
+            if (this._options.AutonomousMode && !result.IsHandoffRequested && this._autonomousModeTurnCount < this._options.AutonomousModeTurnLimit)
+            {
+                this._autonomousModeTurnCount++;
+
+                ChatMessage autonomousMessage = new(ChatRole.User, this._options.AutonomousModePrompt)
+                {
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    MessageId = Guid.NewGuid().ToString("N"),
+                };
+
+                int autonomousBookmark = newConversationBookmark;
+                await this._sharedStateRef.InvokeWithStateAsync(
+                    (sharedState, ctx, ct) =>
+                    {
+                        autonomousBookmark = sharedState!.Conversation.AddMessage(autonomousMessage);
+                        return new ValueTask();
+                    },
+                    context,
+                    cancellationToken).ConfigureAwait(false);
+
+                return await this.ContinueTurnAsync(
+                    state with { ConversationBookmark = autonomousBookmark },
+                    [autonomousMessage],
+                    context,
+                    cancellationToken,
+                    skipAddIncoming: true).ConfigureAwait(false);
+            }
+
+            // Reset the counter when ending the turn (handoff requested or turn limit reached).
+            this._autonomousModeTurnCount = 0;
+
             HandoffState outgoingState = new(state.IncomingState.TurnToken, result.HandoffTargetId, this._agent.Id);
 
             await context.SendMessageAsync(outgoingState, cancellationToken).ConfigureAwait(false);
