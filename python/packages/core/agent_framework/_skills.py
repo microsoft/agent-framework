@@ -1439,10 +1439,12 @@ FRONTMATTER_RE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
-# Matches YAML "key: value" lines. Group 1 = key, Group 2 = quoted value,
-# Group 3 = unquoted value.
+# Matches top-level YAML "key: value" lines (unindented). Group 1 = key,
+# Group 2 = quoted value, Group 3 = unquoted value. Only matches keys at
+# column 0 so that indented children (e.g. under "metadata:") are not
+# mistakenly captured as top-level fields.
 YAML_KV_RE = re.compile(
-    r"^\s*([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
+    r"^([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
     re.MULTILINE,
 )
 

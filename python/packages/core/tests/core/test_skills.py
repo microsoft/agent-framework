@@ -2128,6 +2128,31 @@ class TestExtractFrontmatterSpecFields:
         assert skill.frontmatter.allowed_tools == "tool1"
         assert skill.frontmatter.metadata == {"key": "value"}
 
+    def test_metadata_children_do_not_override_top_level_fields(self) -> None:
+        """Indented keys inside a metadata: block must not overwrite top-level fields."""
+        content = (
+            "---\n"
+            "name: test-skill\n"
+            "description: The real description.\n"
+            "license: MIT\n"
+            "metadata:\n"
+            "  description: should not override\n"
+            "  license: should not override\n"
+            "  name: should not override\n"
+            "---\n"
+            "Body."
+        )
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.name == "test-skill"
+        assert result.description == "The real description."
+        assert result.license == "MIT"
+        assert result.metadata == {
+            "description": "should not override",
+            "license": "should not override",
+            "name": "should not override",
+        }
+
 
 # ---------------------------------------------------------------------------
 # Tests: _create_instructions edge cases
