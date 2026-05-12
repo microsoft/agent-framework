@@ -54,7 +54,7 @@ The `ResponsesHostServer` extends `ResponsesAgentServerHost` (an ASGI applicatio
 - No `asyncio.to_thread()` wrapping of `agent.run()`
 - No task isolation or cancellation boundary
 
-The ASGI server (Starlette-based, as seen in tests at `test_responses.py:121`) runs `_handle_response` as part of an HTTP request handler coroutine. When this coroutine blocks, the entire ASGI server's event loop stalls.
+The ASGI server (Starlette-based, running on Hypercorn) runs `_handle_response` as part of an HTTP request handler coroutine. When this coroutine blocks, the entire ASGI server's event loop stalls.
 
 ### Why 5: Why does this matter for the Responses API specifically?
 
@@ -62,12 +62,12 @@ The Responses API uses a pattern where:
 1. A client POSTs to `/responses` to start agent execution
 2. For streaming, the server sends SSE events back as the agent produces output
 3. For non-streaming, the server must complete the full agent run before responding
-4. Health/readiness checks (`/readiness`) run on the same ASGI app
+4. Health/readiness checks run on the same ASGI app
 
 If a sync tool blocks the event loop:
 - **Non-streaming**: The HTTP response cannot be sent until the tool unblocks
 - **Streaming**: SSE event emission freezes; the client may time out
-- **Health checks**: The `/readiness` endpoint becomes unresponsive, potentially causing the hosting infrastructure to kill the container
+- **Health checks**: The readiness endpoint becomes unresponsive, potentially causing the hosting infrastructure to kill the container
 - **Concurrent requests**: All other requests to the server are blocked
 
 ## Evidence Gathered
@@ -104,10 +104,7 @@ File: `python/packages/foundry_hosting/agent_framework_foundry_hosting/_response
 Line 208: `class ResponsesHostServer(ResponsesAgentServerHost):`
 Line 276: `self.response_handler(self._handle_response)`
 
-Tests confirm ASGI transport (`test_responses.py:121`):
-```python
-transport = httpx.ASGITransport(app=server)
-```
+The base class comes from `azure-ai-agentserver-responses` which depends on `azure-ai-agentserver-core` which in turn depends on `hypercorn` and `starlette` (confirmed in `python/uv.lock:1126`). The server runs as a single-threaded asyncio ASGI application.
 
 ### Evidence 6: No thread pool or separate event loop anywhere in foundry_hosting
 Search for `to_thread`, `run_in_executor`, `ThreadPool`, `thread_pool` in the foundry_hosting package returns zero results in `_responses.py`. The only threading-related code is in `FileBasedFunctionApprovalStorage` (lines 155, 202, 205) which correctly uses `asyncio.to_thread` for file I/O -- but this pattern is not applied to tool execution.
