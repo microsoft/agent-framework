@@ -230,11 +230,11 @@ jobs:
             Verbose         = $true
           }
           ./dotnet/eng/scripts/New-FilteredSolution.ps1 @commonArgs `
-            -TestProjectNameFilter "*UnitTests*" `
+            -TestProjectNameIncludeFilter "*UnitTests*" `
             -OutputPath dotnet/filtered-unit.slnx
           ./dotnet/eng/scripts/New-FilteredSolution.ps1 @commonArgs `
-            -TestProjectNameFilter "*IntegrationTests*" `
-            -TestProjectNameExclude "*DurableTask.IntegrationTests*","*AzureFunctions.IntegrationTests*" `
+            -TestProjectNameIncludeFilter "*IntegrationTests*" `
+            -TestProjectNameExcludeFilter "*DurableTask.IntegrationTests*","*AzureFunctions.IntegrationTests*" `
             -OutputPath dotnet/filtered-integration.slnx
 
       - name: Run Unit Tests

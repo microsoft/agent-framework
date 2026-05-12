@@ -21,14 +21,14 @@
 .PARAMETER Configuration
     Optional MSBuild configuration used when querying TargetFrameworks. Defaults to Debug.
 
-.PARAMETER TestProjectNameFilter
+.PARAMETER TestProjectNameIncludeFilter
     Optional wildcard pattern to filter test project names (e.g., *UnitTests*, *IntegrationTests*).
     When specified, only test projects whose filename matches this pattern are kept.
 
-.PARAMETER TestProjectNameExclude
+.PARAMETER TestProjectNameExcludeFilter
     Optional wildcard pattern(s) to exclude test projects by name (e.g., *DurableTask.IntegrationTests*).
     When specified, test projects whose filename matches any of these patterns are removed.
-    Applied after TestProjectNameFilter. Can be a single string or an array of strings.
+    Applied after TestProjectNameIncludeFilter. Can be a single string or an array of strings.
 
 .PARAMETER ExcludeSamples
     When specified, removes all projects under the samples/ directory from the solution.
@@ -43,7 +43,7 @@
 
 .EXAMPLE
     # Generate a solution with only unit test projects
-    ./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net10.0 -TestProjectNameFilter "*UnitTests*" -OutputPath filtered-unit.slnx
+    ./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net10.0 -TestProjectNameIncludeFilter "*UnitTests*" -OutputPath filtered-unit.slnx
 
 .EXAMPLE
     # Inline usage with dotnet test (PowerShell)
@@ -51,7 +51,7 @@
 
 .EXAMPLE
     # Generate integration tests excluding DurableTask and AzureFunctions
-    ./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net10.0 -TestProjectNameFilter "*IntegrationTests*" -TestProjectNameExclude "*DurableTask.IntegrationTests*","*AzureFunctions.IntegrationTests*" -OutputPath filtered-other-integration.slnx
+    ./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net10.0 -TestProjectNameIncludeFilter "*IntegrationTests*" -TestProjectNameExcludeFilter "*DurableTask.IntegrationTests*","*AzureFunctions.IntegrationTests*" -OutputPath filtered-other-integration.slnx
 #>
 
 [CmdletBinding()]
@@ -64,9 +64,9 @@ param(
 
     [string]$Configuration = "Debug",
 
-    [string]$TestProjectNameFilter,
+    [string]$TestProjectNameIncludeFilter,
 
-    [string[]]$TestProjectNameExclude,
+    [string[]]$TestProjectNameExcludeFilter,
 
     [switch]$ExcludeSamples,
 
@@ -111,7 +111,7 @@ foreach ($proj in $allProjects) {
     $isTestProject = $projRelPath -like "*tests/*"
 
     # Filter test projects by name pattern if specified
-    if ($isTestProject -and $TestProjectNameFilter -and ($projFileName -notlike $TestProjectNameFilter)) {
+    if ($isTestProject -and $TestProjectNameIncludeFilter -and ($projFileName -notlike $TestProjectNameIncludeFilter)) {
         Write-Verbose "Removing (name filter): $projRelPath"
         $removed += $projRelPath
         $proj.ParentNode.RemoveChild($proj) | Out-Null
@@ -119,9 +119,9 @@ foreach ($proj in $allProjects) {
     }
 
     # Exclude test projects matching any exclusion pattern
-    if ($isTestProject -and $TestProjectNameExclude) {
+    if ($isTestProject -and $TestProjectNameExcludeFilter) {
         $excluded = $false
-        foreach ($pattern in $TestProjectNameExclude) {
+        foreach ($pattern in $TestProjectNameExcludeFilter) {
             if ($projFileName -like $pattern) {
                 $excluded = $true
                 break
