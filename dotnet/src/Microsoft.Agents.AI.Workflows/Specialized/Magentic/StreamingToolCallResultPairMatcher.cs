@@ -3,13 +3,14 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 
 internal sealed class StreamingToolCallResultPairMatcher
 {
-    private enum CallType
+    internal enum CallType
     {
         Function,
         McpServerTool
@@ -17,7 +18,7 @@ internal sealed class StreamingToolCallResultPairMatcher
 
     private record CallSummaryKey(CallType Type, string CallId);
 
-    private struct ToolCallSummary(CallType callType, string callId, string name)
+    internal struct ToolCallSummary(CallType callType, string callId, string name)
     {
         public CallType CallType => callType;
 
@@ -27,6 +28,12 @@ internal sealed class StreamingToolCallResultPairMatcher
     }
 
     private readonly Dictionary<CallSummaryKey, ToolCallSummary> _callSummaries = new();
+
+    public bool HasUnmatchedCalls => this._callSummaries.Count > 0;
+
+    public IEnumerable<ToolCallSummary> UnmatchedCalls => this.HasUnmatchedCalls
+                                                        ? this._callSummaries.Values.ToList()
+                                                        : [];
 
     private void Collect(CallType callType, string callId, string name, string callContentTypeName, string resultContentTypeName)
     {
