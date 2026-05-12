@@ -118,6 +118,7 @@ def convert_volume(value: float, factor: float) -> str:
 # 2. Define a class-based skill for temperature conversion
 # ---------------------------------------------------------------------------
 
+
 class TemperatureConverterSkill(ClassSkill):
     """A temperature-converter skill defined as a Python class.
 
@@ -177,6 +178,7 @@ class TemperatureConverterSkill(ClassSkill):
 # ---------------------------------------------------------------------------
 # 3. Wire everything together and run the agent
 # ---------------------------------------------------------------------------
+
 
 async def main() -> None:
     """Run the combined skills demo."""
