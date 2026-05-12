@@ -191,20 +191,22 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             return options;
         }
 
-        // The auto-wiring only applies when the inner agent is a ChatClientAgent. Otherwise, no-op.
-        if (this.InnerAgent.GetService<ChatClientAgent>() is null)
+        // The auto-wiring only applies when a ChatClientAgent is reachable from the inner agent. Otherwise, no-op.
+        // Use GetService rather than a type check so wrapping agents that expose a nested ChatClientAgent are supported.
+        var chatClientAgent = this.InnerAgent.GetService<ChatClientAgent>();
+        if (chatClientAgent is null)
         {
             return options;
         }
 
         // Respect ChatClientAgentOptions.UseProvidedChatClientAsIs: don't decorate the chat client when the user opted out.
-        if (this.InnerAgent.GetService<ChatClientAgentOptions>()?.UseProvidedChatClientAsIs is true)
+        if (chatClientAgent.GetService<ChatClientAgentOptions>()?.UseProvidedChatClientAsIs is true)
         {
             return options;
         }
 
         // Capture the underlying IChatClient and check whether it is already instrumented.
-        var chatClient = this.InnerAgent.GetService<IChatClient>();
+        var chatClient = chatClientAgent.GetService<IChatClient>();
         if (chatClient is null || chatClient.GetService(typeof(OpenTelemetryChatClient)) is not null)
         {
             return options;
