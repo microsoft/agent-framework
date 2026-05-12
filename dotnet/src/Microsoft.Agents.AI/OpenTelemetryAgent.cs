@@ -32,8 +32,8 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     private readonly OpenTelemetryChatClient _otelClient;
     /// <summary>The provider name extracted from <see cref="AIAgentMetadata"/>.</summary>
     private readonly string? _providerName;
-    /// <summary>The configured source name for telemetry. May be <see langword="null"/> to use the default.</summary>
-    private readonly string? _sourceName;
+    /// <summary>The resolved source name for telemetry. Always non-empty; defaults to <see cref="OpenTelemetryConsts.DefaultSourceName"/>.</summary>
+    private readonly string _sourceName;
     /// <summary>
     /// Indicates whether the underlying <see cref="IChatClient"/> of a <see cref="ChatClientAgent"/> inner agent
     /// should be automatically wrapped with <see cref="OpenTelemetryChatClient"/> on each invocation.
@@ -76,12 +76,16 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName, bool autoWireChatClient) : base(innerAgent)
     {
         this._providerName = innerAgent.GetService<AIAgentMetadata>()?.ProviderName;
-        this._sourceName = sourceName;
+
+        // Resolve once so the outer OpenTelemetryChatClient and the auto-wired inner
+        // OpenTelemetryChatClient always emit spans under the same ActivitySource, even when
+        // the caller passes "" (which neither the outer nor inner client should treat as a real source).
+        this._sourceName = string.IsNullOrEmpty(sourceName) ? OpenTelemetryConsts.DefaultSourceName : sourceName!;
         this._autoWireChatClient = autoWireChatClient;
 
         this._otelClient = new OpenTelemetryChatClient(
             new ForwardingChatClient(this),
-            sourceName: string.IsNullOrEmpty(sourceName) ? OpenTelemetryConsts.DefaultSourceName : sourceName!);
+            sourceName: this._sourceName);
     }
 
     /// <inheritdoc/>
@@ -228,8 +232,8 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             return options;
         }
 
-        string? sourceName = this._sourceName;
-        static IChatClient WrapIfNeeded(IChatClient cc, string? sourceName) =>
+        string sourceName = this._sourceName;
+        static IChatClient WrapIfNeeded(IChatClient cc, string sourceName) =>
             cc.GetService(typeof(OpenTelemetryChatClient)) is not null
                 ? cc
                 : cc.AsBuilder().UseOpenTelemetry(sourceName: sourceName).Build();
