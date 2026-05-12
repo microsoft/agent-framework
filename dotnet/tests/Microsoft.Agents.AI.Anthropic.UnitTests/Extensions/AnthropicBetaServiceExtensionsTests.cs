@@ -452,8 +452,6 @@ public sealed class AnthropicBetaServiceExtensionsTests
 
         public IBetaService Beta => this.BetaService;
 
-        public string? WebhookKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
-
         public IBetaService BetaService { get; }
 
         IMessageService IAnthropicClient.Messages => new Mock<IMessageService>().Object;
