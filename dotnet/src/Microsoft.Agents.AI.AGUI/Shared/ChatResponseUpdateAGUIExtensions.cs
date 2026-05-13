@@ -22,6 +22,54 @@ internal static class ChatResponseUpdateAGUIExtensions
     private static readonly MediaTypeHeaderValue? s_jsonPatchMediaType = new("application/json-patch+json");
     private static readonly MediaTypeHeaderValue? s_json = new("application/json");
 
+    private static Dictionary<string, object?>? CopyAdditionalProperties(AIContent content, params string[] reservedPropertyNames)
+    {
+        if (content.AdditionalProperties is not { Count: > 0 } additionalProperties)
+        {
+            return null;
+        }
+
+        Dictionary<string, object?> copiedProperties = [];
+        foreach (KeyValuePair<string, object?> property in additionalProperties)
+        {
+            if (!IsReservedProperty(property.Key, reservedPropertyNames))
+            {
+                copiedProperties[property.Key] = property.Value;
+            }
+        }
+
+        return copiedProperties.Count > 0 ? copiedProperties : null;
+    }
+
+    private static AdditionalPropertiesDictionary? CopyAdditionalProperties(BaseEvent evt)
+    {
+        if (evt.AdditionalProperties is not { Count: > 0 } additionalProperties)
+        {
+            return null;
+        }
+
+        AdditionalPropertiesDictionary copiedProperties = [];
+        foreach (KeyValuePair<string, object?> property in additionalProperties)
+        {
+            copiedProperties[property.Key] = property.Value;
+        }
+
+        return copiedProperties;
+    }
+
+    private static bool IsReservedProperty(string key, string[] reservedPropertyNames)
+    {
+        foreach (string reservedPropertyName in reservedPropertyNames)
+        {
+            if (string.Equals(key, reservedPropertyName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdatesAsync(
         this IAsyncEnumerable<BaseEvent> events,
         JsonSerializerOptions jsonSerializerOptions,
@@ -135,6 +183,7 @@ internal static class ChatResponseUpdateAGUIExtensions
             stateSnapshot.Snapshot!.Value,
             jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)));
         DataContent dataContent = new(jsonBytes, "application/json");
+        dataContent.AdditionalProperties = CopyAdditionalProperties(stateSnapshot);
 
         return new ChatResponseUpdate(ChatRole.Assistant, [dataContent])
         {
@@ -159,6 +208,7 @@ internal static class ChatResponseUpdateAGUIExtensions
             stateDelta.Delta!.Value,
             jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)));
         DataContent dataContent = new(jsonBytes, "application/json-patch+json");
+        dataContent.AdditionalProperties = CopyAdditionalProperties(stateDelta);
 
         return new ChatResponseUpdate(ChatRole.Assistant, [dataContent])
         {
@@ -198,9 +248,14 @@ internal static class ChatResponseUpdateAGUIExtensions
 
         internal ChatResponseUpdate EmitTextUpdate(TextMessageContentEvent textContent)
         {
+            TextContent content = new(textContent.Delta)
+            {
+                AdditionalProperties = CopyAdditionalProperties(textContent)
+            };
+
             return new ChatResponseUpdate(
                 this._currentRole,
-                textContent.Delta)
+                [content])
             {
                 ConversationId = this._conversationId,
                 ResponseId = this._responseId,
@@ -463,7 +518,7 @@ internal static class ChatResponseUpdateAGUIExtensions
             }
 
             if (chatResponse is { Contents.Count: > 0 } &&
-                chatResponse.Contents[0] is TextContent &&
+                chatResponse.Contents[0] is TextContent textContentForStart &&
                 !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
             {
                 // Close any open reasoning block before opening a text message, so AG-UI
@@ -498,7 +553,8 @@ internal static class ChatResponseUpdateAGUIExtensions
                 yield return new TextMessageStartEvent
                 {
                     MessageId = chatResponse.MessageId!,
-                    Role = chatResponse.Role!.Value.Value
+                    Role = chatResponse.Role!.Value.Value,
+                    AdditionalProperties = CopyAdditionalProperties(textContentForStart, "type", "messageId", "role")
                 };
 
                 currentMessageId = chatResponse.MessageId;
@@ -511,7 +567,8 @@ internal static class ChatResponseUpdateAGUIExtensions
                 yield return new TextMessageContentEvent
                 {
                     MessageId = currentMessageId!,
-                    Delta = textContent.Text
+                    Delta = textContent.Text,
+                    AdditionalProperties = CopyAdditionalProperties(textContent, "type", "messageId", "delta")
                 };
             }
 
@@ -643,12 +700,13 @@ internal static class ChatResponseUpdateAGUIExtensions
 #if !NET
                                 Snapshot = (JsonElement?)JsonSerializer.Deserialize(
                                 dataContent.Data.ToArray(),
-                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))
+                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement))),
 #else
                                 Snapshot = (JsonElement?)JsonSerializer.Deserialize(
                                 dataContent.Data.Span,
-                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))
+                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement))),
 #endif
+                                AdditionalProperties = CopyAdditionalProperties(dataContent, "type", "snapshot")
                             };
                         }
                         else if (mediaType is { } && mediaType.Equals(s_jsonPatchMediaType))
@@ -660,12 +718,13 @@ internal static class ChatResponseUpdateAGUIExtensions
 #if !NET
                                 Delta = (JsonElement?)JsonSerializer.Deserialize(
                                 dataContent.Data.ToArray(),
-                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))
+                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement))),
 #else
                                 Delta = (JsonElement?)JsonSerializer.Deserialize(
                                 dataContent.Data.Span,
-                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))
+                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement))),
 #endif
+                                AdditionalProperties = CopyAdditionalProperties(dataContent, "type", "delta")
                             };
                         }
                         else
@@ -675,10 +734,11 @@ internal static class ChatResponseUpdateAGUIExtensions
                             {
                                 MessageId = chatResponse.MessageId!,
 #if !NET
-                                Delta = Encoding.UTF8.GetString(dataContent.Data.ToArray())
+                                Delta = Encoding.UTF8.GetString(dataContent.Data.ToArray()),
 #else
-                                Delta = Encoding.UTF8.GetString(dataContent.Data.Span)
+                                Delta = Encoding.UTF8.GetString(dataContent.Data.Span),
 #endif
+                                AdditionalProperties = CopyAdditionalProperties(dataContent, "type", "messageId", "delta")
                             };
                         }
                     }
