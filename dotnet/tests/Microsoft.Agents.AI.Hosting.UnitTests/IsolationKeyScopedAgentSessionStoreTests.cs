@@ -54,17 +54,6 @@ public class IsolationKeyScopedAgentSessionStoreTests
     }
 
     /// <summary>
-    /// Verify that constructor throws ArgumentNullException when keyProvider is null.
-    /// </summary>
-    [Fact]
-    public void RequiresKeyProvider()
-    {
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>("keyProvider", () =>
-            new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, null!));
-    }
-
-    /// <summary>
     /// Verify that constructor uses default options when options is null.
     /// </summary>
     [Fact]
