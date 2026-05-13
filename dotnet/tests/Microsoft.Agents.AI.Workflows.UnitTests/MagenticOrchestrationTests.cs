@@ -720,6 +720,49 @@ public class MagenticOrchestrationTests
         runResult.Result![0].Text.Should().Contain("maximum reset count limit");
     }
 
+    [Fact]
+    public async Task ProgressLedger_Retry_On_Parse_Failure()
+    {
+        // Arrange: First progress ledger attempt returns invalid JSON (triggers parse failure + warning),
+        // second attempt returns valid JSON (satisfied=true).
+        // Manager turn sequence: facts, plan, INVALID_JSON, VALID_LEDGER(satisfied), finalAnswer
+        // MagenticManager.UpdateProgressLedgerAsync retries internally: attempt 0 fails, attempt 1 succeeds.
+        List<ChatMessage> factsResponse = CreatePlanResponse("Facts about the task");
+        List<ChatMessage> planResponse = CreatePlanResponse("Step 1: Execute");
+        List<ChatMessage> invalidLedgerResponse = CreatePlanResponse("This is not valid JSON for a progress ledger");
+        List<ChatMessage> validLedgerResponse = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Done after retry");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Completed after ledger retry");
+
+        TestReplayAgent manager = new(
+            [factsResponse, planResponse, invalidLedgerResponse, validLedgerResponse, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do task")],
+            eventCollector: collectedEvents);
+
+        // Assert: Warning emitted for parse failure, but workflow completes successfully
+        collectedEvents.OfType<WorkflowWarningEvent>()
+            .Should().Contain(e => e.Data != null && e.Data.ToString()!.Contains("Progress ledger JSON parse failed"));
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Completed after ledger retry");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
