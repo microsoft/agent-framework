@@ -57,9 +57,18 @@ public static class WorkflowBuilderExtensions
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
+        Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>(IsAllowedTypeAndMatchingCondition)!;
-        List<ExecutorBinding> targetList = ValidateTargets(targets);
+        List<ExecutorBinding> targetList = new();
+        foreach (ExecutorBinding target in targets)
+        {
+            Throw.IfNull(target, nameof(targets));
+
+            targetList.Add(target);
+        }
+
+        Throw.IfNullOrEmpty(targetList, nameof(targets));
 
         if (targetList.Count == 1)
         {
@@ -100,9 +109,18 @@ public static class WorkflowBuilderExtensions
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
+        Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
-        List<ExecutorBinding> targetList = ValidateTargets(targets);
+        List<ExecutorBinding> targetList = new();
+        foreach (ExecutorBinding target in targets)
+        {
+            Throw.IfNull(target, nameof(targets));
+
+            targetList.Add(target);
+        }
+
+        Throw.IfNullOrEmpty(targetList, nameof(targets));
 
         if (targetList.Count == 1)
         {
@@ -114,29 +132,6 @@ public static class WorkflowBuilderExtensions
         // The reason we can check for "null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
         static bool IsAllowedType(object? message) => message is null;
-    }
-
-    /// <summary>
-    /// Validates a target collection and returns it as a list.
-    /// </summary>
-    /// <param name="targets">The target executor bindings to validate.</param>
-    /// <returns>A validated list of target executor bindings.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="targets"/> is null or contains a null element.</exception>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="targets"/> is empty.</exception>
-    private static List<ExecutorBinding> ValidateTargets(IEnumerable<ExecutorBinding> targets)
-    {
-        Throw.IfNull(targets);
-
-        List<ExecutorBinding> targetList = new();
-        foreach (ExecutorBinding target in targets)
-        {
-            Throw.IfNull(target, nameof(targets));
-
-            targetList.Add(target);
-        }
-
-        Throw.IfNullOrEmpty(targetList, nameof(targets));
-        return targetList;
     }
 
     /// <summary>
