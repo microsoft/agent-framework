@@ -254,8 +254,8 @@ def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpoin
 # endregion Approval Storage
 
 # Foundry Toolbox Auth integration
-# Consent-URL error code returned by the Foundry MCP gateway.
-CONSENT_ERROR_CODE = -32006
+# Consent-URL error code returned by the Foundry MCP gateway when calling `/list`
+CONSENT_ERROR_CODE = -32007
 
 
 def is_consent_error(exc: BaseException) -> str | None:
