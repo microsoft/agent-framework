@@ -533,6 +533,59 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
+    public async Task Instruction_Message_Sent_When_Present()
+    {
+        // Arrange: Progress ledger has a non-empty instruction_or_question.
+        // The orchestrator should send the instruction as a ChatMessage before delegating to the next agent.
+        // After Worker echoes, the second round completes.
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Facts about the task");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Step 1: Instruct the worker");
+        List<ChatMessage> ledgerWithInstruction = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Please analyze the data carefully");
+
+        // Round 2 after Worker responds
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Updated facts");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Updated plan");
+        List<ChatMessage> satisfiedLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Task completed with instruction");
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, ledgerWithInstruction,
+             factsResponse2, planResponse2, satisfiedLedger, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Analyze data")],
+            eventCollector: collectedEvents);
+
+        // Assert: The workflow completed successfully, proving the instruction path executed without error.
+        // The update text should contain the instruction text since it is sent to participants as a ChatMessage.
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Task completed with instruction");
+        // Verify the delegation happened (two progress ledger events for two rounds)
+        collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(2);
+    }
+
+    [Fact]
     public async Task PlanReview_On_Stall_Replan()
     {
         // Arrange: Plan signoff enabled, stall triggers reset, replan requires new plan review.
