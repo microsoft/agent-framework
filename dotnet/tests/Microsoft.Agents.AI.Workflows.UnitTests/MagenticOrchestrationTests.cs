@@ -532,6 +532,50 @@ public class MagenticOrchestrationTests
         runResult.Result![0].Text.Should().Contain("Recovered after stall reset");
     }
 
+    [Fact]
+    public async Task MaxResetLimit_Terminates_Workflow()
+    {
+        // Arrange: MaxStallCount=1, MaxResets=1.
+        // Flow: facts1, plan1 → ledger1(stall: isInLoop=true) → StallCount=1 → IsStalled → ResetAndReplanAsync
+        //       → ResetCount becomes 1 → facts2, plan2 → DelegateToTeamAsync
+        //       → RunCoordinationRoundAsync: CheckLimits() detects ResetCount(1) >= MaxResetCount(1) → terminates
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Initial plan");
+        List<ChatMessage> stalledLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: true,  // This triggers stall
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Keep trying");
+
+        // After reset: ResetAndReplanAsync → UpdatePlanAndDelegateAsync → new plan
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Fresh facts after reset");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Fresh plan after reset");
+        // No more turns needed: RunCoordinationRoundAsync hits reset limit before calling UpdateProgressLedgerAsync
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, stalledLedger,
+             factsResponse2, planResponse2],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .WithMaxStalls(1)   // One stall triggers reset
+            .WithMaxResets(1)   // One reset triggers termination
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do task")]);
+
+        // Assert: Workflow terminates with reset limit message
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("maximum reset count limit");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
