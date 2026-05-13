@@ -110,7 +110,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
                 out this._planReviewPort);
     }
 
-    private ValueTask SubmitPlanReviewRequestAsync(MagenticTaskContext taskContext, IWorkflowContext workflowContext, bool isStalled = false)
+    private ValueTask SubmitPlanReviewRequestAsync(MagenticTaskContext taskContext, IWorkflowContext workflowContext, bool replanAfterStall = false)
     {
         MagenticProgressLedger? progressLedger = taskContext.ProgressLedger;
         if (progressLedger?.IsStarted is not true)
@@ -118,7 +118,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
             progressLedger = null;
         }
 
-        MagenticPlanReviewRequest request = new(taskContext.TaskLedger!.CurrentPlan, progressLedger, isStalled);
+        MagenticPlanReviewRequest request = new(taskContext.TaskLedger!.CurrentPlan, progressLedger, replanAfterStall);
 
         return this._planReviewPort!.PostRequestAsync(request);
     }
@@ -162,7 +162,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         }
     }
 
-    private async ValueTask UpdatePlanAndDelegateAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken, bool isStalled = false)
+    private async ValueTask UpdatePlanAndDelegateAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken, bool replanAfterStall = false)
     {
         bool isReplan = taskContext.TaskLedger != null;
 
@@ -178,7 +178,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
         if (requirePlanSignoff)
         {
-            await this.SubmitPlanReviewRequestAsync(taskContext, context, isStalled).ConfigureAwait(false);
+            await this.SubmitPlanReviewRequestAsync(taskContext, context, replanAfterStall).ConfigureAwait(false);
         }
         else
         {
@@ -293,7 +293,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         taskContext.Reset();
         await context.SendMessageAsync(new ResetChatSignal(), cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        await this.UpdatePlanAndDelegateAsync(taskContext, context, cancellationToken, isStalled: wasStalled).ConfigureAwait(false);
+        await this.UpdatePlanAndDelegateAsync(taskContext, context, cancellationToken, replanAfterStall: wasStalled).ConfigureAwait(false);
     }
 
     private async ValueTask PrepareFinalAnswerAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
