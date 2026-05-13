@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ._executor import Executor
-from ._typing_utils import normalize_type_to_list, resolve_type_annotation
+from ._typing_utils import is_typevar, normalize_type_to_list, resolve_type_annotation
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 if sys.version_info >= (3, 11):
@@ -94,6 +94,19 @@ class FunctionExecutor(Executor):
             _validate_function_signature(func, skip_message_annotation=resolved_input_type is not None)
         )
 
+        # Check for unresolved TypeVars in explicit type parameters
+        for param_name, param_type in [
+            ("input", resolved_input_type),
+            ("output", resolved_output_type),
+            ("workflow_output", resolved_workflow_output_type),
+        ]:
+            if param_type is not None and is_typevar(param_type):
+                raise ValueError(
+                    f"Executor '{func.__name__}' has an unresolved TypeVar '{param_type}' "
+                    f"as its {param_name} type. "
+                    f"Use @executor(input=ConcreteType, output=ConcreteType) with concrete types."
+                )
+
         # Use explicit types if provided, otherwise fall back to introspection
         message_type = resolved_input_type if resolved_input_type is not None else introspected_message_type
         output_types: list[type[Any] | types.UnionType] = (
@@ -112,6 +125,14 @@ class FunctionExecutor(Executor):
             raise ValueError(
                 f"Function {func.__name__} requires either a message parameter type annotation "
                 "or an explicit input_type parameter"
+            )
+
+        # Check for unresolved TypeVar in introspected message type
+        if is_typevar(message_type):
+            raise ValueError(
+                f"Executor '{func.__name__}' has an unresolved TypeVar '{message_type}' "
+                f"as its message type. "
+                f"Use @executor(input=ConcreteType, output=ConcreteType) with concrete types."
             )
 
         # Store the original function
