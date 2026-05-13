@@ -54,7 +54,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// telemetry collection according to OpenTelemetry semantic conventions for AI systems.
     /// </remarks>
     public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName = null)
-#pragma warning disable MAAI001 // Delegating to the experimental autoWireChatClient overload with the default-on value preserves the original behavior.
+#pragma warning disable MAAI001 // Auto-wiring is the new default; the experimental opt-out lives on the 3-arg overload.
         : this(innerAgent, sourceName, autoWireChatClient: true)
 #pragma warning restore MAAI001
     {
@@ -84,8 +84,8 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
         // Resolve once so the outer OpenTelemetryChatClient and the auto-wired inner
         // OpenTelemetryChatClient always emit spans under the same ActivitySource, even when
-        // the caller passes "" (which neither the outer nor inner client should treat as a real source).
-        this._sourceName = string.IsNullOrEmpty(sourceName) ? OpenTelemetryConsts.DefaultSourceName : sourceName!;
+        // the caller passes "" or whitespace (which neither client should treat as a real source).
+        this._sourceName = string.IsNullOrWhiteSpace(sourceName) ? OpenTelemetryConsts.DefaultSourceName : sourceName!;
         this._autoWireChatClient = autoWireChatClient;
 
         this._otelClient = new OpenTelemetryChatClient(
@@ -206,8 +206,12 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// <summary>
     /// If auto-wiring is enabled and the inner agent is a <see cref="ChatClientAgent"/> whose underlying
     /// <see cref="IChatClient"/> is not already instrumented with <see cref="OpenTelemetryChatClient"/>, returns a
-    /// new <see cref="AgentRunOptions"/> with a <see cref="ChatClientAgentRunOptions.ChatClientFactory"/> that
-    /// wraps the chat client with <see cref="OpenTelemetryChatClient"/>. Otherwise, returns <paramref name="options"/> unchanged.
+    /// new <see cref="ChatClientAgentRunOptions"/> with a <see cref="ChatClientAgentRunOptions.ChatClientFactory"/>
+    /// that wraps the chat client with <see cref="OpenTelemetryChatClient"/>. When <paramref name="options"/> is a
+    /// plain <see cref="AgentRunOptions"/> (the base type, not <see cref="ChatClientAgentRunOptions"/>), the base
+    /// properties are copied onto the new <see cref="ChatClientAgentRunOptions"/> so high-level callers that pass
+    /// the abstract <see cref="AgentRunOptions"/> still benefit from auto-wiring and propagate their settings to
+    /// the inner agent. Otherwise, returns <paramref name="options"/> unchanged.
     /// </summary>
     private AgentRunOptions? GetRunOptionsWithChatClientWiring(AgentRunOptions? options)
     {
