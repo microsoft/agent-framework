@@ -641,6 +641,7 @@ public class MagenticOrchestrationTests
         MagenticPlanReviewRequest? reviewRequest1 = request1.Data.As<MagenticPlanReviewRequest>();
         reviewRequest1.Should().NotBeNull();
         reviewRequest1!.Plan.Text.Should().Contain("Initial plan");
+        reviewRequest1.IsStalled.Should().BeFalse("the initial plan review is not stall-triggered");
 
         // Act 2: Approve initial plan → stall occurs → reset → replan → new plan review
         MagenticPlanReviewResponse approval1 = reviewRequest1.Approve();
@@ -658,6 +659,7 @@ public class MagenticOrchestrationTests
         MagenticPlanReviewRequest? reviewRequest2 = request2.Data.As<MagenticPlanReviewRequest>();
         reviewRequest2.Should().NotBeNull();
         reviewRequest2!.Plan.Text.Should().Contain("Fresh plan after stall reset");
+        reviewRequest2.IsStalled.Should().BeTrue("the replan was triggered by a stall");
 
         // Act 3: Approve the revised plan → satisfied → final answer
         MagenticPlanReviewResponse approval2 = reviewRequest2.Approve();
