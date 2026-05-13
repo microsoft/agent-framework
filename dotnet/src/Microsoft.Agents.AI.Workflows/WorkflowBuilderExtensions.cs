@@ -25,7 +25,7 @@ public static class WorkflowBuilderExtensions
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
     public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, ExecutorBinding target)
     {
-        Throw.IfNull(target);
+        Throw.IfNull(target, nameof(target));
 
         return builder.ForwardMessage<TMessage>(source, [target], condition: null);
     }
@@ -83,7 +83,7 @@ public static class WorkflowBuilderExtensions
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
     public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, ExecutorBinding target)
     {
-        Throw.IfNull(target);
+        Throw.IfNull(target, nameof(target));
 
         return builder.ForwardExcept<TMessage>(source, [target]);
     }
