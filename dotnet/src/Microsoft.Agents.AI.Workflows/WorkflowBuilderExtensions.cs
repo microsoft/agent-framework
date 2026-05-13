@@ -61,26 +61,23 @@ public static class WorkflowBuilderExtensions
         Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>(IsAllowedTypeAndMatchingCondition)!;
-        List<ExecutorBinding> targetList = new();
-        foreach (ExecutorBinding target in targets)
-        {
-            Throw.IfNull(target, nameof(targets));
 
-            targetList.Add(target);
+#if NET6_0_OR_GREATER
+        if (targets.TryGetNonEnumeratedCount(out int count) && count == 1)
+#else
+        if (targets is ICollection<ExecutorBinding> { Count: 1 })
+#endif
+        {
+            return builder.AddEdge(source, Throw.IfNull(targets.First(), nameof(targets)), predicate);
         }
 
-        Throw.IfNullOrEmpty(targetList, nameof(targets));
-
-        if (targetList.Count == 1)
-        {
-            return builder.AddEdge(source, targetList[0], predicate);
-        }
-
-        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targetList));
+        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targets.Select(ValidateTarget)));
 
         // The reason we can check for "not null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
         bool IsAllowedTypeAndMatchingCondition(TMessage? message) => message != null && (condition == null || condition(message));
+
+        ExecutorBinding ValidateTarget(ExecutorBinding target) => Throw.IfNull(target, nameof(targets));
     }
 
     /// <summary>
