@@ -6,6 +6,7 @@
 
 using System.ClientModel;
 using System.ClientModel.Primitives;
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
@@ -60,11 +61,15 @@ internal sealed class Program
         // Ensure sample toolbox and agent exist in Foundry
         string toolboxEndpoint = await CreateSampleToolboxAsync(toolboxName, docsServerLabel, foundryEndpoint, credential);
         string toolboxMcpServerUrl = BuildToolboxMcpServerUrl(toolboxEndpoint, toolboxName, toolboxApiVersion);
-        Environment.SetEnvironmentVariable(ToolboxMcpServerUrlSetting, toolboxMcpServerUrl);
-        // Expose the server label to the workflow so the YAML can build prefixed MCP tool names dynamically.
-        Environment.SetEnvironmentVariable(DocsServerLabelSetting, docsServerLabel);
-        // Expose the web search tool name so the YAML can reference it without hard-coding.
-        Environment.SetEnvironmentVariable(WebSearchToolNameSetting, webSearchToolName);
+        IConfiguration workflowConfiguration = new ConfigurationBuilder()
+            .AddConfiguration(configuration)
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [ToolboxMcpServerUrlSetting] = toolboxMcpServerUrl,
+                [DocsServerLabelSetting] = docsServerLabel,
+                [WebSearchToolNameSetting] = webSearchToolName,
+            })
+            .Build();
 
         await CreateAgentAsync(foundryEndpoint, configuration, credential);
 
@@ -72,7 +77,7 @@ internal sealed class Program
         string workflowInput = Application.GetInput(args);
 
         // Create the MCP tool handler for invoking the Foundry toolbox MCP proxy.
-        List<HttpClient> createdHttpClients = [];
+        ConcurrentBag<HttpClient> createdHttpClients = [];
         DefaultMcpToolHandler mcpToolHandler = new(
             httpClientProvider: async (serverUrl, _) =>
             {
@@ -97,6 +102,7 @@ internal sealed class Program
             // Create the workflow factory with MCP tool provider
             WorkflowFactory workflowFactory = new("InvokeFoundryToolboxMcp.yaml", foundryEndpoint)
             {
+                Configuration = workflowConfiguration,
                 McpToolHandler = mcpToolHandler
             };
 

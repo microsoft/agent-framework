@@ -67,15 +67,12 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         if (IsListToolsToolName(toolName))
         {
             ThrowIfListToolsArgumentsSpecified(arguments);
+            McpClient listToolsClient = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
+            IList<McpClientTool> tools = await listToolsClient.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            return CreateListToolsResultContent(tools.Select(tool => tool.ProtocolTool));
         }
 
         McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
-
-        if (IsListToolsToolName(toolName))
-        {
-            IList<McpClientTool> tools = await client.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-            return CreateListToolsResultContent(tools.Select(tool => tool.ProtocolTool));
-        }
 
         McpServerToolResultContent resultContent = new(Guid.NewGuid().ToString());
 
@@ -349,6 +346,6 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             writer.WriteEndObject();
         }
 
-        return Encoding.UTF8.GetString(stream.ToArray());
+        return Encoding.UTF8.GetString(stream.GetBuffer(), 0, (int)stream.Length);
     }
 }

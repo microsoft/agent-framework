@@ -37,7 +37,7 @@ trigger:
       toolName: tools/list
       conversationId: =System.ConversationId
       headers:
-       Foundry-Features: Toolboxes=V1Preview
+        Foundry-Features: Toolboxes=V1Preview
       output:
         autoSend: true
         result: Local.ToolboxTools
@@ -50,7 +50,7 @@ trigger:
       toolName: =Env.FOUNDRY_TOOLBOX_DOCS_SERVER_LABEL & "___microsoft_docs_search"
       conversationId: =System.ConversationId
       headers:
-       Foundry-Features: Toolboxes=V1Preview
+        Foundry-Features: Toolboxes=V1Preview
       arguments:
         query: =Local.SearchQuery
       output:
@@ -67,7 +67,7 @@ trigger:
       toolName: =Env.FOUNDRY_TOOLBOX_WEB_SEARCH_TOOL_NAME
       conversationId: =System.ConversationId
       headers:
-       Foundry-Features: Toolboxes=V1Preview
+        Foundry-Features: Toolboxes=V1Preview
       arguments:
         search_query: =Local.SearchQuery
       output:
