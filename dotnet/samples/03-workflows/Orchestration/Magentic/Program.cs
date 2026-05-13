@@ -9,11 +9,9 @@
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Foundry;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using Microsoft.Extensions.AI;
-using OpenAI.Responses;
 
 namespace WorkflowMagenticOrchestrationSample;
 
@@ -125,7 +123,7 @@ public static class Program
 
                 case ExecutorFailedEvent executorFailed:
                     Console.ForegroundColor = ConsoleColor.Red;
-                    Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data is null ? "unknown error" : $"exception {executorFailed.Data}") }.");
+                    Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data is null ? "unknown error" : $"exception {executorFailed.Data}")}.");
                     Console.ResetColor();
                     break;
             }
