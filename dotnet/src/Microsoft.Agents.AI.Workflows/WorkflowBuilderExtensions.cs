@@ -114,7 +114,11 @@ public static class WorkflowBuilderExtensions
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
 
+#if NET6_0_OR_GREATER
         if (targets.TryGetNonEnumeratedCount(out int count) && count == 1)
+#else
+        if (targets is ICollection<ExecutorBinding> { Count: 1 })
+#endif
         {
             return builder.AddEdge(source, Throw.IfNull(targets.First(), nameof(targets)), predicate);
         }
