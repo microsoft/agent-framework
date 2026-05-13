@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -58,10 +57,9 @@ public static class WorkflowBuilderExtensions
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
-        Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>(IsAllowedTypeAndMatchingCondition)!;
-        List<ExecutorBinding> targetList = targets.Select(target => Throw.IfNull(target, nameof(targets))).ToList();
+        List<ExecutorBinding> targetList = ValidateTargets(targets);
 
         if (targetList.Count == 1)
         {
@@ -102,10 +100,9 @@ public static class WorkflowBuilderExtensions
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
-        Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
-        List<ExecutorBinding> targetList = targets.Select(target => Throw.IfNull(target, nameof(targets))).ToList();
+        List<ExecutorBinding> targetList = ValidateTargets(targets);
 
         if (targetList.Count == 1)
         {
@@ -117,6 +114,25 @@ public static class WorkflowBuilderExtensions
         // The reason we can check for "null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
         static bool IsAllowedType(object? message) => message is null;
+    }
+
+    private static List<ExecutorBinding> ValidateTargets(IEnumerable<ExecutorBinding> targets)
+    {
+        Throw.IfNull(targets);
+
+        List<ExecutorBinding> targetList = [];
+        foreach (ExecutorBinding? target in targets)
+        {
+            if (target is null)
+            {
+                throw new ArgumentNullException(nameof(targets), "Targets collection cannot contain null elements.");
+            }
+
+            targetList.Add(target);
+        }
+
+        Throw.IfNullOrEmpty(targetList, nameof(targets));
+        return targetList;
     }
 
     /// <summary>
