@@ -137,18 +137,12 @@ internal sealed class MessageMerger
 
         UsageDetails? usage = null;
         AdditionalPropertiesDictionary? additionalProperties = null;
-        HashSet<DateTimeOffset> createdTimes = [];
 
         foreach (AgentResponse response in responses.Values)
         {
             if (response.AgentId is not null)
             {
                 agentIds.Add(response.AgentId);
-            }
-
-            if (response.CreatedAt.HasValue)
-            {
-                createdTimes.Add(response.CreatedAt.Value);
             }
 
             if (response.FinishReason.HasValue)
