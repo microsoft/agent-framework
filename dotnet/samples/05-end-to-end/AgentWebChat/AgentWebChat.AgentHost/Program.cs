@@ -28,6 +28,10 @@ builder.AddDevUI();
 builder.AddOpenAIChatCompletions();
 builder.AddOpenAIResponses();
 
+// When running in production, make sure to use an SessionIsolationKeyProvider, e.g. ClaimsIdentity-based
+// if using Claims-based Identity for Authentication/Authorization
+// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+
 var pirateAgentBuilder = builder.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
@@ -147,6 +151,10 @@ builder.Services.AddKeyedSingleton<AIAgent>("my-di-matchingname-agent", (sp, nam
 
 pirateAgentBuilder.AddA2AServer();
 knightsKnavesAgentBuilder.AddA2AServer();
+
+// When running in production, make sure to use an SessionIsolationKeyProvider, e.g. ClaimsIdentity-based
+// if using Claims-based Identity for Authentication/Authorization
+// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 var app = builder.Build();
 
