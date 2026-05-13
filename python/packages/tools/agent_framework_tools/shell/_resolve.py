@@ -24,12 +24,18 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
     2. ``AGENT_FRAMEWORK_SHELL`` environment variable.
     3. Platform default.
 
+    When ``interactive=False`` (stateless mode), the returned argv is
+    guaranteed to end with a ``-c`` (POSIX) or ``-Command`` (PowerShell)
+    flag so the caller can append a command string verbatim. Overrides
+    that already include the flag are left as-is.
+
     Args:
         shell: Optional override supplied by the caller.
         interactive: When ``True`` (persistent mode), the returned argv is
             suitable for a long-lived session that reads commands from
             ``stdin``. When ``False`` (stateless mode), the caller will
-            append a ``-c``/``-Command`` flag + command to this argv.
+            append a command string to this argv (so the argv must end
+            with ``-c`` / ``-Command``).
     """
     if shell is not None:
         if isinstance(shell, str):
@@ -38,11 +44,11 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
             parts = shlex.split(shell)
             if not parts:
                 raise ShellExecutionError("shell override must not be empty")
-            return parts
-        resolved = list(shell)
-        if not resolved:
-            raise ShellExecutionError("shell override must not be empty")
-        return resolved
+        else:
+            parts = list(shell)
+            if not parts:
+                raise ShellExecutionError("shell override must not be empty")
+        return parts if interactive else _ensure_command_flag(parts)
 
     env_override = os.environ.get(_ENV_OVERRIDE)
     if env_override:
@@ -50,7 +56,7 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
 
         parts = shlex.split(env_override)
         if parts:
-            return parts
+            return parts if interactive else _ensure_command_flag(parts)
 
     if sys.platform == "win32":
         binary = shutil.which("pwsh") or shutil.which("powershell")
@@ -81,3 +87,25 @@ def is_powershell(argv: Sequence[str]) -> bool:
         return False
     name = os.path.basename(argv[0]).lower()
     return name in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
+
+
+def _ensure_command_flag(argv: list[str]) -> list[str]:
+    """Append the right ``-c`` / ``-Command`` flag for stateless argv.
+
+    The caller (``run_stateless``) appends the user's command string
+    verbatim to this argv. If a user-supplied override omits the
+    ``-c`` / ``-Command`` flag, the command would be misinterpreted
+    (POSIX shells treat the next positional arg as a script file
+    path). This helper normalises overrides so they execute correctly
+    in stateless mode.
+    """
+    if not argv:
+        return argv
+    last = argv[-1].lower()
+    if is_powershell(argv):
+        if last in {"-command", "-c"}:
+            return argv
+        return [*argv, "-Command"]
+    if last == "-c":
+        return argv
+    return [*argv, "-c"]

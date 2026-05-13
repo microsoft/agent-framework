@@ -46,8 +46,18 @@ class ShellExecutor(Protocol):
     async def close(self) -> None:
         """Tear down all backend resources. Idempotent."""
 
-    async def run(self, command: str) -> ShellResult:
-        """Execute ``command`` and return its result."""
+    async def run(self, command: str, *, timeout: float | None = None) -> ShellResult:
+        """Execute ``command`` and return its result.
+
+        Args:
+            command: The shell command to execute.
+            timeout: Optional per-call timeout in seconds. When ``None``,
+                the executor uses its configured default. Implementations
+                **must** enforce this timeout cancellation-safely (e.g.
+                kill the subprocess or tear down the session on timeout)
+                so callers can rely on the timeout to bound execution
+                without leaking processes on cancellation.
+        """
         ...
 
     async def __aenter__(self) -> ShellExecutor: ...

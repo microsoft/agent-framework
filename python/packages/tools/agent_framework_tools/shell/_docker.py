@@ -363,8 +363,17 @@ class DockerShellTool:
 
     # ------------------------------------------------------------------ execution
 
-    async def run(self, command: str) -> ShellResult:
-        """Execute ``command`` inside the container and return its result."""
+    async def run(self, command: str, *, timeout: float | None = None) -> ShellResult:
+        """Execute ``command`` inside the container and return its result.
+
+        Args:
+            command: Shell command to execute.
+            timeout: Optional per-call timeout in seconds overriding the
+                tool's configured default. Enforced inside the executor
+                (kills the container / interrupts the bash REPL) so the
+                caller does not need to wrap the call in
+                :func:`asyncio.wait_for`.
+        """
         request = ShellRequest(command=command, workdir=self._workdir)
         decision = self._policy.evaluate(request)
         if decision.decision == "deny":
@@ -375,18 +384,20 @@ class DockerShellTool:
             except Exception:
                 logger.exception("on_command hook raised")
 
+        effective_timeout = self._timeout if timeout is None else timeout
+
         if self._mode == "persistent":
             if self._session is None:
                 await self.start()
             if self._session is None:
                 raise RuntimeError("DockerShellTool session failed to start")
-            return await self._session.run(command, timeout=self._timeout)
+            return await self._session.run(command, timeout=effective_timeout)
 
-        return await self._run_stateless(command)
+        return await self._run_stateless(command, timeout=effective_timeout)
 
     # ------------------------------------------------------------------ stateless
 
-    async def _run_stateless(self, command: str) -> ShellResult:
+    async def _run_stateless(self, command: str, *, timeout: float | None) -> ShellResult:
         """Run a single command in a fresh ``docker run --rm`` container."""
         per_call_name = f"af-shell-{secrets.token_hex(6)}"
         argv = [
@@ -431,7 +442,7 @@ class DockerShellTool:
         )
         timed_out = False
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             timed_out = True
             # Kill the container by name; --rm reaps it.

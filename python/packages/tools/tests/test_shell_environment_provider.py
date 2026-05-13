@@ -42,14 +42,27 @@ class _FakeExecutor:
     async def __aexit__(self, *_: object) -> None:
         await self.close()
 
-    async def run(self, command: str) -> ShellResult:
+    async def run(self, command: str, *, timeout: float | None = None) -> ShellResult:
         self.run_calls.append(command)
         for prefix, response in self._responses.items():
             if command.startswith(prefix) or prefix in command:
                 if isinstance(response, Exception):
                     raise response
                 if isinstance(response, (int, float)):
-                    await asyncio.sleep(float(response))
+                    # Honor timeout in the fake the same way a real executor
+                    # is required to: stop sleeping when timeout elapses and
+                    # report a timed-out result rather than blocking forever.
+                    sleep_for = float(response)
+                    if timeout is not None and sleep_for > timeout:
+                        await asyncio.sleep(timeout)
+                        return ShellResult(
+                            stdout="",
+                            stderr="",
+                            exit_code=124,
+                            duration_ms=0,
+                            timed_out=True,
+                        )
+                    await asyncio.sleep(sleep_for)
                     return ShellResult(stdout="", stderr="", exit_code=0, duration_ms=0)
                 return response
         return ShellResult(stdout="", stderr="", exit_code=127, duration_ms=0)
@@ -202,7 +215,7 @@ async def test_failed_probe_does_not_poison_subsequent_calls() -> None:
 
         async def __aexit__(self, *_: object) -> None: ...
 
-        async def run(self, command: str) -> ShellResult:
+        async def run(self, command: str, *, timeout: float | None = None) -> ShellResult:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("transient")
@@ -235,7 +248,7 @@ async def test_concurrent_first_callers_share_a_single_probe() -> None:
             return self
 
         async def __aexit__(self, *_: object) -> None: ...
-        async def run(self, command: str) -> ShellResult:
+        async def run(self, command: str, *, timeout: float | None = None) -> ShellResult:
             if command.startswith("echo"):
                 call_count["n"] += 1
                 started.set()

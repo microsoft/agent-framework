@@ -237,10 +237,7 @@ class ShellEnvironmentProvider(ContextProvider):
 
     async def _run_probe(self, command: str) -> ShellResult | None:
         try:
-            return await asyncio.wait_for(
-                self._executor.run(command),
-                timeout=self._options.probe_timeout,
-            )
+            return await self._executor.run(command, timeout=self._options.probe_timeout)
         except asyncio.TimeoutError:
             return None
         except (ShellCommandError, ShellExecutionError, ShellTimeoutError):

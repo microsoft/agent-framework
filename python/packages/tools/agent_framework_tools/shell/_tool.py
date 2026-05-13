@@ -227,12 +227,22 @@ class LocalShellTool:
 
     # ------------------------------------------------------------------ core run
 
-    async def run(self, command: str) -> ShellResult:
+    async def run(self, command: str, *, timeout: float | None = None) -> ShellResult:
         """Execute ``command`` directly and return its :class:`ShellResult`.
 
         Applies policy and the audit hook, but **not** approval (that is
         handled by the framework when this tool is wrapped via
         :meth:`as_function`).
+
+        Args:
+            command: The shell command to execute.
+            timeout: Optional per-call timeout in seconds that overrides
+                the tool's configured default. When ``None``, the tool's
+                ``timeout`` setting is used. The timeout is enforced
+                inside the executor (the subprocess is killed / the
+                persistent session tears down the command on timeout)
+                so callers do not need to wrap this call in
+                :func:`asyncio.wait_for`.
         """
         request = ShellRequest(command=command, workdir=self._workdir)
         decision = self._policy.evaluate(request)
@@ -244,20 +254,22 @@ class LocalShellTool:
             except Exception:
                 logger.exception("on_command hook raised")
 
+        effective_timeout = self._timeout if timeout is None else timeout
+
         if self._mode == "persistent":
             if self._session is None:
                 await self.start()
             if self._session is None:
                 raise RuntimeError("LocalShellTool session failed to start")
             effective = self._maybe_reanchor(command)
-            return await self._session.run(effective, timeout=self._timeout)
+            return await self._session.run(effective, timeout=effective_timeout)
 
         return await run_stateless(
             self._stateless_argv,
             command,
             workdir=self._workdir,
             env=self._env,
-            timeout=self._timeout,
+            timeout=effective_timeout,
             max_output_bytes=self._max_output_bytes,
         )
 
