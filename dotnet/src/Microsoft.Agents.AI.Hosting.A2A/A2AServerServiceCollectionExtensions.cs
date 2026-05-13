@@ -140,9 +140,17 @@ public static class A2AServerServiceCollectionExtensions
             var agentSessionStore = serviceProvider.GetKeyedService<AgentSessionStore>(agent.Name);
             var runMode = options?.AgentRunMode ?? AgentRunMode.DisallowBackground;
 
+            // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
+            var isolationKeyProvider = serviceProvider.GetService<SessionIsolationKeyProvider>();
+            if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
+            {
+                agentSessionStore ??= new InMemoryAgentSessionStore();
+                agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new());
+            }
+
             var hostAgent = new AIHostAgent(
                 innerAgent: agent,
-                sessionStore: agentSessionStore ?? new InMemoryAgentSessionStore());
+                sessionStore: agentSessionStore);
 
             agentHandler = new A2AAgentHandler(hostAgent, runMode);
         }
