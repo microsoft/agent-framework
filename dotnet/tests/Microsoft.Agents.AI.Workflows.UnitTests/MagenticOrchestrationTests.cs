@@ -816,6 +816,59 @@ public class MagenticOrchestrationTests
         runResult.Result![0].Text.Should().Contain("Recovered after max retries reset");
     }
 
+    [Fact]
+    public async Task Stall_NoProgress_Increments_StallCount()
+    {
+        // Arrange: MaxStallCount=1, progress ledger reports IsProgressBeingMade=false (not IsInLoop).
+        // This exercises the alternative stall trigger: !IsProgressBeingMade.
+        // Flow: facts1, plan1 → ledger1(IsProgressBeingMade=false) → StallCount=1 → IsStalled → Reset
+        //       → facts2, plan2 (replan) → ledger2(satisfied) → finalAnswer
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Initial plan");
+        List<ChatMessage> noProgressLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,           // Not in loop
+            isProgressBeingMade: false, // But no progress → stall
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Keep trying");
+
+        // After reset: ResetAndReplanAsync → UpdatePlanAndDelegateAsync → new plan
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Fresh facts after no-progress reset");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Fresh plan after no-progress reset");
+        List<ChatMessage> satisfiedLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Recovered after no-progress stall");
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, noProgressLedger,
+             factsResponse2, planResponse2, satisfiedLedger, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .WithMaxStalls(1)
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do task")],
+            eventCollector: collectedEvents);
+
+        // Assert: Stall detected via no-progress, reset triggered, replan emitted, workflow completes
+        collectedEvents.OfType<MagenticReplannedEvent>().Should().NotBeEmpty("no-progress stall triggers reset and replan");
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Recovered after no-progress stall");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
