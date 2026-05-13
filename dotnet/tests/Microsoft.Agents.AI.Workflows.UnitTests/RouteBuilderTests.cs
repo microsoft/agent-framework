@@ -206,7 +206,7 @@ public sealed class RouteBuilderTests
         routeBuilder.AddHandlerUntyped(typeof(string), (message, context, token) =>
         {
             voidInvocation.Capture(message, context, token);
-            return ValueTask.CompletedTask;
+            return default;
         });
         routeBuilder.AddHandlerUntyped<int>(typeof(int), (message, context, token) =>
         {
@@ -334,7 +334,7 @@ public sealed class RouteBuilderTests
         RouteBuilder routeBuilder = new(null);
 
         // Act
-        Action act = () => routeBuilder.AddPortHandler<string, int>("port", (response, context, cancellationToken) => ValueTask.CompletedTask, out _);
+        Action act = () => routeBuilder.AddPortHandler<string, int>("port", (response, context, cancellationToken) => default, out _);
 
         // Assert
         act.Should().Throw<InvalidOperationException>()
@@ -351,7 +351,7 @@ public sealed class RouteBuilderTests
         routeBuilder.AddPortHandler<string, int>("port", (response, context, cancellationToken) =>
         {
             invocation.Capture(response, context, cancellationToken);
-            return ValueTask.CompletedTask;
+            return default;
         }, out PortBinding portBinding);
         await portBinding.PostRequestAsync("request", requestId: "req-1");
         MessageRouter router = routeBuilder.Build();
@@ -380,7 +380,7 @@ public sealed class RouteBuilderTests
         // Arrange
         TestExternalRequestContext externalRequestContext = new();
         RouteBuilder routeBuilder = new(externalRequestContext);
-        routeBuilder.AddPortHandler<string, int>("port", (response, context, cancellationToken) => ValueTask.CompletedTask, out _);
+        routeBuilder.AddPortHandler<string, int>("port", (response, context, cancellationToken) => default, out _);
         MessageRouter router = routeBuilder.Build();
         ExternalRequest request = ExternalRequest.Create(RequestPort.Create<string, int>("other"), "request", requestId: "req-1");
 
@@ -408,14 +408,14 @@ public sealed class RouteBuilderTests
                 routeBuilder.AddHandler<string>((message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
-                    return ValueTask.CompletedTask;
+                    return default;
                 });
                 break;
             case HandlerOverload.AsyncWithoutCancellation:
                 routeBuilder.AddHandler<string>((message, context) =>
                 {
                     invocation.Capture(message, context);
-                    return ValueTask.CompletedTask;
+                    return default;
                 });
                 break;
             default:
@@ -445,7 +445,7 @@ public sealed class RouteBuilderTests
                 Func<string, IWorkflowContext, CancellationToken, ValueTask<string>> asyncHandlerWithCancellation = (message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
-                    return ValueTask.FromResult(NormalizeHandlerResult(message));
+                    return new ValueTask<string>(NormalizeHandlerResult(message));
                 };
                 routeBuilder.AddHandler<string, string>(asyncHandlerWithCancellation);
                 break;
@@ -453,7 +453,7 @@ public sealed class RouteBuilderTests
                 Func<string, IWorkflowContext, ValueTask<string>> asyncHandler = (message, context) =>
                 {
                     invocation.Capture(message, context);
-                    return ValueTask.FromResult(NormalizeHandlerResult(message));
+                    return new ValueTask<string>(NormalizeHandlerResult(message));
                 };
                 routeBuilder.AddHandler<string, string>(asyncHandler);
                 break;
@@ -476,14 +476,14 @@ public sealed class RouteBuilderTests
                 routeBuilder.AddCatchAll((message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
-                    return ValueTask.CompletedTask;
+                    return default;
                 });
                 break;
             case HandlerOverload.AsyncWithoutCancellation:
                 routeBuilder.AddCatchAll((message, context) =>
                 {
                     invocation.Capture(message, context);
-                    return ValueTask.CompletedTask;
+                    return default;
                 });
                 break;
             default:
@@ -513,7 +513,7 @@ public sealed class RouteBuilderTests
                 Func<PortableValue, IWorkflowContext, CancellationToken, ValueTask<string>> asyncCatchAllWithCancellation = (message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
-                    return ValueTask.FromResult(NormalizeCatchAllResult(message));
+                    return new ValueTask<string>(NormalizeCatchAllResult(message));
                 };
                 routeBuilder.AddCatchAll<string>(asyncCatchAllWithCancellation);
                 break;
@@ -521,7 +521,7 @@ public sealed class RouteBuilderTests
                 Func<PortableValue, IWorkflowContext, ValueTask<string>> asyncCatchAll = (message, context) =>
                 {
                     invocation.Capture(message, context);
-                    return ValueTask.FromResult(NormalizeCatchAllResult(message));
+                    return new ValueTask<string>(NormalizeCatchAllResult(message));
                 };
                 routeBuilder.AddCatchAll<string>(asyncCatchAll);
                 break;
