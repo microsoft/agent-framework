@@ -92,6 +92,9 @@ class ShellPolicy:
     allowlist: Sequence[PatternLike] | None = None
     custom: Callable[[ShellRequest], ShellDecision | None] | None = None
 
+    _denies: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
+    _allows: tuple[re.Pattern[str], ...] | None = field(init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         self._denies = _compile_patterns(self.denylist)
         self._allows = _compile_patterns(self.allowlist) if self.allowlist is not None else None

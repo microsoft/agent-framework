@@ -41,12 +41,23 @@ def _quote_powershell(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-_DEFAULT_DESCRIPTION = (
+_PERSISTENT_DESCRIPTION = (
     "Execute a single shell command on the local machine and return its "
     "stdout, stderr, and exit code. Commands run in a persistent session so "
     "`cd` and environment variables from previous calls are preserved. "
     "Approval is required by default."
 )
+
+_STATELESS_DESCRIPTION = (
+    "Execute a single shell command on the local machine and return its "
+    "stdout, stderr, and exit code. Each command runs in a fresh subprocess, "
+    "so `cd` and environment variables do not persist between calls. "
+    "Approval is required by default."
+)
+
+
+def _default_description(mode: ShellMode) -> str:
+    return _PERSISTENT_DESCRIPTION if mode == "persistent" else _STATELESS_DESCRIPTION
 
 
 class LocalShellTool:
@@ -87,8 +98,9 @@ class LocalShellTool:
             ``powershell`` on Windows, ``bash`` or ``sh`` on Unix). May also
             be overridden via the ``AGENT_FRAMEWORK_SHELL`` env var.
         workdir: Working directory for commands. Defaults to the current
-            working directory. In persistent mode, ``cd`` outside this
-            directory is blocked when ``confine_workdir=True``.
+            working directory. In persistent mode, each command is
+            re-anchored to this directory when ``confine_workdir=True`` —
+            see that argument for the exact semantics and caveats.
         confine_workdir: When ``True`` (default), each command in persistent
             mode is prefixed with a ``cd`` back into ``workdir`` so
             ``cd``-wandering in one call does not leak to the next. This is
@@ -270,11 +282,12 @@ class LocalShellTool:
                 return str(exc)
             return result.format_for_model()
 
-        _run_shell.__doc__ = description or _DEFAULT_DESCRIPTION
+        effective_description = description or _default_description(self._mode)
+        _run_shell.__doc__ = effective_description
         return tool(
             func=_run_shell,
             name=name,
-            description=description or _DEFAULT_DESCRIPTION,
+            description=effective_description,
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
         )

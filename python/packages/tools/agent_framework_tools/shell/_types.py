@@ -36,9 +36,11 @@ class ShellResult:
         """Format the result as a single text block suitable for an LLM."""
         parts: list[str] = []
         if self.stdout:
-            parts.append(self.stdout if not self.truncated else f"{self.stdout}\n[stdout truncated]")
+            parts.append(self.stdout)
         if self.stderr:
             parts.append(f"stderr: {self.stderr}")
+        if self.truncated:
+            parts.append("[output truncated]")
         if self.timed_out:
             parts.append("[command timed out]")
         parts.append(f"exit_code: {self.exit_code}")

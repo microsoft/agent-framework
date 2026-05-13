@@ -181,12 +181,23 @@ def build_exec_argv(
 # ---------------------------------------------------------------------------
 
 
-_DEFAULT_DESCRIPTION = (
+_PERSISTENT_DESCRIPTION = (
     "Execute a single shell command inside an isolated Docker container "
     "and return its stdout, stderr, and exit code. Commands run in a "
     "persistent session so `cd` and environment variables from previous "
     "calls are preserved within the container."
 )
+
+_STATELESS_DESCRIPTION = (
+    "Execute a single shell command inside an isolated Docker container "
+    "and return its stdout, stderr, and exit code. Each command runs in a "
+    "fresh container, so `cd` and environment variables do not persist "
+    "between calls."
+)
+
+
+def _default_description(mode: ShellMode) -> str:
+    return _PERSISTENT_DESCRIPTION if mode == "persistent" else _STATELESS_DESCRIPTION
 
 
 class DockerShellTool:
@@ -521,11 +532,12 @@ class DockerShellTool:
                 return str(exc)
             return result.format_for_model()
 
-        _run_shell.__doc__ = description or _DEFAULT_DESCRIPTION
+        effective_description = description or _default_description(self._mode)
+        _run_shell.__doc__ = effective_description
         return tool(
             func=_run_shell,
             name=name,
-            description=description or _DEFAULT_DESCRIPTION,
+            description=effective_description,
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
         )

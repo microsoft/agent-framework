@@ -28,8 +28,20 @@ def test_format_stdout_only() -> None:
 
 def test_format_stdout_truncated_appends_marker() -> None:
     text = _make(stdout="part", truncated=True).format_for_model()
-    assert "[stdout truncated]" in text
+    assert "[output truncated]" in text
     assert text.startswith("part")
+
+
+def test_format_stderr_only_truncated_marker() -> None:
+    text = _make(stderr="boom", truncated=True, exit_code=1).format_for_model()
+    assert "[output truncated]" in text
+    assert "stderr: boom" in text
+
+
+def test_format_truncated_with_empty_streams() -> None:
+    text = _make(truncated=True).format_for_model()
+    assert "[output truncated]" in text
+    assert "exit_code: 0" in text
 
 
 def test_format_stderr_prefixed() -> None:
@@ -59,7 +71,7 @@ def test_format_combines_all_signals_in_order() -> None:
     ).format_for_model()
     lines = text.split("\n")
     assert lines[0] == "out"
-    assert lines[1] == "[stdout truncated]"
-    assert lines[2] == "stderr: err"
+    assert lines[1] == "stderr: err"
+    assert lines[2] == "[output truncated]"
     assert lines[3] == "[command timed out]"
     assert lines[4] == "exit_code: 2"

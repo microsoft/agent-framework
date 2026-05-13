@@ -35,7 +35,10 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
         if isinstance(shell, str):
             import shlex
 
-            return shlex.split(shell) or [shell]
+            parts = shlex.split(shell)
+            if not parts:
+                raise ShellExecutionError("shell override must not be empty")
+            return parts
         resolved = list(shell)
         if not resolved:
             raise ShellExecutionError("shell override must not be empty")

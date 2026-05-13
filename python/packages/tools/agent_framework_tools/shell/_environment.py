@@ -202,7 +202,7 @@ class ShellEnvironmentProvider(ContextProvider):
                 'Write-Output ("CWD=" + (Get-Location).Path)'
             )
         else:
-            command = 'echo "VERSION=${BASH_VERSION:-${ZSH_VERSION:-unknown}}"; echo "CWD=$PWD"'
+            command = 'echo "VERSION=${BASH_VERSION:-${ZSH_VERSION:-unknown}}"; echo "CWD=$(pwd)"'
 
         result = await self._run_probe(command)
         if result is None:
