@@ -143,6 +143,45 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
+    public async Task NextSpeaker_Invalid_Triggers_FinalAnswer()
+    {
+        // Arrange: ProgressLedger returns invalid next_speaker
+        List<ChatMessage> factsResponse = CreatePlanResponse("Facts about the task");
+        List<ChatMessage> planResponse = CreatePlanResponse("Step 1: Execute");
+        List<ChatMessage> invalidNextSpeakerLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "NonExistentAgent",  // Invalid - doesn't match any team member
+            instructionOrQuestion: "Continue");
+        List<ChatMessage> finalAnswer = CreateFinalAnswerResponse("Forced to conclude due to invalid speaker");
+
+        TestReplayAgent manager = new(
+            [factsResponse, planResponse, invalidNextSpeakerLedger, finalAnswer],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do task")],
+            eventCollector: collectedEvents);
+
+        // Assert: Warning should be emitted and final answer prepared
+        collectedEvents.OfType<WorkflowWarningEvent>()
+            .Should().Contain(e => e.Data != null && e.Data.ToString()!.Contains("Invalid next speaker"));
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Forced to conclude");
+    }
+
+    [Fact]
     public async Task ProgressLedger_Updated_Event_Emitted()
     {
         // Arrange
