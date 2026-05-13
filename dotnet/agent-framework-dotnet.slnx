@@ -1,4 +1,4 @@
-<Solution>
+﻿<Solution>
   <Configurations>
     <BuildType Name="Debug" />
     <BuildType Name="Publish" />
@@ -278,6 +278,7 @@
   </Folder>
   <Folder Name="/Samples/03-workflows/Orchestration/">
     <Project Path="samples/03-workflows/Orchestration/Handoff/Handoff.csproj" />
+    <Project Path="samples/03-workflows/Orchestration/Magentic/Magentic.csproj" />
   </Folder>
   <Folder Name="/Samples/03-workflows/Observability/">
     <Project Path="samples/03-workflows/Observability/ApplicationInsights/ApplicationInsights.csproj" />
