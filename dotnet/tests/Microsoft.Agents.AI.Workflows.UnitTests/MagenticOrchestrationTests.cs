@@ -259,6 +259,58 @@ public class MagenticOrchestrationTests
         runResult.Result![0].Text.Should().Contain("Immediate completion");
     }
 
+    [Fact]
+    public async Task NextSpeaker_Empty_Falls_Back_To_First()
+    {
+        // Arrange: First progress ledger returns empty next_speaker, which should fall back to first participant.
+        // Round 1: empty speaker → fallback to Worker (first participant) → Worker echoes
+        // Round 2 (after Worker responds, TakeTurnAsync re-enters): new plan + satisfied ledger → final answer
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Facts about the task");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Step 1: Execute");
+        List<ChatMessage> emptyNextSpeakerLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "",  // Empty - should fall back to first participant
+            instructionOrQuestion: "Please help with this task");
+
+        // Round 2 responses (after Worker echoes back, orchestrator re-enters TakeTurnAsync → UpdatePlanAndDelegateAsync)
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Updated facts");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Updated plan");
+        List<ChatMessage> satisfiedLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Task completed after fallback");
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, emptyNextSpeakerLedger,
+             factsResponse2, planResponse2, satisfiedLedger, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do the task")],
+            eventCollector: collectedEvents);
+
+        // Assert: Warning about empty next speaker should be emitted
+        collectedEvents.OfType<WorkflowWarningEvent>()
+            .Should().Contain(e => e.Data != null && e.Data.ToString()!.Contains("empty"));
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Task completed after fallback");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
