@@ -315,7 +315,8 @@ public class MagenticOrchestrationTests
     public async Task Task_Completes_After_Multiple_Rounds()
     {
         // Arrange: Round 1 delegates to Worker (not satisfied), round 2 completes
-        // Manager turn sequence: facts1, plan1, ledger1(not satisfied), facts2, plan2, ledger2(satisfied), finalAnswer
+        // Manager turn sequence: facts1, plan1, ledger1(not satisfied), ledger2(satisfied), finalAnswer
+        // Note: No replan on agent return — only progress ledger is created on subsequent turns.
         List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
         List<ChatMessage> planResponse1 = CreatePlanResponse("Step 1: Delegate to worker");
         List<ChatMessage> round1Ledger = CreateProgressLedgerResponse(
@@ -325,8 +326,6 @@ public class MagenticOrchestrationTests
             nextSpeaker: "Worker",
             instructionOrQuestion: "Please work on the task");
 
-        List<ChatMessage> factsResponse2 = CreatePlanResponse("Updated facts after worker input");
-        List<ChatMessage> planResponse2 = CreatePlanResponse("Updated plan after worker input");
         List<ChatMessage> round2Ledger = CreateProgressLedgerResponse(
             isRequestSatisfied: true,
             isInLoop: false,
@@ -337,7 +336,7 @@ public class MagenticOrchestrationTests
 
         TestReplayAgent manager = new(
             [factsResponse1, planResponse1, round1Ledger,
-             factsResponse2, planResponse2, round2Ledger, finalAnswerResponse],
+             round2Ledger, finalAnswerResponse],
             name: "Manager");
         TestEchoAgent worker = new(name: "Worker");
 
@@ -354,8 +353,10 @@ public class MagenticOrchestrationTests
             [new ChatMessage(ChatRole.User, "Complex multi-round task")],
             eventCollector: collectedEvents);
 
-        // Assert: Two plan created/replanned events (one per TakeTurn), two progress ledger events, final answer
+        // Assert: One plan created, one progress ledger per round, final answer
         collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(2);
+        collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().ContainSingle("only one initial plan, no replan on agent return");
+        collectedEvents.OfType<MagenticReplannedEvent>().Should().BeEmpty("no replan occurs on normal agent return");
         runResult.Result.Should().NotBeNull();
         runResult.Result![0].Text.Should().Contain("Multi-round task completed!");
     }
@@ -443,7 +444,7 @@ public class MagenticOrchestrationTests
     public async Task MaxRoundLimit_Terminates_Workflow()
     {
         // Arrange: MaxRounds=1, so round 1 delegates to Worker, round 2 hits limit and terminates.
-        // Manager turns: facts1, plan1, ledger1(not satisfied→delegates), facts2, plan2 (re-entry), then limit hit before ledger.
+        // Manager turns: facts1, plan1, ledger1(not satisfied→delegates), then limit hit before ledger.
         List<ChatMessage> factsResponse1 = CreatePlanResponse("Facts");
         List<ChatMessage> planResponse1 = CreatePlanResponse("Plan");
         List<ChatMessage> round1Ledger = CreateProgressLedgerResponse(
@@ -453,13 +454,10 @@ public class MagenticOrchestrationTests
             nextSpeaker: "Worker",
             instructionOrQuestion: "Work on it");
 
-        // Round 2 re-entry: TakeTurnAsync calls UpdatePlanAndDelegateAsync → needs facts + plan
-        List<ChatMessage> factsResponse2 = CreatePlanResponse("Updated facts");
-        List<ChatMessage> planResponse2 = CreatePlanResponse("Updated plan");
         // No more turns needed: RunCoordinationRoundAsync hits round limit before calling UpdateProgressLedgerAsync
 
         TestReplayAgent manager = new(
-            [factsResponse1, planResponse1, round1Ledger, factsResponse2, planResponse2],
+            [factsResponse1, planResponse1, round1Ledger],
             name: "Manager");
         TestEchoAgent worker = new(name: "Worker");
 
@@ -482,7 +480,7 @@ public class MagenticOrchestrationTests
     [Fact]
     public async Task MaxStallCount_Triggers_Reset()
     {
-        // Arrange: MaxStallCount=1, so one stall (isInLoop=true) triggers ResetAndReplanAsync.
+        // Arrange: MaxStallCount=0, so one stall (isInLoop=true, StallCount=1 > 0) triggers ResetAndReplanAsync.
         // Flow: facts1, plan1 → round1 ledger(stall: isInLoop=true) → StallCount=1 → IsStalled → Reset
         //       → facts2, plan2 (replan) → round2 ledger(satisfied) → finalAnswer
         List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
@@ -516,7 +514,7 @@ public class MagenticOrchestrationTests
         Workflow workflow = new MagenticWorkflowBuilder(manager)
             .AddParticipants(worker)
             .RequirePlanSignoff(false)
-            .WithMaxStalls(1)  // One stall triggers reset
+            .WithMaxStalls(0)  // One stall triggers reset (StallCount 1 > 0)
             .Build();
 
         // Act
@@ -547,9 +545,7 @@ public class MagenticOrchestrationTests
             nextSpeaker: "Worker",
             instructionOrQuestion: "Please analyze the data carefully");
 
-        // Round 2 after Worker responds
-        List<ChatMessage> factsResponse2 = CreatePlanResponse("Updated facts");
-        List<ChatMessage> planResponse2 = CreatePlanResponse("Updated plan");
+        // Round 2 after Worker responds (no replan, just progress ledger)
         List<ChatMessage> satisfiedLedger = CreateProgressLedgerResponse(
             isRequestSatisfied: true,
             isInLoop: false,
@@ -560,7 +556,7 @@ public class MagenticOrchestrationTests
 
         TestReplayAgent manager = new(
             [factsResponse1, planResponse1, ledgerWithInstruction,
-             factsResponse2, planResponse2, satisfiedLedger, finalAnswerResponse],
+             satisfiedLedger, finalAnswerResponse],
             name: "Manager");
         TestEchoAgent worker = new(name: "Worker");
 
@@ -623,7 +619,7 @@ public class MagenticOrchestrationTests
         Workflow workflow = new MagenticWorkflowBuilder(manager)
             .AddParticipants(worker)
             .RequirePlanSignoff(true)
-            .WithMaxStalls(1)
+            .WithMaxStalls(0)
             .Build();
 
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
@@ -708,7 +704,7 @@ public class MagenticOrchestrationTests
         Workflow workflow = new MagenticWorkflowBuilder(manager)
             .AddParticipants(worker)
             .RequirePlanSignoff(false)
-            .WithMaxStalls(1)   // One stall triggers reset
+            .WithMaxStalls(0)   // One stall triggers reset (StallCount 1 > 0)
             .WithMaxResets(1)   // One reset triggers termination
             .Build();
 
@@ -821,9 +817,9 @@ public class MagenticOrchestrationTests
     [Fact]
     public async Task Stall_NoProgress_Increments_StallCount()
     {
-        // Arrange: MaxStallCount=1, progress ledger reports IsProgressBeingMade=false (not IsInLoop).
+        // Arrange: MaxStallCount=0, progress ledger reports IsProgressBeingMade=false (not IsInLoop).
         // This exercises the alternative stall trigger: !IsProgressBeingMade.
-        // Flow: facts1, plan1 → ledger1(IsProgressBeingMade=false) → StallCount=1 → IsStalled → Reset
+        // Flow: facts1, plan1 → ledger1(IsProgressBeingMade=false) → StallCount=1 > 0 → IsStalled → Reset
         //       → facts2, plan2 (replan) → ledger2(satisfied) → finalAnswer
         List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
         List<ChatMessage> planResponse1 = CreatePlanResponse("Initial plan");
@@ -856,7 +852,7 @@ public class MagenticOrchestrationTests
         Workflow workflow = new MagenticWorkflowBuilder(manager)
             .AddParticipants(worker)
             .RequirePlanSignoff(false)
-            .WithMaxStalls(1)
+            .WithMaxStalls(0)
             .Build();
 
         // Act
@@ -877,7 +873,7 @@ public class MagenticOrchestrationTests
         // Arrange: Two participants (WorkerA, WorkerB). Manager selects "WorkerA" as next speaker.
         // We verify that WorkerA produces a response update event and WorkerB does not.
         // Flow: facts1, plan1 → ledger1(nextSpeaker=WorkerA, not satisfied) → WorkerA runs
-        //       → TakeTurnAsync re-enters → facts2, plan2 → ledger2(satisfied) → finalAnswer
+        //       → RunCoordinationRoundAsync (no replan) → ledger2(satisfied) → finalAnswer
         List<ChatMessage> factsResponse1 = CreatePlanResponse("Task delegation facts");
         List<ChatMessage> planResponse1 = CreatePlanResponse("Delegate to WorkerA");
         List<ChatMessage> ledger1 = CreateProgressLedgerResponse(
@@ -887,9 +883,7 @@ public class MagenticOrchestrationTests
             nextSpeaker: "WorkerA",
             instructionOrQuestion: "WorkerA please handle this");
 
-        // After WorkerA responds, orchestrator re-enters TakeTurnAsync → UpdatePlanAndDelegateAsync
-        List<ChatMessage> factsResponse2 = CreatePlanResponse("Updated facts after WorkerA");
-        List<ChatMessage> planResponse2 = CreatePlanResponse("Updated plan after WorkerA");
+        // After WorkerA responds, orchestrator goes directly to RunCoordinationRoundAsync (no replan)
         List<ChatMessage> ledger2 = CreateProgressLedgerResponse(
             isRequestSatisfied: true,
             isInLoop: false,
@@ -900,7 +894,7 @@ public class MagenticOrchestrationTests
 
         TestReplayAgent manager = new(
             [factsResponse1, planResponse1, ledger1,
-             factsResponse2, planResponse2, ledger2, finalAnswerResponse],
+             ledger2, finalAnswerResponse],
             name: "Manager");
         TestEchoAgent workerA = new(name: "WorkerA", prefix: "[A] ");
         TestEchoAgent workerB = new(name: "WorkerB", prefix: "[B] ");
@@ -950,9 +944,7 @@ public class MagenticOrchestrationTests
             nextSpeaker: "Worker",
             instructionOrQuestion: "Keep trying");
 
-        // After Worker responds → re-enter TakeTurnAsync
-        List<ChatMessage> facts2 = CreatePlanResponse("Updated facts round 2");
-        List<ChatMessage> plan2 = CreatePlanResponse("Updated plan round 2");
+        // After Worker responds → RunCoordinationRoundAsync (no replan)
         List<ChatMessage> ledger2 = CreateProgressLedgerResponse(
             isRequestSatisfied: false,
             isInLoop: false,
@@ -960,9 +952,7 @@ public class MagenticOrchestrationTests
             nextSpeaker: "Worker",
             instructionOrQuestion: "Good progress");
 
-        // After Worker responds → re-enter TakeTurnAsync
-        List<ChatMessage> facts3 = CreatePlanResponse("Updated facts round 3");
-        List<ChatMessage> plan3 = CreatePlanResponse("Updated plan round 3");
+        // After Worker responds → RunCoordinationRoundAsync (no replan)
         List<ChatMessage> ledger3 = CreateProgressLedgerResponse(
             isRequestSatisfied: true,
             isInLoop: false,
@@ -973,8 +963,8 @@ public class MagenticOrchestrationTests
 
         TestReplayAgent manager = new(
             [facts1, plan1, ledger1,
-             facts2, plan2, ledger2,
-             facts3, plan3, ledger3, finalAnswerResponse],
+             ledger2,
+             ledger3, finalAnswerResponse],
             name: "Manager");
         TestEchoAgent worker = new(name: "Worker");
 
@@ -996,12 +986,11 @@ public class MagenticOrchestrationTests
         collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(3,
             "three coordination rounds should produce three progress ledger events");
 
-        // One initial plan + two replans from re-entering after rounds 1 and 2
-        // If stall reset had occurred, there would be an additional replan beyond normal re-entry
+        // One initial plan, no replans (agent returns go directly to coordination, no replan)
         collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().ContainSingle(
             "only one initial plan should be created");
-        collectedEvents.OfType<MagenticReplannedEvent>().Should().HaveCount(2,
-            "two normal re-entry replans after rounds 1 and 2; no extra replan from stall reset");
+        collectedEvents.OfType<MagenticReplannedEvent>().Should().BeEmpty(
+            "no replan occurs on normal agent return; stall count never exceeded threshold");
 
         runResult.Result.Should().NotBeNull();
         runResult.Result![0].Text.Should().Contain("Completed without reset!");
@@ -1010,9 +999,9 @@ public class MagenticOrchestrationTests
     [Fact]
     public async Task Consecutive_Stalls_Trigger_Reset()
     {
-        // Arrange: MaxStallCount=2 — two consecutive stalls trigger reset.
+        // Arrange: MaxStallCount=1 — two consecutive stalls trigger reset (StallCount 2 > 1).
         // Round 1: isInLoop=true (stall count → 1), delegates to Worker
-        // Round 2: isProgressBeingMade=false (stall count → 2 → IsStalled) → reset & replan
+        // Round 2: isProgressBeingMade=false (stall count → 2 > 1 → IsStalled) → reset & replan
         // After reset: new plan → ledger(satisfied) → final answer
         List<ChatMessage> facts1 = CreatePlanResponse("Initial facts");
         List<ChatMessage> plan1 = CreatePlanResponse("Initial plan");
@@ -1023,13 +1012,11 @@ public class MagenticOrchestrationTests
             nextSpeaker: "Worker",
             instructionOrQuestion: "Keep trying");
 
-        // After Worker responds → re-enter TakeTurnAsync → replan
-        List<ChatMessage> facts2 = CreatePlanResponse("Updated facts round 2");
-        List<ChatMessage> plan2 = CreatePlanResponse("Updated plan round 2");
+        // After Worker responds → RunCoordinationRoundAsync (no replan)
         List<ChatMessage> ledger2 = CreateProgressLedgerResponse(
             isRequestSatisfied: false,
             isInLoop: false,
-            isProgressBeingMade: false,  // stall #2 → StallCount=2 → IsStalled → reset
+            isProgressBeingMade: false,  // stall #2 → StallCount=2 > 1 → IsStalled → reset
             nextSpeaker: "Worker",
             instructionOrQuestion: "No progress");
 
@@ -1046,7 +1033,7 @@ public class MagenticOrchestrationTests
 
         TestReplayAgent manager = new(
             [facts1, plan1, ledger1,
-             facts2, plan2, ledger2,
+             ledger2,
              resetFacts, resetPlan, postResetLedger, finalAnswerResponse],
             name: "Manager");
         TestEchoAgent worker = new(name: "Worker");
@@ -1056,7 +1043,7 @@ public class MagenticOrchestrationTests
         Workflow workflow = new MagenticWorkflowBuilder(manager)
             .AddParticipants(worker)
             .RequirePlanSignoff(false)
-            .WithMaxStalls(2)  // requires 2 consecutive stalls
+            .WithMaxStalls(1)  // requires 2 consecutive stalls (StallCount > 1)
             .Build();
 
         // Act
@@ -1065,15 +1052,14 @@ public class MagenticOrchestrationTests
             [new ChatMessage(ChatRole.User, "Test consecutive stalls")],
             eventCollector: collectedEvents);
 
-        // Assert: Two initial coordination rounds + one post-reset round = 3 ledger events
+        // Assert: Two pre-reset coordination rounds + one post-reset round = 3 ledger events
         collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(3,
             "two pre-reset rounds and one post-reset round");
 
-        // Replan from stall reset should appear as an extra MagenticReplannedEvent
-        // Normal flow: 1 PlanCreated + 1 replan (re-entry after round 1). Stall adds 1 more replan = 2 total replans.
+        // One initial plan + one stall-triggered reset replan (no normal re-entry replans anymore)
         collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().ContainSingle();
-        collectedEvents.OfType<MagenticReplannedEvent>().Should().HaveCount(2,
-            "one normal re-entry replan + one stall-triggered reset replan");
+        collectedEvents.OfType<MagenticReplannedEvent>().Should().ContainSingle(
+            "only one replan from stall-triggered reset; no replan on normal agent return");
 
         runResult.Result.Should().NotBeNull();
         runResult.Result![0].Text.Should().Contain("Recovered after consecutive stalls!");

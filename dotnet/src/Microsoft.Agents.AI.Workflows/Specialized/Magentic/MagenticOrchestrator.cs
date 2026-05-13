@@ -188,9 +188,17 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
     protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
     {
-        // First Turn: Initialize the task context and send the initial messages to the planner agent
-        this._taskContext ??= new(messages, team, limits, emitEvents, []);
-        await this.UpdatePlanAndDelegateAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
+        if (this._taskContext == null)
+        {
+            // First Turn: Initialize the task context and create the initial plan
+            this._taskContext = new(messages, team, limits, emitEvents, []);
+            await this.UpdatePlanAndDelegateAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            // Subsequent turns: agent returned control, go directly to coordination (progress ledger only, no replan)
+            await this.RunCoordinationRoundAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private ChatMessage? _fullTaskLedgerMessage;
