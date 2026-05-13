@@ -43,6 +43,47 @@ public class MessageMergerTests
     }
 
     [Fact]
+    public void Test_MessageMerger_PreservesFunctionCallOrderingWhenToolResultHasCreatedAt()
+    {
+        // Arrange
+        string responseId = Guid.NewGuid().ToString("N");
+        string functionCallMessageId = Guid.NewGuid().ToString("N");
+        string functionResultMessageId = Guid.NewGuid().ToString("N");
+        string callId = Guid.NewGuid().ToString("N");
+        DateTimeOffset toolResultCreatedAt = DateTimeOffset.UtcNow;
+
+        MessageMerger merger = new();
+
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = functionCallMessageId,
+            AgentId = TestAgentId1,
+            Role = ChatRole.Assistant,
+            Contents = [new FunctionCallContent(callId, "handoff_to_TestAgent2")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = functionResultMessageId,
+            AgentId = TestAgentId1,
+            CreatedAt = toolResultCreatedAt,
+            Role = ChatRole.Tool,
+            Contents = [new FunctionResultContent(callId, "Transferred.")],
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(responseId);
+
+        // Assert
+        response.Messages.Should().HaveCount(2);
+        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
+        response.Messages[0].Contents.Should().ContainSingle().Which.Should().BeOfType<FunctionCallContent>();
+        response.Messages[1].Role.Should().Be(ChatRole.Tool);
+        response.Messages[1].Contents.Should().ContainSingle().Which.Should().BeOfType<FunctionResultContent>();
+    }
+
+    [Fact]
     public void Test_MessageMerger_PropagatesFinishReasonFromUpdates()
     {
         // Arrange
