@@ -298,6 +298,7 @@
   </Folder>
   <Folder Name="/Samples/03-workflows/Evaluation/">
     <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowEval/Evaluation_WorkflowEval.csproj" />
+    <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowExpectedOutputs/Evaluation_WorkflowExpectedOutputs.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/">
   </Folder>

@@ -75,7 +75,7 @@ async def main() -> None:
         FilteringSkillsSource(
             FileSkillsSource(str(skills_dir), script_runner=subprocess_script_runner),
             # Only keep the volume-converter skill
-            predicate=lambda s: s.name != "length-converter",
+            predicate=lambda s: s.frontmatter.name != "length-converter",
         )
     )
 
