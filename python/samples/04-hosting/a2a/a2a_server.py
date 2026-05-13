@@ -5,14 +5,15 @@ import os
 import sys
 
 import uvicorn
-from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-from a2a.server.request_handlers.default_request_handler import DefaultRequestHandler
-from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
+from a2a.server.tasks import InMemoryTaskStore
 from agent_definitions import AGENT_CARD_FACTORIES, AGENT_FACTORIES
 from agent_executor import AgentFrameworkExecutor
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+from starlette.applications import Starlette
 
 # Load environment variables from .env file
 load_dotenv()
@@ -96,11 +97,14 @@ def main() -> None:
     request_handler = DefaultRequestHandler(
         agent_executor=executor,
         task_store=task_store,
+        agent_card=agent_card,
     )
 
-    a2a_app = A2AStarletteApplication(
-        agent_card=agent_card,
-        http_handler=request_handler,
+    app = Starlette(
+        routes=[
+            *create_agent_card_routes(agent_card),
+            *create_jsonrpc_routes(request_handler),
+        ]
     )
 
     print(f"Starting A2A server: {agent_card.name}")
@@ -110,7 +114,7 @@ def main() -> None:
     print()
 
     uvicorn.run(
-        a2a_app.build(),
+        app,
         host=args.host,
         port=args.port,
     )

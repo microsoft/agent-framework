@@ -9,8 +9,8 @@ namespace Harness.Shared.Console.Observers;
 internal sealed class TextOutputObserver : ConsoleObserver
 {
     /// <inheritdoc/>
-    public override async Task OnTextAsync(ConsoleWriter writer, string text)
+    public override async Task OnTextAsync(HarnessUXContainer ux, string text)
     {
-        await writer.WriteTextAsync(text);
+        await ux.WriteTextAsync(text);
     }
 }

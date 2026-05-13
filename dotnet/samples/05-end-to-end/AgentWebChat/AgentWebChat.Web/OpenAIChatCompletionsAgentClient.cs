@@ -24,7 +24,7 @@ internal sealed class OpenAIChatCompletionsAgentClient(HttpClient httpClient) : 
     {
         OpenAIClientOptions options = new()
         {
-            Endpoint = new Uri(httpClient.BaseAddress!, $"/{agentName}/v1/"),
+            Endpoint = new Uri(httpClient.BaseAddress!, $"/{Uri.EscapeDataString(agentName)}/v1/"),
             Transport = new HttpClientPipelineTransport(httpClient)
         };
 

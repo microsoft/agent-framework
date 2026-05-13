@@ -207,6 +207,31 @@ public sealed class MessageInjectingChatClient : DelegatingChatClient
     }
 
     /// <summary>
+    /// Gets a snapshot of the pending injected messages for the specified session.
+    /// </summary>
+    /// <remarks>
+    /// Returns a copy of the current pending messages that have not yet been consumed by the
+    /// injection loop. This can be used to display pending messages to the user. The returned
+    /// list is a point-in-time snapshot; messages may be consumed between calls.
+    /// </remarks>
+    /// <param name="session">The agent session to check.</param>
+    /// <returns>A read-only list of pending messages, or an empty list if none are pending.</returns>
+    public IReadOnlyList<ChatMessage> GetPendingMessages(AgentSession session)
+    {
+        Throw.IfNull(session);
+
+        if (!session.StateBag.TryGetValue<List<ChatMessage>>(PendingMessagesStateKey, out var queue) || queue is null)
+        {
+            return Array.Empty<ChatMessage>();
+        }
+
+        lock (queue)
+        {
+            return queue.Count == 0 ? Array.Empty<ChatMessage>() : queue.ToList();
+        }
+    }
+
+    /// <summary>
     /// Gets or creates the pending injected messages queue from the session's <see cref="AgentSessionStateBag"/>.
     /// </summary>
     private static List<ChatMessage> GetOrCreateQueue(AgentSession session)

@@ -11,15 +11,15 @@ namespace Harness.Shared.Console.Observers;
 internal sealed class ToolCallDisplayObserver : ConsoleObserver
 {
     /// <inheritdoc/>
-    public override async Task OnContentAsync(ConsoleWriter writer, AIContent content)
+    public override async Task OnContentAsync(HarnessUXContainer ux, AIContent content)
     {
         if (content is FunctionCallContent functionCall)
         {
-            await writer.WriteInfoLineAsync($"🔧 Calling tool: {ToolCallFormatter.Format(functionCall)}...", ConsoleColor.DarkYellow);
+            await ux.WriteInfoLineAsync($"🔧 Calling tool: {ToolCallFormatter.Format(functionCall)}...", ConsoleColor.DarkYellow);
         }
         else if (content is ToolCallContent toolCall)
         {
-            await writer.WriteInfoLineAsync($"🔧 Calling tool: {toolCall}...", ConsoleColor.DarkYellow);
+            await ux.WriteInfoLineAsync($"🔧 Calling tool: {toolCall}...", ConsoleColor.DarkYellow);
         }
     }
 }
