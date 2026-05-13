@@ -398,7 +398,7 @@ class OllamaChatClient(
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
         # Keys to exclude from processing
-        exclude_keys = {"instructions", "tool_choice"}
+        exclude_keys = {"instructions", "tool_choice", "allow_multiple_tool_calls"}
 
         # Build run_options and model_options separately
         run_options: dict[str, Any] = {}
