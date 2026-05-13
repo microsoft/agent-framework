@@ -1,0 +1,8 @@
+{
+  "documentDBDatabaseAccounts": "cosmos-",
+  "insightsComponents": "appi-",
+  "operationalInsightsWorkspaces": "log-",
+  "resourcesResourceGroups": "rg-",
+  "storageStorageAccounts": "st",
+  "webSitesFunctions": "func-"
+}

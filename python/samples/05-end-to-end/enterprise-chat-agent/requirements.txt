@@ -1,0 +1,29 @@
+# Azure Functions
+azure-functions>=1.21.0
+
+# Microsoft Agent Framework
+agent-framework>=1.2.0,<2.0.0
+
+# Azure Cosmos DB History Provider
+# Provides CosmosHistoryProvider for automatic conversation history persistence
+agent-framework-azure-cosmos>=1.0.0b260424,<2.0.0
+
+# Azure SDK
+azure-identity>=1.15.0
+
+# MCP Client (for Microsoft Learn documentation tools)
+mcp>=1.0.0
+
+# OpenTelemetry Core
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+
+# OpenTelemetry Exporters
+opentelemetry-exporter-otlp>=1.25.0
+azure-monitor-opentelemetry-exporter>=1.0.0b41
+
+# OpenTelemetry Semantic Conventions (matches agent_framework)
+opentelemetry-semantic-conventions-ai>=0.4.13
+
+# Utilities
+pydantic>=2.0.0
