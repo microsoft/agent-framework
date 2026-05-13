@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ from agent_framework import (
 )
 from agent_framework._sessions import AgentSession
 from agent_framework._settings import load_settings
+from azure.ai.contentunderstanding import to_llm_input
 from azure.ai.contentunderstanding.aio import ContentUnderstandingClient
 from azure.ai.contentunderstanding.models import AnalysisInput, AnalysisResult
 from azure.core.credentials import AzureKeyCredential
@@ -39,7 +41,6 @@ if TYPE_CHECKING:
 from ._detection import (
     detect_and_strip_files,
 )
-from ._extraction import extract_sections, format_result
 from ._models import AnalysisSection, DocumentEntry, DocumentStatus, FileSearchConfig
 
 if sys.version_info >= (3, 11):
@@ -58,6 +59,36 @@ MEDIA_TYPE_ANALYZER_MAP: dict[str, str] = {
     "video/": "prebuilt-videoSearch",
 }
 DEFAULT_ANALYZER: str = "prebuilt-documentSearch"
+
+# Defensive filter for rai_warnings telemetry noise (decision C1).
+# The SDK helper may emit internal telemetry strings such as
+# ``LLMStats: completion calls: 2; embedding calls: 1; completion latency: 7.71s``
+# inside the ``rai_warnings:`` YAML list. These are not real RAI warnings; strip
+# any matching list items before injecting the rendered string. Tracked as a
+# follow-up SDK issue (decision C2).
+_RAI_TELEMETRY_LINE_RE: re.Pattern[str] = re.compile(
+    r"^[ \t]*-[ \t]+LLMStats:.*(?:\r?\n|$)", flags=re.MULTILINE
+)
+
+# Matches the leading YAML front-matter block emitted by ``to_llm_input``.
+# A rendered text with no markdown body (e.g. when the CU result has empty
+# ``markdown`` and no fields) is recognised by an empty tail after this match.
+_FRONT_MATTER_RE: re.Pattern[str] = re.compile(r"\A---\n.*?\n---(?:\n|\Z)", flags=re.DOTALL)
+
+
+def _has_renderable_body(text: str) -> bool:
+    """Return True when ``text`` has any non-whitespace content beyond YAML front matter.
+
+    Used to skip ``file_search`` uploads when CU produced a result with no
+    markdown content — uploading a front-matter-only stub would pollute the
+    vector store without giving the LLM anything searchable.
+    """
+    if not text:
+        return False
+    match = _FRONT_MATTER_RE.match(text)
+    if match is None:
+        return bool(text.strip())
+    return bool(text[match.end() :].strip())
 
 
 class ContentUnderstandingSettings(TypedDict, total=False):
@@ -415,7 +446,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     context.extend_messages(
                         self,
                         [
-                            Message(role="user", contents=[format_result(entry["filename"], entry["result"])]),
+                            Message(role="user", contents=[entry["result"] or ""]),
                         ],
                     )
                     context.extend_messages(
@@ -428,7 +459,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                                         f"The user just uploaded '{entry['filename']}'."
                                         " It has been analyzed using Azure Content Understanding."
                                         " The document content (markdown) and extracted fields"
-                                        " (JSON) are provided above."
+                                        " (YAML front matter) are provided above."
                                         " If the user's question is ambiguous,"
                                         " prioritize this most recently uploaded document."
                                         " Use specific field values and cite page numbers"
@@ -556,12 +587,14 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     analysis_duration_s=None,
                     upload_duration_s=None,
                     result=None,
+                    search_payload=None,
                     error=None,
                 )
 
             # Analysis completed within timeout
             analysis_duration = round(time.monotonic() - t0, 2)
-            extracted = self._extract_sections(result)
+            rendered = self._render_for_llm(result, filename)
+            search_payload = self._render_search_payload(result, filename)
             logger.info("Analyzed '%s' with analyzer '%s' in %.1fs.", filename, resolved_analyzer, analysis_duration)
             return DocumentEntry(
                 status=DocumentStatus.READY,
@@ -571,7 +604,8 @@ class ContentUnderstandingContextProvider(ContextProvider):
                 analyzed_at=datetime.now(tz=timezone.utc).isoformat(),
                 analysis_duration_s=analysis_duration,
                 upload_duration_s=None,
-                result=extracted,
+                result=rendered,
+                search_payload=search_payload,
                 error=None,
             )
 
@@ -592,6 +626,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                 analysis_duration_s=round(time.monotonic() - t0, 2),
                 upload_duration_s=None,
                 result=None,
+                search_payload=None,
                 error=str(e),
             )
 
@@ -658,10 +693,12 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     continue
 
                 completed_keys.append(doc_key)
-                extracted = self._extract_sections(result)  # pyright: ignore[reportUnknownArgumentType]
+                rendered = self._render_for_llm(result, entry["filename"])  # pyright: ignore[reportUnknownArgumentType]
+                search_payload = self._render_search_payload(result, entry["filename"])  # pyright: ignore[reportUnknownArgumentType]
                 entry["status"] = DocumentStatus.READY
                 entry["analyzed_at"] = datetime.now(tz=timezone.utc).isoformat()
-                entry["result"] = extracted
+                entry["result"] = rendered
+                entry["search_payload"] = search_payload
                 entry["error"] = None
                 logger.info("Background analysis of '%s' completed.", entry["filename"])
 
@@ -672,7 +709,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     context.extend_messages(
                         self,
                         [
-                            Message(role="user", contents=[format_result(entry["filename"], extracted)]),
+                            Message(role="user", contents=[rendered]),
                         ],
                     )
                 context.extend_messages(
@@ -708,11 +745,67 @@ class ContentUnderstandingContextProvider(ContextProvider):
             del pending_tokens[key]
 
     # ------------------------------------------------------------------
-    # Output Extraction & Formatting (delegates to _extraction module)
+    # LLM Input Rendering (delegates to azure.ai.contentunderstanding.to_llm_input)
     # ------------------------------------------------------------------
 
-    def _extract_sections(self, result: AnalysisResult) -> dict[str, object]:
-        return extract_sections(result, self.output_sections)
+    def _render_for_llm(
+        self,
+        result: AnalysisResult,
+        filename: str,
+        *,
+        include_fields: bool | None = None,
+    ) -> str:
+        """Render a CU ``AnalysisResult`` into LLM-friendly text.
+
+        Maps the MAF ``output_sections`` list to ``to_llm_input`` kwargs:
+
+        - ``"markdown" in output_sections`` -> ``include_markdown=True``
+        - ``"fields" in output_sections``  -> ``include_fields=True``
+
+        Args:
+            result: The CU analysis result.
+            filename: Document filename, surfaced to the LLM via the
+                ``source`` front matter key.
+            include_fields: When set, overrides the ``output_sections``-derived
+                ``include_fields`` value. Used by the ``file_search`` upload
+                path which renders an alternate payload without fields.
+
+        Returns:
+            A YAML-front-matter-prefixed text block ready for direct LLM
+            consumption or vector store upload.
+        """
+        rendered: str = to_llm_input(
+            result,
+            include_markdown="markdown" in self.output_sections,
+            include_fields=(
+                include_fields
+                if include_fields is not None
+                else "fields" in self.output_sections
+            ),
+            metadata={"source": filename},
+        )
+        # Defensive filter for telemetry strings emitted into rai_warnings.
+        # See decision C1; tracked as an SDK follow-up (decision C2).
+        return _RAI_TELEMETRY_LINE_RE.sub("", rendered)
+
+    def _render_search_payload(
+        self,
+        result: AnalysisResult,
+        filename: str,
+    ) -> str | None:
+        """Render the alternate payload uploaded to the ``file_search`` vector store.
+
+        Returns ``None`` when ``file_search`` is not configured so callers can
+        skip the extra rendering work. When configured, the rendering honors
+        ``FileSearchConfig.include_fields`` (default ``False`` per decision D2).
+        """
+        if self.file_search is None:
+            return None
+        return self._render_for_llm(
+            result,
+            filename,
+            include_fields=self.file_search.include_fields,
+        )
 
     # ------------------------------------------------------------------
     # Tool Registration
@@ -801,10 +894,14 @@ class ContentUnderstandingContextProvider(ContextProvider):
         if not result:
             return False
 
-        # Upload the full formatted content (markdown + fields + segments),
-        # not just raw markdown — consistent with what non-file_search mode injects.
-        formatted = format_result(entry["filename"], result)
-        if not formatted:
+        # Prefer the pre-rendered search payload (default: fields stripped for
+        # chunking-friendly text). Fall back to the LLM-injection rendering on
+        # the rare path where it was not pre-rendered (e.g. legacy state).
+        formatted = entry.get("search_payload") or result
+        if not formatted or not _has_renderable_body(formatted):
+            # Empty CU result (e.g. blank markdown, no fields) — skip the
+            # upload so the vector store stays clean. The DocumentEntry still
+            # records the front-matter-only ``result`` so callers can introspect.
             return False
 
         entry["status"] = DocumentStatus.UPLOADING
