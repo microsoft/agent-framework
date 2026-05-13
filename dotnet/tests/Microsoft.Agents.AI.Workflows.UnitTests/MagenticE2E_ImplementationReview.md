@@ -88,12 +88,15 @@ Changing this would affect behavior, so it should not be changed without an expl
 | `MaxRoundLimit_Terminates_Workflow` | Limits | Round limit yields maximum round count message. | Complete |
 | `MaxStallCount_Triggers_Reset` | Stall detection / limits | `IsInLoop=true` reaches stall limit and triggers reset/replan. | Complete |
 | `Instruction_Message_Sent_When_Present` | Edge case / delegation | Non-empty instruction path executes and completes over two rounds. | Partial: does not directly inspect delivered instruction message. |
-| `PlanReview_On_Stall_Replan` | Plan review / stall | Stall with signoff creates a second review request and completes after approval. | Mostly complete: does not assert `IsStalled=true`. |
+| `PlanReview_On_Stall_Replan` | Plan review / stall | Stall with signoff creates a second review request with `IsStalled=true` and completes after approval. | Complete |
 | `MaxResetLimit_Terminates_Workflow` | Limits | Reset limit yields maximum reset count message. | Complete |
 | `ProgressLedger_Retry_On_Parse_Failure` | Progress ledger validation | Invalid ledger JSON warns, retry succeeds, workflow completes. | Complete |
 | `ProgressLedger_Max_Retries_Triggers_Reset` | Progress ledger validation | All retry attempts fail, reset/replan occurs, workflow completes. | Complete |
 | `Stall_NoProgress_Increments_StallCount` | Stall detection | `IsProgressBeingMade=false` triggers stall reset/replan. | Complete |
 | `PlanReview_Multiple_Revisions` | Plan review | Two revisions occur before final approval and completion. | Complete |
+| `Task_Delegates_To_Correct_Agent` | Happy path / routing | Two participants; selected speaker responds while non-selected does not. | Complete |
+| `Progress_Made_Decrements_StallCount` | Stall detection | Stall count increments then decrements on progress; reset is avoided. | Complete |
+| `Consecutive_Stalls_Trigger_Reset` | Stall detection | Two consecutive stalls reach `MaxStallCount=2` threshold and trigger reset/replan. | Complete |
 
 ## Coverage Against Original Plan
 
