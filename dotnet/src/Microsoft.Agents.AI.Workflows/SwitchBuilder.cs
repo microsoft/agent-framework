@@ -37,13 +37,9 @@ public sealed class SwitchBuilder
 
         HashSet<int> indicies = [];
 
-        int executorIndex = 0;
-        foreach (ExecutorBinding? executor in executors)
+        foreach (ExecutorBinding executor in executors)
         {
-            if (executor is null)
-            {
-                throw new ArgumentNullException(nameof(executors), $"Executors collection contains a null element at index {executorIndex}.");
-            }
+            Throw.IfNull(executor, nameof(executors));
 
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
             {
@@ -53,7 +49,6 @@ public sealed class SwitchBuilder
             }
 
             indicies.Add(index);
-            executorIndex++;
         }
 
         Func<object?, bool> casePredicate = WorkflowBuilder.CreateConditionFunc(predicate)!;
@@ -71,13 +66,9 @@ public sealed class SwitchBuilder
     {
         Throw.IfNull(executors);
 
-        int executorIndex = 0;
-        foreach (ExecutorBinding? executor in executors)
+        foreach (ExecutorBinding executor in executors)
         {
-            if (executor is null)
-            {
-                throw new ArgumentNullException(nameof(executors), $"Executors collection contains a null element at index {executorIndex}.");
-            }
+            Throw.IfNull(executor, nameof(executors));
 
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
             {
@@ -87,7 +78,6 @@ public sealed class SwitchBuilder
             }
 
             this._defaultIndicies.Add(index);
-            executorIndex++;
         }
 
         return this;

@@ -127,27 +127,15 @@ public static class WorkflowBuilderExtensions
     {
         Throw.IfNull(targets);
 
-        List<ExecutorBinding> targetList = [];
-        using IEnumerator<ExecutorBinding> targetEnumerator = targets.GetEnumerator();
-        if (!targetEnumerator.MoveNext())
+        List<ExecutorBinding> targetList = new();
+        foreach (ExecutorBinding target in targets)
         {
-            throw new ArgumentException("Targets collection cannot be empty.", nameof(targets));
-        }
-
-        int targetIndex = 0;
-        do
-        {
-            ExecutorBinding? target = targetEnumerator.Current;
-            if (target is null)
-            {
-                throw new ArgumentNullException(nameof(targets), $"Targets collection contains a null element at index {targetIndex}.");
-            }
+            Throw.IfNull(target, nameof(targets));
 
             targetList.Add(target);
-            targetIndex++;
         }
-        while (targetEnumerator.MoveNext());
 
+        Throw.IfNullOrEmpty(targetList, nameof(targets));
         return targetList;
     }
 
