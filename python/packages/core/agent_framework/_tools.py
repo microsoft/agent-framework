@@ -1856,6 +1856,43 @@ def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse
     return response
 
 
+_FUNCTION_INVOCATION_LIMIT_RESPONSE = (
+    "Function invocation stopped after reaching the configured limit before the model produced a final response."
+)
+
+
+def _response_has_contents(response: ChatResponse[Any]) -> bool:
+    for message in response.messages:
+        for content in message.contents:
+            if getattr(content, "type", None) != "text":
+                return True
+            if getattr(content, "text", "").strip():
+                return True
+    return False
+
+
+def _ensure_function_limit_response(response: ChatResponse[Any]) -> ChatResponse[Any]:
+    if _response_has_contents(response):
+        return response
+
+    from ._types import Message
+
+    response.messages = [Message(role="assistant", contents=[_FUNCTION_INVOCATION_LIMIT_RESPONSE])]
+    if response.finish_reason is None:
+        response.finish_reason = "stop"
+    return response
+
+
+def _function_limit_update() -> ChatResponseUpdate:
+    from ._types import ChatResponseUpdate, Content
+
+    return ChatResponseUpdate(
+        contents=[Content.from_text(_FUNCTION_INVOCATION_LIMIT_RESPONSE)],
+        role="assistant",
+        finish_reason="stop",
+    )
+
+
 def _extract_tools(
     options: dict[str, Any] | None,
 ) -> ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None:
@@ -2383,6 +2420,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 fcc_messages: list[Message] = []
                 response: ChatResponse[Any] | None = None
                 aggregated_usage: UsageDetails | None = None
+                function_limit_reached = False
 
                 loop_enabled = self.function_invocation_configuration.get("enabled", True)
                 max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
@@ -2436,12 +2474,15 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         execute_function_calls=execute_function_calls,
                     )
                     if result.get("action") == "return":
+                        if function_limit_reached:
+                            response = _ensure_function_limit_response(response)
                         response.usage_details = aggregated_usage
                         return _clear_internal_conversation_id(response)
                     total_function_calls += result.get("function_call_count", 0)
                     if result.get("action") == "stop":
                         # Error threshold reached: force a final non-tool turn so
                         # function_call_output items are submitted before exit.
+                        function_limit_reached = True
                         mutable_options["tool_choice"] = "none"
                     elif max_function_calls is not None and total_function_calls >= max_function_calls:
                         # Best-effort limit: checked after each batch of parallel calls completes,
@@ -2451,6 +2492,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                             total_function_calls,
                             max_function_calls,
                         )
+                        function_limit_reached = True
                         mutable_options["tool_choice"] = "none"
                     errors_in_a_row = result.get("errors_in_a_row", errors_in_a_row)
 
@@ -2480,6 +2522,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         "Maximum iterations reached (%d). Requesting final response without tools.",
                         self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS),
                     )
+                    function_limit_reached = True
                 mutable_options["tool_choice"] = "none"
                 response = cast(
                     ChatResponse[Any],
@@ -2500,6 +2543,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     options=mutable_options,
                 )
                 response.usage_details = aggregated_usage
+                if function_limit_reached:
+                    response = _ensure_function_limit_response(response)
                 if fcc_messages:
                     for msg in reversed(fcc_messages):
                         response.messages.insert(0, msg)
@@ -2520,6 +2565,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             prepped_messages = list(messages)
             fcc_messages: list[Message] = []
             response: ChatResponse[Any] | None = None
+            function_limit_reached = False
 
             loop_enabled = self.function_invocation_configuration.get("enabled", True)
             max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
@@ -2574,6 +2620,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     for msg in response.messages
                     for item in msg.contents
                 ):
+                    if function_limit_reached and not _response_has_contents(response):
+                        yield _function_limit_update()
                     return
 
                 if response.conversation_id is not None:
@@ -2599,6 +2647,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 if result.get("action") == "stop":
                     # Error threshold reached: submit collected function_call_output
                     # items once more with tools disabled.
+                    function_limit_reached = True
                     mutable_options["tool_choice"] = "none"
                 elif result.get("action") != "continue":
                     return
@@ -2610,6 +2659,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         total_function_calls,
                         max_function_calls,
                     )
+                    function_limit_reached = True
                     mutable_options["tool_choice"] = "none"
 
                 # When tool_choice is 'required', reset the tool_choice after one iteration to avoid infinite loops
@@ -2638,6 +2688,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     "Maximum iterations reached (%d). Requesting final response without tools.",
                     self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS),
                 )
+                function_limit_reached = True
             mutable_options["tool_choice"] = "none"
             final_inner_stream = cast(
                 ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
@@ -2655,6 +2706,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
             # Finalize the inner stream to trigger its hooks
             final_response = await final_inner_stream.get_final_response()
+            if function_limit_reached and not _response_has_contents(final_response):
+                yield _function_limit_update()
             _update_continuation_state(
                 filtered_kwargs,
                 final_response,

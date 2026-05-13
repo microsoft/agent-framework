@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import pytest
@@ -12,6 +12,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
+    ResponseStream,
     SupportsChatGetResponse,
     chat_middleware,
     tool,
@@ -1150,6 +1151,108 @@ async def test_max_iterations_makes_final_toolchoice_none_call(chat_client_base:
     assert last_msg.text == "I broke out of the function invocation loop...", (
         f"Expected failsafe text response, got: {last_msg.text!r}"
     )
+
+
+async def test_max_iterations_empty_final_response_is_not_returned(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    original_get_response = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _empty_tool_choice_none_response(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        if options.get("tool_choice") == "none":
+            return ChatResponse(messages=Message(role="assistant", contents=[]))
+        return await original_get_response(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _empty_tool_choice_none_response  # type: ignore[attr-defined,method-assign]
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1": "v1"}')
+                ],
+            )
+        ),
+    ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+    )
+
+    assert exec_counter == 1
+    assert "configured limit" in response.messages[-1].text
+
+
+async def test_streaming_max_iterations_empty_final_response_is_not_returned(
+    chat_client_base: SupportsChatGetResponse,
+):
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    original_get_streaming_response = chat_client_base._get_streaming_response  # type: ignore[attr-defined]
+
+    def _empty_tool_choice_none_stream(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if options.get("tool_choice") != "none":
+            return original_get_streaming_response(messages=messages, options=options, **kwargs)
+
+        async def _stream():
+            if False:
+                yield ChatResponseUpdate()
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            return ChatResponse.from_updates(updates)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
+
+    chat_client_base._get_streaming_response = _empty_tool_choice_none_stream  # type: ignore[attr-defined,method-assign]
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1":')],
+                role="assistant",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="test_function", arguments='"v1"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            "hello",
+            options={"tool_choice": "auto", "tools": [ai_func]},
+            stream=True,
+        )
+    ]
+
+    assert exec_counter == 1
+    assert "configured limit" in "".join(update.text for update in updates)
 
 
 async def test_max_iterations_preserves_all_fcc_messages(chat_client_base: SupportsChatGetResponse):
