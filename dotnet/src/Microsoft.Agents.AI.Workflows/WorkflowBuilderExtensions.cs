@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -112,26 +113,19 @@ public static class WorkflowBuilderExtensions
         Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
-        List<ExecutorBinding> targetList = new();
-        foreach (ExecutorBinding target in targets)
-        {
-            Throw.IfNull(target, nameof(targets));
 
-            targetList.Add(target);
+        if (targets.TryGetNonEnumeratedCount(out int count) && count == 1)
+        {
+            return builder.AddEdge(source, Throw.IfNull(targets.First(), nameof(targets)), predicate);
         }
 
-        Throw.IfNullOrEmpty(targetList, nameof(targets));
-
-        if (targetList.Count == 1)
-        {
-            return builder.AddEdge(source, targetList[0], predicate);
-        }
-
-        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targetList));
+        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targets.Select(ValidateTarget)));
 
         // The reason we can check for "null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
         static bool IsAllowedType(object? message) => message is null;
+
+        ExecutorBinding ValidateTarget(ExecutorBinding target) => Throw.IfNull(target, nameof(targets));
     }
 
     /// <summary>
