@@ -101,6 +101,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         return base.ConfigureProtocol(protocolBuilder)
                    .SendsMessage<ChatMessage>()
                    .SendsMessage<ResetChatSignal>()
+                   .YieldsOutput<List<ChatMessage>>()
                    .ConfigureRoutes(ConfigureRoutes);
 
         void ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder.AddPortHandler<MagenticPlanReviewRequest, MagenticPlanReviewResponse>(
