@@ -869,6 +869,107 @@ public class MagenticOrchestrationTests
         runResult.Result![0].Text.Should().Contain("Recovered after no-progress stall");
     }
 
+    [Fact]
+    public async Task PlanReview_Multiple_Revisions()
+    {
+        // Arrange: Human rejects the plan twice before approving on the third review.
+        // Flow: facts1, plan1 → PlanCreatedEvent → plan review (pending)
+        //       resume with revision1 → facts2, plan2 → ReplannedEvent → plan review (pending)
+        //       resume with revision2 → facts3, plan3 → ReplannedEvent → plan review (pending)
+        //       resume with approval → ledger(satisfied) → finalAnswer
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Initial plan - too vague");
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Revised facts v2");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Revised plan v2 - still needs work");
+        List<ChatMessage> factsResponse3 = CreatePlanResponse("Revised facts v3");
+        List<ChatMessage> planResponse3 = CreatePlanResponse("Revised plan v3 - final version");
+        List<ChatMessage> progressLedgerResponse = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Execute final plan");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Completed after multiple revisions");
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1,
+             factsResponse2, planResponse2,
+             factsResponse3, planResponse3,
+             progressLedgerResponse, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(true)
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        List<WorkflowEvent> allEvents = [];
+
+        // Act 1: First run - should pause for plan review with initial plan
+        WorkflowRunResult firstResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Execute task")],
+            checkpointManager: checkpointManager,
+            eventCollector: allEvents);
+
+        firstResult.PendingRequests.Should().ContainSingle();
+        ExternalRequest request1 = firstResult.PendingRequests[0].Request;
+        MagenticPlanReviewRequest? reviewRequest1 = request1.Data.As<MagenticPlanReviewRequest>();
+        reviewRequest1.Should().NotBeNull();
+        reviewRequest1!.Plan.Text.Should().Contain("Initial plan");
+
+        // Act 2: Resume with first revision
+        MagenticPlanReviewResponse revision1 = reviewRequest1.Revise("Too vague, add more detail");
+        ExternalResponse revisionResponse1 = request1.CreateResponse(revision1);
+        WorkflowRunResult secondResult = await ResumeMagenticWorkflowAsync(
+            workflow,
+            revisionResponse1,
+            checkpointManager,
+            firstResult.LastCheckpoint,
+            eventCollector: allEvents);
+
+        secondResult.PendingRequests.Should().NotBeEmpty();
+        ExternalRequest request2 = secondResult.PendingRequests[^1].Request;
+        MagenticPlanReviewRequest? reviewRequest2 = request2.Data.As<MagenticPlanReviewRequest>();
+        reviewRequest2.Should().NotBeNull();
+        reviewRequest2!.Plan.Text.Should().Contain("Revised plan v2");
+
+        // Act 3: Resume with second revision
+        MagenticPlanReviewResponse revision2 = reviewRequest2.Revise("Still needs more work on step 3");
+        ExternalResponse revisionResponse2 = request2.CreateResponse(revision2);
+        WorkflowRunResult thirdResult = await ResumeMagenticWorkflowAsync(
+            workflow,
+            revisionResponse2,
+            checkpointManager,
+            secondResult.LastCheckpoint,
+            eventCollector: allEvents);
+
+        thirdResult.PendingRequests.Should().NotBeEmpty();
+        ExternalRequest request3 = thirdResult.PendingRequests[^1].Request;
+        MagenticPlanReviewRequest? reviewRequest3 = request3.Data.As<MagenticPlanReviewRequest>();
+        reviewRequest3.Should().NotBeNull();
+        reviewRequest3!.Plan.Text.Should().Contain("Revised plan v3");
+
+        // Act 4: Resume with approval
+        MagenticPlanReviewResponse approval = reviewRequest3.Approve();
+        ExternalResponse approvalResponse = request3.CreateResponse(approval);
+        WorkflowRunResult fourthResult = await ResumeMagenticWorkflowAsync(
+            workflow,
+            approvalResponse,
+            checkpointManager,
+            thirdResult.LastCheckpoint,
+            eventCollector: allEvents);
+
+        // Assert: Multiple replan events emitted, final answer produced
+        allEvents.OfType<MagenticPlanCreatedEvent>().Should().NotBeEmpty("initial plan emits PlanCreatedEvent");
+        allEvents.OfType<MagenticReplannedEvent>().Should().HaveCountGreaterThanOrEqualTo(2,
+            "two revisions should emit at least two ReplannedEvents");
+        fourthResult.Result.Should().NotBeNull();
+        fourthResult.Result![0].Text.Should().Contain("Completed after multiple revisions");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
