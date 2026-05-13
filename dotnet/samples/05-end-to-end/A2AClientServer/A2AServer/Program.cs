@@ -101,6 +101,10 @@ else
     throw new ArgumentException("Either A2AServer:ApiKey or A2AServer:ConnectionString & agentName must be provided");
 }
 
+// When running in production, make sure to use an SessionIsolationKeyProvider, e.g. ClaimsIdentity-based
+// if using Claims-based Identity for Authentication/Authorization
+// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+
 builder.AddA2AServer(hostA2AAgent);
 
 var app = builder.Build();
