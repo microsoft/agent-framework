@@ -360,6 +360,85 @@ public class MagenticOrchestrationTests
         runResult.Result![0].Text.Should().Contain("Multi-round task completed!");
     }
 
+    [Fact]
+    public async Task PlanReview_Revised_Triggers_Replan()
+    {
+        // Arrange: Human rejects initial plan with revision, triggering a replan.
+        // Flow: facts1, plan1 → PlanCreatedEvent → plan review (pending)
+        //       resume with revision → facts2, plan2 → MagenticReplannedEvent → plan review again (pending)
+        //       resume with approval → progressLedger(satisfied) → finalAnswer
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Initial plan - needs revision");
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Revised facts");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Revised plan - much better");
+        List<ChatMessage> progressLedgerResponse = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Execute revised plan");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Revised plan executed successfully");
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, factsResponse2, planResponse2, progressLedgerResponse, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(true)
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        List<WorkflowEvent> allEvents = [];
+
+        // Act 1: First run - should pause for plan review with initial plan
+        WorkflowRunResult firstResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Execute task")],
+            checkpointManager: checkpointManager,
+            eventCollector: allEvents);
+
+        firstResult.PendingRequests.Should().ContainSingle();
+        ExternalRequest request1 = firstResult.PendingRequests[0].Request;
+        MagenticPlanReviewRequest? reviewRequest1 = request1.Data.As<MagenticPlanReviewRequest>();
+        reviewRequest1.Should().NotBeNull();
+        reviewRequest1!.Plan.Text.Should().Contain("Initial plan");
+
+        // Act 2: Resume with revision (reject the plan)
+        MagenticPlanReviewResponse revision = reviewRequest1.Revise("Please include more detail");
+        ExternalResponse revisionResponse = request1.CreateResponse(revision);
+        WorkflowRunResult secondResult = await ResumeMagenticWorkflowAsync(
+            workflow,
+            revisionResponse,
+            checkpointManager,
+            firstResult.LastCheckpoint,
+            eventCollector: allEvents);
+
+        // Should pause again for review of the revised plan (stream may include prior request too)
+        secondResult.PendingRequests.Should().NotBeEmpty();
+        ExternalRequest request2 = secondResult.PendingRequests[^1].Request;
+        MagenticPlanReviewRequest? reviewRequest2 = request2.Data.As<MagenticPlanReviewRequest>();
+        reviewRequest2.Should().NotBeNull();
+        reviewRequest2!.Plan.Text.Should().Contain("Revised plan");
+
+        // Act 3: Resume with approval
+        MagenticPlanReviewResponse approval = reviewRequest2.Approve();
+        ExternalResponse approvalResponse = request2.CreateResponse(approval);
+        WorkflowRunResult thirdResult = await ResumeMagenticWorkflowAsync(
+            workflow,
+            approvalResponse,
+            checkpointManager,
+            secondResult.LastCheckpoint,
+            eventCollector: allEvents);
+
+        // Assert: MagenticReplannedEvent should have been emitted, and final answer produced
+        allEvents.OfType<MagenticPlanCreatedEvent>().Should().NotBeEmpty("initial plan emits PlanCreatedEvent");
+        allEvents.OfType<MagenticReplannedEvent>().Should().NotBeEmpty("revision triggers ReplannedEvent");
+        thirdResult.Result.Should().NotBeNull();
+        thirdResult.Result![0].Text.Should().Contain("Revised plan executed successfully");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
