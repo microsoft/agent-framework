@@ -120,6 +120,36 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithTextEventAdditionalProperties_PreservesTextContentMetadataAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
+            new TextMessageContentEvent
+            {
+                MessageId = "msg1",
+                Delta = "Hello",
+                AdditionalProperties = new Dictionary<string, object?> { ["textContentType"] = "Markdown" }
+            },
+            new TextMessageEndEvent { MessageId = "msg1" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        ChatResponseUpdate textUpdate = Assert.Single(updates);
+        TextContent content = Assert.IsType<TextContent>(textUpdate.Contents[0]);
+        Assert.NotNull(content.AdditionalProperties);
+        Assert.Equal("Markdown", content.AdditionalProperties["textContentType"]);
+    }
+
+    [Fact]
     public async Task AsChatResponseUpdatesAsync_WithTextMessageStartWhileMessageInProgress_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
@@ -696,6 +726,48 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
+    public async Task AsAGUIEventStreamAsync_WithStateDataAdditionalProperties_EmitsPassthroughPropertiesAsync()
+    {
+        // Arrange
+        JsonElement snapshot = JsonSerializer.SerializeToElement(new { counter = 42 });
+        DataContent dataContent = new(JsonSerializer.SerializeToUtf8Bytes(snapshot), "application/json")
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["stateKind"] = "progress",
+                ["snapshot"] = "reserved"
+            }
+        };
+
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, [dataContent])
+            {
+                MessageId = "msg1"
+            }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert
+        StateSnapshotEvent snapshotEvent = outputEvents.OfType<StateSnapshotEvent>().Single();
+        Assert.NotNull(snapshotEvent.AdditionalProperties);
+        Assert.Equal("progress", snapshotEvent.AdditionalProperties["stateKind"]);
+        Assert.False(snapshotEvent.AdditionalProperties.ContainsKey("snapshot"));
+
+        string json = JsonSerializer.Serialize(snapshotEvent, AGUIJsonSerializerContext.Default.StateSnapshotEvent);
+        using JsonDocument document = JsonDocument.Parse(json);
+        Assert.Equal("progress", document.RootElement.GetProperty("stateKind").GetString());
+        Assert.True(document.RootElement.TryGetProperty("snapshot", out JsonElement snapshotElement));
+        Assert.Equal(42, snapshotElement.GetProperty("counter").GetInt32());
+    }
+
+    [Fact]
     public async Task AsAGUIEventStreamAsync_WithBothSnapshotAndDelta_EmitsBothEventsAsync()
     {
         // Arrange
@@ -913,6 +985,49 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         Assert.Contains(outputEvents, e => e is TextMessageStartEvent);
         Assert.Contains(outputEvents, e => e is TextMessageContentEvent);
         Assert.Contains(outputEvents, e => e is TextMessageEndEvent);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithTextContentAdditionalProperties_EmitsPassthroughPropertiesAsync()
+    {
+        // Arrange
+        TextContent content = new("Hello")
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["textContentType"] = "Markdown",
+                ["messageId"] = "reserved"
+            }
+        };
+
+        List<ChatResponseUpdate> updates =
+        [
+            new(ChatRole.Assistant, [content]) { MessageId = "msg1" }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert
+        TextMessageStartEvent startEvent = outputEvents.OfType<TextMessageStartEvent>().Single();
+        Assert.NotNull(startEvent.AdditionalProperties);
+        Assert.Equal("Markdown", startEvent.AdditionalProperties["textContentType"]);
+        Assert.False(startEvent.AdditionalProperties.ContainsKey("messageId"));
+
+        TextMessageContentEvent contentEvent = outputEvents.OfType<TextMessageContentEvent>().Single();
+        Assert.NotNull(contentEvent.AdditionalProperties);
+        Assert.Equal("Markdown", contentEvent.AdditionalProperties["textContentType"]);
+        Assert.False(contentEvent.AdditionalProperties.ContainsKey("messageId"));
+
+        string json = JsonSerializer.Serialize(contentEvent, AGUIJsonSerializerContext.Default.TextMessageContentEvent);
+        using JsonDocument document = JsonDocument.Parse(json);
+        Assert.Equal("Markdown", document.RootElement.GetProperty("textContentType").GetString());
+        Assert.Equal("msg1", document.RootElement.GetProperty("messageId").GetString());
+        Assert.Equal("Hello", document.RootElement.GetProperty("delta").GetString());
     }
 
     [Fact]

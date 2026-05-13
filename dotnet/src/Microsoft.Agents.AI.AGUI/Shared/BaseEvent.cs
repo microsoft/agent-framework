@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 #if ASPNETCORE
@@ -13,4 +14,7 @@ internal abstract class BaseEvent
 {
     [JsonPropertyName("type")]
     public string Type { get; set; } = string.Empty;
+
+    [JsonExtensionData]
+    public IDictionary<string, object?>? AdditionalProperties { get; set; }
 }
