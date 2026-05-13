@@ -2,7 +2,7 @@
 
 ## Review Scope
 
-This review compares the current implementation against the original plan in `MagenticE2E_TestPlan.md`.
+This document reviews the current Magentic E2E implementation against the original plan in `MagenticE2E_TestPlan.md`.
 
 Reviewed files:
 
@@ -10,157 +10,186 @@ Reviewed files:
 - `dotnet/tests/Microsoft.Agents.AI.Workflows.UnitTests/MagenticOrchestrationTests.cs`
 - `dotnet/src/Microsoft.Agents.AI.Workflows/Specialized/Magentic/MagenticOrchestrator.cs`
 
-## Summary
+## Executive Summary
 
-The current changes implement a significant subset of the Magentic E2E test plan and also fix one production bug uncovered by the first E2E test. The implemented tests run against fully-built `MagenticWorkflowBuilder.Build()` workflows and cover the core orchestrator branches: basic completion, plan signoff disabled, plan approval, plan revision/replan, multi-round delegation, empty and invalid next speaker handling, progress ledger event emission, round limit termination, and stall-triggered reset.
+The current implementation is a strong partial implementation of the original Magentic E2E plan. It contains **11 end-to-end tests** that exercise fully-built workflows created with `MagenticWorkflowBuilder.Build()` and cover the highest-value branches in `MagenticOrchestrator`.
 
-The plan estimated roughly 31 tests across all categories. The current implementation contains **11 E2E tests**.
+The implemented tests cover:
 
-## Production Code Change
+- Initial planning and final-answer completion.
+- Explicit no-plan-signoff flow.
+- Human plan approval with checkpoint/resume.
+- Human plan revision triggering replanning.
+- Multi-round delegation through a participant agent.
+- Progress ledger event emission.
+- Empty next-speaker fallback.
+- Invalid next-speaker warning and forced final answer.
+- Round-limit termination.
+- Stall-triggered reset and replan.
+- Replanned-event emission.
 
-### `MagenticOrchestrator` output declaration
+The implementation also includes one production fix: `MagenticOrchestrator.ConfigureProtocol()` now declares `.YieldsOutput<List<ChatMessage>>()`, matching the type yielded by `PrepareFinalAnswerAsync`.
 
-Implemented:
+The original plan estimated roughly 31 tests. The remaining gaps are mostly lower-level granularity and edge cases: reset-limit termination, progress-ledger retry/failure behavior, direct checkpoint state assertions, explicit valid-speaker routing assertions, multiple plan revisions, plan review after stall, and empty/single-team edge cases.
 
-- `MagenticOrchestrator.ConfigureProtocol()` now declares `.YieldsOutput<List<ChatMessage>>()`.
+## Production Code Review
+
+### `MagenticOrchestrator.ConfigureProtocol()` output declaration
+
+Current implementation:
+
+- The protocol declares `.YieldsOutput<List<ChatMessage>>()`.
 
 Assessment:
 
-- This is a valid fix. `MagenticOrchestrator.PrepareFinalAnswerAsync()` yields `List<ChatMessage>` via `context.YieldOutputAsync(...)`, but the protocol previously did not declare that output type.
-- Without this declaration, a fully-built workflow failed at runtime with an error like: `Cannot output object of type List'1. Expecting one of []`.
-- This fix aligns the protocol declaration with existing orchestrator behavior.
+- This change is correct and necessary.
+- `PrepareFinalAnswerAsync()` yields `List<ChatMessage>` through `context.YieldOutputAsync(...)`.
+- Without this declaration, a fully-built workflow can fail at runtime because the output type is not registered in the protocol.
+- This is a production bug fix uncovered by the E2E tests, not test-only cleanup.
 
-## Implemented Test Coverage
+## Implemented Tests
 
-| Original Plan Area | Planned Test | Implemented Test | Status |
+| Test | Original Plan Area | What It Verifies | Assessment |
 |---|---|---|---|
-| Happy Path | `Task_Completes_When_RequestSatisfied` | `Task_Completes_When_RequestSatisfied` | ✅ Complete |
-| Happy Path | `PlanSignoff_Disabled_Proceeds_Immediately` | `PlanSignoff_Disabled_Proceeds_Immediately` | ✅ Complete |
-| Happy Path | `Task_Completes_After_Multiple_Rounds` | `Task_Completes_After_Multiple_Rounds` | ✅ Complete |
-| Plan Review | `PlanReview_Approved_Proceeds` | `PlanReview_Approved_Proceeds` | ✅ Complete |
-| Plan Review | `PlanReview_Revised_Triggers_Replan` | `PlanReview_Revised_Triggers_Replan` | ✅ Complete |
-| Limit Enforcement | `MaxRoundLimit_Terminates_Workflow` | `MaxRoundLimit_Terminates_Workflow` | ✅ Complete |
-| Stall Detection | `MaxStallCount_Triggers_Reset` | `MaxStallCount_Triggers_Reset` | ✅ Complete |
-| Next Speaker | `NextSpeaker_Empty_Falls_Back_To_First` | `NextSpeaker_Empty_Falls_Back_To_First` | ✅ Complete |
-| Next Speaker | `NextSpeaker_Invalid_Triggers_FinalAnswer` | `NextSpeaker_Invalid_Triggers_FinalAnswer` | ✅ Complete |
-| Event Emission | `Initial_Plan_Emits_PlanCreatedEvent` | `Initial_Plan_Emits_PlanCreatedEvent` | ✅ Complete |
-| Progress Ledger / Events | `ProgressLedger_Updated_Event_Emitted` | `ProgressLedger_Updated_Event_Emitted` | ✅ Complete |
+| `Task_Completes_When_RequestSatisfied` | Happy path | First progress ledger says request is satisfied; workflow yields final answer and has no pending review request. | Complete |
+| `PlanReview_Approved_Proceeds` | Plan review / checkpoint-resume | Plan review request is emitted, approval response resumes from checkpoint, and workflow completes. | Complete |
+| `Initial_Plan_Emits_PlanCreatedEvent` | Event emission | Initial plan creation emits `MagenticPlanCreatedEvent`. | Complete |
+| `NextSpeaker_Invalid_Triggers_FinalAnswer` | Next speaker validation / warnings | Invalid `next_speaker` emits warning and causes final answer generation. | Complete |
+| `ProgressLedger_Updated_Event_Emitted` | Progress ledger / event emission | Successful ledger update emits `MagenticProgressLedgerUpdatedEvent`. | Complete |
+| `PlanSignoff_Disabled_Proceeds_Immediately` | Happy path | `RequirePlanSignoff(false)` skips plan review requests and proceeds directly. | Complete |
+| `NextSpeaker_Empty_Falls_Back_To_First` | Next speaker validation / warnings | Empty `next_speaker` emits warning, falls back to first participant, then completes on a later round. | Complete |
+| `Task_Completes_After_Multiple_Rounds` | Happy path / delegation loop | A non-satisfied first round delegates to a participant; a later round completes. | Complete |
+| `PlanReview_Revised_Triggers_Replan` | Plan review / replanning / checkpoint-resume | Revision response triggers replanning, emits `MagenticReplannedEvent`, requests review again, then completes after approval. | Complete |
+| `MaxRoundLimit_Terminates_Workflow` | Limit enforcement | Round limit is checked before the next coordination round and yields the maximum round limit message. | Complete |
+| `MaxStallCount_Triggers_Reset` | Stall detection / replanning | A stalled progress ledger reaches `MaxStallCount`, resets, replans, emits `MagenticReplannedEvent`, and then completes. | Complete |
 
-## Original Plan Coverage Status
+## Coverage Against Original Plan
 
-### 1. Happy Path Tests (3 of 4 implemented)
+### 1. Happy Path Tests
 
-Implemented:
-
-- `Task_Completes_When_RequestSatisfied`
-- `PlanSignoff_Disabled_Proceeds_Immediately`
-- `Task_Completes_After_Multiple_Rounds`
-
-Not yet implemented:
-
-- `Task_Delegates_To_Correct_Agent`
-
-### 2. Plan Review Tests (2 of 4 implemented)
-
-Implemented:
-
-- `PlanReview_Approved_Proceeds`
-- `PlanReview_Revised_Triggers_Replan`
-
-Not yet implemented:
-
-- `PlanReview_Multiple_Revisions`
-- `PlanReview_On_Stall_Replan`
-
-### 3. Limit Enforcement Tests (1 of 3 implemented)
-
-Implemented:
-
-- `MaxRoundLimit_Terminates_Workflow`
-
-Not yet implemented:
-
-- `MaxResetLimit_Terminates_Workflow`
-- `MaxStallCount_Triggers_Reset` (as a limit test; stall-triggered reset is covered separately)
-
-### 4. Stall Detection Tests (1 of 4 implemented)
-
-Implemented:
-
-- `MaxStallCount_Triggers_Reset` (covers `Consecutive_Stalls_Trigger_Reset` with MaxStallCount=1)
-
-Not yet implemented:
-
-- `Stall_IsInLoop_Increments_StallCount` (stall counting directly)
-- `Stall_NoProgress_Increments_StallCount`
-- `Progress_Made_Decrements_StallCount`
-
-### 5. Progress Ledger Validation Tests (1 of 3 implemented)
-
-Implemented:
-
-- `ProgressLedger_Updated_Event_Emitted`
-
-Not yet implemented:
-
-- `ProgressLedger_Retry_On_Parse_Failure`
-- `ProgressLedger_Max_Retries_Triggers_Reset`
-
-### 6. Next Speaker Validation Tests (2 of 3 implemented)
-
-Implemented:
-
-- `NextSpeaker_Invalid_Triggers_FinalAnswer`
-- `NextSpeaker_Empty_Falls_Back_To_First`
-
-Not yet implemented:
-
-- `NextSpeaker_Valid_Delegates_Correctly` (partially covered by `Task_Completes_After_Multiple_Rounds`)
-
-### 7. Event Emission Tests (2 of 3 implemented)
-
-Implemented:
-
-- `Initial_Plan_Emits_PlanCreatedEvent`
-- `ProgressLedger_Updated_Event_Emitted`
-- `MagenticReplannedEvent` emission is verified in `PlanReview_Revised_Triggers_Replan` and `MaxStallCount_Triggers_Reset`
-
-Not yet implemented:
-
-- Broader `Warning_Events_On_Errors` (partially covered by `NextSpeaker_Invalid_Triggers_FinalAnswer` and `NextSpeaker_Empty_Falls_Back_To_First`)
-
-### 8. Checkpoint/Resume Tests (partial)
-
-Implemented:
-
-- Indirect coverage via `PlanReview_Approved_Proceeds` and `PlanReview_Revised_Triggers_Replan`, which both resume from checkpoints.
-
-Not yet implemented:
-
-- `Checkpoint_Saves_TaskContext`
-- `Checkpoint_Resume_Continues_Correctly`
-- `Checkpoint_Preserves_ProgressLedger`
-
-### 9. Edge Cases (0 of 4 implemented)
-
-Not yet implemented:
-
-- `Empty_Team_Handling`
-- `Single_Agent_Team`
-- `Instruction_Message_Sent_When_Present`
-- `Terminated_Context_Rejects_New_Messages`
-
-## Success Criteria Review
-
-| Success Criterion | Status | Notes |
+| Planned Test | Status | Notes |
 |---|---|---|
-| All logical forks in `MagenticOrchestrator` are covered by at least one test | Mostly met | Round limit, reset/stall, empty speaker fallback, invalid speaker, plan signoff, plan revision, multi-round delegation, and satisfied completion are all covered. Remaining: reset limit, progress ledger parse failure/retry, and edge cases. |
-| Tests use the same patterns as `HandoffOrchestrationTests` | Met | Tests use `StreamingRun`, `CheckpointManager`, `RequestInfoEvent`, `WorkflowOutputEvent`, and helper-based workflow execution patterns. |
-| Tests run against fully-built workflows, not isolated components | Met | All 11 tests use `MagenticWorkflowBuilder(...).Build()`. |
-| Each test verifies specific event emissions and state changes | Met | Event tests verify emitted events (PlanCreated, Replanned, ProgressLedgerUpdated, Warning); limit tests verify termination messages; plan review tests verify checkpoint/resume flow. |
-| Tests cover both `requirePlanSignoff=true` and `false` paths | Met | `PlanReview_Approved_Proceeds` and `PlanReview_Revised_Triggers_Replan` use `true`; happy path tests use `false`. |
-| Checkpoint/resume functionality is verified | Partially met | Plan review tests exercise checkpoint/resume, but direct state persistence assertions for `MagenticTaskContext` are not yet implemented. |
+| `Task_Completes_When_RequestSatisfied` | Implemented | Covered directly. |
+| `Task_Delegates_To_Correct_Agent` | Partially covered | Multi-round tests prove delegation can occur, but no test currently asserts that a specific selected participant receives the turn. |
+| `Task_Completes_After_Multiple_Rounds` | Implemented | Covered directly with a participant response and second manager round. |
+| `PlanSignoff_Disabled_Proceeds_Immediately` | Implemented | Covered directly and asserts no review request is emitted. |
 
-## Overall Assessment
+Summary: **3 complete, 1 partial**.
 
-The current implementation covers the majority of the critical orchestrator decision paths and has grown from 5 to 11 E2E tests. The remaining ~20 tests from the original plan are primarily: additional edge cases, direct checkpoint state verification, progress ledger parse retry/failure, and stall counting granularity. The most impactful orchestrator branches are now covered.
+### 2. Plan Review Tests
+
+| Planned Test | Status | Notes |
+|---|---|---|
+| `PlanReview_Approved_Proceeds` | Implemented | Covered directly with checkpoint/resume. |
+| `PlanReview_Revised_Triggers_Replan` | Implemented | Covered directly with revision, replan event, second review request, approval, and completion. |
+| `PlanReview_Multiple_Revisions` | Not implemented | Current revision test covers one revision only. |
+| `PlanReview_On_Stall_Replan` | Not implemented | Stall-triggered replan is covered without plan signoff; the plan-review-on-stall path remains uncovered. |
+
+Summary: **2 complete, 2 remaining**.
+
+### 3. Limit Enforcement Tests
+
+| Planned Test | Status | Notes |
+|---|---|---|
+| `MaxRoundLimit_Terminates_Workflow` | Implemented | Covered directly. |
+| `MaxResetLimit_Terminates_Workflow` | Not implemented | Reset limit branch remains uncovered. |
+| `MaxStallCount_Triggers_Reset` | Implemented | Covered directly as stall-triggered reset/replan. |
+
+Summary: **2 complete, 1 remaining**.
+
+### 4. Stall Detection Tests
+
+| Planned Test | Status | Notes |
+|---|---|---|
+| `Stall_IsInLoop_Increments_StallCount` | Partially covered | `MaxStallCount_Triggers_Reset` uses `IsInLoop=true`, but asserts reset/replan rather than directly asserting the counter. |
+| `Stall_NoProgress_Increments_StallCount` | Not implemented | No direct coverage for `IsProgressBeingMade=false`. |
+| `Progress_Made_Decrements_StallCount` | Not implemented | No direct coverage for stall count decrement. |
+| `Consecutive_Stalls_Trigger_Reset` | Implemented in simplified form | Covered with `MaxStallCount=1`; not covered with multiple consecutive stalls. |
+
+Summary: **1 complete/simplified, 1 partial, 2 remaining**.
+
+### 5. Progress Ledger Validation Tests
+
+| Planned Test | Status | Notes |
+|---|---|---|
+| `ProgressLedger_Retry_On_Parse_Failure` | Not implemented | Retry behavior remains uncovered. |
+| `ProgressLedger_Max_Retries_Triggers_Reset` | Not implemented | Failure-after-retries reset path remains uncovered. |
+| `ProgressLedger_Updated_Event_Emitted` | Implemented | Covered directly. |
+
+Summary: **1 complete, 2 remaining**.
+
+### 6. Next Speaker Validation Tests
+
+| Planned Test | Status | Notes |
+|---|---|---|
+| `NextSpeaker_Empty_Falls_Back_To_First` | Implemented | Covered directly. |
+| `NextSpeaker_Invalid_Triggers_FinalAnswer` | Implemented | Covered directly. |
+| `NextSpeaker_Valid_Delegates_Correctly` | Partially covered | Valid speaker delegation happens in multi-round tests, but the selected executor is not asserted independently. |
+
+Summary: **2 complete, 1 partial**.
+
+### 7. Event Emission Tests
+
+| Planned Test | Status | Notes |
+|---|---|---|
+| `Initial_Plan_Emits_PlanCreatedEvent` | Implemented | Covered directly. |
+| `Replan_Emits_ReplannedEvent` | Implemented | Covered by both plan revision and stall reset tests. |
+| `Warning_Events_On_Errors` | Partially covered | Empty and invalid next speaker warnings are covered; broader warning paths are not. |
+
+Summary: **2 complete, 1 partial**.
+
+### 8. Checkpoint/Resume Tests
+
+| Planned Test | Status | Notes |
+|---|---|---|
+| `Checkpoint_Saves_TaskContext` | Not implemented | No direct assertion on persisted `MagenticTaskContext` state. |
+| `Checkpoint_Resume_Continues_Correctly` | Partially covered | Plan approval and plan revision flows resume successfully from checkpoints. |
+| `Checkpoint_Preserves_ProgressLedger` | Not implemented | No direct progress ledger persistence assertion. |
+
+Summary: **1 partial, 2 remaining**.
+
+### 9. Edge Cases
+
+| Planned Test | Status | Notes |
+|---|---|---|
+| `Empty_Team_Handling` | Not implemented | No coverage for zero participants. |
+| `Single_Agent_Team` | Not implemented | Existing tests commonly use one participant, but there is no dedicated single-agent edge-case assertion. |
+| `Instruction_Message_Sent_When_Present` | Partially covered | Tests provide `instruction_or_question`, but do not assert the instruction message is sent or preserved. |
+| `Terminated_Context_Rejects_New_Messages` | Not implemented | No coverage for post-termination message handling. |
+
+Summary: **1 partial, 3 remaining**.
+
+## Success Criteria Assessment
+
+| Success Criterion | Status | Assessment |
+|---|---|---|
+| All logical forks in `MagenticOrchestrator` are covered by at least one test | Partially met | The major forks are covered: signoff/no-signoff, approved/revised plan review, satisfied completion, empty/invalid speaker, round limit, and stall reset. Remaining branches include reset limit, progress ledger retry/failure, and post-termination behavior. |
+| Tests use the same patterns as `HandoffOrchestrationTests` | Met | Tests use fully-built workflows, `StreamingRun`, `CheckpointManager`, pending requests, workflow events, and collected outputs. |
+| Tests run against fully-built workflows | Met | All tests build workflows through `MagenticWorkflowBuilder(...).Build()`. |
+| Each test verifies specific event emissions and state changes | Mostly met | Event and output assertions are present. Some planned state transitions, especially internal counters and checkpoint state, are only indirectly covered. |
+| Tests cover both `requirePlanSignoff=true` and `false` paths | Met | Plan review tests use `true`; happy path, next speaker, limit, and stall tests use `false`. |
+| Checkpoint/resume functionality is verified | Partially met | Resume is exercised through plan review flows, but direct serialized-state assertions are not implemented. |
+
+## Key Observations
+
+- The tests are true E2E tests for the workflow builder path rather than isolated protocol/unit tests.
+- `TestReplayAgent` response ordering is important because each re-entry into `TakeTurnAsync` can trigger another facts update and plan update before the next coordination round.
+- The current implementation provides strong coverage for high-risk orchestration behavior, especially human-in-the-loop and replanning flows.
+- Remaining gaps are mostly about deeper verification rather than proving the main workflow can run.
+
+## Recommended Next Tests
+
+Continue one test at a time in this order:
+
+1. `ProgressLedger_Retry_On_Parse_Failure`
+2. `ProgressLedger_Max_Retries_Triggers_Reset`
+3. `MaxResetLimit_Terminates_Workflow`
+4. `PlanReview_On_Stall_Replan`
+5. `Task_Delegates_To_Correct_Agent` / `NextSpeaker_Valid_Delegates_Correctly`
+6. Direct checkpoint state preservation tests
+7. `Instruction_Message_Sent_When_Present`
+8. Edge cases: empty team, dedicated single-agent team, post-termination rejection
+
+## Overall Conclusion
+
+The current implementation should be considered a correct and valuable partial completion of the original plan. It covers the most important user-visible orchestration paths and validates the previously missing output declaration in production code. The remaining work is well-scoped and can continue incrementally, with priority given to progress-ledger failure/retry handling and reset-limit coverage.
