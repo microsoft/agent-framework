@@ -491,21 +491,21 @@ public sealed class RouteBuilderTests
                 routeBuilder.AddCatchAll<string>((message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
-                    return message.As<TestPayload>()!.Value.ToUpperInvariant();
+                    return GetPayloadValue(message).ToUpperInvariant();
                 });
                 break;
             case 1:
                 routeBuilder.AddCatchAll<string>((message, context) =>
                 {
                     invocation.Capture(message, context);
-                    return message.As<TestPayload>()!.Value.ToUpperInvariant();
+                    return GetPayloadValue(message).ToUpperInvariant();
                 });
                 break;
             case 2:
                 Func<PortableValue, IWorkflowContext, CancellationToken, ValueTask<string>> asyncCatchAllWithCancellation = (message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
-                    return ValueTask.FromResult(message.As<TestPayload>()!.Value.ToUpperInvariant());
+                    return ValueTask.FromResult(GetPayloadValue(message).ToUpperInvariant());
                 };
                 routeBuilder.AddCatchAll<string>(asyncCatchAllWithCancellation);
                 break;
@@ -513,7 +513,7 @@ public sealed class RouteBuilderTests
                 Func<PortableValue, IWorkflowContext, ValueTask<string>> asyncCatchAll = (message, context) =>
                 {
                     invocation.Capture(message, context);
-                    return ValueTask.FromResult(message.As<TestPayload>()!.Value.ToUpperInvariant());
+                    return ValueTask.FromResult(GetPayloadValue(message).ToUpperInvariant());
                 };
                 routeBuilder.AddCatchAll<string>(asyncCatchAll);
                 break;
@@ -523,4 +523,11 @@ public sealed class RouteBuilderTests
     }
 
     private static bool UsesCancellationToken(int overload) => overload is 0 or 2;
+
+    private static string GetPayloadValue(PortableValue message)
+    {
+        TestPayload? payload = message.As<TestPayload>();
+        payload.Should().NotBeNull();
+        return payload.Value;
+    }
 }
