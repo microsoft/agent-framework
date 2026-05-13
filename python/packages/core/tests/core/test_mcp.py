@@ -4084,6 +4084,53 @@ async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_e
             assert meta is None
 
 
+async def test_mcp_tool_call_tool_forwards_tool_list_meta():
+    """call_tool echoes per-tool metadata returned by tools/list."""
+    from opentelemetry import trace
+
+    tool_meta = {
+        "tool_configuration": {
+            "name": "WorkIQSharePoint.readSmallBinaryFile",
+            "type": "foundry_toolbox",
+        }
+    }
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="WorkIQSharePoint.readSmallBinaryFile",
+                            description="Read a binary file",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"fileId": {"type": "string"}},
+                                "required": ["fileId"],
+                            },
+                            _meta=tool_meta,
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="result")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+
+        with trace.use_span(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)):
+            await server.call_tool("WorkIQSharePoint.readSmallBinaryFile", fileId="file-1")
+
+        assert server.session.call_tool.call_args.kwargs["meta"] == tool_meta
+
+
 async def test_mcp_streamable_http_tool_hook_not_duplicated_on_repeated_get_mcp_client():
     """Test that calling get_mcp_client multiple times does not accumulate duplicate hooks."""
     tool = MCPStreamableHTTPTool(

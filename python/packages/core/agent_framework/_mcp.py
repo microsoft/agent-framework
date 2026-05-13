@@ -261,6 +261,7 @@ class MCPTool:
         self.request_timeout = request_timeout
         self.client = client
         self._functions: list[FunctionTool] = []
+        self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
@@ -940,6 +941,7 @@ class MCPTool:
 
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
+        self._tool_call_meta_by_name.clear()
 
         params: types.PaginatedRequestParams | None = None
         while True:
@@ -999,6 +1001,9 @@ class MCPTool:
             tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
 
             for tool in tool_list.tools:
+                if tool.meta is not None:
+                    self._tool_call_meta_by_name[tool.name] = dict(tool.meta)
+
                 normalized_name = _normalize_mcp_name(tool.name)
                 local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
 
@@ -1141,14 +1146,15 @@ class MCPTool:
             }
         }
 
-        # Inject OpenTelemetry trace context into MCP _meta for distributed tracing.
-        otel_meta = _inject_otel_into_mcp_meta()
+        # Some MCP proxies require their tools/list metadata to be echoed on tools/call.
+        tool_meta = self._tool_call_meta_by_name.get(tool_name)
+        meta = _inject_otel_into_mcp_meta(dict(tool_meta) if tool_meta is not None else None)
 
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
                 if result.isError:
                     parsed = parser(result)
                     text = (
