@@ -130,16 +130,97 @@ def test_init_requires_memory_store_name(mock_project_client: AsyncMock) -> None
         )
 
 
-def test_init_requires_scope(mock_project_client: AsyncMock) -> None:
-    with pytest.raises(ValueError, match="scope is required"):
-        FoundryMemoryProvider(
-            project_client=mock_project_client,
-            memory_store_name="test_store",
-            scope="",
-        )
+def test_init_scope_is_optional(mock_project_client: AsyncMock) -> None:
+    """scope can be omitted; it will be resolved from session.state at runtime."""
+    provider = FoundryMemoryProvider(
+        project_client=mock_project_client,
+        memory_store_name="test_store",
+    )
+    assert provider.scope is None
+
+
+# -- _resolve_scope tests -------------------------------------------------------
+
+
+def test_resolve_scope_explicit(mock_project_client: AsyncMock) -> None:
+    provider = FoundryMemoryProvider(
+        project_client=mock_project_client,
+        memory_store_name="test_store",
+        scope="explicit_scope",
+    )
+    session = AgentSession(session_id="s1")
+    session.state["user_id"] = "ignored"
+    assert provider._resolve_scope(session) == "explicit_scope"
+
+
+def test_resolve_scope_from_user_id(mock_project_client: AsyncMock) -> None:
+    provider = FoundryMemoryProvider(
+        project_client=mock_project_client,
+        memory_store_name="test_store",
+    )
+    session = AgentSession(session_id="s1")
+    session.state["user_id"] = "user_42"
+    assert provider._resolve_scope(session) == "user_42"
+
+
+def test_resolve_scope_raises_without_user_id(mock_project_client: AsyncMock) -> None:
+    provider = FoundryMemoryProvider(
+        project_client=mock_project_client,
+        memory_store_name="test_store",
+    )
+    session = AgentSession(session_id="s1")
+    with pytest.raises(ValueError, match="Memory scope cannot be resolved"):
+        provider._resolve_scope(session)
 
 
 # -- before_run tests ----------------------------------------------------------
+
+
+async def test_before_run_resolves_scope_from_session_state(mock_project_client: AsyncMock) -> None:
+    """When scope is not set at init, before_run resolves it from session.state."""
+    static_result = Mock()
+    static_result.memories = []
+    contextual_result = Mock()
+    contextual_result.memories = []
+    mock_project_client.beta.memory_stores.search_memories.side_effect = [static_result, contextual_result]
+
+    provider = FoundryMemoryProvider(
+        project_client=mock_project_client,
+        memory_store_name="test_store",
+    )
+    session = AgentSession(session_id="test-session")
+    session.state["user_id"] = "u1"
+    ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
+
+    await provider.before_run(  # type: ignore[arg-type]
+        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+    )
+
+    for call in mock_project_client.beta.memory_stores.search_memories.call_args_list:
+        assert call.kwargs["scope"] == "u1"
+
+
+async def test_after_run_resolves_scope_from_session_state(mock_project_client: AsyncMock) -> None:
+    """When scope is not set at init, after_run resolves it from session.state."""
+    mock_poller = Mock()
+    mock_poller.update_id = "update-1"
+    mock_project_client.beta.memory_stores.begin_update_memories.return_value = mock_poller
+
+    provider = FoundryMemoryProvider(
+        project_client=mock_project_client,
+        memory_store_name="test_store",
+    )
+    session = AgentSession(session_id="test-session")
+    session.state["user_id"] = "u1"
+    ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="s1")
+    ctx._response = AgentResponse(messages=[Message(role="assistant", text="hey")])
+
+    await provider.after_run(  # type: ignore[arg-type]
+        agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+    )
+
+    call_kwargs = mock_project_client.beta.memory_stores.begin_update_memories.call_args.kwargs
+    assert call_kwargs["scope"] == "u1"
 
 
 async def test_retrieves_static_memories_on_first_run(mock_project_client: AsyncMock) -> None:
