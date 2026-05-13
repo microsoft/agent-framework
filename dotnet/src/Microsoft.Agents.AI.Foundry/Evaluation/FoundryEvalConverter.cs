@@ -130,6 +130,7 @@ internal static class FoundryEvalConverter
             QueryMessages = ConvertMessages(queryMessages),
             ResponseMessages = ConvertMessages(responseMessages),
             Context = item.Context,
+            GroundTruth = item.ExpectedOutput,
             ToolDefinitions = item.Tools is { Count: > 0 }
                 ? item.Tools
                     .OfType<AIFunction>()
@@ -185,6 +186,11 @@ internal static class FoundryEvalConverter
                     dataMapping["context"] = "{{item.context}}";
                 }
 
+                if (GroundTruthEvaluators.Contains(qualified))
+                {
+                    dataMapping["ground_truth"] = "{{item.ground_truth}}";
+                }
+
                 if (ToolEvaluators.Contains(qualified))
                 {
                     dataMapping["tool_definitions"] = "{{item.tool_definitions}}";
@@ -206,7 +212,7 @@ internal static class FoundryEvalConverter
     /// <summary>
     /// Builds the <c>item_schema</c> for custom JSONL eval definitions.
     /// </summary>
-    internal static WireItemSchema BuildItemSchema(bool hasContext = false, bool hasTools = false)
+    internal static WireItemSchema BuildItemSchema(bool hasContext = false, bool hasTools = false, bool hasGroundTruth = false)
     {
         var properties = new Dictionary<string, WireSchemaProperty>
         {
@@ -221,6 +227,11 @@ internal static class FoundryEvalConverter
             properties["context"] = new WireSchemaProperty { Type = "string" };
         }
 
+        if (hasGroundTruth)
+        {
+            properties["ground_truth"] = new WireSchemaProperty { Type = "string" };
+        }
+
         if (hasTools)
         {
             properties["tool_definitions"] = new WireSchemaProperty { Type = "array" };
@@ -231,6 +242,31 @@ internal static class FoundryEvalConverter
             Properties = properties,
             Required = ["query", "response"],
         };
+    }
+
+    /// <summary>
+    /// Returns the subset of <paramref name="evaluators"/> that require a ground-truth
+    /// (reference) value but cannot be evaluated because no item provided one.
+    /// </summary>
+    internal static List<string> FindMissingGroundTruthEvaluators(
+        IEnumerable<string> evaluators,
+        bool hasGroundTruth)
+    {
+        if (hasGroundTruth)
+        {
+            return [];
+        }
+
+        var missing = new List<string>();
+        foreach (var name in evaluators)
+        {
+            if (GroundTruthEvaluators.Contains(ResolveEvaluator(name)))
+            {
+                missing.Add(name);
+            }
+        }
+
+        return missing;
     }
 
     /// <summary>
@@ -275,6 +311,12 @@ internal static class FoundryEvalConverter
         "builtin.tool_input_accuracy",
         "builtin.tool_output_utilization",
         "builtin.tool_call_success",
+    };
+
+    // Evaluators that require a ground_truth (reference) value per item.
+    internal static readonly HashSet<string> GroundTruthEvaluators = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "builtin.similarity",
     };
 
     // Short name → fully-qualified name mapping.
