@@ -116,6 +116,13 @@ public static class WorkflowBuilderExtensions
         static bool IsAllowedType(object? message) => message is null;
     }
 
+    /// <summary>
+    /// Validates a target collection and returns it as a list.
+    /// </summary>
+    /// <param name="targets">The target executor bindings to validate.</param>
+    /// <returns>A validated list of target executor bindings.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="targets"/> is null or contains a null element.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="targets"/> is empty.</exception>
     private static List<ExecutorBinding> ValidateTargets(IEnumerable<ExecutorBinding> targets)
     {
         Throw.IfNull(targets);

@@ -447,6 +447,9 @@ public partial class WorkflowBuilderSmokeTests
         Assert.Throws<ArgumentNullException>("executors", () => switchBuilder.WithDefault([target, null!]));
     }
 
+    /// <summary>
+    /// Gets the only edge emitted by the specified workflow source.
+    /// </summary>
     private static Edge GetSingleEdge(Workflow workflow, string sourceId)
         => workflow.Edges[sourceId].Should().ContainSingle().Subject;
 }
