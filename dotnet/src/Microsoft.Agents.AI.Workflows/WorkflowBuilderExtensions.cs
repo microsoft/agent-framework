@@ -128,14 +128,16 @@ public static class WorkflowBuilderExtensions
         Throw.IfNull(targets);
 
         List<ExecutorBinding> targetList = [];
+        int targetIndex = 0;
         foreach (ExecutorBinding? target in targets)
         {
             if (target is null)
             {
-                throw new ArgumentNullException(nameof(targets), "Targets collection cannot contain null elements.");
+                throw new ArgumentNullException(nameof(targets), $"Targets collection contains a null element at index {targetIndex}.");
             }
 
             targetList.Add(target);
+            targetIndex++;
         }
 
         Throw.IfNullOrEmpty(targetList, nameof(targets));
