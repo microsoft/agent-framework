@@ -191,6 +191,182 @@ public class DelegatingAgentSessionStoreTests
 
     #endregion
 
+    #region GetService Tests
+
+    /// <summary>
+    /// Verify that GetService returns itself when requesting the exact type.
+    /// </summary>
+    [Fact]
+    public void GetServiceReturnsItselfForExactType()
+    {
+        // Act
+        var result = this._delegatingStore.GetService(typeof(TestDelegatingAgentSessionStore));
+
+        // Assert
+        Assert.Same(this._delegatingStore, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns itself when requesting a base type.
+    /// </summary>
+    [Fact]
+    public void GetServiceReturnsItselfForBaseType()
+    {
+        // Act
+        var result = this._delegatingStore.GetService(typeof(DelegatingAgentSessionStore));
+
+        // Assert
+        Assert.Same(this._delegatingStore, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns itself when requesting AgentSessionStore.
+    /// </summary>
+    [Fact]
+    public void GetServiceReturnsItselfForAgentSessionStoreType()
+    {
+        // Act
+        var result = this._delegatingStore.GetService(typeof(AgentSessionStore));
+
+        // Assert
+        Assert.Same(this._delegatingStore, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService chains to inner store when type is not satisfied by outer store.
+    /// </summary>
+    [Fact]
+    public void GetServiceChainsToInnerStore()
+    {
+        // Arrange
+        var innerStore = new ConcreteAgentSessionStore();
+        var delegatingStore = new TestDelegatingAgentSessionStore(innerStore);
+
+        // Act
+        var result = delegatingStore.GetService(typeof(ConcreteAgentSessionStore));
+
+        // Assert
+        Assert.Same(innerStore, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService chains through multiple delegation layers.
+    /// </summary>
+    [Fact]
+    public void GetServiceChainsThoughMultipleDelegationLayers()
+    {
+        // Arrange - create a three-layer chain: outer -> middle -> inner
+        var innerStore = new ConcreteAgentSessionStore();
+        var middleStore = new AnotherDelegatingAgentSessionStore(innerStore);
+        var outerStore = new TestDelegatingAgentSessionStore(middleStore);
+
+        // Act - request the innermost store type
+        var result = outerStore.GetService(typeof(ConcreteAgentSessionStore));
+
+        // Assert
+        Assert.Same(innerStore, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService can find a store in the middle of the delegation chain.
+    /// </summary>
+    [Fact]
+    public void GetServiceFindsMiddleStoreInChain()
+    {
+        // Arrange - create a three-layer chain: outer -> middle -> inner
+        var innerStore = new ConcreteAgentSessionStore();
+        var middleStore = new AnotherDelegatingAgentSessionStore(innerStore);
+        var outerStore = new TestDelegatingAgentSessionStore(middleStore);
+
+        // Act - request the middle store type
+        var result = outerStore.GetService(typeof(AnotherDelegatingAgentSessionStore));
+
+        // Assert
+        Assert.Same(middleStore, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null when the requested type is not found in the chain.
+    /// </summary>
+    [Fact]
+    public void GetServiceReturnsNullWhenTypeNotFound()
+    {
+        // Arrange
+        var innerStore = new ConcreteAgentSessionStore();
+        var delegatingStore = new TestDelegatingAgentSessionStore(innerStore);
+
+        // Act
+        var result = delegatingStore.GetService(typeof(string));
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null when a service key is provided but not matched.
+    /// </summary>
+    [Fact]
+    public void GetServiceReturnsNullWhenServiceKeyProvided()
+    {
+        // Act
+        var result = this._delegatingStore.GetService(typeof(TestDelegatingAgentSessionStore), "some-key");
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// Verify that GetService throws ArgumentNullException when serviceType is null.
+    /// </summary>
+    [Fact]
+    public void GetServiceThrowsWhenServiceTypeIsNull() =>
+        Assert.Throws<ArgumentNullException>("serviceType", () => this._delegatingStore.GetService(null!));
+
+    /// <summary>
+    /// Verify that GetService generic method works correctly.
+    /// </summary>
+    [Fact]
+    public void GetServiceGenericReturnsItself()
+    {
+        // Act
+        var result = this._delegatingStore.GetService<TestDelegatingAgentSessionStore>();
+
+        // Assert
+        Assert.Same(this._delegatingStore, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService generic method chains to inner store.
+    /// </summary>
+    [Fact]
+    public void GetServiceGenericChainsToInnerStore()
+    {
+        // Arrange
+        var innerStore = new ConcreteAgentSessionStore();
+        var delegatingStore = new TestDelegatingAgentSessionStore(innerStore);
+
+        // Act
+        var result = delegatingStore.GetService<ConcreteAgentSessionStore>();
+
+        // Assert
+        Assert.Same(innerStore, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService generic method returns null when type not found.
+    /// </summary>
+    [Fact]
+    public void GetServiceGenericReturnsNullWhenTypeNotFound()
+    {
+        // Act
+        var result = this._delegatingStore.GetService<string>();
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    #endregion
+
     #region Test Implementation
 
     /// <summary>
@@ -199,6 +375,23 @@ public class DelegatingAgentSessionStoreTests
     private sealed class TestDelegatingAgentSessionStore(AgentSessionStore innerStore) : DelegatingAgentSessionStore(innerStore)
     {
         public new AgentSessionStore InnerStore => base.InnerStore;
+    }
+
+    /// <summary>
+    /// Another delegating store implementation for testing multi-layer chains.
+    /// </summary>
+    private sealed class AnotherDelegatingAgentSessionStore(AgentSessionStore innerStore) : DelegatingAgentSessionStore(innerStore);
+
+    /// <summary>
+    /// Concrete (non-delegating) session store for testing GetService chaining.
+    /// </summary>
+    private sealed class ConcreteAgentSessionStore : AgentSessionStore
+    {
+        public override ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+            => new(new TestAgentSession());
+
+        public override ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
     }
 
     private sealed class TestAgentSession : AgentSession;
