@@ -479,6 +479,59 @@ public class MagenticOrchestrationTests
         runResult.Result![0].Text.Should().Contain("maximum round count limit");
     }
 
+    [Fact]
+    public async Task MaxStallCount_Triggers_Reset()
+    {
+        // Arrange: MaxStallCount=1, so one stall (isInLoop=true) triggers ResetAndReplanAsync.
+        // Flow: facts1, plan1 → round1 ledger(stall: isInLoop=true) → StallCount=1 → IsStalled → Reset
+        //       → facts2, plan2 (replan) → round2 ledger(satisfied) → finalAnswer
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Initial plan");
+        List<ChatMessage> stalledLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: true,  // This triggers stall
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Keep trying");
+
+        // After reset: ResetAndReplanAsync → UpdatePlanAndDelegateAsync → new plan
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Fresh facts after reset");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Fresh plan after reset");
+        List<ChatMessage> satisfiedLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Recovered after stall reset");
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, stalledLedger,
+             factsResponse2, planResponse2, satisfiedLedger, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .WithMaxStalls(1)  // One stall triggers reset
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do task")],
+            eventCollector: collectedEvents);
+
+        // Assert: MagenticReplannedEvent should be emitted (reset triggers replan), final answer produced
+        collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().NotBeEmpty("initial plan created");
+        collectedEvents.OfType<MagenticReplannedEvent>().Should().NotBeEmpty("stall triggers reset and replan");
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Recovered after stall reset");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
