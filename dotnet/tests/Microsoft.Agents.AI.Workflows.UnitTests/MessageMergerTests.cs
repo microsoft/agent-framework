@@ -219,10 +219,11 @@ public class MessageMergerTests
     }
 
     [Fact]
-    public void Test_MessageMerger_StableSort_WithThreeOrMoreMixedTimestampMessages()
+    public void Test_MessageMerger_ReproducibleOrdering_WithMixedTimestamps()
     {
         // Arrange: 3+ messages with mixed null/non-null CreatedAt values
-        // This tests the non-transitive comparison edge case
+        // This tests that the same input sequence produces the same output
+        // (run-to-run reproducibility for a fixed input)
         string responseId = Guid.NewGuid().ToString("N");
         string messageIdA = Guid.NewGuid().ToString("N");
         string messageIdB = Guid.NewGuid().ToString("N");
@@ -261,10 +262,10 @@ public class MessageMergerTests
             Contents = [new TextContent("Message C (T=5)")],
         });
 
-        // Act - Run multiple times to verify determinism
+        // Act - Run multiple times to verify reproducibility
         AgentResponse response1 = merger.ComputeMerged(responseId);
 
-        // Create a fresh merger with same data to verify determinism
+        // Create a fresh merger with same data to verify reproducibility
         MessageMerger merger2 = new();
         merger2.AddUpdate(new AgentResponseUpdate
         {
@@ -291,7 +292,7 @@ public class MessageMergerTests
         });
         AgentResponse response2 = merger2.ComputeMerged(responseId);
 
-        // Assert: Result is deterministic and consistent across runs
+        // Assert: Result is reproducible and consistent across runs with same input order
         response1.Messages.Should().HaveCount(3);
         response2.Messages.Should().HaveCount(3);
 
@@ -368,6 +369,10 @@ public class MessageMergerTests
         int firstA1Index = messageTexts.FindIndex(t => t.StartsWith("Agent1", StringComparison.Ordinal));
         int firstA2Index = messageTexts.FindIndex(t => t.StartsWith("Agent2", StringComparison.Ordinal));
 
+        // Assert both indices are valid (messages were found)
+        firstA1Index.Should().BeGreaterThanOrEqualTo(0, "Agent1 messages should be present in response");
+        firstA2Index.Should().BeGreaterThanOrEqualTo(0, "Agent2 messages should be present in response");
+
         // All Agent1 messages should be contiguous (either at start or after all Agent2 messages)
         var a1Messages = messageTexts.Where(t => t.StartsWith("Agent1", StringComparison.Ordinal)).ToList();
         var a2Messages = messageTexts.Where(t => t.StartsWith("Agent2", StringComparison.Ordinal)).ToList();
@@ -398,40 +403,102 @@ public class MessageMergerTests
     public void Test_MessageMerger_MaintainsAgentGrouping_WithDifferentResponseIds()
     {
         // Arrange: Agent1 uses ResponseId=R1, Agent2 uses ResponseId=R2
+        // Multiple messages per ResponseId to properly test contiguity
         string responseIdR1 = Guid.NewGuid().ToString("N");
         string responseIdR2 = Guid.NewGuid().ToString("N");
-        string messageIdA1 = Guid.NewGuid().ToString("N");
-        string messageIdA2 = Guid.NewGuid().ToString("N");
+        string messageIdA1M1 = Guid.NewGuid().ToString("N");
+        string messageIdA1M2 = Guid.NewGuid().ToString("N");
+        string messageIdA1M3 = Guid.NewGuid().ToString("N");
+        string messageIdA2M1 = Guid.NewGuid().ToString("N");
+        string messageIdA2M2 = Guid.NewGuid().ToString("N");
+        string messageIdA2M3 = Guid.NewGuid().ToString("N");
 
         MessageMerger merger = new();
 
+        // Interleaved arrival: A1-1, A2-1, A1-2, A2-2, A1-3, A2-3
         merger.AddUpdate(new AgentResponseUpdate
         {
             ResponseId = responseIdR1,
-            MessageId = messageIdA1,
+            MessageId = messageIdA1M1,
             AgentId = TestAgentId1,
             Role = ChatRole.Assistant,
-            Contents = [new TextContent("Agent1 Response")],
+            Contents = [new TextContent("Agent1 Response 1")],
         });
         merger.AddUpdate(new AgentResponseUpdate
         {
             ResponseId = responseIdR2,
-            MessageId = messageIdA2,
+            MessageId = messageIdA2M1,
             AgentId = TestAgentId2,
             Role = ChatRole.Assistant,
-            Contents = [new TextContent("Agent2 Response")],
+            Contents = [new TextContent("Agent2 Response 1")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR1,
+            MessageId = messageIdA1M2,
+            AgentId = TestAgentId1,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent1 Response 2")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR2,
+            MessageId = messageIdA2M2,
+            AgentId = TestAgentId2,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent2 Response 2")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR1,
+            MessageId = messageIdA1M3,
+            AgentId = TestAgentId1,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent1 Response 3")],
+        });
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseIdR2,
+            MessageId = messageIdA2M3,
+            AgentId = TestAgentId2,
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent("Agent2 Response 3")],
         });
 
         // Act
         AgentResponse response = merger.ComputeMerged(responseIdR1);
 
         // Assert: Messages from each agent are contiguous (not interleaved)
-        response.Messages.Should().HaveCount(2);
+        response.Messages.Should().HaveCount(6);
 
-        // Both messages should be present
         var messageTexts = response.Messages.Select(m => m.Text).ToList();
-        messageTexts.Should().Contain("Agent1 Response");
-        messageTexts.Should().Contain("Agent2 Response");
+
+        // Verify all messages are present
+        messageTexts.Should().Contain("Agent1 Response 1");
+        messageTexts.Should().Contain("Agent1 Response 2");
+        messageTexts.Should().Contain("Agent1 Response 3");
+        messageTexts.Should().Contain("Agent2 Response 1");
+        messageTexts.Should().Contain("Agent2 Response 2");
+        messageTexts.Should().Contain("Agent2 Response 3");
+
+        // Find indices to verify contiguity
+        int firstA1Index = messageTexts.FindIndex(t => t.StartsWith("Agent1", StringComparison.Ordinal));
+        int lastA1Index = messageTexts.FindLastIndex(t => t.StartsWith("Agent1", StringComparison.Ordinal));
+        int firstA2Index = messageTexts.FindIndex(t => t.StartsWith("Agent2", StringComparison.Ordinal));
+        int lastA2Index = messageTexts.FindLastIndex(t => t.StartsWith("Agent2", StringComparison.Ordinal));
+
+        // Assert indices are valid
+        firstA1Index.Should().BeGreaterThanOrEqualTo(0, "Agent1 messages should be present");
+        firstA2Index.Should().BeGreaterThanOrEqualTo(0, "Agent2 messages should be present");
+
+        // Verify contiguity: all Agent1 messages should span exactly 3 consecutive indices
+        (lastA1Index - firstA1Index).Should().Be(2, "Agent1 messages should be contiguous (3 messages spanning 2 index gaps)");
+        (lastA2Index - firstA2Index).Should().Be(2, "Agent2 messages should be contiguous (3 messages spanning 2 index gaps)");
+
+        // Verify no interleaving: ranges should not overlap
+        bool a1BeforeA2 = lastA1Index < firstA2Index;
+        bool a2BeforeA1 = lastA2Index < firstA1Index;
+        (a1BeforeA2 || a2BeforeA1).Should().BeTrue("Agent message blocks should not interleave");
     }
 
     #endregion
