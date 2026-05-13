@@ -999,6 +999,7 @@ class MCPTool:
 
         params: types.PaginatedRequestParams | None = None
         while True:
+            prompt_list: types.ListPromptsResult | None = None
             for attempt in range(2):
                 try:
                     # Ensure connection is still valid before each page request
@@ -1027,6 +1028,9 @@ class MCPTool:
                         inner_exception=cl_ex,
                     ) from cl_ex
 
+            if prompt_list is None:
+                raise ToolExecutionException("Failed to load prompts.")
+
             for prompt in prompt_list.prompts:
                 normalized_name = _normalize_mcp_name(prompt.name)
                 local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
@@ -1052,7 +1056,7 @@ class MCPTool:
                 existing_names.add(local_name)
 
             # Check if there are more pages
-            if not prompt_list or not prompt_list.nextCursor:
+            if not prompt_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
 
@@ -1077,6 +1081,7 @@ class MCPTool:
 
         params: types.PaginatedRequestParams | None = None
         while True:
+            tool_list: types.ListToolsResult | None = None
             for attempt in range(2):
                 try:
                     # Ensure connection is still valid before each page request
@@ -1102,6 +1107,9 @@ class MCPTool:
                         "Failed to load tools - connection lost.",
                         inner_exception=cl_ex,
                     ) from cl_ex
+
+            if tool_list is None:
+                raise ToolExecutionException("Failed to load tools.")
 
             for tool in tool_list.tools:
                 normalized_name = _normalize_mcp_name(tool.name)
@@ -1147,7 +1155,7 @@ class MCPTool:
                 existing_names.add(local_name)
 
             # Check if there are more pages
-            if not tool_list or not tool_list.nextCursor:
+            if not tool_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
