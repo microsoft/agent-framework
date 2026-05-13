@@ -763,6 +763,59 @@ public class MagenticOrchestrationTests
         runResult.Result![0].Text.Should().Contain("Completed after ledger retry");
     }
 
+    [Fact]
+    public async Task ProgressLedger_Max_Retries_Triggers_Reset()
+    {
+        // Arrange: All 3 progress ledger retry attempts return invalid JSON → exception → ResetAndReplanAsync.
+        // After reset: new plan, valid ledger (satisfied), final answer.
+        // Turn sequence: facts1, plan1, invalidJSON×3, facts2, plan2, validLedger(satisfied), finalAnswer
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Initial plan");
+        List<ChatMessage> invalidLedger1 = CreatePlanResponse("not json at all");
+        List<ChatMessage> invalidLedger2 = CreatePlanResponse("still not json");
+        List<ChatMessage> invalidLedger3 = CreatePlanResponse("definitely not json");
+
+        // After reset: ResetAndReplanAsync → UpdatePlanAndDelegateAsync → new plan
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Fresh facts after reset");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Fresh plan after reset");
+        List<ChatMessage> validLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Done after reset");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Recovered after max retries reset");
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, invalidLedger1, invalidLedger2, invalidLedger3,
+             factsResponse2, planResponse2, validLedger, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do task")],
+            eventCollector: collectedEvents);
+
+        // Assert: Parse failure warnings emitted, reset triggered (ReplannedEvent), workflow completes
+        collectedEvents.OfType<WorkflowWarningEvent>()
+            .Where(e => e.Data?.ToString()?.Contains("Progress ledger JSON parse failed") == true)
+            .Should().HaveCountGreaterThanOrEqualTo(3, "all 3 retry attempts should emit warnings");
+        collectedEvents.OfType<WorkflowWarningEvent>()
+            .Should().Contain(e => e.Data != null && e.Data.ToString()!.Contains("triggering reset"));
+        collectedEvents.OfType<MagenticReplannedEvent>().Should().NotBeEmpty("reset triggers replan");
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Recovered after max retries reset");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
