@@ -364,7 +364,7 @@ public partial class WorkflowBuilderSmokeTests
         NoOpExecutor target = new("target");
 
         // Act/Assert
-        Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).ForwardMessage<string>(source, target));
+        Assert.Throws<ArgumentNullException>(() => ((WorkflowBuilder)null!).ForwardMessage<string>(source, target));
         Assert.Throws<ArgumentNullException>("source", () => builder.ForwardMessage<string>(null!, target));
         Assert.Throws<ArgumentNullException>("target", () => builder.ForwardMessage<string>(source, (ExecutorBinding)null!));
         Assert.Throws<ArgumentNullException>("targets", () => builder.ForwardMessage<string>(source, (IEnumerable<ExecutorBinding>)null!));
@@ -381,7 +381,7 @@ public partial class WorkflowBuilderSmokeTests
         NoOpExecutor target = new("target");
 
         // Act/Assert
-        Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).ForwardExcept<string>(source, target));
+        Assert.Throws<ArgumentNullException>(() => ((WorkflowBuilder)null!).ForwardExcept<string>(source, target));
         Assert.Throws<ArgumentNullException>("source", () => builder.ForwardExcept<string>(null!, target));
         Assert.Throws<ArgumentNullException>("target", () => builder.ForwardExcept<string>(source, (ExecutorBinding)null!));
         Assert.Throws<ArgumentNullException>("targets", () => builder.ForwardExcept<string>(source, (IEnumerable<ExecutorBinding>)null!));
@@ -399,7 +399,7 @@ public partial class WorkflowBuilderSmokeTests
         NoOpExecutor otherTarget = new("other-target");
 
         // Act/Assert
-        Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).AddChain(source, [target]));
+        Assert.Throws<ArgumentNullException>(() => ((WorkflowBuilder)null!).AddChain(source, [target]));
         Assert.Throws<ArgumentNullException>("source", () => builder.AddChain(null!, [target]));
         Assert.Throws<ArgumentNullException>("executors", () => builder.AddChain(source, null!));
         Assert.Throws<ArgumentNullException>("executors", () => builder.AddChain(source, [target, null!]));
@@ -415,7 +415,7 @@ public partial class WorkflowBuilderSmokeTests
         NoOpExecutor source = new("start");
 
         // Act/Assert
-        Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).AddExternalCall<string, int>(source, "port"));
+        Assert.Throws<ArgumentNullException>(() => ((WorkflowBuilder)null!).AddExternalCall<string, int>(source, "port"));
         Assert.Throws<ArgumentNullException>("source", () => builder.AddExternalCall<string, int>(null!, "port"));
         Assert.Throws<ArgumentNullException>("portId", () => builder.AddExternalCall<string, int>(source, null!));
     }
@@ -428,7 +428,7 @@ public partial class WorkflowBuilderSmokeTests
         NoOpExecutor source = new("start");
 
         // Act/Assert
-        Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).AddSwitch(source, _ => { }));
+        Assert.Throws<ArgumentNullException>(() => ((WorkflowBuilder)null!).AddSwitch(source, _ => { }));
         Assert.Throws<ArgumentNullException>("source", () => builder.AddSwitch(null!, _ => { }));
         Assert.Throws<ArgumentNullException>("configureSwitch", () => builder.AddSwitch(source, null!));
         Assert.Throws<ArgumentException>("targets", () => builder.AddSwitch(source, _ => { }));
