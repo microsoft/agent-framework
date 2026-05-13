@@ -1,9 +1,10 @@
 # What this sample demonstrates
 
-This sample demonstrates how to use a `ChatClientAgent` with the `FileAccessProvider` to give an agent access to a folder of data files for reading, analyzing, and writing results.
+This sample demonstrates how to use a `HarnessAgent` with the `FileAccessProvider` to give an agent access to a folder of data files for reading, analyzing, and writing results. The `HarnessAgent` pre-configures function invocation, per-service-call chat history persistence, and in-loop compaction — so the sample only needs to supply the chat client, token limits, and application-specific options.
 
 Key features showcased:
 
+- **HarnessAgent** — a pre-configured agent that wraps a `ChatClientAgent` with function invocation, per-service-call persistence, and context-window compaction
 - **FileAccessProvider** — gives the agent tools to read, write, list, search, and delete files in a shared data folder
 - **CSV data processing** — the agent reads sales transaction data and performs analysis on demand
 - **Output file creation** — the agent can write summaries, filtered data, or reports back to the data folder

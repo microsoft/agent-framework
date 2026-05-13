@@ -42,23 +42,15 @@ internal sealed class ClientHeadersAgent : DelegatingAIAgent
         CancellationToken cancellationToken = default)
     {
         var snapshot = TrySnapshot(options);
-        if (snapshot is null)
+        if (snapshot is not null)
         {
-            return this.InnerAgent.RunAsync(messages, session, options, cancellationToken);
+            // AsyncLocal mutations made inside an awaited async method do not leak back to the
+            // caller after the method returns, so we do not need an explicit restore step here.
+            // See ClientHeadersScope remarks.
+            ClientHeadersScope.Current = snapshot;
         }
 
-        return RunAsyncCoreAsync(messages, session, options, snapshot, cancellationToken);
-
-        async Task<AgentResponse> RunAsyncCoreAsync(
-            IEnumerable<ChatMessage> innerMessages,
-            AgentSession? innerSession,
-            AgentRunOptions? innerOptions,
-            Dictionary<string, string> innerSnapshot,
-            CancellationToken innerCt)
-        {
-            using var _ = ClientHeadersScope.Push(innerSnapshot);
-            return await this.InnerAgent.RunAsync(innerMessages, innerSession, innerOptions, innerCt).ConfigureAwait(false);
-        }
+        return this.InnerAgent.RunAsync(messages, session, options, cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -69,7 +61,10 @@ internal sealed class ClientHeadersAgent : DelegatingAIAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var snapshot = TrySnapshot(options);
-        using var _ = snapshot is null ? default : ClientHeadersScope.Push(snapshot);
+        if (snapshot is not null)
+        {
+            ClientHeadersScope.Current = snapshot;
+        }
 
         await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
         {

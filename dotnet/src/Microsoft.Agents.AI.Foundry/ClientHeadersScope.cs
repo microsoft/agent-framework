@@ -11,39 +11,31 @@ namespace Microsoft.Agents.AI.Foundry;
 /// <see cref="ClientHeadersPolicy"/> running inside the SCM transport pipeline.
 /// </summary>
 /// <remarks>
-/// AsyncLocal flows the value into downstream awaits but does not roll the value back when the
-/// setting method returns. This type pairs each <see cref="Push(IReadOnlyDictionary{string, string}?)"/>
-/// with a disposable that explicitly restores the prior value, giving stack-style LIFO semantics
-/// for nested or sequential per-call scopes on the same async flow.
+/// <para>
+/// <see cref="AsyncLocal{T}"/> propagates the value forward into every <c>await</c> on the same
+/// async flow, but mutations made inside an awaited <c>async</c> method do <em>not</em> leak back
+/// to the caller after the method returns. This means a method that assigns
+/// <see cref="Current"/> at the top and then awaits inner work does not need any explicit
+/// restoration step: the runtime restores the caller's view of the AsyncLocal automatically when
+/// the method's task completes.
+/// </para>
+/// <para>
+/// Setting <see cref="Current"/> from synchronous code, however, will leak to the caller because
+/// no async-method boundary is crossed. All Agent Framework call sites of this carrier are
+/// inside <c>async</c> methods (<see cref="ClientHeadersAgent"/>), so the natural restoration
+/// suffices for our needs.
+/// </para>
 /// </remarks>
 internal static class ClientHeadersScope
 {
     private static readonly AsyncLocal<IReadOnlyDictionary<string, string>?> s_current = new();
 
-    /// <summary>Gets the dictionary captured by the most recent <see cref="Push(IReadOnlyDictionary{string, string}?)"/> on this async flow.</summary>
-    public static IReadOnlyDictionary<string, string>? Current => s_current.Value;
-
     /// <summary>
-    /// Pushes a new value as the current scope. Disposing the returned token restores the previous value.
+    /// Gets or sets the per-async-flow client-header snapshot read by <see cref="ClientHeadersPolicy"/>.
     /// </summary>
-    /// <param name="headers">The header dictionary to surface to the policy. May be <see langword="null"/>.</param>
-    public static Scope Push(IReadOnlyDictionary<string, string>? headers)
+    public static IReadOnlyDictionary<string, string>? Current
     {
-        var previous = s_current.Value;
-        s_current.Value = headers;
-        return new Scope(previous);
-    }
-
-    /// <summary>Disposable token that restores the previous scope on <see cref="Dispose"/>.</summary>
-    internal readonly struct Scope : System.IDisposable
-    {
-        private readonly IReadOnlyDictionary<string, string>? _previous;
-
-        internal Scope(IReadOnlyDictionary<string, string>? previous)
-        {
-            this._previous = previous;
-        }
-
-        public void Dispose() => s_current.Value = this._previous;
+        get => s_current.Value;
+        set => s_current.Value = value;
     }
 }

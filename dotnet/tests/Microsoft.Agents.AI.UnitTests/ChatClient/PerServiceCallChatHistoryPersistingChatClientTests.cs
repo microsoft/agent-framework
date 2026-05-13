@@ -1311,4 +1311,64 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
         // Assert — session should NOT have the sentinel
         Assert.NotEqual(PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId, session!.ConversationId);
     }
+
+    /// <summary>
+    /// Verifies that when the consumer abandons enumeration early (the streaming enumerator is
+    /// disposed before completing — e.g. <c>ToolApprovalAgent.RunStreamingAsync</c> doing a
+    /// <c>yield break</c>), the decorator still persists the input messages via its <c>finally</c>
+    /// block. This regression-guards the dropped-FunctionResultContent → HTTP 400 bug.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_PersistsInputMessages_WhenConsumerAbandonsEnumerationAsync()
+    {
+        // Arrange — emit multiple updates so the consumer can break after the first.
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(CreateAsyncEnumerableAsync(
+                new ChatResponseUpdate(ChatRole.Assistant, "first "),
+                new ChatResponseUpdate(ChatRole.Assistant, "second "),
+                new ChatResponseUpdate(ChatRole.Assistant, "third")));
+
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<IEnumerable<ChatMessage>>(ctx.RequestMessages.ToList()));
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            RequirePerServiceCallChatHistoryPersistence = true,
+        });
+
+        // Act — consumer breaks out after the first update, mirroring ToolApprovalAgent's
+        // yield-break-on-approval-required path.
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await foreach (var _ in agent.RunStreamingAsync([new(ChatRole.User, "frc-input")], session))
+        {
+            break;
+        }
+
+        // Assert — even though the consumer abandoned the stream, the input messages
+        // must still have been persisted (so we don't lose function-call/function-result
+        // pairings).
+        mockChatHistoryProvider
+            .Protected()
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
+                ItExpr.Is<ChatHistoryProvider.InvokedContext>(x =>
+                    x.RequestMessages.Any(m => m.Text == "frc-input") &&
+                    (x.ResponseMessages == null || !x.ResponseMessages.Any()) &&
+                    x.InvokeException == null),
+                ItExpr.IsAny<CancellationToken>());
+    }
 }

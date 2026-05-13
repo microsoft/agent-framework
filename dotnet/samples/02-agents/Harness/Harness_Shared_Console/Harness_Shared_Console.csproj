@@ -8,11 +8,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Spectre.Console" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
+    <ProjectReference Include="..\ConsoleReactiveFramework\ConsoleReactiveFramework.csproj" />
+    <ProjectReference Include="..\ConsoleReactiveComponents\ConsoleReactiveComponents.csproj" />
   </ItemGroup>
 
 </Project>

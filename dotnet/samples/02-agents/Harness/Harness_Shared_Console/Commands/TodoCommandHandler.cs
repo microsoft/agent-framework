@@ -7,7 +7,7 @@ namespace Harness.Shared.Console.Commands;
 /// <summary>
 /// Handles the <c>/todos</c> command to display the current todo list.
 /// </summary>
-internal sealed class TodoCommandHandler : ICommandHandler
+internal sealed class TodoCommandHandler : CommandHandler
 {
     private readonly TodoProvider? _todoProvider;
 
@@ -21,10 +21,10 @@ internal sealed class TodoCommandHandler : ICommandHandler
     }
 
     /// <inheritdoc/>
-    public string? GetHelpText() => this._todoProvider is not null ? "/todos (show todo list)" : null;
+    public override string? GetHelpText() => this._todoProvider is not null ? "/todos (show todo list)" : null;
 
     /// <inheritdoc/>
-    public async ValueTask<bool> TryHandleAsync(string input, AgentSession session)
+    public override async ValueTask<bool> TryHandleAsync(string input, AgentSession session, HarnessUXContainer ux)
     {
         if (!input.Equals("/todos", StringComparison.OrdinalIgnoreCase))
         {
@@ -33,34 +33,28 @@ internal sealed class TodoCommandHandler : ICommandHandler
 
         if (this._todoProvider is null)
         {
-            System.Console.WriteLine("TodoProvider is not available.");
+            await ux.WriteInfoLineAsync("TodoProvider is not available.").ConfigureAwait(false);
             return true;
         }
 
         var todos = await this._todoProvider.GetAllTodosAsync(session).ConfigureAwait(false);
         if (todos.Count == 0)
         {
-            System.Console.WriteLine("\n  No todos yet.\n");
+            await ux.WriteInfoLineAsync("No todos yet.").ConfigureAwait(false);
             return true;
         }
 
-        System.Console.WriteLine();
-        System.Console.WriteLine("  ── Todo List ──");
+        await ux.WriteInfoLineAsync("── Todo List ──").ConfigureAwait(false);
         foreach (var item in todos)
         {
             string status = item.IsComplete ? "✓" : "○";
-            System.Console.ForegroundColor = item.IsComplete ? ConsoleColor.DarkGray : ConsoleColor.White;
-            System.Console.Write($"  [{status}] #{item.Id} {item.Title}");
-            if (!string.IsNullOrWhiteSpace(item.Description))
-            {
-                System.Console.Write($" — {item.Description}");
-            }
-
-            System.Console.WriteLine();
+            ConsoleColor color = item.IsComplete ? ConsoleColor.DarkGray : ConsoleColor.White;
+            string description = string.IsNullOrWhiteSpace(item.Description)
+                ? string.Empty
+                : $" — {item.Description}";
+            await ux.WriteInfoLineAsync($"[{status}] #{item.Id} {item.Title}{description}", color).ConfigureAwait(false);
         }
 
-        System.Console.ResetColor();
-        System.Console.WriteLine();
         return true;
     }
 }

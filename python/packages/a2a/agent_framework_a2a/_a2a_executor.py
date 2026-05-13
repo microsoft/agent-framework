@@ -1,16 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import base64
 import logging
 from asyncio import CancelledError
 from collections.abc import Mapping
 from functools import partial
 from typing import Any
 
+from a2a.helpers import new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import FilePart, FileWithBytes, FileWithUri, Part, TaskState, TextPart
-from a2a.utils import new_task
+from a2a.types import Part, TaskState
 from agent_framework import (
     AgentResponseUpdate,
     AgentSession,
@@ -39,21 +40,24 @@ class A2AExecutor(AgentExecutor):
     Example:
         .. code-block:: python
 
-            from a2a.server.apps import A2AStarletteApplication
             from a2a.server.request_handlers import DefaultRequestHandler
+            from a2a.server.routes import create_jsonrpc_routes, create_agent_card_routes
             from a2a.server.tasks import InMemoryTaskStore
-            from a2a.types import AgentCapabilities, AgentCard
+            from a2a.types import AgentCapabilities, AgentCard, AgentInterface
             from agent_framework.a2a import A2AExecutor
             from agent_framework.openai import OpenAIResponsesClient
+            from starlette.applications import Starlette
 
             public_agent_card = AgentCard(
                 name="Food Agent",
                 description="A simple agent that provides food-related information.",
-                url="http://localhost:9999/",
                 version="1.0.0",
-                defaultInputModes=["text"],
-                defaultOutputModes=["text"],
+                default_input_modes=["text"],
+                default_output_modes=["text"],
                 capabilities=AgentCapabilities(streaming=True),
+                supported_interfaces=[
+                    AgentInterface(url="http://localhost:9999/", protocol_binding="JSONRPC"),
+                ],
                 skills=[],
             )
 
@@ -68,12 +72,15 @@ class A2AExecutor(AgentExecutor):
             request_handler = DefaultRequestHandler(
                 agent_executor=A2AExecutor(agent, stream=True, run_kwargs={"client_kwargs": {"max_tokens": 500}}),
                 task_store=InMemoryTaskStore(),
+                agent_card=public_agent_card,
             )
 
-            server = A2AStarletteApplication(
-                agent_card=public_agent_card,
-                http_handler=request_handler,
-            ).build()
+            app = Starlette(
+                routes=[
+                    *create_agent_card_routes(public_agent_card),
+                    *create_jsonrpc_routes(request_handler),
+                ],
+            )
 
     Args:
         agent: The AI agent to execute.
@@ -143,7 +150,7 @@ class A2AExecutor(AgentExecutor):
         task = context.current_task
 
         if not task:
-            task = new_task(context.message)
+            task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
 
         updater = TaskUpdater(event_queue, task.id, context.context_id)
@@ -162,13 +169,12 @@ class A2AExecutor(AgentExecutor):
             # Mark as complete
             await updater.complete()
         except CancelledError:
-            await updater.update_status(state=TaskState.canceled, final=True)
+            await updater.update_status(state=TaskState.TASK_STATE_CANCELED)
         except Exception as e:
             logger.exception("A2AExecutor encountered an error during execution.", exc_info=e)
             await updater.update_status(
-                state=TaskState.failed,
-                final=True,
-                message=updater.new_agent_message([Part(root=TextPart(text=str(e)))]),
+                state=TaskState.TASK_STATE_FAILED,
+                message=updater.new_agent_message([Part(text=str(e))]),
             )
 
     async def _run_stream(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
@@ -221,9 +227,9 @@ class A2AExecutor(AgentExecutor):
                     ) -> None:
                         # Custom logic to transform item contents
                         if item.role == "assistant" and item.contents:
-                            parts = [Part(root=TextPart(text=f"Custom: {item.contents[0].text}"))]
+                            parts = [Part(text=f"Custom: {item.contents[0].text}")]
                             await updater.update_status(
-                                state=TaskState.working,
+                                state=TaskState.TASK_STATE_WORKING,
                                 message=updater.new_agent_message(parts=parts),
                             )
                         else:
@@ -242,12 +248,12 @@ class A2AExecutor(AgentExecutor):
 
         for content in contents:
             if content.type == "text" and content.text:
-                parts.append(Part(root=TextPart(text=content.text)))
+                parts.append(Part(text=content.text))
             elif content.type == "data" and content.uri:
                 base64_str = get_uri_data(content.uri)
-                parts.append(Part(root=FilePart(file=FileWithBytes(bytes=base64_str, mime_type=content.media_type))))
+                parts.append(Part(raw=base64.b64decode(base64_str), media_type=content.media_type or ""))
             elif content.type == "uri" and content.uri:
-                parts.append(Part(root=FilePart(file=FileWithUri(uri=content.uri, mime_type=content.media_type))))
+                parts.append(Part(url=content.uri, media_type=content.media_type or ""))
             else:
                 # Silently skip unsupported content types
                 logger.warning("A2AExecutor does not yet support content type: %s. Omitted.", content.type)
@@ -270,6 +276,6 @@ class A2AExecutor(AgentExecutor):
             else:
                 # For final messages, we send TaskStatusUpdateEvent with 'working' state
                 await updater.update_status(
-                    state=TaskState.working,
+                    state=TaskState.TASK_STATE_WORKING,
                     message=updater.new_agent_message(parts=parts, metadata=metadata),
                 )
