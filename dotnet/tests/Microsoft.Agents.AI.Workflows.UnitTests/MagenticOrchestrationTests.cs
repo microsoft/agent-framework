@@ -872,6 +872,68 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
+    public async Task Task_Delegates_To_Correct_Agent()
+    {
+        // Arrange: Two participants (WorkerA, WorkerB). Manager selects "WorkerA" as next speaker.
+        // We verify that WorkerA produces a response update event and WorkerB does not.
+        // Flow: facts1, plan1 → ledger1(nextSpeaker=WorkerA, not satisfied) → WorkerA runs
+        //       → TakeTurnAsync re-enters → facts2, plan2 → ledger2(satisfied) → finalAnswer
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Task delegation facts");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Delegate to WorkerA");
+        List<ChatMessage> ledger1 = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "WorkerA",
+            instructionOrQuestion: "WorkerA please handle this");
+
+        // After WorkerA responds, orchestrator re-enters TakeTurnAsync → UpdatePlanAndDelegateAsync
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Updated facts after WorkerA");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Updated plan after WorkerA");
+        List<ChatMessage> ledger2 = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "WorkerA",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Delegated correctly!");
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, ledger1,
+             factsResponse2, planResponse2, ledger2, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent workerA = new(name: "WorkerA", prefix: "[A] ");
+        TestEchoAgent workerB = new(name: "WorkerB", prefix: "[B] ");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(workerA, workerB)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Test delegation routing")],
+            eventCollector: collectedEvents);
+
+        // Assert: WorkerA should have produced response updates, WorkerB should not
+        List<AgentResponseUpdateEvent> agentUpdates = collectedEvents.OfType<AgentResponseUpdateEvent>().ToList();
+
+        // WorkerA's executor should appear in the events
+        agentUpdates.Should().Contain(e => e.Update.AuthorName == "WorkerA",
+            "WorkerA was selected as next speaker and should have responded");
+
+        // WorkerB should NOT have responded
+        agentUpdates.Should().NotContain(e => e.Update.AuthorName == "WorkerB",
+            "WorkerB was not selected and should not have responded");
+
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Delegated correctly!");
+    }
+
+    [Fact]
     public async Task PlanReview_Multiple_Revisions()
     {
         // Arrange: Human rejects the plan twice before approving on the third review.
