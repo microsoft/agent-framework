@@ -934,6 +934,80 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
+    public async Task Progress_Made_Decrements_StallCount()
+    {
+        // Arrange: MaxStallCount=3, so a single stall won't trigger reset.
+        // Round 1: isInLoop=true (stall count → 1), delegates to Worker
+        // Round 2: progress being made (stall count → 0), delegates to Worker
+        // Round 3: satisfied → final answer
+        // No reset should occur because the stall count was decremented before reaching threshold.
+        List<ChatMessage> facts1 = CreatePlanResponse("Initial facts");
+        List<ChatMessage> plan1 = CreatePlanResponse("Initial plan");
+        List<ChatMessage> ledger1 = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: true,  // triggers stall increment → StallCount=1
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Keep trying");
+
+        // After Worker responds → re-enter TakeTurnAsync
+        List<ChatMessage> facts2 = CreatePlanResponse("Updated facts round 2");
+        List<ChatMessage> plan2 = CreatePlanResponse("Updated plan round 2");
+        List<ChatMessage> ledger2 = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,  // progress → stall count decrements → StallCount=0
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Good progress");
+
+        // After Worker responds → re-enter TakeTurnAsync
+        List<ChatMessage> facts3 = CreatePlanResponse("Updated facts round 3");
+        List<ChatMessage> plan3 = CreatePlanResponse("Updated plan round 3");
+        List<ChatMessage> ledger3 = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "All done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Completed without reset!");
+
+        TestReplayAgent manager = new(
+            [facts1, plan1, ledger1,
+             facts2, plan2, ledger2,
+             facts3, plan3, ledger3, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .WithMaxStalls(3)  // high threshold so single stall doesn't trigger reset
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Test stall decrement")],
+            eventCollector: collectedEvents);
+
+        // Assert: Three progress ledger updates, no stall-triggered reset
+        collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(3,
+            "three coordination rounds should produce three progress ledger events");
+
+        // One initial plan + two replans from re-entering after rounds 1 and 2
+        // If stall reset had occurred, there would be an additional replan beyond normal re-entry
+        collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().ContainSingle(
+            "only one initial plan should be created");
+        collectedEvents.OfType<MagenticReplannedEvent>().Should().HaveCount(2,
+            "two normal re-entry replans after rounds 1 and 2; no extra replan from stall reset");
+
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Completed without reset!");
+    }
+
+    [Fact]
     public async Task PlanReview_Multiple_Revisions()
     {
         // Arrange: Human rejects the plan twice before approving on the third review.
