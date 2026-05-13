@@ -533,6 +533,97 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
+    public async Task PlanReview_On_Stall_Replan()
+    {
+        // Arrange: Plan signoff enabled, stall triggers reset, replan requires new plan review.
+        // Flow: facts1, plan1 → PlanCreatedEvent → plan review (pending)
+        //       resume with approval → ledger1(stall: isInLoop=true) → StallCount=1 → IsStalled → Reset
+        //       → facts2, plan2 → MagenticReplannedEvent → plan review again (pending)
+        //       resume with approval → ledger2(satisfied) → finalAnswer
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Initial plan");
+        List<ChatMessage> stalledLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: true,  // This triggers stall
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Keep trying");
+
+        // After reset: new plan
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Fresh facts after stall reset");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Fresh plan after stall reset");
+        // After second approval: satisfied ledger + final answer
+        List<ChatMessage> satisfiedLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Recovered after stall with plan review");
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, stalledLedger,
+             factsResponse2, planResponse2, satisfiedLedger, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(true)
+            .WithMaxStalls(1)
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        List<WorkflowEvent> allEvents = [];
+
+        // Act 1: First run - should pause for initial plan review
+        WorkflowRunResult firstResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do task")],
+            checkpointManager: checkpointManager,
+            eventCollector: allEvents);
+
+        firstResult.PendingRequests.Should().ContainSingle();
+        ExternalRequest request1 = firstResult.PendingRequests[0].Request;
+        MagenticPlanReviewRequest? reviewRequest1 = request1.Data.As<MagenticPlanReviewRequest>();
+        reviewRequest1.Should().NotBeNull();
+        reviewRequest1!.Plan.Text.Should().Contain("Initial plan");
+
+        // Act 2: Approve initial plan → stall occurs → reset → replan → new plan review
+        MagenticPlanReviewResponse approval1 = reviewRequest1.Approve();
+        ExternalResponse approvalResponse1 = request1.CreateResponse(approval1);
+        WorkflowRunResult secondResult = await ResumeMagenticWorkflowAsync(
+            workflow,
+            approvalResponse1,
+            checkpointManager,
+            firstResult.LastCheckpoint,
+            eventCollector: allEvents);
+
+        // Should pause for review of the replanned plan
+        secondResult.PendingRequests.Should().NotBeEmpty();
+        ExternalRequest request2 = secondResult.PendingRequests[^1].Request;
+        MagenticPlanReviewRequest? reviewRequest2 = request2.Data.As<MagenticPlanReviewRequest>();
+        reviewRequest2.Should().NotBeNull();
+        reviewRequest2!.Plan.Text.Should().Contain("Fresh plan after stall reset");
+
+        // Act 3: Approve the revised plan → satisfied → final answer
+        MagenticPlanReviewResponse approval2 = reviewRequest2.Approve();
+        ExternalResponse approvalResponse2 = request2.CreateResponse(approval2);
+        WorkflowRunResult thirdResult = await ResumeMagenticWorkflowAsync(
+            workflow,
+            approvalResponse2,
+            checkpointManager,
+            secondResult.LastCheckpoint,
+            eventCollector: allEvents);
+
+        // Assert
+        allEvents.OfType<MagenticPlanCreatedEvent>().Should().NotBeEmpty("initial plan emits PlanCreatedEvent");
+        allEvents.OfType<MagenticReplannedEvent>().Should().NotBeEmpty("stall reset triggers ReplannedEvent");
+        thirdResult.Result.Should().NotBeNull();
+        thirdResult.Result![0].Text.Should().Contain("Recovered after stall with plan review");
+    }
+
+    [Fact]
     public async Task MaxResetLimit_Terminates_Workflow()
     {
         // Arrange: MaxStallCount=1, MaxResets=1.
