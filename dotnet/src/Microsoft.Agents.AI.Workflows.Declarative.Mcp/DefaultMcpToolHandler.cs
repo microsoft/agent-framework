@@ -3,12 +3,15 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -24,6 +27,14 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// </remarks>
 public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 {
+    /// <summary>
+    /// Reserved <c>toolName</c> value that maps an <see cref="IMcpToolHandler.InvokeToolAsync"/> request
+    /// to the MCP protocol <c>tools/list</c> discovery operation.
+    /// </summary>
+    public const string ListToolsToolName = "tools/list";
+
+    private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
+
     private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Dictionary<string, McpClient> _clients = [];
     private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
@@ -53,8 +64,20 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         // TODO: Handle connectionName and server label appropriately when Hosted scenario supports them. For now, ignore
-        McpServerToolResultContent resultContent = new(Guid.NewGuid().ToString());
+        if (IsListToolsToolName(toolName))
+        {
+            ThrowIfListToolsArgumentsSpecified(arguments);
+        }
+
         McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
+
+        if (IsListToolsToolName(toolName))
+        {
+            IList<McpClientTool> tools = await client.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            return CreateListToolsResultContent(tools.Select(tool => tool.ProtocolTool));
+        }
+
+        McpServerToolResultContent resultContent = new(Guid.NewGuid().ToString());
 
         // Convert IDictionary to IReadOnlyDictionary for CallToolAsync
         IReadOnlyDictionary<string, object?>? readOnlyArguments = arguments is null
@@ -68,6 +91,23 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 
         // Map MCP content blocks to MEAI AIContent types
         PopulateResultContent(resultContent, result);
+
+        return resultContent;
+    }
+
+    internal static bool IsListToolsToolName(string toolName) =>
+        string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal);
+
+    internal static McpServerToolResultContent CreateListToolsResultContent(IEnumerable<Tool> tools)
+    {
+        Throw.IfNull(tools);
+
+        McpServerToolResultContent resultContent = new(Guid.NewGuid().ToString())
+        {
+            Outputs = []
+        };
+
+        resultContent.Outputs.Add(new TextContent(SerializeToolsList(tools)));
 
         return resultContent;
     }
@@ -183,6 +223,16 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         return hashCode.ToString(CultureInfo.InvariantCulture);
     }
 
+    private static void ThrowIfListToolsArgumentsSpecified(IDictionary<string, object?>? arguments)
+    {
+        if (arguments is { Count: > 0 })
+        {
+            throw new ArgumentException(
+                $"The reserved MCP '{ListToolsToolName}' operation does not accept tool arguments.",
+                nameof(arguments));
+        }
+    }
+
     private static void PopulateResultContent(McpServerToolResultContent resultContent, CallToolResult result)
     {
         // Ensure Outputs list is initialized
@@ -230,6 +280,17 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             TextContentBlock text => new TextContent(text.Text),
             ImageContentBlock image => CreateDataContent(image.Data, image.MimeType ?? "image/*"),
             AudioContentBlock audio => CreateDataContent(audio.Data, audio.MimeType ?? "audio/*"),
+            EmbeddedResourceBlock embedded => ConvertEmbeddedResource(embedded),
+            _ => new TextContent(block.ToString() ?? string.Empty),
+        };
+    }
+
+    private static AIContent ConvertEmbeddedResource(EmbeddedResourceBlock block)
+    {
+        return block.Resource switch
+        {
+            TextResourceContents text => new TextContent(text.Text),
+            BlobResourceContents blob => CreateDataContent(blob.Blob, blob.MimeType ?? "application/octet-stream"),
             _ => new TextContent(block.ToString() ?? string.Empty),
         };
     }
@@ -254,5 +315,40 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
 
         return new DataContent($"data:{mediaType};base64,{base64}", mediaType);
+    }
+
+    private static string SerializeToolsList(IEnumerable<Tool> tools)
+    {
+        using MemoryStream stream = new();
+        using (Utf8JsonWriter writer = new(stream, s_toolListJsonWriterOptions))
+        {
+            writer.WriteStartObject();
+            writer.WriteStartArray("tools");
+
+            foreach (Tool tool in tools)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("name", tool.Name);
+                writer.WriteString("description", tool.Description);
+                writer.WritePropertyName("inputSchema");
+                tool.InputSchema.WriteTo(writer);
+                writer.WritePropertyName("outputSchema");
+                if (tool.OutputSchema is JsonElement outputSchema)
+                {
+                    outputSchema.WriteTo(writer);
+                }
+                else
+                {
+                    writer.WriteNullValue();
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(stream.ToArray());
     }
 }
