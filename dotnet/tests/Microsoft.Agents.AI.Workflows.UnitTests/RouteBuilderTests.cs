@@ -526,8 +526,8 @@ public sealed class RouteBuilderTests
 
     private static string GetPayloadValue(PortableValue message)
     {
-        TestPayload? payload = message.As<TestPayload>();
-        payload.Should().NotBeNull();
-        return payload.Value;
+        return message.As<TestPayload>() is TestPayload payload
+            ? payload.Value
+            : throw new InvalidOperationException("Expected catch-all message payload to deserialize as TestPayload.");
     }
 }
