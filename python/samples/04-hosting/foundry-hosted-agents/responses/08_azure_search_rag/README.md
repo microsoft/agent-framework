@@ -181,4 +181,6 @@ azd env set AZURE_SEARCH_ENDPOINT "https://<your-search>.search.windows.net"
 azd env set AZURE_SEARCH_INDEX_NAME "contoso-outdoors"
 ```
 
+If these are not set, running `azd ai agent init -m <agent-manifest.yaml>` will prompt you to enter them interactively.
+
 The deployed agent's Managed Identity needs **Search Index Data Reader** on the Azure AI Search service.

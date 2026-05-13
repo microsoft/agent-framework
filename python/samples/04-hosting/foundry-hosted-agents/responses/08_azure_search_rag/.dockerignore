@@ -5,3 +5,4 @@ __pycache__
 *.pyd
 .Python
 .env
+provision_index.py

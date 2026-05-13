@@ -24,6 +24,14 @@ template:
       value: "{{AZURE_SEARCH_ENDPOINT}}"
     - name: AZURE_SEARCH_INDEX_NAME
       value: "{{AZURE_SEARCH_INDEX_NAME}}"
+parameters:
+  properties:
+    - name: AZURE_SEARCH_ENDPOINT
+      secret: false
+      description: The endpoint of the Azure AI Search service to use for RAG (e.g., https://my-search-service.search.windows.net)
+    - name: AZURE_SEARCH_INDEX_NAME
+      secret: false
+      description: The name of the Azure AI Search index to use for RAG (e.g., contoso-outdoors)
 resources:
   - kind: model
     id: gpt-4.1-mini
