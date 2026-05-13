@@ -97,23 +97,11 @@ internal sealed class MessageMerger
         }
     }
 
-    private int CompareByDateTimeOffset(AgentResponse left, AgentResponse right)
+    private int CompareByDateTimeOffset(AgentResponse left, int leftIndex, AgentResponse right, int rightIndex)
     {
-        const int LESS = -1, EQ = 0, GREATER = 1;
-
-        if (left.CreatedAt == right.CreatedAt)
+        if (!left.CreatedAt.HasValue || !right.CreatedAt.HasValue || left.CreatedAt == right.CreatedAt)
         {
-            return EQ;
-        }
-
-        if (!left.CreatedAt.HasValue)
-        {
-            return GREATER;
-        }
-
-        if (!right.CreatedAt.HasValue)
-        {
-            return LESS;
+            return leftIndex.CompareTo(rightIndex);
         }
 
         return left.CreatedAt.Value.CompareTo(right.CreatedAt.Value);
@@ -136,8 +124,14 @@ internal sealed class MessageMerger
                 responseList.Add(mergeState.ComputeDangling());
             }
 
-            responseList.Sort(this.CompareByDateTimeOffset);
-            responses[responseId] = responseList.Aggregate(MergeResponses);
+            List<(AgentResponse Response, int Index)> orderedResponseList = responseList
+                .Select((response, index) => (Response: response, Index: index))
+                .ToList();
+            orderedResponseList.Sort((left, right) => this.CompareByDateTimeOffset(left.Response, left.Index, right.Response, right.Index));
+
+            responses[responseId] = orderedResponseList
+                .Select(item => item.Response)
+                .Aggregate(MergeResponses);
             messages.AddRange(GetMessagesWithCreatedAt(responses[responseId]));
         }
 
