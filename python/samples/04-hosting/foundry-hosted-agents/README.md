@@ -15,7 +15,8 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 5 | [Workflows](responses/05_workflows/) | An agent with a multi-step orchestrated workflow, demonstrating chaining prompts through an orchestrated flow. |
 | 6 | [Files](responses/06_files/) | An agent demonstrating how to work with files in a hosted agent session, including uploading files to a hosted agent session and having the agent read and manipulate those files at runtime. |
 | 7 | [Observability](responses/07_observability/) | A sample demonstrating how to enable observability for the agent deployed to Foundry. |
-| 8 | [Using deployed agent](responses/using_deployed_agent.py) | A sample demonstrating how to invoke an agent that has already been deployed to Foundry, showing how to interact with a hosted agent in code. |
+| 8 | [Azure AI Search RAG](responses/08_azure_search_rag/) | An agent with Retrieval Augmented Generation (RAG) capabilities backed by Azure AI Search, grounding answers in documents indexed in a pre-provisioned search index. |
+| 9 | [Using deployed agent](responses/using_deployed_agent.py) | A sample demonstrating how to invoke an agent that has already been deployed to Foundry, showing how to interact with a hosted agent in code. |
 
 ### Invocations API
 
