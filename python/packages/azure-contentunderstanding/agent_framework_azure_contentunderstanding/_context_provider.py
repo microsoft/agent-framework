@@ -73,7 +73,10 @@ _RAI_TELEMETRY_LINE_RE: re.Pattern[str] = re.compile(
 # Matches the leading YAML front-matter block emitted by ``to_llm_input``.
 # A rendered text with no markdown body (e.g. when the CU result has empty
 # ``markdown`` and no fields) is recognised by an empty tail after this match.
-_FRONT_MATTER_RE: re.Pattern[str] = re.compile(r"\A---\n.*?\n---(?:\n|\Z)", flags=re.DOTALL)
+# Accept both LF and CRLF line endings so body detection works cross-platform.
+_FRONT_MATTER_RE: re.Pattern[str] = re.compile(
+    r"\A---\r?\n.*?\r?\n---(?:\r?\n|\Z)", flags=re.DOTALL
+)
 
 
 def _has_renderable_body(text: str) -> bool:
