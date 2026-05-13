@@ -12,6 +12,14 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public sealed class RouteBuilderTests
 {
+    public enum HandlerOverload
+    {
+        SyncWithCancellation = 0,
+        SyncWithoutCancellation = 1,
+        AsyncWithCancellation = 2,
+        AsyncWithoutCancellation = 3,
+    }
+
     private sealed record TestPayload(string Value);
 
     private sealed class HandlerInvocation
@@ -53,11 +61,11 @@ public sealed class RouteBuilderTests
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(2)]
-    [InlineData(3)]
-    public async Task AddHandler_VoidOverloads_RouteExpectedMessageAsync(int overload)
+    [InlineData(HandlerOverload.SyncWithCancellation)]
+    [InlineData(HandlerOverload.SyncWithoutCancellation)]
+    [InlineData(HandlerOverload.AsyncWithCancellation)]
+    [InlineData(HandlerOverload.AsyncWithoutCancellation)]
+    public async Task AddHandler_VoidOverloads_RouteExpectedMessageAsync(HandlerOverload overload)
     {
         // Arrange
         RouteBuilder routeBuilder = new(null);
@@ -86,11 +94,11 @@ public sealed class RouteBuilderTests
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(2)]
-    [InlineData(3)]
-    public async Task AddHandler_ResultOverloads_RouteExpectedMessageAsync(int overload)
+    [InlineData(HandlerOverload.SyncWithCancellation)]
+    [InlineData(HandlerOverload.SyncWithoutCancellation)]
+    [InlineData(HandlerOverload.AsyncWithCancellation)]
+    [InlineData(HandlerOverload.AsyncWithoutCancellation)]
+    public async Task AddHandler_ResultOverloads_RouteExpectedMessageAsync(HandlerOverload overload)
     {
         // Arrange
         RouteBuilder routeBuilder = new(null);
@@ -120,11 +128,11 @@ public sealed class RouteBuilderTests
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(2)]
-    [InlineData(3)]
-    public async Task AddCatchAll_VoidOverloads_RouteUnexpectedMessageAsync(int overload)
+    [InlineData(HandlerOverload.SyncWithCancellation)]
+    [InlineData(HandlerOverload.SyncWithoutCancellation)]
+    [InlineData(HandlerOverload.AsyncWithCancellation)]
+    [InlineData(HandlerOverload.AsyncWithoutCancellation)]
+    public async Task AddCatchAll_VoidOverloads_RouteUnexpectedMessageAsync(HandlerOverload overload)
     {
         // Arrange
         RouteBuilder routeBuilder = new(null);
@@ -154,11 +162,11 @@ public sealed class RouteBuilderTests
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(2)]
-    [InlineData(3)]
-    public async Task AddCatchAll_ResultOverloads_RouteUnexpectedMessageAsync(int overload)
+    [InlineData(HandlerOverload.SyncWithCancellation)]
+    [InlineData(HandlerOverload.SyncWithoutCancellation)]
+    [InlineData(HandlerOverload.AsyncWithCancellation)]
+    [InlineData(HandlerOverload.AsyncWithoutCancellation)]
+    public async Task AddCatchAll_ResultOverloads_RouteUnexpectedMessageAsync(HandlerOverload overload)
     {
         // Arrange
         RouteBuilder routeBuilder = new(null);
@@ -386,24 +394,24 @@ public sealed class RouteBuilderTests
         result.Exception!.Message.Should().Contain("Unknown port");
     }
 
-    private static void RegisterVoidHandler(RouteBuilder routeBuilder, HandlerInvocation invocation, int overload)
+    private static void RegisterVoidHandler(RouteBuilder routeBuilder, HandlerInvocation invocation, HandlerOverload overload)
     {
         switch (overload)
         {
-            case 0:
+            case HandlerOverload.SyncWithCancellation:
                 routeBuilder.AddHandler<string>((message, context, cancellationToken) => invocation.Capture(message, context, cancellationToken));
                 break;
-            case 1:
+            case HandlerOverload.SyncWithoutCancellation:
                 routeBuilder.AddHandler<string>((message, context) => invocation.Capture(message, context));
                 break;
-            case 2:
+            case HandlerOverload.AsyncWithCancellation:
                 routeBuilder.AddHandler<string>((message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
                     return ValueTask.CompletedTask;
                 });
                 break;
-            case 3:
+            case HandlerOverload.AsyncWithoutCancellation:
                 routeBuilder.AddHandler<string>((message, context) =>
                 {
                     invocation.Capture(message, context);
@@ -415,25 +423,25 @@ public sealed class RouteBuilderTests
         }
     }
 
-    private static void RegisterResultHandler(RouteBuilder routeBuilder, HandlerInvocation invocation, int overload)
+    private static void RegisterResultHandler(RouteBuilder routeBuilder, HandlerInvocation invocation, HandlerOverload overload)
     {
         switch (overload)
         {
-            case 0:
+            case HandlerOverload.SyncWithCancellation:
                 routeBuilder.AddHandler<string, string>((message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
                     return NormalizeHandlerResult(message);
                 });
                 break;
-            case 1:
+            case HandlerOverload.SyncWithoutCancellation:
                 routeBuilder.AddHandler<string, string>((message, context) =>
                 {
                     invocation.Capture(message, context);
                     return NormalizeHandlerResult(message);
                 });
                 break;
-            case 2:
+            case HandlerOverload.AsyncWithCancellation:
                 Func<string, IWorkflowContext, CancellationToken, ValueTask<string>> asyncHandlerWithCancellation = (message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
@@ -441,7 +449,7 @@ public sealed class RouteBuilderTests
                 };
                 routeBuilder.AddHandler<string, string>(asyncHandlerWithCancellation);
                 break;
-            case 3:
+            case HandlerOverload.AsyncWithoutCancellation:
                 Func<string, IWorkflowContext, ValueTask<string>> asyncHandler = (message, context) =>
                 {
                     invocation.Capture(message, context);
@@ -454,24 +462,24 @@ public sealed class RouteBuilderTests
         }
     }
 
-    private static void RegisterVoidCatchAll(RouteBuilder routeBuilder, HandlerInvocation invocation, int overload)
+    private static void RegisterVoidCatchAll(RouteBuilder routeBuilder, HandlerInvocation invocation, HandlerOverload overload)
     {
         switch (overload)
         {
-            case 0:
+            case HandlerOverload.SyncWithCancellation:
                 routeBuilder.AddCatchAll((message, context, cancellationToken) => invocation.Capture(message, context, cancellationToken));
                 break;
-            case 1:
+            case HandlerOverload.SyncWithoutCancellation:
                 routeBuilder.AddCatchAll((message, context) => invocation.Capture(message, context));
                 break;
-            case 2:
+            case HandlerOverload.AsyncWithCancellation:
                 routeBuilder.AddCatchAll((message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
                     return ValueTask.CompletedTask;
                 });
                 break;
-            case 3:
+            case HandlerOverload.AsyncWithoutCancellation:
                 routeBuilder.AddCatchAll((message, context) =>
                 {
                     invocation.Capture(message, context);
@@ -483,25 +491,25 @@ public sealed class RouteBuilderTests
         }
     }
 
-    private static void RegisterResultCatchAll(RouteBuilder routeBuilder, HandlerInvocation invocation, int overload)
+    private static void RegisterResultCatchAll(RouteBuilder routeBuilder, HandlerInvocation invocation, HandlerOverload overload)
     {
         switch (overload)
         {
-            case 0:
+            case HandlerOverload.SyncWithCancellation:
                 routeBuilder.AddCatchAll<string>((message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
                     return NormalizeCatchAllResult(message);
                 });
                 break;
-            case 1:
+            case HandlerOverload.SyncWithoutCancellation:
                 routeBuilder.AddCatchAll<string>((message, context) =>
                 {
                     invocation.Capture(message, context);
                     return NormalizeCatchAllResult(message);
                 });
                 break;
-            case 2:
+            case HandlerOverload.AsyncWithCancellation:
                 Func<PortableValue, IWorkflowContext, CancellationToken, ValueTask<string>> asyncCatchAllWithCancellation = (message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
@@ -509,7 +517,7 @@ public sealed class RouteBuilderTests
                 };
                 routeBuilder.AddCatchAll<string>(asyncCatchAllWithCancellation);
                 break;
-            case 3:
+            case HandlerOverload.AsyncWithoutCancellation:
                 Func<PortableValue, IWorkflowContext, ValueTask<string>> asyncCatchAll = (message, context) =>
                 {
                     invocation.Capture(message, context);
@@ -522,7 +530,8 @@ public sealed class RouteBuilderTests
         }
     }
 
-    private static bool UsesCancellationToken(int overload) => overload is 0 or 2;
+    private static bool UsesCancellationToken(HandlerOverload overload) =>
+        overload is HandlerOverload.SyncWithCancellation or HandlerOverload.AsyncWithCancellation;
 
     private static string NormalizeHandlerResult(string message) => message.ToUpperInvariant();
 
