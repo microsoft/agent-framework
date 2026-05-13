@@ -1008,6 +1008,78 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
+    public async Task Consecutive_Stalls_Trigger_Reset()
+    {
+        // Arrange: MaxStallCount=2 — two consecutive stalls trigger reset.
+        // Round 1: isInLoop=true (stall count → 1), delegates to Worker
+        // Round 2: isProgressBeingMade=false (stall count → 2 → IsStalled) → reset & replan
+        // After reset: new plan → ledger(satisfied) → final answer
+        List<ChatMessage> facts1 = CreatePlanResponse("Initial facts");
+        List<ChatMessage> plan1 = CreatePlanResponse("Initial plan");
+        List<ChatMessage> ledger1 = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: true,  // stall #1 → StallCount=1
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Keep trying");
+
+        // After Worker responds → re-enter TakeTurnAsync → replan
+        List<ChatMessage> facts2 = CreatePlanResponse("Updated facts round 2");
+        List<ChatMessage> plan2 = CreatePlanResponse("Updated plan round 2");
+        List<ChatMessage> ledger2 = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: false,  // stall #2 → StallCount=2 → IsStalled → reset
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "No progress");
+
+        // Reset & replan: new facts + plan, then coordination round
+        List<ChatMessage> resetFacts = CreatePlanResponse("Fresh facts after stall reset");
+        List<ChatMessage> resetPlan = CreatePlanResponse("Fresh plan after stall reset");
+        List<ChatMessage> postResetLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Recovered after consecutive stalls!");
+
+        TestReplayAgent manager = new(
+            [facts1, plan1, ledger1,
+             facts2, plan2, ledger2,
+             resetFacts, resetPlan, postResetLedger, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .WithMaxStalls(2)  // requires 2 consecutive stalls
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Test consecutive stalls")],
+            eventCollector: collectedEvents);
+
+        // Assert: Two initial coordination rounds + one post-reset round = 3 ledger events
+        collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(3,
+            "two pre-reset rounds and one post-reset round");
+
+        // Replan from stall reset should appear as an extra MagenticReplannedEvent
+        // Normal flow: 1 PlanCreated + 1 replan (re-entry after round 1). Stall adds 1 more replan = 2 total replans.
+        collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().ContainSingle();
+        collectedEvents.OfType<MagenticReplannedEvent>().Should().HaveCount(2,
+            "one normal re-entry replan + one stall-triggered reset replan");
+
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Recovered after consecutive stalls!");
+    }
+
+    [Fact]
     public async Task PlanReview_Multiple_Revisions()
     {
         // Arrange: Human rejects the plan twice before approving on the third review.
