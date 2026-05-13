@@ -432,6 +432,7 @@ public partial class WorkflowBuilderSmokeTests
         Assert.Throws<ArgumentNullException>("source", () => builder.AddSwitch(null!, _ => { }));
         Assert.Throws<ArgumentNullException>("configureSwitch", () => builder.AddSwitch(source, null!));
         Assert.Throws<ArgumentException>("targets", () => builder.AddSwitch(source, _ => { }));
+        Assert.Throws<ArgumentException>("targets", () => builder.AddSwitch(source, switchBuilder => switchBuilder.AddCase<string>(_ => true, [])));
     }
 
     [Fact]
