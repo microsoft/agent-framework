@@ -59,4 +59,23 @@ public abstract class DelegatingAgentSessionStore : AgentSessionStore
     /// <inheritdoc/>
     public override ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
         => this.InnerStore.SaveSessionAsync(agent, conversationId, session, cancellationToken);
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// This implementation first checks if this instance satisfies the service request.
+    /// If not, it chains the request to the inner store, allowing services to be retrieved
+    /// from any store in the delegation chain.
+    /// </remarks>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        // First, check if this instance satisfies the request
+        object? service = base.GetService(serviceType, serviceKey);
+        if (service is not null)
+        {
+            return service;
+        }
+
+        // Chain to the inner store
+        return this.InnerStore.GetService(serviceType, serviceKey);
+    }
 }
