@@ -220,6 +220,45 @@ public class MagenticOrchestrationTests
         ledgerEvent.ProgressLedger.IsRequestSatisfied.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task PlanSignoff_Disabled_Proceeds_Immediately()
+    {
+        // Arrange: requirePlanSignoff=false should mean no plan review request
+        List<ChatMessage> factsResponse = CreatePlanResponse("Task facts");
+        List<ChatMessage> planResponse = CreatePlanResponse("Step 1: Execute immediately");
+        List<ChatMessage> progressLedgerResponse = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Go");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Immediate completion");
+
+        TestReplayAgent manager = new(
+            [factsResponse, planResponse, progressLedgerResponse, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do it now")],
+            eventCollector: collectedEvents);
+
+        // Assert: No plan review request, workflow completes immediately
+        runResult.PendingRequests.Should().BeEmpty("plan signoff is disabled, so no review should be requested");
+        collectedEvents.OfType<RequestInfoEvent>().Should().BeEmpty();
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Immediate completion");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
