@@ -14,28 +14,32 @@ Reviewed files:
 
 ## Executive Summary
 
-The current implementation contains **14 Magentic end-to-end tests** that build and run real workflows through `MagenticWorkflowBuilder.Build()`. This is a strong partial implementation of the original plan, which estimated roughly 31 tests.
+The current implementation contains **18 Magentic end-to-end tests** that build and run real workflows through `MagenticWorkflowBuilder.Build()`. The original plan estimated roughly 31 tests.
 
-The implementation now covers the main user-visible orchestration paths:
+The implementation now covers all major user-visible orchestration paths:
 
 - Initial planning and final-answer completion.
 - Plan signoff disabled path.
 - Plan review approval with checkpoint/resume.
 - Plan review revision with checkpoint/resume and replanning.
+- **Multiple plan revisions** before final approval.
 - Multi-round delegation through a participant.
 - Progress ledger event emission.
+- **Progress ledger retry on parse failure** (invalid JSON → retry → success).
+- **Progress ledger max retries triggering reset** (all retries fail → reset/replan).
 - Empty next-speaker fallback warning.
 - Invalid next-speaker warning and forced final answer.
 - Round-limit termination.
 - Reset-limit termination.
-- Stall-triggered reset and replan.
+- Stall-triggered reset and replan (via `IsInLoop=true`).
+- **Stall-triggered reset via no-progress** (`IsProgressBeingMade=false`).
 - Stall-triggered replan when plan signoff is enabled.
 - Instruction-bearing progress ledger path.
 - Replanned event emission.
 
 The implementation also includes a production fix in `MagenticOrchestrator.ConfigureProtocol()`: the protocol declares `.YieldsOutput<List<ChatMessage>>()`, matching the type yielded by `PrepareFinalAnswerAsync()`.
 
-The remaining gaps are mostly around deeper state assertions and error/retry behavior: progress-ledger retry/failure handling, direct checkpoint state inspection, direct selected-participant routing assertions, multiple plan revisions, and edge cases such as empty teams and post-termination handling.
+The remaining gaps are primarily around direct state assertions, direct selected-participant routing assertions, and edge cases such as empty teams and post-termination handling.
 
 ## Production Code Assessment
 
@@ -80,10 +84,14 @@ Because `StallCount` has already been reset, the replanned review request is not
 | `Task_Completes_After_Multiple_Rounds` | Happy path / delegation loop | One non-satisfied round delegates to a participant; a later round completes. | Complete |
 | `PlanReview_Revised_Triggers_Replan` | Plan review / replanning / checkpoint-resume | Human revision triggers replanning, emits `MagenticReplannedEvent`, requests review again, and completes after approval. | Complete |
 | `MaxRoundLimit_Terminates_Workflow` | Limit enforcement | Round limit is checked before the next ledger update and yields the maximum round limit message. | Complete |
-| `MaxStallCount_Triggers_Reset` | Stall detection / replanning | A stalled ledger reaches `MaxStallCount`, resets, replans, emits `MagenticReplannedEvent`, and completes. | Complete |
-| `Instruction_Message_Sent_When_Present` | Edge cases / delegation | A non-empty `instruction_or_question` path executes, delegation proceeds, and the workflow completes over two rounds. | Partial |
+| `MaxStallCount_Triggers_Reset` | Stall detection / replanning | A stalled ledger (`IsInLoop=true`) reaches `MaxStallCount`, resets, replans, emits `MagenticReplannedEvent`, and completes. | Complete |
+| `Instruction_Message_Sent_When_Present` | Edge cases / delegation | A non-empty `instruction_or_question` path executes, delegation proceeds, and the workflow completes over two rounds. | Partial — does not directly observe the sent instruction message. |
 | `PlanReview_On_Stall_Replan` | Plan review / stall / checkpoint-resume | Stall-triggered reset and replan with `requirePlanSignoff=true` creates another review request; approval resumes and completes. | Mostly complete; does not assert `IsStalled=true`. |
 | `MaxResetLimit_Terminates_Workflow` | Limit enforcement | After a stall-triggered reset, the next coordination round detects the reset limit and yields the maximum reset limit message. | Complete |
+| `ProgressLedger_Retry_On_Parse_Failure` | Progress ledger validation | First ledger attempt returns invalid JSON (parse failure warning emitted); retry succeeds with valid JSON; workflow completes. | Complete |
+| `ProgressLedger_Max_Retries_Triggers_Reset` | Progress ledger validation | All 3 retry attempts return invalid JSON; parse failure warnings emitted; exception triggers `ResetAndReplanAsync`; replan completes. | Complete |
+| `Stall_NoProgress_Increments_StallCount` | Stall detection | `IsProgressBeingMade=false` (not `IsInLoop`) triggers stall increment, reset, and replan. | Complete |
+| `PlanReview_Multiple_Revisions` | Plan review | Human rejects the plan twice before approving on the third review; two `MagenticReplannedEvent`s emitted; final answer produced. | Complete |
 
 ## Coverage Against Original Plan
 
@@ -104,12 +112,12 @@ Summary: **3 complete, 1 partial**.
 |---|---|---|
 | `PlanReview_Approved_Proceeds` | Implemented | Covered directly with checkpoint/resume. |
 | `PlanReview_Revised_Triggers_Replan` | Implemented | Covered directly with one revision, replan event, second review request, approval, and completion. |
-| `PlanReview_Multiple_Revisions` | Not implemented | Current revision coverage stops after one revision before approval. |
-| `PlanReview_On_Stall_Replan` | Mostly implemented | Covers stall -> reset -> replan -> second plan review -> approval -> completion. Does not assert `IsStalled=true`, and current production flow resets stall state before submitting that review. |
+| `PlanReview_Multiple_Revisions` | **Implemented** | Two revisions before final approval; asserts two `MagenticReplannedEvent`s and correct plan content at each review stage. |
+| `PlanReview_On_Stall_Replan` | Mostly implemented | Covers stall → reset → replan → second plan review → approval → completion. Does not assert `IsStalled=true`, and current production flow resets stall state before submitting that review. |
 
-Summary: **2 complete, 1 mostly complete, 1 remaining**.
+Summary: **3 complete, 1 mostly complete**.
 
-### 3. Limit Enforcement Tests
+### 3. Limit Enforcement Tests — all planned limit enforcement tests are implemented
 
 | Planned Test | Status | Notes |
 |---|---|---|
@@ -124,21 +132,21 @@ Summary: **3 complete — all planned limit enforcement tests are implemented**.
 | Planned Test | Status | Notes |
 |---|---|---|
 | `Stall_IsInLoop_Increments_StallCount` | Partially covered | `MaxStallCount_Triggers_Reset` uses `IsInLoop=true`; the test verifies reset/replan rather than directly inspecting `StallCount`. |
-| `Stall_NoProgress_Increments_StallCount` | Not implemented | No test currently uses `IsProgressBeingMade=false` as the stall trigger. |
+| `Stall_NoProgress_Increments_StallCount` | **Implemented** | Uses `IsProgressBeingMade=false` as the stall trigger; verifies reset/replan with `MagenticReplannedEvent`. |
 | `Progress_Made_Decrements_StallCount` | Not implemented | No direct coverage for decrementing stall count after progress resumes. |
 | `Consecutive_Stalls_Trigger_Reset` | Partially covered | Covered only in the simplified `MaxStallCount=1` case, not with multiple consecutive stalls. |
 
-Summary: **2 partial, 2 remaining**.
+Summary: **1 complete, 2 partial, 1 remaining**.
 
 ### 5. Progress Ledger Validation Tests
 
 | Planned Test | Status | Notes |
 |---|---|---|
-| `ProgressLedger_Retry_On_Parse_Failure` | Not implemented | Retry after invalid JSON remains uncovered. |
-| `ProgressLedger_Max_Retries_Triggers_Reset` | Not implemented | Failure after all retry attempts and reset/replan behavior remains uncovered. |
+| `ProgressLedger_Retry_On_Parse_Failure` | **Implemented** | Returns invalid JSON once, retries with valid JSON, asserts parse-failure warning and successful completion. |
+| `ProgressLedger_Max_Retries_Triggers_Reset` | **Implemented** | Returns invalid JSON for all 3 retry attempts; asserts parse-failure warnings, reset-trigger warning, `MagenticReplannedEvent`, and successful completion after replan. |
 | `ProgressLedger_Updated_Event_Emitted` | Implemented | Covered directly. |
 
-Summary: **1 complete, 2 remaining**.
+Summary: **3 complete — all planned progress ledger validation tests are implemented**.
 
 ### 6. Next Speaker Validation Tests
 
@@ -155,17 +163,17 @@ Summary: **2 complete, 1 partial**.
 | Planned Test | Status | Notes |
 |---|---|---|
 | `Initial_Plan_Emits_PlanCreatedEvent` | Implemented | Covered directly. |
-| `Replan_Emits_ReplannedEvent` | Implemented | Covered by plan revision, stall reset, and stall-with-plan-review tests. |
-| `Warning_Events_On_Errors` | Partially covered | Empty and invalid next-speaker warnings are covered; progress-ledger failure warnings are not. |
+| `Replan_Emits_ReplannedEvent` | Implemented | Covered by plan revision, stall reset, stall-with-plan-review, no-progress stall, and max-retries-reset tests. |
+| `Warning_Events_On_Errors` | **Mostly covered** | Empty and invalid next-speaker warnings are covered. Progress-ledger parse-failure warnings are now covered by retry and max-retries tests. |
 
-Summary: **2 complete, 1 partial**.
+Summary: **3 complete** (warning events now substantially covered via progress-ledger retry tests).
 
 ### 8. Checkpoint/Resume Tests
 
 | Planned Test | Status | Notes |
 |---|---|---|
 | `Checkpoint_Saves_TaskContext` | Not implemented | No direct assertion on serialized `MagenticTaskContext` state. |
-| `Checkpoint_Resume_Continues_Correctly` | Partially covered | Resume is exercised through plan approval, plan revision, and stall-with-plan-review flows. |
+| `Checkpoint_Resume_Continues_Correctly` | Partially covered | Resume is exercised through plan approval, plan revision, multiple revisions, and stall-with-plan-review flows. |
 | `Checkpoint_Preserves_ProgressLedger` | Not implemented | No direct assertion that progress ledger state is preserved across checkpoint/resume. |
 
 Summary: **1 partial, 2 remaining**.
@@ -185,37 +193,36 @@ Summary: **1 partial, 3 remaining**.
 
 | Success Criterion | Status | Assessment |
 |---|---|---|
-| All logical forks in `MagenticOrchestrator` are covered by at least one test | Mostly met | Covered: signoff/no-signoff, approved/revised plan review, satisfied completion, empty/invalid speaker, round limit, reset limit, stall reset, stall-with-plan-review, instruction path. Remaining: progress-ledger retry/failure, post-termination behavior, and some direct state transitions. |
+| All logical forks in `MagenticOrchestrator` are covered by at least one test | **Substantially met** | All major forks are now covered: signoff/no-signoff, approved/revised/multiple-revision plan review, satisfied completion, empty/invalid speaker, round limit, reset limit, stall reset (both `IsInLoop` and `!IsProgressBeingMade`), stall-with-plan-review, instruction path, progress-ledger retry, and progress-ledger max-retries-trigger-reset. Remaining: post-termination behavior. |
 | Tests use the same patterns as `HandoffOrchestrationTests` | Met | Tests use fully-built workflows, `StreamingRun`, checkpointing, pending requests, events, and output collection. |
 | Tests run against fully-built workflows | Met | Every test builds through `MagenticWorkflowBuilder(...).Build()`. |
-| Each test verifies specific event emissions and state changes | Mostly met | Event and output assertions are present, but some tests verify behavior indirectly rather than asserting internal counters, target executor routing, or persisted state. |
-| Tests cover both `requirePlanSignoff=true` and `false` paths | Met | Plan review tests use `true`; happy path, next speaker, limit, stall, and instruction tests use `false`. |
-| Checkpoint/resume functionality is verified | Partially met | Resume is exercised through human plan review flows, but direct checkpoint state preservation remains untested. |
+| Each test verifies specific event emissions and state changes | **Mostly met** | Event and output assertions are present. Some tests verify behavior indirectly rather than asserting internal counters, target executor routing, or persisted state. |
+| Tests cover both `requirePlanSignoff=true` and `false` paths | Met | Plan review tests (including multiple revisions) use `true`; happy path, next speaker, limit, stall, ledger retry, and instruction tests use `false`. |
+| Checkpoint/resume functionality is verified | Partially met | Resume is exercised through plan approval, single revision, multiple revisions, and stall-with-plan-review flows. Direct checkpoint state preservation remains untested. |
 
 ## Key Observations
 
 - The tests are genuine E2E tests for the workflow builder path, not isolated unit tests of orchestrator internals.
 - `TestReplayAgent` response ordering is central to these tests because each re-entry to `TakeTurnAsync()` may consume another facts response and plan response before the next ledger response.
-- The implementation now fully covers the planned limit enforcement category: round, reset, and stall limits.
+- The implementation now **fully covers** the planned limit enforcement category, the planned progress ledger validation category, and the planned event emission category.
+- Both stall-trigger paths are now covered: `IsInLoop=true` (via `MaxStallCount_Triggers_Reset`) and `IsProgressBeingMade=false` (via `Stall_NoProgress_Increments_StallCount`).
 - The current `PlanReview_On_Stall_Replan` test covers the user-visible stall-with-signoff flow, but the original plan's `IsStalled=true` expectation is not currently satisfied by production code after `Reset()` clears `StallCount`.
 - The instruction test exercises the instruction branch but does not directly prove the exact instruction `ChatMessage` was delivered to a participant.
-- Remaining gaps are concentrated in progress-ledger failure paths, direct checkpoint state inspection, and direct participant-routing assertions.
+- Progress-ledger failure/retry paths are now fully covered, including both single-retry recovery and all-retries-fail-trigger-reset scenarios.
 
 ## Recommended Next Tests
 
 Continue one test at a time in this order:
 
-1. `ProgressLedger_Retry_On_Parse_Failure` — return invalid ledger JSON once, then valid JSON, and assert retry warning plus successful completion.
-2. `ProgressLedger_Max_Retries_Triggers_Reset` — return invalid ledger JSON for all attempts and assert warning/reset/replan behavior.
-3. `Task_Delegates_To_Correct_Agent` / `NextSpeaker_Valid_Delegates_Correctly` — use multiple participants and assert only the selected participant receives the turn.
-4. `PlanReview_Multiple_Revisions` — exercise multiple human revision responses before final approval.
-5. Direct checkpoint state tests — inspect persisted `MagenticTaskContext` and progress ledger state where possible.
-6. Dedicated edge cases — empty team behavior, single-agent team behavior, and post-termination rejection.
-7. Strengthen `Instruction_Message_Sent_When_Present` if a stable event or test hook is available to directly observe the sent instruction message.
-8. Clarify or fix the `PlanReview_On_Stall_Replan` `IsStalled` expectation: either adjust production behavior to preserve stall context in the review request or update the original plan expectation.
+1. `Task_Delegates_To_Correct_Agent` / `NextSpeaker_Valid_Delegates_Correctly` — use multiple participants and assert only the selected participant receives the turn.
+2. Direct checkpoint state tests — inspect persisted `MagenticTaskContext` and progress ledger state where possible.
+3. Dedicated edge cases — empty team behavior, single-agent team behavior, and post-termination rejection.
+4. `Progress_Made_Decrements_StallCount` — use `MaxStallCount > 1` with one stall followed by a progress round and verify the stall count decrements (requires observing that the workflow does not reset when it otherwise would).
+5. Strengthen `Instruction_Message_Sent_When_Present` if a stable event or test hook is available to directly observe the sent instruction message.
+6. Clarify or fix the `PlanReview_On_Stall_Replan` `IsStalled` expectation: either adjust production behavior to preserve stall context in the review request or update the original plan expectation.
 
 ## Overall Conclusion
 
-The current implementation is a valuable and correct partial completion of the original Magentic E2E plan. It covers **14 tests** and most major user-visible orchestration decisions, including all planned limit enforcement scenarios and the important human-in-the-loop flows.
+The current implementation covers **18 tests** and all major user-visible orchestration decisions. Three entire plan categories are now fully implemented: limit enforcement, progress ledger validation, and event emission. The plan review category is substantially complete with the addition of multiple-revision coverage.
 
-The next highest-value work is progress-ledger failure/retry coverage, followed by direct routing and checkpoint-state assertions. Two areas deserve special attention before calling the plan complete: the current inability to assert `IsStalled=true` on stall-triggered plan review requests after reset, and the indirect nature of the instruction-message test.
+The next highest-value work is direct participant-routing assertions and direct checkpoint-state assertions. The remaining edge cases (empty team, single-agent team, post-termination rejection) and the `Progress_Made_Decrements_StallCount` test represent the final gaps before full plan coverage.
