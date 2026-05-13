@@ -1,0 +1,38 @@
+name: agent-framework-agent-foundry-memory-responses
+description: >
+  An Agent Framework agent with persistent semantic memory backed by an
+  Azure AI Foundry Memory Store. Uses FoundryMemoryProvider to retrieve and
+  store memories around each model invocation, allowing the agent to remember
+  facts about a user across sessions.
+metadata:
+  tags:
+    - Agent Framework
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Foundry Memory
+template:
+  name: agent-framework-agent-foundry-memory-responses
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  environment_variables:
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
+    - name: FOUNDRY_MEMORY_STORE_NAME
+      value: "{{FOUNDRY_MEMORY_STORE_NAME}}"
+    - name: FOUNDRY_MEMORY_SCOPE
+      value: "{{FOUNDRY_MEMORY_SCOPE}}"
+parameters:
+  properties:
+    - name: FOUNDRY_MEMORY_STORE_NAME
+      secret: false
+      description: The name of the pre-provisioned Foundry Memory Store the agent will use (e.g., agent_framework_memory)
+    - name: FOUNDRY_MEMORY_SCOPE
+      secret: false
+      description: Scope (e.g., user id) used to isolate memories within the store (e.g., user_123)
+resources:
+  - kind: model
+    id: gpt-4.1-mini
+    name: AZURE_AI_MODEL_DEPLOYMENT_NAME
