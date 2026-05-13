@@ -396,6 +396,7 @@ public partial class WorkflowBuilderSmokeTests
         WorkflowBuilder builder = new("start");
         NoOpExecutor source = new("start");
         NoOpExecutor target = new("target");
+        NoOpExecutor otherTarget = new("other-target");
 
         // Act/Assert
         Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).AddChain(source, [target]));
@@ -403,6 +404,7 @@ public partial class WorkflowBuilderSmokeTests
         Assert.Throws<ArgumentNullException>("executors", () => builder.AddChain(source, null!));
         Assert.Throws<ArgumentNullException>("executors", () => builder.AddChain(source, [target, null!]));
         Assert.Throws<ArgumentException>("executors", () => builder.AddChain(source, [target, source]));
+        Assert.Throws<ArgumentException>("executors", () => builder.AddChain(source, [target, otherTarget, target]));
     }
 
     [Fact]
