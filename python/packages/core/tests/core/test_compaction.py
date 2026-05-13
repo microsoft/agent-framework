@@ -153,6 +153,24 @@ def test_group_annotations_handle_same_message_reasoning_and_function_calls() ->
     assert _group_has_reasoning(messages[1]) is True
 
 
+def test_annotate_message_groups_assigns_unique_ids_after_incremental_calls() -> None:
+    """Regression: ``_ensure_message_ids`` previously ran inside
+    ``group_messages`` against a slice and assigned ``msg_{slice_index}``,
+    which collided with ids already present in the preserved prefix.
+    """
+    messages: list[Message] = []
+    for turn in range(4):
+        messages.append(Message(role="user", contents=[f"u{turn}"]))
+        messages.append(Message(role="assistant", contents=[f"a{turn}"]))
+        annotate_message_groups(messages)
+
+    ids = [m.message_id for m in messages]
+    assert None not in ids
+    assert len(set(ids)) == len(ids), (
+        f"expected unique message_ids across incremental annotation, got {ids}"
+    )
+
+
 def test_annotate_message_groups_with_tokenizer_adds_token_counts() -> None:
     messages = [
         Message(role="user", contents=["hello"]),
