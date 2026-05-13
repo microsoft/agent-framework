@@ -2378,7 +2378,7 @@ class FileSkillsSource(SkillsSource):
             if (
                 os.path.isabs(directory)
                 or normalized.startswith("/")
-                or (len(normalized) >= 2 and normalized[1] == ":")
+                or re.match(r"^[A-Za-z]:[/\\]", directory)
             ):
                 logger.warning(
                     "Skipping directory '%s': absolute paths are not allowed.",
@@ -2441,14 +2441,23 @@ class FileSkillsSource(SkillsSource):
             if not target_dir.is_dir():
                 continue
 
-            # Directory-level symlink check for non-root directories
-            if not is_root and FileSkillsSource._has_symlink_in_path(resolved_target, root_directory_path):
-                logger.warning(
-                    "Skipping resource directory '%s': symlink detected in path under skill directory '%s'",
-                    directory,
-                    skill_dir_path,
-                )
-                continue
+            # Directory-level containment and symlink checks for non-root directories
+            if not is_root:
+                if not FileSkillsSource._is_path_within_directory(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping resource directory '%s': resolves outside skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
+
+                if FileSkillsSource._has_symlink_in_path(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping resource directory '%s': symlink detected in path under skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
 
             # Scan top-level files only (non-recursive) within this directory
             try:
@@ -2535,14 +2544,23 @@ class FileSkillsSource(SkillsSource):
             if not target_dir.is_dir():
                 continue
 
-            # Directory-level symlink check for non-root directories
-            if not is_root and FileSkillsSource._has_symlink_in_path(resolved_target, root_directory_path):
-                logger.warning(
-                    "Skipping script directory '%s': symlink detected in path under skill directory '%s'",
-                    directory,
-                    skill_dir_path,
-                )
-                continue
+            # Directory-level containment and symlink checks for non-root directories
+            if not is_root:
+                if not FileSkillsSource._is_path_within_directory(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping script directory '%s': resolves outside skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
+
+                if FileSkillsSource._has_symlink_in_path(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping script directory '%s': symlink detected in path under skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
 
             # Scan top-level files only (non-recursive) within this directory
             try:
