@@ -36,13 +36,18 @@ public sealed class InputWaiterTests : IDisposable
     {
         Task waitTask = this._waiter.WaitForInputAsync(TimeSpan.FromSeconds(5));
 
-        await Task.Delay(50);
-        waitTask.IsCompleted.Should().BeFalse("the waiter should block until input is signaled");
+        Task completedBeforeSignal = await Task.WhenAny(waitTask, Task.Delay(100));
+        completedBeforeSignal.Should().NotBeSameAs(
+            waitTask,
+            "the waiter should not complete before input is signaled");
 
         this._waiter.SignalInput();
 
-        Task completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(1)));
-        completed.Should().BeSameAs(waitTask, "the wait task should complete after being signaled");
+        Task completedAfterSignal = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(1)));
+        completedAfterSignal.Should().BeSameAs(
+            waitTask,
+            "the wait task should complete after being signaled");
+
         await waitTask;
     }
 
