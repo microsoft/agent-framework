@@ -30,8 +30,11 @@ from agent_framework import (
     SkillsProvider,
 )
 from agent_framework._skills import (
+    DEFAULT_RESOURCE_DIRECTORIES,
     DEFAULT_RESOURCE_EXTENSIONS,
+    DEFAULT_SCRIPT_DIRECTORIES,
     DEFAULT_SCRIPT_EXTENSIONS,
+    ROOT_DIRECTORY_INDICATOR,
     InlineSkillResource,
     InlineSkillScript,
     _create_resource_element,
@@ -143,6 +146,8 @@ async def _discover_file_skills_for_test(
     *,
     resource_extensions: tuple[str, ...] | None = None,
     script_extensions: tuple[str, ...] | None = None,
+    resource_directories: Sequence[str] | None = None,
+    script_directories: Sequence[str] | None = None,
     script_runner: Any = None,
 ) -> dict[str, FileSkill]:
     """Test helper: discover file skills and return as a dict keyed by name.
@@ -155,6 +160,10 @@ async def _discover_file_skills_for_test(
         kwargs["resource_extensions"] = resource_extensions
     if script_extensions is not None:
         kwargs["script_extensions"] = script_extensions
+    if resource_directories is not None:
+        kwargs["resource_directories"] = resource_directories
+    if script_directories is not None:
+        kwargs["script_directories"] = script_directories
     if script_runner is not None:
         kwargs["script_runner"] = script_runner
 
@@ -191,59 +200,103 @@ class TestNormalizeResourcePath:
 class TestDiscoverResourceFiles:
     """Tests for _discover_resource_files (filesystem-based resource discovery)."""
 
-    def test_discovers_md_files(self, tmp_path: Path) -> None:
+    def test_discovers_md_files_in_references(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("---\nname: s\ndescription: d\n---\n", encoding="utf-8")
-        refs = skill_dir / "refs"
+        refs = skill_dir / "references"
         refs.mkdir()
         (refs / "FAQ.md").write_text("FAQ content", encoding="utf-8")
         resources = FileSkillsSource._discover_resource_files(str(skill_dir))
-        assert "refs/FAQ.md" in resources
+        assert "references/FAQ.md" in resources
 
-    def test_excludes_skill_md(self, tmp_path: Path) -> None:
+    def test_discovers_md_files_in_assets(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        assets = skill_dir / "assets"
+        assets.mkdir()
+        (assets / "guide.md").write_text("guide", encoding="utf-8")
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
+        assert "assets/guide.md" in resources
+
+    def test_excludes_skill_md_at_root(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("content", encoding="utf-8")
-        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir), directories=(".",))
         assert len(resources) == 0
 
     def test_discovers_multiple_extensions(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
-        (skill_dir / "data.json").write_text("{}", encoding="utf-8")
-        (skill_dir / "config.yaml").write_text("key: val", encoding="utf-8")
-        (skill_dir / "notes.txt").write_text("notes", encoding="utf-8")
+        refs = skill_dir / "references"
+        refs.mkdir(parents=True)
+        (refs / "data.json").write_text("{}", encoding="utf-8")
+        (refs / "config.yaml").write_text("key: val", encoding="utf-8")
+        (refs / "notes.txt").write_text("notes", encoding="utf-8")
         resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert len(resources) == 3
         names = set(resources)
-        assert "data.json" in names
-        assert "config.yaml" in names
-        assert "notes.txt" in names
+        assert "references/data.json" in names
+        assert "references/config.yaml" in names
+        assert "references/notes.txt" in names
 
     def test_ignores_unsupported_extensions(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
-        (skill_dir / "image.png").write_bytes(b"\x89PNG")
-        (skill_dir / "binary.exe").write_bytes(b"\x00")
+        refs = skill_dir / "references"
+        refs.mkdir(parents=True)
+        (refs / "image.png").write_bytes(b"\x89PNG")
+        (refs / "binary.exe").write_bytes(b"\x00")
         resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert len(resources) == 0
 
     def test_custom_extensions(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
-        (skill_dir / "data.json").write_text("{}", encoding="utf-8")
-        (skill_dir / "notes.txt").write_text("notes", encoding="utf-8")
+        refs = skill_dir / "references"
+        refs.mkdir(parents=True)
+        (refs / "data.json").write_text("{}", encoding="utf-8")
+        (refs / "notes.txt").write_text("notes", encoding="utf-8")
         resources = FileSkillsSource._discover_resource_files(str(skill_dir), extensions=(".json",))
-        assert resources == ["data.json"]
+        assert resources == ["references/data.json"]
 
-    def test_discovers_nested_files(self, tmp_path: Path) -> None:
+    def test_does_not_discover_nested_files(self, tmp_path: Path) -> None:
+        """Non-recursive: files inside subdirectories of configured dirs are not discovered."""
         skill_dir = tmp_path / "my-skill"
-        sub = skill_dir / "refs" / "deep"
+        sub = skill_dir / "references" / "deep"
         sub.mkdir(parents=True)
         (sub / "doc.md").write_text("deep doc", encoding="utf-8")
         resources = FileSkillsSource._discover_resource_files(str(skill_dir))
-        assert "refs/deep/doc.md" in resources
+        assert len(resources) == 0
+
+    def test_root_directory_discovers_root_files(self, tmp_path: Path) -> None:
+        """The '.' root indicator discovers files at the skill root level."""
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "data.json").write_text("{}", encoding="utf-8")
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir), directories=(".",))
+        assert "data.json" in resources
+
+    def test_root_does_not_discover_by_default(self, tmp_path: Path) -> None:
+        """Files at skill root are not discovered with default directories."""
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "data.json").write_text("{}", encoding="utf-8")
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
+        assert len(resources) == 0
+
+    def test_custom_directories(self, tmp_path: Path) -> None:
+        """Custom directory names override defaults."""
+        skill_dir = tmp_path / "my-skill"
+        custom = skill_dir / "docs"
+        custom.mkdir(parents=True)
+        (custom / "readme.md").write_text("readme", encoding="utf-8")
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir), directories=("docs",))
+        assert "docs/readme.md" in resources
+
+    def test_nonexistent_directory_silently_skipped(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir), directories=("nonexistent",))
+        assert resources == []
 
     def test_empty_directory(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
@@ -259,6 +312,27 @@ class TestDiscoverResourceFiles:
         assert ".csv" in DEFAULT_RESOURCE_EXTENSIONS
         assert ".xml" in DEFAULT_RESOURCE_EXTENSIONS
         assert ".txt" in DEFAULT_RESOURCE_EXTENSIONS
+
+    def test_duplicate_directories_deduplicated(self, tmp_path: Path) -> None:
+        """Duplicate directory entries should not produce duplicate resources."""
+        skill_dir = tmp_path / "my-skill"
+        refs = skill_dir / "references"
+        refs.mkdir(parents=True)
+        (refs / "doc.md").write_text("content", encoding="utf-8")
+        resources = FileSkillsSource._discover_resource_files(
+            str(skill_dir), directories=("references", "references")
+        )
+        assert resources == ["references/doc.md"]
+
+    def test_results_are_sorted(self, tmp_path: Path) -> None:
+        """Results should be sorted for stable ordering."""
+        skill_dir = tmp_path / "my-skill"
+        refs = skill_dir / "references"
+        refs.mkdir(parents=True)
+        (refs / "zebra.md").write_text("z", encoding="utf-8")
+        (refs / "alpha.md").write_text("a", encoding="utf-8")
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
+        assert resources == ["references/alpha.md", "references/zebra.md"]
 
 
 class TestTryParseSkillDocument:
@@ -414,11 +488,11 @@ class TestDiscoverAndLoadSkills:
             tmp_path,
             "my-skill",
             body="Instructions here.",
-            resources={"refs/FAQ.md": "FAQ content"},
+            resources={"references/FAQ.md": "FAQ content"},
         )
         skills = await _discover_file_skills_for_test([str(tmp_path)])
         assert "my-skill" in skills
-        assert [r.name for r in skills["my-skill"].resources] == ["refs/FAQ.md"]
+        assert [r.name for r in skills["my-skill"].resources] == ["references/FAQ.md"]
 
     async def test_skill_discovers_all_resource_files(self, tmp_path: Path) -> None:
         """Resources are discovered by filesystem scan, not by markdown links."""
@@ -426,13 +500,13 @@ class TestDiscoverAndLoadSkills:
             tmp_path,
             "my-skill",
             body="No links here.",
-            resources={"data.json": '{"key": "val"}', "refs/doc.md": "doc content"},
+            resources={"references/data.json": '{"key": "val"}', "assets/doc.md": "doc content"},
         )
         skills = await _discover_file_skills_for_test([str(tmp_path)])
         assert "my-skill" in skills
         resource_names = sorted(r.name for r in skills["my-skill"].resources)
-        assert "data.json" in resource_names
-        assert "refs/doc.md" in resource_names
+        assert "assets/doc.md" in resource_names
+        assert "references/data.json" in resource_names
 
 
 # ---------------------------------------------------------------------------
@@ -447,12 +521,12 @@ class TestReadSkillResource:
         _write_skill(
             tmp_path,
             "my-skill",
-            body="See [doc](refs/FAQ.md).",
-            resources={"refs/FAQ.md": "FAQ content here"},
+            body="See [doc](references/FAQ.md).",
+            resources={"references/FAQ.md": "FAQ content here"},
         )
         skill_dir = tmp_path / "my-skill"
-        full_path = str(skill_dir / "refs" / "FAQ.md")
-        resource = _FileSkillResource(name="refs/FAQ.md", full_path=full_path)
+        full_path = str(skill_dir / "references" / "FAQ.md")
+        resource = _FileSkillResource(name="references/FAQ.md", full_path=full_path)
         content = await resource.read()
         assert content == "FAQ content here"
 
@@ -469,12 +543,12 @@ class TestReadSkillResource:
         _write_skill(
             tmp_path,
             "my-skill",
-            body="See [doc](refs/FAQ.md).",
-            resources={"refs/FAQ.md": "FAQ content"},
+            body="See [doc](references/FAQ.md).",
+            resources={"references/FAQ.md": "FAQ content"},
         )
         skill_dir = tmp_path / "my-skill"
-        full_path = str(skill_dir / "refs" / "FAQ.md")
-        resource = _FileSkillResource(name="refs/FAQ.md", full_path=full_path)
+        full_path = str(skill_dir / "references" / "FAQ.md")
+        resource = _FileSkillResource(name="references/FAQ.md", full_path=full_path)
         content = await resource.read()
         assert content == "FAQ content"
 
@@ -487,7 +561,7 @@ class TestReadSkillResource:
         skill_dir = tmp_path / "skill"
         skill_dir.mkdir()
         (tmp_path / "secret.md").write_text("secret", encoding="utf-8")
-        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir), directories=(".",))
         assert not any("secret" in r for r in resources)
 
 
@@ -632,13 +706,13 @@ class TestSkillsProvider:
         _write_skill(
             tmp_path,
             "my-skill",
-            body="See [doc](refs/FAQ.md).",
-            resources={"refs/FAQ.md": "FAQ content"},
+            body="See [doc](references/FAQ.md).",
+            resources={"references/FAQ.md": "FAQ content"},
         )
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
         result = provider._load_skill(_raw_skills(provider), "my-skill")
-        assert "See [doc](refs/FAQ.md)." in result
+        assert "See [doc](references/FAQ.md)." in result
 
     async def test_load_skill_unknown_returns_error(self, tmp_path: Path) -> None:
         provider = SkillsProvider.from_paths(str(tmp_path))
@@ -656,12 +730,12 @@ class TestSkillsProvider:
         _write_skill(
             tmp_path,
             "my-skill",
-            body="See [doc](refs/FAQ.md).",
-            resources={"refs/FAQ.md": "FAQ content"},
+            body="See [doc](references/FAQ.md).",
+            resources={"references/FAQ.md": "FAQ content"},
         )
         provider = SkillsProvider.from_paths(str(tmp_path))
         await _init_provider(provider)
-        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "refs/FAQ.md")
+        result = await provider._read_skill_resource(_raw_skills(provider), "my-skill", "references/FAQ.md")
         assert result == "FAQ content"
 
     async def test_read_skill_resource_unknown_skill_returns_error(self, tmp_path: Path) -> None:
@@ -790,7 +864,7 @@ class TestSymlinkDetection:
             "---\nname: my-skill\ndescription: A test skill.\n---\nInstructions.\n",
             encoding="utf-8",
         )
-        refs_dir = skill_dir / "refs"
+        refs_dir = skill_dir / "references"
         refs_dir.mkdir()
         (refs_dir / "leak.md").symlink_to(outside_file)
         # Also add a safe resource
@@ -799,8 +873,8 @@ class TestSymlinkDetection:
         skills = await _discover_file_skills_for_test([str(tmp_path)])
         assert "my-skill" in skills
         resource_names = [r.name for r in skills["my-skill"].resources]
-        assert "refs/leak.md" not in resource_names
-        assert "refs/safe.md" in resource_names
+        assert "references/leak.md" not in resource_names
+        assert "references/safe.md" in resource_names
 
     def test_discover_resource_files_rejects_symlinked_resource(self, tmp_path: Path) -> None:
         """_discover_resource_files should exclude a symlinked resource file."""
@@ -810,12 +884,12 @@ class TestSymlinkDetection:
         outside_file = tmp_path / "secret.md"
         outside_file.write_text("secret content", encoding="utf-8")
 
-        refs_dir = skill_dir / "refs"
+        refs_dir = skill_dir / "references"
         refs_dir.mkdir()
         (refs_dir / "leak.md").symlink_to(outside_file)
 
         resources = FileSkillsSource._discover_resource_files(str(skill_dir))
-        assert "refs/leak.md" not in resources
+        assert "references/leak.md" not in resources
 
     def test_discover_skips_symlinked_script(self, tmp_path: Path) -> None:
         """_discover_script_files should skip scripts with symlinks in their path."""
@@ -1324,21 +1398,22 @@ class TestSkillsProviderCodeSkill:
     async def test_custom_resource_extensions(self, tmp_path: Path) -> None:
         """SkillsProvider accepts custom resource_extensions."""
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        refs = skill_dir / "references"
+        refs.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: A test skill.\n---\nBody.",
             encoding="utf-8",
         )
-        (skill_dir / "data.json").write_text("{}", encoding="utf-8")
-        (skill_dir / "notes.txt").write_text("notes", encoding="utf-8")
+        (refs / "data.json").write_text("{}", encoding="utf-8")
+        (refs / "notes.txt").write_text("notes", encoding="utf-8")
 
         # Only discover .json files
         provider = SkillsProvider.from_paths(str(tmp_path), resource_extensions=(".json",))
         await _init_provider(provider)
         skill = _ctx(provider)[0]["my-skill"]
         resource_names = [r.name for r in skill.resources]
-        assert "data.json" in resource_names
-        assert "notes.txt" not in resource_names
+        assert "references/data.json" in resource_names
+        assert "references/notes.txt" not in resource_names
 
 
 # ---------------------------------------------------------------------------
@@ -1370,11 +1445,11 @@ class TestFileBasedSkillParsing:
         assert skill.path == str(tmp_path / "my-skill")
 
     async def test_resources_populated(self, tmp_path: Path) -> None:
-        _write_skill(tmp_path, "my-skill", resources={"refs/doc.md": "content"})
+        _write_skill(tmp_path, "my-skill", resources={"references/doc.md": "content"})
         skills = await _discover_file_skills_for_test([str(tmp_path)])
         assert "my-skill" in skills
         resource_names = [r.name for r in skills["my-skill"].resources]
-        assert "refs/doc.md" in resource_names
+        assert "references/doc.md" in resource_names
 
 
 # ---------------------------------------------------------------------------
@@ -1429,12 +1504,12 @@ class TestDiscoverResourceFilesEdgeCases:
     """Additional edge-case tests for filesystem resource discovery."""
 
     def test_excludes_skill_md_case_insensitive(self, tmp_path: Path) -> None:
-        """SKILL.md in any casing is excluded."""
+        """SKILL.md in any casing is excluded when scanning root."""
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "skill.md").write_text("lowercase name", encoding="utf-8")
         (skill_dir / "other.md").write_text("keep me", encoding="utf-8")
-        resources = FileSkillsSource._discover_resource_files(str(skill_dir))
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir), directories=(".",))
         names = [r.lower() for r in resources]
         assert "skill.md" not in names
         assert "other.md" in resources
@@ -1442,17 +1517,171 @@ class TestDiscoverResourceFilesEdgeCases:
     def test_skips_directories(self, tmp_path: Path) -> None:
         """Directories are not included as resources even if their name matches an extension."""
         skill_dir = tmp_path / "my-skill"
-        subdir = skill_dir / "data.json"
-        subdir.mkdir(parents=True)
+        refs = skill_dir / "references"
+        refs.mkdir(parents=True)
+        subdir = refs / "data.json"
+        subdir.mkdir()
         resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert resources == []
 
     def test_extension_matching_is_case_insensitive(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
-        (skill_dir / "NOTES.TXT").write_text("caps", encoding="utf-8")
+        refs = skill_dir / "references"
+        refs.mkdir(parents=True)
+        (refs / "NOTES.TXT").write_text("caps", encoding="utf-8")
         resources = FileSkillsSource._discover_resource_files(str(skill_dir))
         assert len(resources) == 1
+
+
+class TestValidateAndNormalizeDirectoryNames:
+    """Tests for _validate_and_normalize_directory_names."""
+
+    def test_simple_directory_name(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(["references"])
+        assert result == ["references"]
+
+    def test_root_indicator(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(["."])
+        assert result == ["."]
+
+    def test_dot_slash_normalizes_to_root(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(["./"])
+        assert result == ["."]
+
+    def test_backslash_dot_normalizes_to_root(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names([".\\"])
+        assert result == ["."]
+
+    def test_backslashes_normalized(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(["sub\\scripts"])
+        assert result == ["sub/scripts"]
+
+    def test_trailing_slash_stripped(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(["scripts/"])
+        assert result == ["scripts"]
+
+    def test_leading_dot_slash_stripped(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(["./references"])
+        assert result == ["references"]
+
+    def test_rejects_parent_traversal(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(["../secrets"])
+        assert result == []
+
+    def test_rejects_embedded_parent_traversal(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(["sub/../secrets"])
+        assert result == []
+
+    def test_rejects_absolute_path(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(["/etc/passwd"])
+        assert result == []
+
+    def test_rejects_windows_absolute_path(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(["C:\\Windows"])
+        assert result == []
+
+    def test_empty_string_raises(self) -> None:
+        with pytest.raises(ValueError, match="empty or whitespace"):
+            FileSkillsSource._validate_and_normalize_directory_names([""])
+
+    def test_whitespace_only_raises(self) -> None:
+        with pytest.raises(ValueError, match="empty or whitespace"):
+            FileSkillsSource._validate_and_normalize_directory_names(["   "])
+
+    def test_multiple_directories(self) -> None:
+        result = FileSkillsSource._validate_and_normalize_directory_names(
+            [".", "references", "assets", "scripts"]
+        )
+        assert result == [".", "references", "assets", "scripts"]
+
+    def test_default_resource_directories(self) -> None:
+        assert DEFAULT_RESOURCE_DIRECTORIES == ("references", "assets")
+
+    def test_default_script_directories(self) -> None:
+        assert DEFAULT_SCRIPT_DIRECTORIES == ("scripts",)
+
+    def test_root_directory_indicator_is_dot(self) -> None:
+        assert ROOT_DIRECTORY_INDICATOR == "."
+
+
+class TestFileSkillsSourceDirectories:
+    """Tests for resource_directories and script_directories parameters."""
+
+    async def test_custom_resource_directories(self, tmp_path: Path) -> None:
+        """Custom resource_directories controls which dirs are scanned."""
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: test\n---\nBody",
+            encoding="utf-8",
+        )
+        # Put resource in a custom directory
+        docs = skill_dir / "docs"
+        docs.mkdir()
+        (docs / "guide.md").write_text("guide", encoding="utf-8")
+        # Also put one in default references/ — should not be found
+        refs = skill_dir / "references"
+        refs.mkdir()
+        (refs / "ref.md").write_text("ref", encoding="utf-8")
+
+        source = FileSkillsSource(str(tmp_path), resource_directories=["docs"])
+        skills = await source.get_skills()
+        resource_names = [r.name for r in skills[0].resources]
+        assert "docs/guide.md" in resource_names
+        assert "references/ref.md" not in resource_names
+
+    async def test_custom_script_directories(self, tmp_path: Path) -> None:
+        """Custom script_directories controls which dirs are scanned."""
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: test\n---\nBody",
+            encoding="utf-8",
+        )
+        # Put script in a custom directory
+        tools = skill_dir / "tools"
+        tools.mkdir()
+        (tools / "run.py").write_text("print('run')", encoding="utf-8")
+
+        source = FileSkillsSource(str(tmp_path), script_directories=["tools"])
+        skills = await source.get_skills()
+        script_names = [s.name for s in skills[0].scripts]
+        assert "tools/run.py" in script_names
+
+    async def test_root_indicator_discovers_root_files(self, tmp_path: Path) -> None:
+        """The '.' root indicator discovers files at the skill root."""
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: test\n---\nBody",
+            encoding="utf-8",
+        )
+        (skill_dir / "data.json").write_text("{}", encoding="utf-8")
+
+        source = FileSkillsSource(str(tmp_path), resource_directories=[".", "references"])
+        skills = await source.get_skills()
+        resource_names = [r.name for r in skills[0].resources]
+        assert "data.json" in resource_names
+
+    async def test_from_paths_passes_directories(self, tmp_path: Path) -> None:
+        """from_paths passes resource_directories and script_directories through."""
+        skill_dir = tmp_path / "my-skill"
+        docs = skill_dir / "docs"
+        docs.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: test\n---\nBody",
+            encoding="utf-8",
+        )
+        (docs / "guide.md").write_text("guide", encoding="utf-8")
+
+        provider = SkillsProvider.from_paths(
+            str(tmp_path),
+            resource_directories=["docs"],
+        )
+        await _init_provider(provider)
+        skill = _ctx(provider)[0]["my-skill"]
+        resource_names = [r.name for r in skill.resources]
+        assert "docs/guide.md" in resource_names
 
 
 # ---------------------------------------------------------------------------
@@ -2614,12 +2843,13 @@ class TestSkillsProviderFactories:
         assert isinstance(_CustomRunner(), SkillScriptRunner)
 
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+        (scripts_dir / "run.py").write_text("print('hi')", encoding="utf-8")
 
         provider = SkillsProvider.from_paths(
             str(tmp_path),
@@ -2635,12 +2865,13 @@ class TestSkillsProviderFactories:
         assert isinstance(sync_runner, SkillScriptRunner)
 
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+        (scripts_dir / "run.py").write_text("print('hi')", encoding="utf-8")
 
         provider = SkillsProvider.from_paths(
             str(tmp_path),
@@ -2652,12 +2883,13 @@ class TestSkillsProviderFactories:
     async def test_file_script_with_sync_runner_executes(self, tmp_path: Path) -> None:
         """A sync script_runner is awaitable through the provider's run_skill_script."""
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+        (scripts_dir / "run.py").write_text("print('hi')", encoding="utf-8")
 
         def sync_runner(skill, script, args=None):
             return f"sync: {script.name} args={args}"
@@ -2668,17 +2900,18 @@ class TestSkillsProviderFactories:
         )
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="run.py", args={"key": "val"})
-        assert result == "sync: run.py args={'key': 'val'}"
+        result = await run_tool.func(skill_name="my-skill", script_name="scripts/run.py", args={"key": "val"})
+        assert result == "sync: scripts/run.py args={'key': 'val'}"
 
     async def test_file_skills_with_callback_runner(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+        (scripts_dir / "run.py").write_text("print('hi')", encoding="utf-8")
 
         provider = SkillsProvider.from_paths(
             str(tmp_path),
@@ -2712,12 +2945,13 @@ class TestSkillsProviderFactories:
 
     async def test_file_scripts_without_runner_no_error_at_init(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+        (scripts_dir / "run.py").write_text("print('hi')", encoding="utf-8")
 
         provider = SkillsProvider.from_paths(str(tmp_path))
         # Initialization succeeds; the error now surfaces at script.run() time
@@ -2993,7 +3227,23 @@ class TestSkillsProviderFactories:
 class TestFileScriptDiscovery:
     """Tests for automatic .py script discovery in skill directories."""
 
-    async def test_discovers_py_files(self, tmp_path: Path) -> None:
+    async def test_discovers_py_files_in_scripts_dir(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "my-skill"
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: test\n---\nBody",
+            encoding="utf-8",
+        )
+        (scripts_dir / "analyze.py").write_text("print('hi')", encoding="utf-8")
+
+        skills = await _discover_file_skills_for_test(str(tmp_path))
+        assert "my-skill" in skills
+        assert len(skills["my-skill"].scripts) == 1
+        assert skills["my-skill"].scripts[0].name == "scripts/analyze.py"
+
+    async def test_root_py_files_not_discovered_by_default(self, tmp_path: Path) -> None:
+        """Scripts at the skill root are NOT discovered with default directories."""
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -3004,8 +3254,7 @@ class TestFileScriptDiscovery:
 
         skills = await _discover_file_skills_for_test(str(tmp_path))
         assert "my-skill" in skills
-        assert len(skills["my-skill"].scripts) == 1
-        assert skills["my-skill"].scripts[0].name == "analyze.py"
+        assert len(skills["my-skill"].scripts) == 0
 
     async def test_discovered_script_has_absolute_full_path(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
@@ -3024,7 +3273,8 @@ class TestFileScriptDiscovery:
         expected = str(Path(str(skill_dir), "scripts", "generate.py"))
         assert script.full_path == expected
 
-    async def test_discovers_nested_scripts(self, tmp_path: Path) -> None:
+    async def test_scripts_not_discovered_recursively(self, tmp_path: Path) -> None:
+        """Scripts inside subdirectories of scripts/ are NOT discovered (non-recursive)."""
         skill_dir = tmp_path / "my-skill"
         scripts_dir = skill_dir / "scripts"
         scripts_dir.mkdir(parents=True)
@@ -3032,11 +3282,16 @@ class TestFileScriptDiscovery:
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (scripts_dir / "generate.py").write_text("print('gen')", encoding="utf-8")
+        # File directly in scripts/ is discovered
+        (scripts_dir / "top.py").write_text("print('top')", encoding="utf-8")
+        # File in scripts/sub/ is NOT discovered
+        sub_dir = scripts_dir / "sub"
+        sub_dir.mkdir()
+        (sub_dir / "nested.py").write_text("print('nested')", encoding="utf-8")
 
         skills = await _discover_file_skills_for_test(str(tmp_path))
         assert len(skills["my-skill"].scripts) == 1
-        assert skills["my-skill"].scripts[0].name == "scripts/generate.py"
+        assert skills["my-skill"].scripts[0].name == "scripts/top.py"
 
     async def test_no_scripts_when_no_py_files(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
@@ -3057,36 +3312,38 @@ class TestCustomScriptExtensions:
     async def test_custom_script_extensions_via_get_skills(self, tmp_path: Path) -> None:
         """get_skills() forwards script_extensions to _discover_script_files."""
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (skill_dir / "analyze.py").write_text("print('hi')", encoding="utf-8")
-        (skill_dir / "run.sh").write_text("#!/bin/bash", encoding="utf-8")
+        (scripts_dir / "analyze.py").write_text("print('hi')", encoding="utf-8")
+        (scripts_dir / "run.sh").write_text("#!/bin/bash", encoding="utf-8")
 
         # Default: only .py discovered
         skills_default = await _discover_file_skills_for_test(str(tmp_path))
         script_names_default = [s.name for s in skills_default["my-skill"].scripts]
-        assert "analyze.py" in script_names_default
-        assert "run.sh" not in script_names_default
+        assert "scripts/analyze.py" in script_names_default
+        assert "scripts/run.sh" not in script_names_default
 
         # Custom: only .sh discovered
         skills_custom = await _discover_file_skills_for_test(str(tmp_path), script_extensions=(".sh",))
         script_names_custom = [s.name for s in skills_custom["my-skill"].scripts]
-        assert "run.sh" in script_names_custom
-        assert "analyze.py" not in script_names_custom
+        assert "scripts/run.sh" in script_names_custom
+        assert "scripts/analyze.py" not in script_names_custom
 
     async def test_custom_script_extensions_via_provider(self, tmp_path: Path) -> None:
         """SkillsProvider accepts custom script_extensions."""
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (skill_dir / "analyze.py").write_text("print('hi')", encoding="utf-8")
-        (skill_dir / "run.sh").write_text("#!/bin/bash", encoding="utf-8")
+        (scripts_dir / "analyze.py").write_text("print('hi')", encoding="utf-8")
+        (scripts_dir / "run.sh").write_text("#!/bin/bash", encoding="utf-8")
 
         # Only discover .sh scripts
         provider = SkillsProvider.from_paths(
@@ -3097,20 +3354,21 @@ class TestCustomScriptExtensions:
         await _init_provider(provider)
         skill = _ctx(provider)[0]["my-skill"]
         script_names = [s.name for s in skill.scripts]
-        assert "run.sh" in script_names
-        assert "analyze.py" not in script_names
+        assert "scripts/run.sh" in script_names
+        assert "scripts/analyze.py" not in script_names
 
     async def test_multiple_script_extensions(self, tmp_path: Path) -> None:
         """Multiple script extensions can be specified."""
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (skill_dir / "analyze.py").write_text("print('hi')", encoding="utf-8")
-        (skill_dir / "run.sh").write_text("#!/bin/bash", encoding="utf-8")
-        (skill_dir / "notes.txt").write_text("notes", encoding="utf-8")
+        (scripts_dir / "analyze.py").write_text("print('hi')", encoding="utf-8")
+        (scripts_dir / "run.sh").write_text("#!/bin/bash", encoding="utf-8")
+        (scripts_dir / "notes.txt").write_text("notes", encoding="utf-8")
 
         provider = SkillsProvider.from_paths(
             str(tmp_path),
@@ -3120,9 +3378,9 @@ class TestCustomScriptExtensions:
         await _init_provider(provider)
         skill = _ctx(provider)[0]["my-skill"]
         script_names = [s.name for s in skill.scripts]
-        assert "analyze.py" in script_names
-        assert "run.sh" in script_names
-        assert "notes.txt" not in script_names
+        assert "scripts/analyze.py" in script_names
+        assert "scripts/run.sh" in script_names
+        assert "scripts/notes.txt" not in script_names
 
     def test_default_script_extensions_unchanged(self) -> None:
         """DEFAULT_SCRIPT_EXTENSIONS contains only .py."""
@@ -4275,21 +4533,22 @@ class TestSkillsSource:
     async def test_file_skills_source_with_extensions(self, tmp_path: Path) -> None:
         """FileSkillsSource resource_extensions controls extension filtering."""
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        refs = skill_dir / "references"
+        refs.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: Test skill.\n---\nBody.",
             encoding="utf-8",
         )
-        (skill_dir / "data.json").write_text("{}", encoding="utf-8")
-        (skill_dir / "data.csv").write_text("a,b", encoding="utf-8")
+        (refs / "data.json").write_text("{}", encoding="utf-8")
+        (refs / "data.csv").write_text("a,b", encoding="utf-8")
 
         # Only allow .json resources
         source = FileSkillsSource(str(tmp_path), resource_extensions=(".json",))
         skills = await source.get_skills()
         assert len(skills) == 1
         resource_names = [r.name for r in skills[0].resources]
-        assert "data.json" in resource_names
-        assert "data.csv" not in resource_names
+        assert "references/data.json" in resource_names
+        assert "references/data.csv" not in resource_names
 
     async def test_in_memory_skills_source_returns_all_skills(self) -> None:
         """InMemorySkillsSource returns all provided skills."""
@@ -4512,12 +4771,13 @@ class TestSourceComposition:
     async def test_file_source_with_script_runner(self, tmp_path: Path) -> None:
         """FileSkillsSource with script_runner enables script execution."""
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+        (scripts_dir / "run.py").write_text("print('hi')", encoding="utf-8")
 
         source = DeduplicatingSkillsSource(FileSkillsSource(str(tmp_path), script_runner=_noop_script_runner))
         provider = SkillsProvider(source)
@@ -4547,12 +4807,13 @@ class TestSourceComposition:
     async def test_per_source_runner(self, tmp_path: Path) -> None:
         """Per-source script runner is used when set on FileSkillsSource."""
         skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: test\n---\nBody",
             encoding="utf-8",
         )
-        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+        (scripts_dir / "run.py").write_text("print('hi')", encoding="utf-8")
 
         call_log: list[str] = []
 
@@ -4566,7 +4827,7 @@ class TestSourceComposition:
 
         # The source-level runner should be discovered and used
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="run.py")
+        result = await run_tool.func(skill_name="my-skill", script_name="scripts/run.py")
         assert result == "source"
         assert call_log == ["source"]
 
