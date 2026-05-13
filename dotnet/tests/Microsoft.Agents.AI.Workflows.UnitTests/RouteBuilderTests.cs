@@ -423,21 +423,21 @@ public sealed class RouteBuilderTests
                 routeBuilder.AddHandler<string, string>((message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
-                    return message.ToUpperInvariant();
+                    return NormalizeHandlerResult(message);
                 });
                 break;
             case 1:
                 routeBuilder.AddHandler<string, string>((message, context) =>
                 {
                     invocation.Capture(message, context);
-                    return message.ToUpperInvariant();
+                    return NormalizeHandlerResult(message);
                 });
                 break;
             case 2:
                 Func<string, IWorkflowContext, CancellationToken, ValueTask<string>> asyncHandlerWithCancellation = (message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
-                    return ValueTask.FromResult(message.ToUpperInvariant());
+                    return ValueTask.FromResult(NormalizeHandlerResult(message));
                 };
                 routeBuilder.AddHandler<string, string>(asyncHandlerWithCancellation);
                 break;
@@ -445,7 +445,7 @@ public sealed class RouteBuilderTests
                 Func<string, IWorkflowContext, ValueTask<string>> asyncHandler = (message, context) =>
                 {
                     invocation.Capture(message, context);
-                    return ValueTask.FromResult(message.ToUpperInvariant());
+                    return ValueTask.FromResult(NormalizeHandlerResult(message));
                 };
                 routeBuilder.AddHandler<string, string>(asyncHandler);
                 break;
@@ -491,21 +491,21 @@ public sealed class RouteBuilderTests
                 routeBuilder.AddCatchAll<string>((message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
-                    return GetPayloadValue(message).ToUpperInvariant();
+                    return NormalizeCatchAllResult(message);
                 });
                 break;
             case 1:
                 routeBuilder.AddCatchAll<string>((message, context) =>
                 {
                     invocation.Capture(message, context);
-                    return GetPayloadValue(message).ToUpperInvariant();
+                    return NormalizeCatchAllResult(message);
                 });
                 break;
             case 2:
                 Func<PortableValue, IWorkflowContext, CancellationToken, ValueTask<string>> asyncCatchAllWithCancellation = (message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
-                    return ValueTask.FromResult(GetPayloadValue(message).ToUpperInvariant());
+                    return ValueTask.FromResult(NormalizeCatchAllResult(message));
                 };
                 routeBuilder.AddCatchAll<string>(asyncCatchAllWithCancellation);
                 break;
@@ -513,7 +513,7 @@ public sealed class RouteBuilderTests
                 Func<PortableValue, IWorkflowContext, ValueTask<string>> asyncCatchAll = (message, context) =>
                 {
                     invocation.Capture(message, context);
-                    return ValueTask.FromResult(GetPayloadValue(message).ToUpperInvariant());
+                    return ValueTask.FromResult(NormalizeCatchAllResult(message));
                 };
                 routeBuilder.AddCatchAll<string>(asyncCatchAll);
                 break;
@@ -523,6 +523,10 @@ public sealed class RouteBuilderTests
     }
 
     private static bool UsesCancellationToken(int overload) => overload is 0 or 2;
+
+    private static string NormalizeHandlerResult(string message) => message.ToUpperInvariant();
+
+    private static string NormalizeCatchAllResult(PortableValue message) => GetPayloadValue(message).ToUpperInvariant();
 
     private static string GetPayloadValue(PortableValue message)
     {
