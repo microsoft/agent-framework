@@ -157,4 +157,183 @@ public partial class WorkflowBuilderSmokeTests
         workflow3.Name.Should().Be("Named Only");
         workflow3.Description.Should().BeNull();
     }
+
+    [Fact]
+    public void ForwardMessage_WithSingleTarget_CreatesDirectEdge()
+    {
+        // Arrange
+        NoOpExecutor source = new("start");
+        NoOpExecutor target = new("target");
+
+        // Act
+        Workflow workflow = new WorkflowBuilder(source.Id)
+            .ForwardMessage<string>(source, target)
+            .Build();
+
+        // Assert
+        Edge edge = GetSingleEdge(workflow, source.Id);
+        edge.Kind.Should().Be(EdgeKind.Direct);
+        edge.DirectEdgeData.Should().NotBeNull();
+        edge.DirectEdgeData!.SinkId.Should().Be(target.Id);
+        edge.DirectEdgeData.Condition.Should().NotBeNull();
+        edge.DirectEdgeData.Condition!("message").Should().BeTrue();
+        edge.DirectEdgeData.Condition!(42).Should().BeFalse();
+        edge.DirectEdgeData.Condition!(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ForwardMessage_WithMultipleTargets_CreatesFanOutEdge()
+    {
+        // Arrange
+        NoOpExecutor source = new("start");
+        NoOpExecutor target1 = new("target1");
+        NoOpExecutor target2 = new("target2");
+
+        // Act
+        Workflow workflow = new WorkflowBuilder(source.Id)
+            .ForwardMessage<string>(source, [target1, target2], message => message == "match")
+            .Build();
+
+        // Assert
+        Edge edge = GetSingleEdge(workflow, source.Id);
+        edge.Kind.Should().Be(EdgeKind.FanOut);
+        edge.FanOutEdgeData.Should().NotBeNull();
+        edge.FanOutEdgeData!.SinkIds.Should().Equal([target1.Id, target2.Id]);
+        edge.FanOutEdgeData.EdgeAssigner.Should().NotBeNull();
+        edge.FanOutEdgeData.EdgeAssigner!("match", 2).Should().Equal([0, 1]);
+        edge.FanOutEdgeData.EdgeAssigner!("other", 2).Should().BeEmpty();
+        edge.FanOutEdgeData.EdgeAssigner!(42, 2).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ForwardExcept_WithSingleTarget_CreatesDirectEdge()
+    {
+        // Arrange
+        NoOpExecutor source = new("start");
+        NoOpExecutor target = new("target");
+
+        // Act
+        Workflow workflow = new WorkflowBuilder(source.Id)
+            .ForwardExcept<string>(source, target)
+            .Build();
+
+        // Assert
+        Edge edge = GetSingleEdge(workflow, source.Id);
+        edge.Kind.Should().Be(EdgeKind.Direct);
+        edge.DirectEdgeData.Should().NotBeNull();
+        edge.DirectEdgeData!.SinkId.Should().Be(target.Id);
+        edge.DirectEdgeData.Condition.Should().NotBeNull();
+        edge.DirectEdgeData.Condition!("message").Should().BeFalse();
+        edge.DirectEdgeData.Condition!(42).Should().BeTrue();
+        edge.DirectEdgeData.Condition!(null).Should().BeTrue();
+    }
+
+    [Fact]
+    public void ForwardExcept_WithMultipleTargets_CreatesFanOutEdge()
+    {
+        // Arrange
+        NoOpExecutor source = new("start");
+        NoOpExecutor target1 = new("target1");
+        NoOpExecutor target2 = new("target2");
+
+        // Act
+        Workflow workflow = new WorkflowBuilder(source.Id)
+            .ForwardExcept<string>(source, [target1, target2])
+            .Build();
+
+        // Assert
+        Edge edge = GetSingleEdge(workflow, source.Id);
+        edge.Kind.Should().Be(EdgeKind.FanOut);
+        edge.FanOutEdgeData.Should().NotBeNull();
+        edge.FanOutEdgeData!.SinkIds.Should().Equal([target1.Id, target2.Id]);
+        edge.FanOutEdgeData.EdgeAssigner.Should().NotBeNull();
+        edge.FanOutEdgeData.EdgeAssigner!(42, 2).Should().Equal([0, 1]);
+        edge.FanOutEdgeData.EdgeAssigner!("message", 2).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AddChain_CreatesSequentialDirectEdges()
+    {
+        // Arrange
+        NoOpExecutor source = new("start");
+        NoOpExecutor middle = new("middle");
+        NoOpExecutor end = new("end");
+
+        // Act
+        Workflow workflow = new WorkflowBuilder(source.Id)
+            .AddChain(source, [middle, end])
+            .Build();
+
+        // Assert
+        GetSingleEdge(workflow, source.Id).DirectEdgeData!.SinkId.Should().Be(middle.Id);
+        GetSingleEdge(workflow, middle.Id).DirectEdgeData!.SinkId.Should().Be(end.Id);
+    }
+
+    [Fact]
+    public void AddChain_WhenExecutorRepeats_Throws()
+    {
+        // Arrange
+        NoOpExecutor source = new("start");
+        NoOpExecutor middle = new("middle");
+
+        // Act
+        Action act = () => new WorkflowBuilder(source.Id)
+            .AddChain(source, [middle, source]);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithParameterName("executors");
+    }
+
+    [Fact]
+    public void AddExternalCall_CreatesRequestPortAndRoundTripEdges()
+    {
+        // Arrange
+        const string PortId = "port1";
+        NoOpExecutor source = new("start");
+
+        // Act
+        Workflow workflow = new WorkflowBuilder(source.Id)
+            .AddExternalCall<string, int>(source, PortId)
+            .Build();
+
+        // Assert
+        workflow.Ports.Should().ContainKey(PortId);
+        workflow.Ports[PortId].Request.Should().Be(typeof(string));
+        workflow.Ports[PortId].Response.Should().Be(typeof(int));
+        workflow.ExecutorBindings.Should().ContainKey(PortId);
+        GetSingleEdge(workflow, source.Id).DirectEdgeData!.SinkId.Should().Be(PortId);
+        GetSingleEdge(workflow, PortId).DirectEdgeData!.SinkId.Should().Be(source.Id);
+    }
+
+    [Fact]
+    public void AddSwitch_CreatesFanOutEdgeWithCasesAndDefault()
+    {
+        // Arrange
+        NoOpExecutor source = new("start");
+        NoOpExecutor stringTarget = new("string-target");
+        NoOpExecutor intTarget = new("int-target");
+        NoOpExecutor defaultTarget = new("default-target");
+
+        // Act
+        Workflow workflow = new WorkflowBuilder(source.Id)
+            .AddSwitch(source, switchBuilder => switchBuilder
+                .AddCase<string>(message => message == "match", [stringTarget])
+                .AddCase<int>(message => message > 0, [intTarget])
+                .WithDefault([defaultTarget]))
+            .Build();
+
+        // Assert
+        Edge edge = GetSingleEdge(workflow, source.Id);
+        edge.Kind.Should().Be(EdgeKind.FanOut);
+        edge.FanOutEdgeData.Should().NotBeNull();
+        edge.FanOutEdgeData!.SinkIds.Should().Equal([stringTarget.Id, intTarget.Id, defaultTarget.Id]);
+        edge.FanOutEdgeData.EdgeAssigner.Should().NotBeNull();
+        edge.FanOutEdgeData.EdgeAssigner!("match", 3).Should().Equal([0]);
+        edge.FanOutEdgeData.EdgeAssigner!(2, 3).Should().Equal([1]);
+        edge.FanOutEdgeData.EdgeAssigner!("other", 3).Should().Equal([2]);
+    }
+
+    private static Edge GetSingleEdge(Workflow workflow, string sourceId)
+        => workflow.Edges[sourceId].Should().ContainSingle().Subject;
 }
