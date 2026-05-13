@@ -39,6 +39,8 @@ public sealed class SwitchBuilder
 
         foreach (ExecutorBinding executor in executors)
         {
+            Throw.IfNull(executor, nameof(executors));
+
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
             {
                 index = this._executors.Count;
@@ -66,6 +68,8 @@ public sealed class SwitchBuilder
 
         foreach (ExecutorBinding executor in executors)
         {
+            Throw.IfNull(executor, nameof(executors));
+
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
             {
                 index = this._executors.Count;

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -174,6 +175,7 @@ public partial class WorkflowBuilderSmokeTests
         Edge edge = GetSingleEdge(workflow, source.Id);
         edge.Kind.Should().Be(EdgeKind.Direct);
         edge.DirectEdgeData.Should().NotBeNull();
+        edge.DirectEdgeData!.SourceId.Should().Be(source.Id);
         edge.DirectEdgeData!.SinkId.Should().Be(target.Id);
         edge.DirectEdgeData.Condition.Should().NotBeNull();
         edge.DirectEdgeData.Condition!("message").Should().BeTrue();
@@ -198,6 +200,7 @@ public partial class WorkflowBuilderSmokeTests
         Edge edge = GetSingleEdge(workflow, source.Id);
         edge.Kind.Should().Be(EdgeKind.FanOut);
         edge.FanOutEdgeData.Should().NotBeNull();
+        edge.FanOutEdgeData!.SourceId.Should().Be(source.Id);
         edge.FanOutEdgeData!.SinkIds.Should().Equal([target1.Id, target2.Id]);
         edge.FanOutEdgeData.EdgeAssigner.Should().NotBeNull();
         edge.FanOutEdgeData.EdgeAssigner!("match", 2).Should().Equal([0, 1]);
@@ -221,6 +224,7 @@ public partial class WorkflowBuilderSmokeTests
         Edge edge = GetSingleEdge(workflow, source.Id);
         edge.Kind.Should().Be(EdgeKind.Direct);
         edge.DirectEdgeData.Should().NotBeNull();
+        edge.DirectEdgeData!.SourceId.Should().Be(source.Id);
         edge.DirectEdgeData!.SinkId.Should().Be(target.Id);
         edge.DirectEdgeData.Condition.Should().NotBeNull();
         edge.DirectEdgeData.Condition!("message").Should().BeFalse();
@@ -245,6 +249,7 @@ public partial class WorkflowBuilderSmokeTests
         Edge edge = GetSingleEdge(workflow, source.Id);
         edge.Kind.Should().Be(EdgeKind.FanOut);
         edge.FanOutEdgeData.Should().NotBeNull();
+        edge.FanOutEdgeData!.SourceId.Should().Be(source.Id);
         edge.FanOutEdgeData!.SinkIds.Should().Equal([target1.Id, target2.Id]);
         edge.FanOutEdgeData.EdgeAssigner.Should().NotBeNull();
         edge.FanOutEdgeData.EdgeAssigner!(42, 2).Should().Equal([0, 1]);
@@ -265,8 +270,15 @@ public partial class WorkflowBuilderSmokeTests
             .Build();
 
         // Assert
-        GetSingleEdge(workflow, source.Id).DirectEdgeData!.SinkId.Should().Be(middle.Id);
-        GetSingleEdge(workflow, middle.Id).DirectEdgeData!.SinkId.Should().Be(end.Id);
+        Edge firstEdge = GetSingleEdge(workflow, source.Id);
+        firstEdge.Kind.Should().Be(EdgeKind.Direct);
+        firstEdge.DirectEdgeData!.SourceId.Should().Be(source.Id);
+        firstEdge.DirectEdgeData.SinkId.Should().Be(middle.Id);
+
+        Edge secondEdge = GetSingleEdge(workflow, middle.Id);
+        secondEdge.Kind.Should().Be(EdgeKind.Direct);
+        secondEdge.DirectEdgeData!.SourceId.Should().Be(middle.Id);
+        secondEdge.DirectEdgeData.SinkId.Should().Be(end.Id);
     }
 
     [Fact]
@@ -302,8 +314,16 @@ public partial class WorkflowBuilderSmokeTests
         workflow.Ports[PortId].Request.Should().Be(typeof(string));
         workflow.Ports[PortId].Response.Should().Be(typeof(int));
         workflow.ExecutorBindings.Should().ContainKey(PortId);
-        GetSingleEdge(workflow, source.Id).DirectEdgeData!.SinkId.Should().Be(PortId);
-        GetSingleEdge(workflow, PortId).DirectEdgeData!.SinkId.Should().Be(source.Id);
+
+        Edge requestEdge = GetSingleEdge(workflow, source.Id);
+        requestEdge.Kind.Should().Be(EdgeKind.Direct);
+        requestEdge.DirectEdgeData!.SourceId.Should().Be(source.Id);
+        requestEdge.DirectEdgeData.SinkId.Should().Be(PortId);
+
+        Edge responseEdge = GetSingleEdge(workflow, PortId);
+        responseEdge.Kind.Should().Be(EdgeKind.Direct);
+        responseEdge.DirectEdgeData!.SourceId.Should().Be(PortId);
+        responseEdge.DirectEdgeData.SinkId.Should().Be(source.Id);
     }
 
     [Fact]
@@ -327,11 +347,104 @@ public partial class WorkflowBuilderSmokeTests
         Edge edge = GetSingleEdge(workflow, source.Id);
         edge.Kind.Should().Be(EdgeKind.FanOut);
         edge.FanOutEdgeData.Should().NotBeNull();
+        edge.FanOutEdgeData!.SourceId.Should().Be(source.Id);
         edge.FanOutEdgeData!.SinkIds.Should().Equal([stringTarget.Id, intTarget.Id, defaultTarget.Id]);
         edge.FanOutEdgeData.EdgeAssigner.Should().NotBeNull();
         edge.FanOutEdgeData.EdgeAssigner!("match", 3).Should().Equal([0]);
         edge.FanOutEdgeData.EdgeAssigner!(2, 3).Should().Equal([1]);
         edge.FanOutEdgeData.EdgeAssigner!("other", 3).Should().Equal([2]);
+    }
+
+    [Fact]
+    public void ForwardMessage_InvalidArguments_Throw()
+    {
+        // Arrange
+        WorkflowBuilder builder = new("start");
+        NoOpExecutor source = new("start");
+        NoOpExecutor target = new("target");
+
+        // Act/Assert
+        Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).ForwardMessage<string>(source, target));
+        Assert.Throws<ArgumentNullException>("source", () => builder.ForwardMessage<string>(null!, target));
+        Assert.Throws<ArgumentNullException>("target", () => builder.ForwardMessage<string>(source, (ExecutorBinding)null!));
+        Assert.Throws<ArgumentNullException>("targets", () => builder.ForwardMessage<string>(source, (IEnumerable<ExecutorBinding>)null!));
+        Assert.Throws<ArgumentNullException>("executors", () => builder.ForwardMessage<string>(source, [target, null!]));
+        Assert.Throws<ArgumentException>("targets", () => builder.ForwardMessage<string>(source, []));
+    }
+
+    [Fact]
+    public void ForwardExcept_InvalidArguments_Throw()
+    {
+        // Arrange
+        WorkflowBuilder builder = new("start");
+        NoOpExecutor source = new("start");
+        NoOpExecutor target = new("target");
+
+        // Act/Assert
+        Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).ForwardExcept<string>(source, target));
+        Assert.Throws<ArgumentNullException>("source", () => builder.ForwardExcept<string>(null!, target));
+        Assert.Throws<ArgumentNullException>("target", () => builder.ForwardExcept<string>(source, (ExecutorBinding)null!));
+        Assert.Throws<ArgumentNullException>("targets", () => builder.ForwardExcept<string>(source, (IEnumerable<ExecutorBinding>)null!));
+        Assert.Throws<ArgumentNullException>("executors", () => builder.ForwardExcept<string>(source, [target, null!]));
+        Assert.Throws<ArgumentException>("targets", () => builder.ForwardExcept<string>(source, []));
+    }
+
+    [Fact]
+    public void AddChain_InvalidArguments_Throw()
+    {
+        // Arrange
+        WorkflowBuilder builder = new("start");
+        NoOpExecutor source = new("start");
+        NoOpExecutor target = new("target");
+
+        // Act/Assert
+        Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).AddChain(source, [target]));
+        Assert.Throws<ArgumentNullException>("source", () => builder.AddChain(null!, [target]));
+        Assert.Throws<ArgumentNullException>("executors", () => builder.AddChain(source, null!));
+        Assert.Throws<ArgumentNullException>("executors", () => builder.AddChain(source, [target, null!]));
+        Assert.Throws<ArgumentException>("executors", () => builder.AddChain(source, [target, source]));
+    }
+
+    [Fact]
+    public void AddExternalCall_InvalidArguments_Throw()
+    {
+        // Arrange
+        WorkflowBuilder builder = new("start");
+        NoOpExecutor source = new("start");
+
+        // Act/Assert
+        Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).AddExternalCall<string, int>(source, "port"));
+        Assert.Throws<ArgumentNullException>("source", () => builder.AddExternalCall<string, int>(null!, "port"));
+        Assert.Throws<ArgumentNullException>("portId", () => builder.AddExternalCall<string, int>(source, null!));
+    }
+
+    [Fact]
+    public void AddSwitch_InvalidArguments_Throw()
+    {
+        // Arrange
+        WorkflowBuilder builder = new("start");
+        NoOpExecutor source = new("start");
+
+        // Act/Assert
+        Assert.Throws<ArgumentNullException>("builder", () => ((WorkflowBuilder)null!).AddSwitch(source, _ => { }));
+        Assert.Throws<ArgumentNullException>("source", () => builder.AddSwitch(null!, _ => { }));
+        Assert.Throws<ArgumentNullException>("configureSwitch", () => builder.AddSwitch(source, null!));
+        Assert.Throws<ArgumentException>("targets", () => builder.AddSwitch(source, _ => { }));
+    }
+
+    [Fact]
+    public void SwitchBuilder_InvalidArguments_Throw()
+    {
+        // Arrange
+        SwitchBuilder switchBuilder = new();
+        NoOpExecutor target = new("target");
+
+        // Act/Assert
+        Assert.Throws<ArgumentNullException>("predicate", () => switchBuilder.AddCase<string>(null!, [target]));
+        Assert.Throws<ArgumentNullException>("executors", () => switchBuilder.AddCase<string>(_ => true, null!));
+        Assert.Throws<ArgumentNullException>("executors", () => switchBuilder.AddCase<string>(_ => true, [target, null!]));
+        Assert.Throws<ArgumentNullException>("executors", () => switchBuilder.WithDefault(null!));
+        Assert.Throws<ArgumentNullException>("executors", () => switchBuilder.WithDefault([target, null!]));
     }
 
     private static Edge GetSingleEdge(Workflow workflow, string sourceId)

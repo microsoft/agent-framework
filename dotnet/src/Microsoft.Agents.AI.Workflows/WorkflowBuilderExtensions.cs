@@ -52,6 +52,8 @@ public static class WorkflowBuilderExtensions
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
     public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, IEnumerable<ExecutorBinding> targets, Func<TMessage, bool>? condition = null)
     {
+        Throw.IfNull(builder);
+        Throw.IfNull(source);
         Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>(IsAllowedTypeAndMatchingCondition)!;
@@ -93,6 +95,8 @@ public static class WorkflowBuilderExtensions
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
     public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, IEnumerable<ExecutorBinding> targets)
     {
+        Throw.IfNull(builder);
+        Throw.IfNull(source);
         Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
@@ -129,6 +133,7 @@ public static class WorkflowBuilderExtensions
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
+        Throw.IfNull(executors);
 
         HashSet<string> seenExecutors = [source.Id];
 
