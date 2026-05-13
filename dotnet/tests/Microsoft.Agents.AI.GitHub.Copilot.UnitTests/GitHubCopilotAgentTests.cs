@@ -129,6 +129,7 @@ public sealed class GitHubCopilotAgentTests
             OnUserInputRequest = userInputHandler,
             McpServers = mcpServers,
             DisabledSkills = ["skill1"],
+            Streaming = true,
         };
 
         // Act
@@ -180,6 +181,7 @@ public sealed class GitHubCopilotAgentTests
             OnUserInputRequest = userInputHandler,
             McpServers = mcpServers,
             DisabledSkills = ["skill1"],
+            Streaming = true,
         };
 
         // Act
@@ -220,6 +222,40 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(result.WorkingDirectory);
         Assert.Null(result.ConfigDir);
         Assert.True(result.Streaming);
+    }
+
+    [Fact]
+    public void CopySessionConfig_WithStreamingFalse_PreservesStreamingFalse()
+    {
+        // Arrange — caller explicitly disables streaming (issue #4732)
+        var source = new SessionConfig
+        {
+            Streaming = false,
+            SystemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "You are a helpful assistant." },
+        };
+
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
+
+        // Assert
+        Assert.False(result.Streaming);
+    }
+
+    [Fact]
+    public void CopyResumeSessionConfig_WithStreamingFalse_PreservesStreamingFalse()
+    {
+        // Arrange — caller explicitly disables streaming (issue #4732)
+        var source = new SessionConfig
+        {
+            Streaming = false,
+            SystemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "You are a helpful assistant." },
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(source);
+
+        // Assert
+        Assert.False(result.Streaming);
     }
 
     [Fact]
