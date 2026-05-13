@@ -346,12 +346,12 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
             builder.AddEdge(start, executors[this._initialAgent.Id]);
         }
 
-        if (this._name is not null)
+        if (!string.IsNullOrWhiteSpace(this._name))
         {
             builder.WithName(this._name);
         }
 
-        if (this._description is not null)
+        if (!string.IsNullOrWhiteSpace(this._description))
         {
             builder.WithDescription(this._description);
         }
