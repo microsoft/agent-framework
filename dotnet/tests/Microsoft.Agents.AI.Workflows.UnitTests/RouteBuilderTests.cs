@@ -447,7 +447,7 @@ public sealed class RouteBuilderTests
                     invocation.Capture(message, context, cancellationToken);
                     return new ValueTask<string>(NormalizeHandlerResult(message));
                 };
-                routeBuilder.AddHandler<string, string>(asyncHandlerWithCancellation);
+                routeBuilder.AddHandler(asyncHandlerWithCancellation);
                 break;
             case HandlerOverload.AsyncWithoutCancellation:
                 Func<string, IWorkflowContext, ValueTask<string>> asyncHandler = (message, context) =>
@@ -455,7 +455,7 @@ public sealed class RouteBuilderTests
                     invocation.Capture(message, context);
                     return new ValueTask<string>(NormalizeHandlerResult(message));
                 };
-                routeBuilder.AddHandler<string, string>(asyncHandler);
+                routeBuilder.AddHandler(asyncHandler);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(overload));
@@ -496,14 +496,14 @@ public sealed class RouteBuilderTests
         switch (overload)
         {
             case HandlerOverload.SyncWithCancellation:
-                routeBuilder.AddCatchAll<string>((message, context, cancellationToken) =>
+                routeBuilder.AddCatchAll((message, context, cancellationToken) =>
                 {
                     invocation.Capture(message, context, cancellationToken);
                     return NormalizeCatchAllResult(message);
                 });
                 break;
             case HandlerOverload.SyncWithoutCancellation:
-                routeBuilder.AddCatchAll<string>((message, context) =>
+                routeBuilder.AddCatchAll((message, context) =>
                 {
                     invocation.Capture(message, context);
                     return NormalizeCatchAllResult(message);
@@ -515,7 +515,7 @@ public sealed class RouteBuilderTests
                     invocation.Capture(message, context, cancellationToken);
                     return new ValueTask<string>(NormalizeCatchAllResult(message));
                 };
-                routeBuilder.AddCatchAll<string>(asyncCatchAllWithCancellation);
+                routeBuilder.AddCatchAll(asyncCatchAllWithCancellation);
                 break;
             case HandlerOverload.AsyncWithoutCancellation:
                 Func<PortableValue, IWorkflowContext, ValueTask<string>> asyncCatchAll = (message, context) =>
@@ -523,7 +523,7 @@ public sealed class RouteBuilderTests
                     invocation.Capture(message, context);
                     return new ValueTask<string>(NormalizeCatchAllResult(message));
                 };
-                routeBuilder.AddCatchAll<string>(asyncCatchAll);
+                routeBuilder.AddCatchAll(asyncCatchAll);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(overload));
