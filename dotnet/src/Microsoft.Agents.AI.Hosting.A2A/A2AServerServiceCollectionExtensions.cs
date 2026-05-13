@@ -145,7 +145,7 @@ public static class A2AServerServiceCollectionExtensions
             if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
             {
                 agentSessionStore ??= new InMemoryAgentSessionStore();
-                agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new());
+                agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });
             }
 
             var hostAgent = new AIHostAgent(
