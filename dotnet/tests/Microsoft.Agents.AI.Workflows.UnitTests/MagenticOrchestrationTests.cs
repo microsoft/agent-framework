@@ -52,6 +52,135 @@ public class MagenticOrchestrationTests
         runResult.PendingRequests.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task PlanReview_Approved_Proceeds()
+    {
+        // Arrange: Human approves initial plan
+        List<ChatMessage> factsResponse = CreatePlanResponse("Facts about executing the plan");
+        List<ChatMessage> planResponse = CreatePlanResponse("Step 1: Execute the plan");
+        List<ChatMessage> progressLedgerResponse = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Execute");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Plan executed successfully");
+
+        TestReplayAgent manager = new(
+            [factsResponse, planResponse, progressLedgerResponse, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(true)
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+
+        // Act: First run - should pause for plan review
+        WorkflowRunResult firstResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Execute plan")],
+            checkpointManager: checkpointManager);
+
+        firstResult.PendingRequests.Should().ContainSingle();
+        ExternalRequest request = firstResult.PendingRequests[0].Request;
+        MagenticPlanReviewRequest? reviewRequest = request.Data.As<MagenticPlanReviewRequest>();
+        reviewRequest.Should().NotBeNull();
+        reviewRequest!.Plan.Text.Should().Contain("Execute the plan");
+
+        // Act: Resume with approval
+        MagenticPlanReviewResponse approval = reviewRequest.Approve();
+        ExternalResponse response = request.CreateResponse(approval);
+        WorkflowRunResult secondResult = await ResumeMagenticWorkflowAsync(
+            workflow,
+            response,
+            checkpointManager,
+            firstResult.LastCheckpoint);
+
+        // Assert
+        secondResult.Result.Should().NotBeNull();
+        secondResult.Result![0].Text.Should().Contain("Plan executed successfully");
+    }
+
+    [Fact]
+    public async Task Initial_Plan_Emits_PlanCreatedEvent()
+    {
+        // Arrange
+        List<ChatMessage> factsResponse = CreatePlanResponse("Facts about the task");
+        List<ChatMessage> planResponse = CreatePlanResponse("Step 1: Initial plan");
+        List<ChatMessage> progressLedgerResponse = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Execute");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Done");
+
+        TestReplayAgent manager = new(
+            [factsResponse, planResponse, progressLedgerResponse, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        // Act
+        await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do task")],
+            eventCollector: collectedEvents);
+
+        // Assert
+        collectedEvents.OfType<MagenticPlanCreatedEvent>().Should().NotBeEmpty();
+        MagenticPlanCreatedEvent planEvent = collectedEvents.OfType<MagenticPlanCreatedEvent>().First();
+        planEvent.FullTaskLedger.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ProgressLedger_Updated_Event_Emitted()
+    {
+        // Arrange
+        List<ChatMessage> factsResponse = CreatePlanResponse("Facts about the task");
+        List<ChatMessage> planResponse = CreatePlanResponse("Step 1: Execute");
+        List<ChatMessage> progressLedgerResponse = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Execute");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Done");
+
+        TestReplayAgent manager = new(
+            [factsResponse, planResponse, progressLedgerResponse, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        // Act
+        await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do task")],
+            eventCollector: collectedEvents);
+
+        // Assert
+        collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().NotBeEmpty();
+        MagenticProgressLedgerUpdatedEvent ledgerEvent = collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().First();
+        ledgerEvent.ProgressLedger.Should().NotBeNull();
+        ledgerEvent.ProgressLedger.IsRequestSatisfied.Should().BeTrue();
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
@@ -113,6 +242,26 @@ public class MagenticOrchestrationTests
                 CreatedAt = DateTimeOffset.UtcNow
             }
         ];
+    }
+
+    private static async Task<WorkflowRunResult> ResumeMagenticWorkflowAsync(
+        Workflow workflow,
+        ExternalResponse response,
+        CheckpointManager checkpointManager,
+        CheckpointInfo? fromCheckpoint,
+        List<WorkflowEvent>? eventCollector = null)
+    {
+        InProcessExecutionEnvironment environment = ExecutionEnvironment.InProcess_Lockstep
+            .ToWorkflowExecutionEnvironment()
+            .WithCheckpointing(checkpointManager);
+
+        await using StreamingRun run = fromCheckpoint != null
+            ? await environment.ResumeStreamingAsync(workflow, fromCheckpoint)
+            : await environment.OpenStreamingAsync(workflow);
+
+        await run.SendResponseAsync(response);
+
+        return await ProcessWorkflowRunAsync(run, eventCollector);
     }
 
     private static async Task<WorkflowRunResult> RunMagenticWorkflowAsync(
