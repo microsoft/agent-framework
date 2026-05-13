@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Hosting;
 /// </summary>
 public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
 {
-    private readonly SessionIsolationKeyProvider _keyProvider;
+    private readonly SessionIsolationKeyProvider? _keyProvider;
     private readonly bool _strict;
 
     /// <summary>
@@ -34,7 +34,7 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
         IsolationKeyScopedAgentSessionStoreOptions? options = null)
         : base(innerStore)
     {
-        this._keyProvider = Throw.IfNull(keyProvider);
+        this._keyProvider = keyProvider;
         options ??= new IsolationKeyScopedAgentSessionStoreOptions();
         this._strict = options.Strict;
     }
@@ -51,7 +51,9 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
     /// </exception>
     private async ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken)
     {
-        string? key = await this._keyProvider.GetSessionIsolationKeyAsync(cancellationToken).ConfigureAwait(false);
+        string? key = this._keyProvider != null
+                    ? await this._keyProvider.GetSessionIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
+                    : null;
 
         if (this._strict && key == null)
         {
