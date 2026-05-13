@@ -439,6 +439,46 @@ public class MagenticOrchestrationTests
         thirdResult.Result![0].Text.Should().Contain("Revised plan executed successfully");
     }
 
+    [Fact]
+    public async Task MaxRoundLimit_Terminates_Workflow()
+    {
+        // Arrange: MaxRounds=1, so round 1 delegates to Worker, round 2 hits limit and terminates.
+        // Manager turns: facts1, plan1, ledger1(not satisfied→delegates), facts2, plan2 (re-entry), then limit hit before ledger.
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Facts");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Plan");
+        List<ChatMessage> round1Ledger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Work on it");
+
+        // Round 2 re-entry: TakeTurnAsync calls UpdatePlanAndDelegateAsync → needs facts + plan
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Updated facts");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Updated plan");
+        // No more turns needed: RunCoordinationRoundAsync hits round limit before calling UpdateProgressLedgerAsync
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, round1Ledger, factsResponse2, planResponse2],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .WithMaxRounds(1)
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Do task")]);
+
+        // Assert: Workflow terminates with round limit message
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("maximum round count limit");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
