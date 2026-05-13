@@ -364,6 +364,45 @@ public class IsolationKeyScopedAgentSessionStoreTests
 
     #endregion
 
+    #region GetService Tests
+
+    /// <summary>
+    /// Verify that GetService can retrieve IsolationKeyScopedAgentSessionStore from a delegation chain.
+    /// </summary>
+    [Fact]
+    public void GetServiceReturnsIsolationKeyScopedAgentSessionStore()
+    {
+        // Arrange
+        var provider = new TestSessionIsolationKeyProvider(TestIsolationKey);
+        var store = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider);
+
+        // Act
+        var result = store.GetService<IsolationKeyScopedAgentSessionStore>();
+
+        // Assert
+        Assert.Same(store, result);
+    }
+
+    /// <summary>
+    /// Verify that GetService chains through to find inner store types.
+    /// </summary>
+    [Fact]
+    public void GetServiceChainsToInnerStore()
+    {
+        // Arrange
+        var concreteInnerStore = new ConcreteAgentSessionStore();
+        var provider = new TestSessionIsolationKeyProvider(TestIsolationKey);
+        var store = new IsolationKeyScopedAgentSessionStore(concreteInnerStore, provider);
+
+        // Act
+        var result = store.GetService<ConcreteAgentSessionStore>();
+
+        // Assert
+        Assert.Same(concreteInnerStore, result);
+    }
+
+    #endregion
+
     #region Helper Classes
 
     /// <summary>
@@ -385,6 +424,18 @@ public class IsolationKeyScopedAgentSessionStoreTests
     }
 
     private sealed class TestAgentSession : AgentSession;
+
+    /// <summary>
+    /// Concrete (non-delegating) session store for testing GetService chaining.
+    /// </summary>
+    private sealed class ConcreteAgentSessionStore : AgentSessionStore
+    {
+        public override ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+            => new(new TestAgentSession());
+
+        public override ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+    }
 
     #endregion
 }
