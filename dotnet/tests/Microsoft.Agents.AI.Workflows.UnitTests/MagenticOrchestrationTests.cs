@@ -311,6 +311,55 @@ public class MagenticOrchestrationTests
         runResult.Result![0].Text.Should().Contain("Task completed after fallback");
     }
 
+    [Fact]
+    public async Task Task_Completes_After_Multiple_Rounds()
+    {
+        // Arrange: Round 1 delegates to Worker (not satisfied), round 2 completes
+        // Manager turn sequence: facts1, plan1, ledger1(not satisfied), facts2, plan2, ledger2(satisfied), finalAnswer
+        List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");
+        List<ChatMessage> planResponse1 = CreatePlanResponse("Step 1: Delegate to worker");
+        List<ChatMessage> round1Ledger = CreateProgressLedgerResponse(
+            isRequestSatisfied: false,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Please work on the task");
+
+        List<ChatMessage> factsResponse2 = CreatePlanResponse("Updated facts after worker input");
+        List<ChatMessage> planResponse2 = CreatePlanResponse("Updated plan after worker input");
+        List<ChatMessage> round2Ledger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Task is done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Multi-round task completed!");
+
+        TestReplayAgent manager = new(
+            [factsResponse1, planResponse1, round1Ledger,
+             factsResponse2, planResponse2, round2Ledger, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        List<WorkflowEvent> collectedEvents = [];
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        // Act
+        WorkflowRunResult runResult = await RunMagenticWorkflowAsync(
+            workflow,
+            [new ChatMessage(ChatRole.User, "Complex multi-round task")],
+            eventCollector: collectedEvents);
+
+        // Assert: Two plan created/replanned events (one per TakeTurn), two progress ledger events, final answer
+        collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>().Should().HaveCount(2);
+        runResult.Result.Should().NotBeNull();
+        runResult.Result![0].Text.Should().Contain("Multi-round task completed!");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
