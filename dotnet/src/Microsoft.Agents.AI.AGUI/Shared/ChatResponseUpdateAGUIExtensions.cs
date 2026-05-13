@@ -458,8 +458,9 @@ internal static class ChatResponseUpdateAGUIExtensions
             // This ensures all AGUI events have a valid messageId regardless of agent type.
             if (string.IsNullOrWhiteSpace(chatResponse.MessageId))
             {
-                streamingMessageId ??= Guid.NewGuid().ToString("N");
-                chatResponse.MessageId = streamingMessageId;
+                chatResponse.MessageId = ContainsOnlyToolResults(chatResponse)
+                    ? Guid.NewGuid().ToString("N")
+                    : (streamingMessageId ??= Guid.NewGuid().ToString("N"));
             }
 
             if (chatResponse is { Contents.Count: > 0 } &&
@@ -724,5 +725,23 @@ internal static class ChatResponseUpdateAGUIExtensions
             JsonElement jsonElement => jsonElement.GetRawText(),
             _ => JsonSerializer.Serialize(functionResultContent.Result, options.GetTypeInfo(functionResultContent.Result.GetType())),
         };
+    }
+
+    private static bool ContainsOnlyToolResults(ChatResponseUpdate chatResponse)
+    {
+        if (chatResponse.Contents.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (AIContent content in chatResponse.Contents)
+        {
+            if (content is not FunctionResultContent)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

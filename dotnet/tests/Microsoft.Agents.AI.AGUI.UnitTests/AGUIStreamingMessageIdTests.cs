@@ -150,6 +150,46 @@ public sealed class AGUIStreamingMessageIdTests
     }
 
     /// <summary>
+    /// Tool results are separate tool-role messages, so their fallback IDs must not
+    /// collide with the assistant message that requested the tool call.
+    /// </summary>
+    [Fact]
+    public async Task ToolResults_NullMessageId_GeneratesDistinctMessageIdAsync()
+    {
+        FunctionCallContent functionCall = new("call_abc123", "GetWeather")
+        {
+            Arguments = new Dictionary<string, object?> { ["location"] = "San Francisco" }
+        };
+
+        List<ChatResponseUpdate> providerUpdates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, "Checking the weather"),
+            new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                Contents = [functionCall]
+            },
+            new ChatResponseUpdate(ChatRole.Tool, [new FunctionResultContent("call_abc123", "72F and sunny")])
+        ];
+
+        List<BaseEvent> aguiEvents = [];
+        await foreach (BaseEvent evt in providerUpdates.ToAsyncEnumerableAsync()
+            .AsAGUIEventStreamAsync("thread-1", "run-1", AGUIJsonSerializerContext.Default.Options))
+        {
+            aguiEvents.Add(evt);
+        }
+
+        TextMessageStartEvent textStart = Assert.Single(aguiEvents.OfType<TextMessageStartEvent>());
+        ToolCallStartEvent toolCallStart = Assert.Single(aguiEvents.OfType<ToolCallStartEvent>());
+        ToolCallResultEvent toolCallResult = Assert.Single(aguiEvents.OfType<ToolCallResultEvent>());
+
+        Assert.Equal(textStart.MessageId, toolCallStart.ParentMessageId);
+        Assert.Equal("call_abc123", toolCallResult.ToolCallId);
+        Assert.False(string.IsNullOrEmpty(toolCallResult.MessageId));
+        Assert.NotEqual(textStart.MessageId, toolCallResult.MessageId);
+    }
+
+    /// <summary>
     /// When a provider properly sets MessageId (e.g., OpenAI), the AGUI pipeline
     /// produces valid events with correct messageId values.
     /// </summary>
