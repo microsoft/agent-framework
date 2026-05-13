@@ -25,7 +25,11 @@ public static class WorkflowBuilderExtensions
     /// <param name="target">The target executor to which messages will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
     public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, ExecutorBinding target)
-        => builder.ForwardMessage<TMessage>(source, [target], condition: null);
+    {
+        Throw.IfNull(target);
+
+        return builder.ForwardMessage<TMessage>(source, [target], condition: null);
+    }
 
     /// <summary>
     /// Adds edges to the workflow that forward messages of the specified type from the source executor to
@@ -57,17 +61,14 @@ public static class WorkflowBuilderExtensions
         Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>(IsAllowedTypeAndMatchingCondition)!;
+        List<ExecutorBinding> targetList = targets.Select(target => Throw.IfNull(target, nameof(targets))).ToList();
 
-#if NET
-        if (targets.TryGetNonEnumeratedCount(out int count) && count == 1)
-#else
-        if (targets is ICollection<ExecutorBinding> { Count: 1 })
-#endif
+        if (targetList.Count == 1)
         {
-            return builder.AddEdge(source, targets.First(), predicate);
+            return builder.AddEdge(source, targetList[0], predicate);
         }
 
-        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targets));
+        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targetList));
 
         // The reason we can check for "not null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
@@ -83,7 +84,11 @@ public static class WorkflowBuilderExtensions
     /// <param name="target">The target executor to which messages, except those of type <typeparamref name="TMessage"/>, will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
     public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, ExecutorBinding target)
-        => builder.ForwardExcept<TMessage>(source, [target]);
+    {
+        Throw.IfNull(target);
+
+        return builder.ForwardExcept<TMessage>(source, [target]);
+    }
 
     /// <summary>
     /// Adds edges from the specified source to the provided executors, excluding messages of a specified type.
@@ -100,17 +105,14 @@ public static class WorkflowBuilderExtensions
         Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
+        List<ExecutorBinding> targetList = targets.Select(target => Throw.IfNull(target, nameof(targets))).ToList();
 
-#if NET
-        if (targets.TryGetNonEnumeratedCount(out int count) && count == 1)
-#else
-        if (targets is ICollection<ExecutorBinding> { Count: 1 })
-#endif
+        if (targetList.Count == 1)
         {
-            return builder.AddEdge(source, targets.First(), predicate);
+            return builder.AddEdge(source, targetList[0], predicate);
         }
 
-        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targets));
+        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targetList));
 
         // The reason we can check for "null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.

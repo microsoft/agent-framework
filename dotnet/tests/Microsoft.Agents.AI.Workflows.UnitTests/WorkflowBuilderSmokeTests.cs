@@ -368,7 +368,7 @@ public partial class WorkflowBuilderSmokeTests
         Assert.Throws<ArgumentNullException>("source", () => builder.ForwardMessage<string>(null!, target));
         Assert.Throws<ArgumentNullException>("target", () => builder.ForwardMessage<string>(source, (ExecutorBinding)null!));
         Assert.Throws<ArgumentNullException>("targets", () => builder.ForwardMessage<string>(source, (IEnumerable<ExecutorBinding>)null!));
-        Assert.Throws<ArgumentNullException>("executors", () => builder.ForwardMessage<string>(source, [target, null!]));
+        Assert.Throws<ArgumentNullException>("targets", () => builder.ForwardMessage<string>(source, [target, null!]));
         Assert.Throws<ArgumentException>("targets", () => builder.ForwardMessage<string>(source, []));
     }
 
@@ -385,7 +385,7 @@ public partial class WorkflowBuilderSmokeTests
         Assert.Throws<ArgumentNullException>("source", () => builder.ForwardExcept<string>(null!, target));
         Assert.Throws<ArgumentNullException>("target", () => builder.ForwardExcept<string>(source, (ExecutorBinding)null!));
         Assert.Throws<ArgumentNullException>("targets", () => builder.ForwardExcept<string>(source, (IEnumerable<ExecutorBinding>)null!));
-        Assert.Throws<ArgumentNullException>("executors", () => builder.ForwardExcept<string>(source, [target, null!]));
+        Assert.Throws<ArgumentNullException>("targets", () => builder.ForwardExcept<string>(source, [target, null!]));
         Assert.Throws<ArgumentException>("targets", () => builder.ForwardExcept<string>(source, []));
     }
 
