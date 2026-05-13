@@ -210,6 +210,36 @@ public class HandoffOrchestrationTests
     }
 
     [Fact]
+    public async Task Handoffs_ReassignedMessagesDoNotMutateSharedConversationAsync()
+    {
+        var firstAgent = new ChatClientAgent(new MockChatClient((_, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            return new ChatResponse([
+                new ChatMessage(ChatRole.Assistant, "Context from first agent"),
+                new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]),
+            ]);
+        }), name: "firstAgent");
+        CapturingAgent secondAgent = new("secondAgent", "The second agent", "Context from first agent");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(firstAgent)
+            .WithHandoff(firstAgent, secondAgent)
+            .Build();
+
+        (_, List<ChatMessage>? result, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "start")]);
+
+        Assert.NotNull(result);
+        Assert.Equal(ChatRole.User, secondAgent.RoleSeenDuringRun);
+
+        ChatMessage sharedMessage = Assert.Single(result, m => m.Text == "Context from first agent");
+        Assert.Equal(ChatRole.Assistant, sharedMessage.Role);
+        Assert.NotSame(sharedMessage, secondAgent.MessageSeenDuringRun);
+    }
+
+    [Fact]
     public async Task Handoffs_TwoTransfers_HandoffTargetsDoNotReceiveHandoffFunctionMessagesAsync()
     {
         // Regression test for https://github.com/microsoft/agent-framework/issues/3161
@@ -1197,6 +1227,44 @@ public class HandoffOrchestrationTests
     private static Task<WorkflowRunResult> RunWorkflowAsync(
         Workflow workflow, List<ChatMessage> input, ExecutionEnvironment executionEnvironment = ExecutionEnvironment.InProcess_Lockstep)
         => RunWorkflowCheckpointedAsync(workflow, input, executionEnvironment.ToWorkflowExecutionEnvironment());
+
+    private sealed class CapturingAgent(string name, string description, string textToCapture) : AIAgent
+    {
+        public override string Name => name;
+        public override string Description => description;
+        public ChatMessage? MessageSeenDuringRun { get; private set; }
+        public ChatRole? RoleSeenDuringRun { get; private set; }
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => new(new TestAgentSession());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new TestAgentSession());
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => default;
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+
+            this.MessageSeenDuringRun = messages.Single(m => m.Text == textToCapture);
+            this.RoleSeenDuringRun = this.MessageSeenDuringRun.Role;
+
+            yield return new AgentResponseUpdate(ChatRole.Assistant, "Done")
+            {
+                AuthorName = this.Name,
+                MessageId = Guid.NewGuid().ToString("N"),
+            };
+        }
+    }
+
+    private sealed class TestAgentSession() : AgentSession();
 
     private sealed class DoubleEchoAgent(string name) : AIAgent
     {
