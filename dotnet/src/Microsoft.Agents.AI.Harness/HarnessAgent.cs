@@ -17,6 +17,7 @@ namespace Microsoft.Agents.AI;
 /// <see cref="HarnessAgent"/> assembles the following pipeline from a caller-supplied <see cref="IChatClient"/>:
 /// <list type="number">
 /// <item><description><see cref="FunctionInvokingChatClient"/> — automatic function/tool invocation.</description></item>
+/// <item><description><see cref="MessageInjectingChatClient"/> — allows external code to inject messages into the conversation mid-stream.</description></item>
 /// <item><description><see cref="PerServiceCallChatHistoryPersistingChatClient"/> — persists chat history after every individual service call within a function-invocation loop.</description></item>
 /// <item><description><see cref="AIContextProviderChatClient"/> with a <see cref="CompactionProvider"/> — applies context-window compaction before each call so long function-invocation loops do not overflow the context window.</description></item>
 /// </list>
@@ -110,6 +111,7 @@ public sealed class HarnessAgent : DelegatingAIAgent
         return chatClient
             .AsBuilder()
             .UseFunctionInvocation()
+            .UseMessageInjection()
             .UsePerServiceCallChatHistoryPersistence()
             .UseAIContextProviders(compactionProvider)
             .BuildAIAgent(new ChatClientAgentOptions

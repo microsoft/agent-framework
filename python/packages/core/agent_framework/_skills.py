@@ -289,13 +289,15 @@ class SkillScript(ABC):
         return None
 
     @abstractmethod
-    async def run(self, skill: Skill, args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
         """Run this script.
 
         Args:
             skill: The skill that owns this script.
-            args: Optional keyword arguments for the script, provided by the
-                agent/LLM.
+            args: Optional arguments for the script, provided by the
+                agent/LLM.  May be a ``dict`` (named keyword arguments
+                for inline scripts) or a ``list[str]`` (positional CLI
+                arguments for file-based scripts).
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``.
 
@@ -361,19 +363,31 @@ class InlineSkillScript(SkillScript):
             self._parameters_schema_resolved = True
         return self._parameters_schema
 
-    async def run(self, skill: Skill, args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
         """Run the script by invoking the callable in-process.
 
         Args:
             skill: The skill that owns this script.
             args: Optional keyword arguments for the script, provided by the
-                agent/LLM.
+                agent/LLM.  Must be a ``dict`` or ``None``; passing a
+                ``list`` raises :class:`TypeError` because inline scripts
+                bind arguments by keyword name.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``.
 
         Returns:
             The script execution result.
+
+        Raises:
+            TypeError: If ``args`` is a ``list`` (array-style arguments
+                are only supported for file-based scripts).
         """
+        if isinstance(args, list):
+            raise TypeError(
+                f"Inline script '{self.name}' requires keyword arguments (dict), "
+                f"but received a list. Array-style arguments are only supported "
+                f"for file-based scripts."
+            )
         if self._accepts_kwargs:  # noqa: SIM108
             result = self.function(**(args or {}), **kwargs)
         else:
@@ -431,13 +445,23 @@ class FileSkillScript(SkillScript):
         self.full_path = full_path
         self._runner = runner
 
-    async def run(self, skill: Skill, args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+    @property
+    def parameters_schema(self) -> dict[str, Any] | None:
+        """JSON Schema advertising that file scripts accept a string array.
+
+        Returns a fixed schema ``{"type": "array", "items": {"type": "string"}}``
+        so that the LLM knows to pass positional CLI arguments as a JSON array
+        of strings.
+        """
+        return {"type": "array", "items": {"type": "string"}}
+
+    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
         """Run the script by delegating to the configured runner.
 
         Args:
             skill: The skill that owns this script.  Must be a
                 :class:`FileSkill`.
-            args: Optional keyword arguments for the script.
+            args: Optional arguments for the script.
             **kwargs: Additional runtime keyword arguments (unused).
 
         Returns:
@@ -1348,6 +1372,7 @@ class FileSkill(Skill):
         self.path = path
         self._resources: list[SkillResource] = list(resources) if resources is not None else []
         self._scripts: list[SkillScript] = list(scripts) if scripts is not None else []
+        self._cached_content: str | None = None
 
     @property
     def frontmatter(self) -> SkillFrontmatter:
@@ -1356,8 +1381,23 @@ class FileSkill(Skill):
 
     @property
     def content(self) -> str:
-        """The skill content provided at construction time."""
-        return self._content
+        """The skill content with appended scripts block.
+
+        When scripts are present, a ``<scripts>`` XML block is appended
+        to the raw SKILL.md content so that the LLM can discover each
+        script's ``<parameters_schema>``.
+
+        The result is cached after the first access.  Adding scripts
+        after the first access will not be reflected.
+        """
+        if self._cached_content is not None:
+            return self._cached_content
+        if not self._scripts:
+            self._cached_content = self._content
+        else:
+            script_lines = "\n".join(_create_script_element(s) for s in self._scripts)
+            self._cached_content = f"{self._content}\n\n<scripts>\n{script_lines}\n</scripts>"
+        return self._cached_content
 
     @property
     def resources(self) -> list[SkillResource]:
@@ -1392,7 +1432,9 @@ class SkillScriptRunner(Protocol):
     satisfies this protocol.
     """
 
-    def __call__(self, skill: FileSkill, script: FileSkillScript, args: dict[str, Any] | None = None) -> Any:
+    def __call__(
+        self, skill: FileSkill, script: FileSkillScript, args: dict[str, Any] | list[str] | None = None
+    ) -> Any:
         """Run a skill script.
 
         The :class:`SkillsProvider` resolves skill and script names
@@ -1402,7 +1444,7 @@ class SkillScriptRunner(Protocol):
         Args:
             skill: The file-based skill that owns the script.
             script: The file-based script to run.
-            args: Optional keyword arguments for the script.
+            args: Optional arguments for the script.
 
         Returns:
             The result. May be any type; the framework
@@ -1982,7 +2024,7 @@ class SkillsProvider(ContextProvider):
         if include_script_runner_tool:
 
             async def _run_script(
-                skill_name: str, script_name: str, args: dict[str, Any] | None = None, **kwargs: Any
+                skill_name: str, script_name: str, args: dict[str, Any] | list[str] | None = None, **kwargs: Any
             ) -> Any:
                 return await self._run_skill_script(skills, skill_name, script_name, args, **kwargs)
 
@@ -2005,12 +2047,31 @@ class SkillsProvider(ContextProvider):
                                 ),
                             },
                             "args": {
-                                "type": ["object", "null"],
-                                "additionalProperties": True,
+                                "oneOf": [
+                                    {
+                                        "type": "object",
+                                        "additionalProperties": True,
+                                        "description": (
+                                            "Named arguments as key-value pairs "
+                                            '(e.g. {"length": 24, "uppercase": true}).'
+                                        ),
+                                    },
+                                    {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "description": (
+                                            "Positional CLI arguments as a string array "
+                                            '(e.g. ["input.docx", "--output", "result.idx"]).'
+                                        ),
+                                    },
+                                    {"type": "null"},
+                                ],
                                 "default": None,
                                 "description": (
-                                    "Arguments to pass to the script as key-value pairs. "
-                                    "Use parameter names as keys without leading dashes "
+                                    "Arguments to pass to the script. "
+                                    "Use an array of strings for CLI-style positional arguments "
+                                    '(e.g. ["input.docx", "--output", "result.idx"]), '
+                                    "or an object for named parameters "
                                     '(e.g. {"length": 24, "uppercase": true}). '
                                     "How these values are mapped to the underlying script "
                                     "is determined by the script implementation or configured runner."
@@ -2060,7 +2121,7 @@ class SkillsProvider(ContextProvider):
         skills: Sequence[Skill],
         skill_name: str,
         script_name: str,
-        args: dict[str, Any] | None = None,
+        args: dict[str, Any] | list[str] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Run a named script from a skill.
@@ -2072,9 +2133,8 @@ class SkillsProvider(ContextProvider):
             skills: The skills to look up the skill from.
             skill_name: The name of the owning skill.
             script_name: The script name to look up (case-insensitive).
-            args: Optional keyword arguments for the script, provided by the
-                agent/LLM.  These are mapped to the function's declared
-                parameters.
+            args: Optional arguments for the script, provided by the
+                agent/LLM.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs`` (e.g. arguments passed via
                 ``agent.run(user_id="123")``).
@@ -2254,7 +2314,7 @@ class FileSkillsSource(SkillsSource):
 
         Args:
             skill_paths: One or more directory paths to search for file-based
-                skills.  Each path may point to an individual skill folder
+                skills.  Each path may point to an individual skill directory
                 (containing ``SKILL.md``) or to a parent that contains skill
                 subdirectories.
 

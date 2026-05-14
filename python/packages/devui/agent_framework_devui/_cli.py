@@ -81,13 +81,15 @@ Examples:
     parser.add_argument(
         "--no-auth",
         action="store_true",
-        help="Disable Bearer token authentication. DevUI is auth-enabled by default; use this to opt out.",
+        help=(
+            "Disable Bearer token authentication for loopback-only local development. Non-loopback hosts require auth."
+        ),
     )
 
     parser.add_argument(
         "--auth-token",
         type=str,
-        help="Custom Bearer token. Auto-generated and logged at startup when omitted.",
+        help="Custom Bearer token. Required for non-loopback hosts when DEVUI_AUTH_TOKEN is not set.",
     )
 
     parser.add_argument("--version", action="version", version=f"Agent Framework DevUI {get_version()}")
