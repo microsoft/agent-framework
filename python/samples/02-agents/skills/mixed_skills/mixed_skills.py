@@ -21,6 +21,7 @@ from agent_framework import (
     FileSkillsSource,
     InlineSkill,
     InMemorySkillsSource,
+    SkillFrontmatter,
     SkillsProvider,
 )
 from agent_framework.foundry import FoundryChatClient
@@ -73,8 +74,9 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 volume_converter_skill = InlineSkill(
-    name="volume-converter",
-    description="Convert between gallons and liters using a conversion factor",
+    frontmatter=SkillFrontmatter(
+        name="volume-converter", description="Convert between gallons and liters using a conversion factor"
+    ),
     instructions=dedent("""\
         Use this skill when the user asks to convert between gallons and liters.
 
@@ -118,6 +120,7 @@ def convert_volume(value: float, factor: float) -> str:
 # 2. Define a class-based skill for temperature conversion
 # ---------------------------------------------------------------------------
 
+
 class TemperatureConverterSkill(ClassSkill):
     """A temperature-converter skill defined as a Python class.
 
@@ -127,8 +130,10 @@ class TemperatureConverterSkill(ClassSkill):
 
     def __init__(self) -> None:
         super().__init__(
-            name="temperature-converter",
-            description="Convert between temperature scales (Fahrenheit, Celsius, Kelvin).",
+            frontmatter=SkillFrontmatter(
+                name="temperature-converter",
+                description="Convert between temperature scales (Fahrenheit, Celsius, Kelvin).",
+            )
         )
 
     @property
@@ -177,6 +182,7 @@ class TemperatureConverterSkill(ClassSkill):
 # ---------------------------------------------------------------------------
 # 3. Wire everything together and run the agent
 # ---------------------------------------------------------------------------
+
 
 async def main() -> None:
     """Run the combined skills demo."""

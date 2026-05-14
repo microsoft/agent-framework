@@ -1,6 +1,12 @@
 ---
 name: length-converter
 description: Convert between common length units (miles, km, feet, meters) using a multiplication factor.
+license: MIT
+compatibility: Works with any model that supports tool use.
+allowed-tools: convert
+metadata:
+  author: agent-framework-samples
+  version: "1.0"
 ---
 
 ## Usage
