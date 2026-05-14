@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
@@ -1287,14 +1288,16 @@ public class MagenticOrchestrationTests
         string isRequestSatisfiedStr = isRequestSatisfied ? "true" : "false";
         string isInLoopStr = isInLoop ? "true" : "false";
         string isProgressBeingMadeStr = isProgressBeingMade ? "true" : "false";
+        string nextSpeakerJson = JsonSerializer.Serialize(nextSpeaker);
+        string instructionJson = JsonSerializer.Serialize(instructionOrQuestion);
 
         string ledgerJson = $$"""
         {
             "is_request_satisfied": { "answer": {{isRequestSatisfiedStr}}, "reason": "test reason" },
             "is_in_loop": { "answer": {{isInLoopStr}}, "reason": "test reason" },
             "is_progress_being_made": { "answer": {{isProgressBeingMadeStr}}, "reason": "test reason" },
-            "next_speaker": { "answer": "{{nextSpeaker}}", "reason": "test reason" },
-            "instruction_or_question": { "answer": "{{instructionOrQuestion}}", "reason": "test reason" }
+            "next_speaker": { "answer": {{nextSpeakerJson}}, "reason": "test reason" },
+            "instruction_or_question": { "answer": {{instructionJson}}, "reason": "test reason" }
         }
         """;
 
