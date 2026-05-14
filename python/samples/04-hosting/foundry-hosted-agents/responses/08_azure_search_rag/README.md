@@ -116,7 +116,7 @@ curl -X POST "$SEARCH_ENDPOINT/indexes/$INDEX_NAME/docs/index?api-version=2024-0
   }'
 ```
 
-You can also point the sample at any existing index that exposes the four fields above; the provider reads `content`, `sourceName`, and `sourceLink` from the search results.
+You can also point the sample at any existing index that exposes a retrievable text field such as `content`.
 
 ## Running the Agent Host
 

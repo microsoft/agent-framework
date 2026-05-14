@@ -39,6 +39,16 @@ DOWNLOADED_SKILLS_DIR: Final = Path(__file__).parent / "downloaded_skills"
 logger = logging.getLogger(__name__)
 
 
+def _safe_extract_zip(zf: zipfile.ZipFile, dest_dir: Path) -> None:
+    """Extract ``zf`` into ``dest_dir``, rejecting entries that escape it (zip-slip guard)."""
+    dest_root = dest_dir.resolve()
+    for member in zf.infolist():
+        member_path = (dest_root / member.filename).resolve()
+        if dest_root != member_path and dest_root not in member_path.parents:
+            raise RuntimeError(f"Refusing to extract unsafe path '{member.filename}' outside of '{dest_root}'.")
+    zf.extractall(dest_dir)
+
+
 async def _bootstrap_skills(endpoint: str, skill_names: list[str], target_dir: Path) -> None:
     """Download each named skill via ``project.beta.skills`` and unpack it as ``<target_dir>/<name>/SKILL.md``."""
     if target_dir.exists():  # noqa: ASYNC240
@@ -56,7 +66,7 @@ async def _bootstrap_skills(endpoint: str, skill_names: list[str], target_dir: P
             skill_dir = target_dir / name
             skill_dir.mkdir()
             with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-                zf.extractall(skill_dir)
+                _safe_extract_zip(zf, skill_dir)
             if not (skill_dir / "SKILL.md").is_file():
                 raise RuntimeError(f"Downloaded archive for '{name}' did not contain a SKILL.md at the root.")
 
@@ -77,23 +87,24 @@ async def main() -> None:
     # instruction-only.
     skills_provider = SkillsProvider.from_paths(skill_paths=str(DOWNLOADED_SKILLS_DIR))
 
-    client = FoundryChatClient(
-        project_endpoint=project_endpoint,
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=DefaultAzureCredential(),
-    )
+    async with DefaultAzureCredential() as credential:
+        client = FoundryChatClient(
+            project_endpoint=project_endpoint,
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=credential,
+        )
 
-    agent = Agent(
-        client=client,
-        instructions="You are a customer-support assistant for Contoso Outdoors.",
-        context_providers=[skills_provider],
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
-        default_options={"store": False},
-    )
-    server = ResponsesHostServer(agent)
-    await server.run_async()
+        agent = Agent(
+            client=client,
+            instructions="You are a customer-support assistant for Contoso Outdoors.",
+            context_providers=[skills_provider],
+            # History will be managed by the hosting infrastructure, thus there
+            # is no need to store history by the service. Learn more at:
+            # https://developers.openai.com/api/reference/resources/responses/methods/create
+            default_options={"store": False},
+        )
+        server = ResponsesHostServer(agent)
+        await server.run_async()
 
 
 if __name__ == "__main__":

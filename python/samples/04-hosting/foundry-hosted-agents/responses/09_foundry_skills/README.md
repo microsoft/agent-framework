@@ -130,7 +130,7 @@ When deploying, make sure `SKILL_NAMES` is set in your `azd` environment so it g
 azd env set SKILL_NAMES "support-style,escalation-policy"
 ```
 
-If it is not set, running `azd ai agent init -m <agent-manifest.yaml>` will prompt you to enter it interactively.
+If it is not set, running `azd ai agent init -m <agent.manifest.yaml>` will prompt you to enter it interactively.
 
 The deployed agent's Managed Identity needs **Azure AI User** on the Foundry project to download skills at startup. Make sure you have run `provision_skills.py` against the same Foundry project before deploying — otherwise the agent will fail to start with HTTP 404 on the skill download.
 
