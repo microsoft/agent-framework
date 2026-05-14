@@ -42,6 +42,7 @@ gets its own throwaway ``docker run --rm``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import secrets
@@ -68,6 +69,60 @@ DEFAULT_NETWORK = "none"
 DEFAULT_MEMORY = "512m"
 DEFAULT_PIDS_LIMIT = 256
 DEFAULT_WORKDIR = "/workspace"
+
+# Docker run flags that would silently dismantle the isolation defaults
+# (--cap-drop ALL, --security-opt no-new-privileges, --network none,
+# --read-only root, pids/memory caps) if spliced in via ``extra_run_args``.
+# These are rejected at construction time so the failure surfaces loudly
+# rather than as a silently-unsandboxed container at runtime.
+_BLOCKED_EXTRA_RUN_FLAGS: tuple[str, ...] = (
+    "--privileged",
+    "--cap-add",
+    "--security-opt",
+    "--network",
+    "--net",
+    "--volume",
+    "-v",
+    "--mount",
+    "--device",
+    "--device-cgroup-rule",
+    "--pid",
+    "--ipc",
+    "--userns",
+    "--user",
+    "--cgroupns",
+    "--add-host",
+    "--gpus",
+    "--read-only",
+    "--tmpfs",
+)
+
+
+def _validate_extra_run_args(args: Sequence[str]) -> None:
+    """Reject extra ``docker run`` args that would break the isolation contract.
+
+    A caller can otherwise pass ``["--privileged"]``, ``["--network=host"]``,
+    ``["-v", "/:/host:rw"]``, etc. and silently undo every isolation flag
+    this tool sets. The blocklist covers the obvious offenders; operators
+    that genuinely need one of these flags should subclass the tool or
+    build their own argv rather than slip past the check.
+    """
+    bad: list[str] = []
+    for raw in args:
+        if not raw.startswith("-"):
+            continue
+        # Split off any "=value" tail so "--network=host" matches "--network".
+        flag = raw.split("=", 1)[0]
+        if flag in _BLOCKED_EXTRA_RUN_FLAGS:
+            bad.append(raw)
+    if bad:
+        raise ValueError(
+            "extra_run_args contains flags that would dismantle DockerShellTool's "
+            f"isolation defaults: {bad}. Override these via dedicated constructor "
+            "arguments (network, host_workdir, mount_readonly, read_only_root, "
+            "memory, pids_limit, user) or subclass the tool if you really need "
+            "to relax the sandbox."
+        )
 
 
 class DockerNotAvailableError(RuntimeError):
@@ -233,6 +288,21 @@ class DockerShellTool:
         user: ``UID:GID`` to run as. Default ``65534:65534`` (nobody).
         read_only_root: Mount the root filesystem read-only. Default ``True``.
         extra_run_args: Additional args appended to ``docker run``.
+
+            .. warning::
+               This parameter can dismantle the tool's isolation
+               contract. Flags that would undo the default sandbox
+               (``--privileged``, ``--cap-add``, ``--security-opt``,
+               ``--network``/``--net``, ``-v``/``--volume``,
+               ``--mount``, ``--device``, ``--pid``, ``--ipc``,
+               ``--userns``, ``--user``, ``--read-only``,
+               ``--tmpfs``, ``--add-host``, ``--gpus``, ``--cgroupns``,
+               ``--device-cgroup-rule``) are rejected at construction
+               time. Override the corresponding dedicated argument
+               (``network``, ``host_workdir``, ``mount_readonly``,
+               ``read_only_root``, ``user``, etc.) instead. If you
+               genuinely need to relax the sandbox further, subclass
+               the tool — don't slip past this check.
         env: Environment variables to set inside the container. These are
             passed via ``-e`` and apply to every command.
         policy: Optional :class:`ShellPolicy`. Less critical than for
@@ -281,6 +351,7 @@ class DockerShellTool:
     ) -> None:
         if mode not in ("persistent", "stateless"):
             raise ValueError(f"mode must be 'persistent' or 'stateless', got {mode!r}")
+        _validate_extra_run_args(tuple(extra_run_args or ()))
         self._image = image
         self._container_name = container_name or f"af-shell-{secrets.token_hex(6)}"
         self._mode: ShellMode = mode
@@ -445,7 +516,11 @@ class DockerShellTool:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             timed_out = True
-            # Kill the container by name; --rm reaps it.
+            # Kill the container by name. ``--rm`` reaps it on a clean
+            # exit; if ``docker kill`` itself hangs or returns non-zero
+            # (daemon stuck, container with unkillable kernel task) the
+            # ``--rm`` reaper never fires and the container is leaked,
+            # so we explicitly fall back to ``docker rm -f``.
             killer = await asyncio.create_subprocess_exec(
                 self._binary,
                 "kill",
@@ -455,13 +530,57 @@ class DockerShellTool:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
+            kill_ok = False
             try:
-                await asyncio.wait_for(killer.wait(), timeout=5.0)
+                rc = await asyncio.wait_for(killer.wait(), timeout=5.0)
+                kill_ok = rc == 0
             except asyncio.TimeoutError:
                 killer.kill()
+                with contextlib.suppress(Exception):
+                    await killer.wait()
+            if not kill_ok:
+                logger.warning(
+                    "docker kill of stateless container %s did not succeed; "
+                    "attempting docker rm -f to avoid a container leak",
+                    per_call_name,
+                )
+                reaper = await asyncio.create_subprocess_exec(
+                    self._binary,
+                    "rm",
+                    "-f",
+                    per_call_name,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    _, rerr = await asyncio.wait_for(reaper.communicate(), timeout=5.0)
+                    if reaper.returncode != 0:
+                        logger.error(
+                            "docker rm -f %s failed (rc=%s, err=%s); container may be leaked",
+                            per_call_name,
+                            reaper.returncode,
+                            rerr.decode("utf-8", errors="replace").strip(),
+                        )
+                except asyncio.TimeoutError:
+                    reaper.kill()
+                    with contextlib.suppress(Exception):
+                        await reaper.wait()
+                    logger.error(
+                        "docker rm -f %s timed out; container may be leaked",
+                        per_call_name,
+                    )
             try:
                 stdout_bytes, stderr_bytes = await proc.communicate()
             except Exception:
+                # Pipe/socket failures after kill leave us with no captured
+                # output. Log so operators can correlate empty results with
+                # the timeout teardown (otherwise the model just sees
+                # exit_code=-1 with no stdout/stderr).
+                logger.warning(
+                    "failed to drain stdout/stderr after killing stateless container %s",
+                    per_call_name,
+                    exc_info=True,
+                )
                 stdout_bytes, stderr_bytes = b"", b""
 
         duration_ms = int((time.monotonic() - started) * 1000)
@@ -513,18 +632,45 @@ class DockerShellTool:
     async def _stop_container(self) -> None:
         # Use docker rm -f for a hard shutdown. With --rm on the run
         # command, this also reaps the container.
-        proc = await asyncio.create_subprocess_exec(
-            self._binary,
-            "rm",
-            "-f",
+        async def _attempt(timeout: float) -> tuple[int | None, str]:
+            """Run a single ``docker rm -f`` attempt. Returns (rc, stderr)."""
+            proc = await asyncio.create_subprocess_exec(
+                self._binary,
+                "rm",
+                "-f",
+                self._container_name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                return proc.returncode, err.decode("utf-8", errors="replace").strip()
+            except asyncio.TimeoutError:
+                proc.kill()
+                with contextlib.suppress(Exception):
+                    await proc.wait()
+                return None, "docker rm -f timed out"
+
+        rc, err = await _attempt(timeout=10.0)
+        if rc == 0:
+            return
+        logger.warning(
+            "docker rm -f %s did not succeed on first attempt (rc=%s, err=%s); retrying",
             self._container_name,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            rc,
+            err,
         )
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=10.0)
-        except asyncio.TimeoutError:
-            proc.kill()
+        rc, err = await _attempt(timeout=5.0)
+        if rc != 0:
+            # Container may have been leaked. Surface the name so an
+            # operator can clean it up manually.
+            logger.error(
+                "docker rm -f %s failed after retry (rc=%s, err=%s); "
+                "container may be running and require manual cleanup",
+                self._container_name,
+                rc,
+                err,
+            )
 
     # ------------------------------------------------------------------ AF wiring
 

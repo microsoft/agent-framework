@@ -22,7 +22,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.2.0,<2",
+    "agent-framework-core>=1.2.2,<2",
     # psutil powers cross-OS process-tree termination on timeout. It's a
     # mandatory dep because it's the difference between "child processes
     # may survive timeout on Windows" and "they don't" — a security-relevant

@@ -138,6 +138,43 @@ def test_build_exec_argv_interactive():
     assert argv == ["docker", "exec", "-i", "c", "bash", "--noprofile", "--norc"]
 
 
+# --------------------------------------------------------------------- extra_run_args validation
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ("--privileged",),
+        ("--network=host",),
+        ("--network", "host"),
+        ("--net=host",),
+        ("-v", "/:/host:rw"),
+        ("--volume=/etc:/etc",),
+        ("--cap-add=ALL",),
+        ("--cap-add", "SYS_ADMIN"),
+        ("--security-opt", "seccomp=unconfined"),
+        ("--device", "/dev/kvm"),
+        ("--pid=host",),
+        ("--ipc=host",),
+        ("--userns=host",),
+        ("--user=0:0",),
+        ("--read-only=false",),
+        ("--tmpfs", "/var:rw"),
+        ("--gpus", "all"),
+        ("--add-host", "evil:1.2.3.4"),
+        ("--label", "x=1", "--privileged"),  # mixed safe + unsafe
+    ],
+)
+def test_dockershell_rejects_isolation_breaking_extra_run_args(extra):
+    with pytest.raises(ValueError, match="isolation defaults"):
+        DockerShellTool(extra_run_args=list(extra))
+
+
+def test_dockershell_accepts_benign_extra_run_args():
+    # Should not raise.
+    DockerShellTool(extra_run_args=("--label", "team=af", "--name-suffix", "x"))
+
+
 def test_build_exec_argv_non_interactive_appends_dash_c():
     argv = build_exec_argv(binary="docker", container_name="c", interactive=False)
     assert argv == ["docker", "exec", "-i", "c", "bash", "-c"]
