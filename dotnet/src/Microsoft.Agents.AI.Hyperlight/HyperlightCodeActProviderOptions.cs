@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using HyperlightSandbox.Api;
+using HyperlightSandbox.Guest.Python;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -12,8 +13,9 @@ namespace Microsoft.Agents.AI.Hyperlight;
 /// <see cref="HyperlightExecuteCodeFunction"/>.
 /// </summary>
 /// <remarks>
-/// Use the <see cref="CreateForWasm(string)"/> and <see cref="CreateForJavaScript()"/>
-/// factory methods to construct an instance with the desired sandbox backend.
+/// Use the <see cref="CreateForPython()"/>, <see cref="CreateForWasm(string)"/>,
+/// and <see cref="CreateForJavaScript()"/> factory methods to construct an instance
+/// with the desired sandbox backend.
 /// The parameterless constructor is equivalent to <see cref="CreateForJavaScript()"/>.
 /// </remarks>
 public sealed class HyperlightCodeActProviderOptions
@@ -34,7 +36,17 @@ public sealed class HyperlightCodeActProviderOptions
     }
 
     /// <summary>
-    /// Creates options targeting the <see cref="SandboxBackend.Wasm"/> backend.
+    /// Creates options targeting the <see cref="SandboxBackend.Wasm"/> backend
+    /// with the bundled Python guest module from the
+    /// <c>Hyperlight.HyperlightSandbox.Guest.Python</c> NuGet package.
+    /// No explicit module path is required.
+    /// </summary>
+    public static HyperlightCodeActProviderOptions CreateForPython()
+        => new(SandboxBackend.Wasm, PythonGuestModule.GetModulePath());
+
+    /// <summary>
+    /// Creates options targeting the <see cref="SandboxBackend.Wasm"/> backend
+    /// with a custom guest module.
     /// </summary>
     /// <param name="modulePath">Path to the guest module (<c>.wasm</c> or <c>.aot</c> file).</param>
     public static HyperlightCodeActProviderOptions CreateForWasm(string modulePath)
@@ -53,7 +65,8 @@ public sealed class HyperlightCodeActProviderOptions
 
     /// <summary>
     /// Gets the path to the guest module. Set when the options were created via
-    /// <see cref="CreateForWasm(string)"/>; <see langword="null"/> otherwise.
+    /// <see cref="CreateForPython()"/> or <see cref="CreateForWasm(string)"/>;
+    /// <see langword="null"/> when using the built-in JavaScript backend.
     /// </summary>
     public string? ModulePath { get; }
 
