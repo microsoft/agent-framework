@@ -6,7 +6,7 @@ This agent uses :class:`FoundryMemoryProvider` to give an otherwise stateless
 hosted agent persistent, semantic memory backed by an Azure AI Foundry
 Memory Store. The store itself is provisioned once via
 ``provision_memory_store.py`` and its name is passed in through the
-``FOUNDRY_MEMORY_STORE_NAME`` environment variable.
+``MEMORY_STORE_NAME`` environment variable.
 
 Unlike the standalone ``azure_ai_foundry_memory.py`` sample, here we construct
 the :class:`FoundryChatClient` first and then reuse its underlying
@@ -41,15 +41,12 @@ async def main() -> None:
     # constructing a second one for the memory provider.
     memory_provider = FoundryMemoryProvider(
         project_client=client.project_client,
-        memory_store_name=os.environ["FOUNDRY_MEMORY_STORE_NAME"],
-        # Scope namespaces memories (e.g., per end-user). When unset, the
-        # provider falls back to the session id, which limits memories to a
-        # single session.
-        scope=os.environ.get("FOUNDRY_MEMORY_SCOPE", "user_123"),
-        # In production, leave update_delay at its default to batch updates and
-        # reduce cost. We use 0 here so memories are written immediately, which
-        # makes the sample easier to demo.
-        update_delay=0,
+        memory_store_name=os.environ["MEMORY_STORE_NAME"],
+        # Scope memories by user id, so each user that interacts with the agent
+        # has their own isolated memories in the store (assuming those users are
+        # granted access). `{{userId}}` is a special placeholder that the hosting
+        # infrastructure will replace with the actual user id at runtime.
+        scope="{{$userId}}",
     )
 
     agent = Agent(

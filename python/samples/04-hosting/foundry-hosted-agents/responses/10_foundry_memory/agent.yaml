@@ -10,7 +10,5 @@ resources:
 environment_variables:
   - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
     value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
-  - name: FOUNDRY_MEMORY_STORE_NAME
-    value: ${FOUNDRY_MEMORY_STORE_NAME}
-  - name: FOUNDRY_MEMORY_SCOPE
-    value: ${FOUNDRY_MEMORY_SCOPE}
+  - name: MEMORY_STORE_NAME
+    value: ${MEMORY_STORE_NAME}

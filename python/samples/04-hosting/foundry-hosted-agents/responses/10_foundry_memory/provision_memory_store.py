@@ -2,7 +2,7 @@
 
 """Provision the Azure AI Foundry Memory Store used by this sample.
 
-Creates the memory store named by ``FOUNDRY_MEMORY_STORE_NAME`` if it does not
+Creates the memory store named by ``MEMORY_STORE_NAME`` if it does not
 already exist. The store is configured with the user-profile capability so the
 agent can remember stable facts about a user across sessions; chat-summary is
 disabled to keep the demo focused on durable preferences. Safe to re-run: if a
@@ -14,10 +14,10 @@ Usage (from this directory, with the venv activated and ``az login`` done):
 
 Required env vars (also read from a local ``.env`` file if present):
 
-    FOUNDRY_PROJECT_ENDPOINT          e.g. https://<account>.services.ai.azure.com/api/projects/<project>
-    AZURE_AI_MODEL_DEPLOYMENT_NAME    Chat model deployment used by the memory store
-    AZURE_OPENAI_EMBEDDING_MODEL      Embedding model deployment used by the memory store
-    FOUNDRY_MEMORY_STORE_NAME         Name of the memory store to create
+    FOUNDRY_PROJECT_ENDPOINT                      e.g. https://<account>.services.ai.azure.com/api/projects/<project>
+    AZURE_AI_MODEL_DEPLOYMENT_NAME                Chat model deployment used by the memory store
+    AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME      Embedding model deployment used by the memory store
+    MEMORY_STORE_NAME                             Name of the memory store to create
 
 Your identity needs ``Azure AI User`` on the Foundry project scope.
 """
@@ -34,14 +34,14 @@ from azure.core.exceptions import ResourceNotFoundError
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv
 
+load_dotenv()
+
 
 async def main() -> None:
-    load_dotenv()
-
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    memory_store_name = os.environ["FOUNDRY_MEMORY_STORE_NAME"]
+    memory_store_name = os.environ["MEMORY_STORE_NAME"]
     chat_model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
-    embedding_model = os.environ["AZURE_OPENAI_EMBEDDING_MODEL"]
+    embedding_model = os.environ["AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME"]
 
     async with (
         DefaultAzureCredential() as credential,
@@ -72,6 +72,18 @@ async def main() -> None:
             definition=definition,
         )
         print(f"Created memory store '{created.name}' (id={created.id}).")
+
+        # Verify the store actually exists on the service by reading it back.
+        # ``create`` returns the requested definition, but a follow-up ``get``
+        # confirms the store is persisted and reachable for the agent at runtime.
+        try:
+            verified = await project.beta.memory_stores.get(name=memory_store_name)
+        except ResourceNotFoundError as exc:
+            raise RuntimeError(
+                f"Memory store '{memory_store_name}' was not found after creation; "
+                "the service may not have persisted it."
+            ) from exc
+        print(f"Verified memory store '{verified.name}' is available on the service (id={verified.id}).")
 
 
 if __name__ == "__main__":

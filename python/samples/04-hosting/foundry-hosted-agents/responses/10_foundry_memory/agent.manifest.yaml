@@ -20,18 +20,13 @@ template:
   environment_variables:
     - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
       value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
-    - name: FOUNDRY_MEMORY_STORE_NAME
-      value: "{{FOUNDRY_MEMORY_STORE_NAME}}"
-    - name: FOUNDRY_MEMORY_SCOPE
-      value: "{{FOUNDRY_MEMORY_SCOPE}}"
+    - name: MEMORY_STORE_NAME
+      value: "{{MEMORY_STORE_NAME}}"
 parameters:
   properties:
-    - name: FOUNDRY_MEMORY_STORE_NAME
+    - name: MEMORY_STORE_NAME
       secret: false
       description: The name of the pre-provisioned Foundry Memory Store the agent will use (e.g., agent_framework_memory)
-    - name: FOUNDRY_MEMORY_SCOPE
-      secret: false
-      description: Scope (e.g., user id) used to isolate memories within the store (e.g., user_123)
 resources:
   - kind: model
     id: gpt-4.1-mini

@@ -44,8 +44,8 @@ From this directory, with the venv activated and `az login` done:
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
 export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
-export AZURE_OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-export FOUNDRY_MEMORY_STORE_NAME="agent_framework_memory"
+export AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME="text-embedding-3-small"
+export MEMORY_STORE_NAME="agent_framework_memory"
 python provision_memory_store.py
 ```
 
@@ -54,8 +54,8 @@ Or in PowerShell:
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
-$env:AZURE_OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-$env:FOUNDRY_MEMORY_STORE_NAME="agent_framework_memory"
+$env:AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME="text-embedding-3-small"
+$env:MEMORY_STORE_NAME="agent_framework_memory"
 python provision_memory_store.py
 ```
 
@@ -75,16 +75,13 @@ Follow the instructions in the [Running the Agent Host Locally](../../README.md#
 In addition to the standard environment variables, this sample requires:
 
 ```bash
-export FOUNDRY_MEMORY_STORE_NAME="agent_framework_memory"
-# Optional — defaults to "user_123" in main.py if unset.
-export FOUNDRY_MEMORY_SCOPE="user_123"
+export MEMORY_STORE_NAME="agent_framework_memory"
 ```
 
 Or in PowerShell:
 
 ```powershell
-$env:FOUNDRY_MEMORY_STORE_NAME="agent_framework_memory"
-$env:FOUNDRY_MEMORY_SCOPE="user_123"
+$env:MEMORY_STORE_NAME="agent_framework_memory"
 ```
 
 You can also place these in a `.env` file next to `main.py` — see [`.env.example`](.env.example).
@@ -93,7 +90,9 @@ You can also place these in a `.env` file next to `main.py` — see [`.env.examp
 
 > Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../../README.md) for more details.
 
-Send a POST request to the server with a JSON body containing an `"input"` field to interact with the agent. The first request seeds a memory; subsequent requests (especially in new sessions) should be able to recall it because memories are scoped to `FOUNDRY_MEMORY_SCOPE`, not to a particular session.
+Send a POST request to the server with a JSON body containing an `"input"` field to interact with the agent. The first request seeds a memory; subsequent requests (especially in new sessions) should be able to recall it because memories are persisted across Foundry Hosted Agents sessions.
+
+> In this sample, the memory is scoped to the user by specifying `scope="{{$userId}}"`, thus memories are isolated across different users but shared across different sessions from the same user.
 
 ```bash
 # 1. Tell the agent something to remember.
@@ -108,17 +107,14 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
   -d '{"input": "What do you remember about my preferences?"}'
 ```
 
-The agent's answers to the follow-up turns should reflect the preferences shared in the first turn, even though `default_options={"store": False}` is set (so the Responses service is not persisting conversation history) — the recall is coming exclusively from the Foundry Memory Store.
-
 ## Deploying the Agent to Foundry
 
 To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
 
-When deploying, make sure `FOUNDRY_MEMORY_STORE_NAME` and `FOUNDRY_MEMORY_SCOPE` are set in your `azd` environment so they get injected into the hosted container per [`agent.manifest.yaml`](agent.manifest.yaml):
+When deploying, make sure `MEMORY_STORE_NAME` and `FOUNDRY_MEMORY_SCOPE` are set in your `azd` environment so they get injected into the hosted container per [`agent.manifest.yaml`](agent.manifest.yaml):
 
 ```bash
-azd env set FOUNDRY_MEMORY_STORE_NAME "agent_framework_memory"
-azd env set FOUNDRY_MEMORY_SCOPE "user_123"
+azd env set MEMORY_STORE_NAME "agent_framework_memory"
 ```
 
 If these are not set, running `azd ai agent init -m <agent-manifest.yaml>` will prompt you to enter them interactively.
