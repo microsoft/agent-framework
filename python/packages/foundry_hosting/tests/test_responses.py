@@ -2816,5 +2816,78 @@ class TestCheckpointContextPathValidation:
         assert before == after, f"Unexpected filesystem artifacts created for {context_field}={bad_id!r}"
         assert list(root.iterdir()) == [], f"Checkpoint dir created inside root for {context_field}={bad_id!r}"
 
+    @pytest.mark.parametrize(
+        "context_field,bad_id",
+        [
+            # Restore sink: caller-controlled previous_response_id. These are
+            # rejected by request validation (HTTP 400) before the checkpoint
+            # code is reached.
+            ("previous_response_id", "../../escape"),
+            ("previous_response_id", "/tmp/escape-abs"),
+            ("previous_response_id", "caresp_x/../../service-data/api-made-dir" + "A" * 14),
+            # Restore sink: server-issued conversation id (defense in depth).
+            # Reaches the checkpoint code and is rejected there, surfacing as
+            # an HTTP 5xx without creating any filesystem artifacts.
+            ("conversation", "../../escape"),
+            ("conversation", "/tmp/escape-abs"),
+        ],
+    )
+    async def test_malicious_context_id_rejected_e2e(self, tmp_path: Any, context_field: str, bad_id: str) -> None:
+        """End-to-end (ASGI-in-process): malicious context ids must be rejected
+        through the full HTTP pipeline, and no checkpoint directory may be
+        created on disk for either the validation-layer rejection
+        (``previous_response_id``) or the deeper checkpoint-layer rejection
+        (``conversation``).
+
+        The ``response_id`` write-sink is server-generated and not reachable
+        via the public HTTP surface, so its defense-in-depth check is covered
+        by the helper-level test above.
+        """
+        from agent_framework import WorkflowAgent
+
+        # Build a mock that satisfies isinstance(agent, WorkflowAgent) and the
+        # constructor's "no existing checkpointing" guard.
+        agent = MagicMock(spec=WorkflowAgent)
+        agent.id = "wf-agent"
+        agent.name = "wf"
+        agent.description = ""
+        agent.context_providers = []
+        agent.workflow = MagicMock()
+        agent.workflow.name = "wf"
+        agent.workflow._runner_context.has_checkpointing = MagicMock(  # pyright: ignore[reportPrivateUsage]
+            return_value=False
+        )
+
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        # Re-root checkpoint storage at our isolated tmp_path so we can detect
+        # any escape attempt on the filesystem.
+        root = tmp_path / "root"
+        root.mkdir()
+        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
+
+        payload: dict[str, Any] = {"model": "m", "input": "hi"}
+        if context_field == "previous_response_id":
+            payload["previous_response_id"] = bad_id
+        else:  # conversation
+            payload["conversation"] = bad_id
+
+        before = sorted(p.name for p in tmp_path.iterdir())
+        transport = httpx.ASGITransport(app=server)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post("/responses", json=payload)
+        after = sorted(p.name for p in tmp_path.iterdir())
+
+        # The request must not succeed; either request validation rejects it
+        # (4xx) or the checkpoint layer raises and the server returns 5xx.
+        # Either way, no successful response may be produced.
+        assert resp.status_code >= 400, (
+            f"Expected non-2xx for {context_field}={bad_id!r}, got {resp.status_code}: {resp.text[:200]}"
+        )
+        assert before == after, (
+            f"Unexpected filesystem artifacts under tmp_path for {context_field}={bad_id!r}: "
+            f"before={before} after={after}"
+        )
+        assert list(root.iterdir()) == [], f"Checkpoint directory created inside root for {context_field}={bad_id!r}"
+
 
 # endregion
