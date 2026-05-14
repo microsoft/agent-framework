@@ -529,7 +529,7 @@ class ThreadItemConverter:
                 # TODO(evmattso): Implement generated image handling in a future PR
                 return []
             case StructuredInputItem():
-                # TODO: Implement structured input handling in a future PR
+                # TODO(evmattso): Implement structured input handling in a future PR
                 return []
             case _:
                 assert_never(item)
