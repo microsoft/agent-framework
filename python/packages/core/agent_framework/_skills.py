@@ -2463,6 +2463,11 @@ class FileSkillsSource(SkillsSource):
             try:
                 entries = list(target_dir.iterdir())
             except OSError:
+                logger.warning(
+                    "Failed to list resource directory '%s' in skill directory '%s'; skipping.",
+                    directory,
+                    skill_dir_path,
+                )
                 continue
 
             for resource_file in entries:
@@ -2566,6 +2571,11 @@ class FileSkillsSource(SkillsSource):
             try:
                 entries = list(target_dir.iterdir())
             except OSError:
+                logger.warning(
+                    "Failed to list script directory '%s' in skill directory '%s'; skipping.",
+                    directory,
+                    skill_dir_path,
+                )
                 continue
 
             for script_file in entries:

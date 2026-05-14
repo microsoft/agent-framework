@@ -1533,6 +1533,54 @@ class TestDiscoverResourceFilesEdgeCases:
         assert len(resources) == 1
 
 
+class TestDiscoverFilesOSErrorWarning:
+    """OSError during directory listing should log a warning, not fail silently."""
+
+    def test_resource_discovery_warns_on_oserror(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """_discover_resource_files logs a warning when iterdir() raises OSError."""
+        skill_dir = tmp_path / "my-skill"
+        refs = skill_dir / "references"
+        refs.mkdir(parents=True)
+        (refs / "guide.md").write_text("content", encoding="utf-8")
+
+        original_iterdir = Path.iterdir
+
+        def _patched_iterdir(self: Path) -> Any:
+            if self.name == "references":
+                raise PermissionError("access denied")
+            return original_iterdir(self)
+
+        import unittest.mock
+
+        with unittest.mock.patch.object(Path, "iterdir", _patched_iterdir):
+            resources = FileSkillsSource._discover_resource_files(str(skill_dir))
+
+        assert resources == []
+        assert any("Failed to list resource directory" in r.message for r in caplog.records)
+
+    def test_script_discovery_warns_on_oserror(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """_discover_script_files logs a warning when iterdir() raises OSError."""
+        skill_dir = tmp_path / "my-skill"
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
+        (scripts_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+
+        original_iterdir = Path.iterdir
+
+        def _patched_iterdir(self: Path) -> Any:
+            if self.name == "scripts":
+                raise PermissionError("access denied")
+            return original_iterdir(self)
+
+        import unittest.mock
+
+        with unittest.mock.patch.object(Path, "iterdir", _patched_iterdir):
+            scripts = FileSkillsSource._discover_script_files(str(skill_dir))
+
+        assert scripts == []
+        assert any("Failed to list script directory" in r.message for r in caplog.records)
+
+
 class TestValidateAndNormalizeDirectoryNames:
     """Tests for _validate_and_normalize_directory_names."""
 
