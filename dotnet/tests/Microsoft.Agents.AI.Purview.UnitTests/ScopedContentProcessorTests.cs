@@ -267,6 +267,36 @@ public sealed class ScopedContentProcessorTests
     }
 
     [Fact]
+    public void CheckApplicableScopes_MatchesAnyLocationInScope()
+    {
+        // Arrange
+        ProcessContentRequest pcRequest = CreateProcessContentRequest();
+        ProtectionScopesResponse psResponse = new()
+        {
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations =
+                    [
+                        new("microsoft.graph.policyLocationApplication", "app-123"),
+                        new("microsoft.graph.policyLocationApplication", "different-app")
+                    ],
+                    ExecutionMode = ExecutionMode.EvaluateInline
+                }
+            ]
+        };
+
+        // Act
+        (bool shouldProcess, _, ExecutionMode executionMode) = ScopedContentProcessor.CheckApplicableScopes(pcRequest, psResponse);
+
+        // Assert
+        Assert.True(shouldProcess);
+        Assert.Equal(ExecutionMode.EvaluateInline, executionMode);
+    }
+
+    [Fact]
     public async Task ProcessMessagesAsync_UsesCachedProtectionScopes_WhenAvailableAsync()
     {
         // Arrange
@@ -696,33 +726,6 @@ public sealed class ScopedContentProcessorTests
     }
 
     [Fact]
-    public async Task BackgroundJobRunner_ScopeRetrievalCacheWriteFailure_DoesNotThrowAsync()
-    {
-        // Arrange
-        Mock<IPurviewClient> purviewClient = new();
-        Mock<ICacheProvider> cacheProvider = new();
-        ProtectionScopesRequest request = CreateProtectionScopesRequest();
-        ProtectionScopesCacheKey cacheKey = new(request);
-        ScopeRetrievalJob job = new(request, cacheKey, CreateProcessContentRequest());
-
-        purviewClient.Setup(x => x.GetProtectionScopesAsync(It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProtectionScopesResponse());
-
-        cacheProvider.Setup(x => x.SetAsync(
-            It.IsAny<ProtectionScopesCacheKey>(),
-            It.IsAny<ProtectionScopesResponse>(),
-            It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("cache unavailable"));
-
-        // Act
-        await RunBackgroundJobAsync(job, purviewClient.Object, cacheProvider.Object);
-
-        // Assert
-        purviewClient.Verify(x => x.GetProtectionScopesAsync(
-            It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
     public async Task BackgroundJobRunner_ScopeRetrievalNoApplicableScopes_QueuesContentActivityJobAsync()
     {
         // Arrange
@@ -751,34 +754,6 @@ public sealed class ScopedContentProcessorTests
 
         // Assert
         channelHandler.Verify(x => x.QueueJob(It.IsAny<ContentActivityJob>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task BackgroundJobRunner_ScopeRetrievalPaymentRequiredCacheWriteFailure_DoesNotThrowAsync()
-    {
-        // Arrange
-        Mock<IPurviewClient> purviewClient = new();
-        Mock<ICacheProvider> cacheProvider = new();
-        ProtectionScopesRequest request = CreateProtectionScopesRequest();
-        ScopeRetrievalJob job = new(request, new ProtectionScopesCacheKey(request), CreateProcessContentRequest());
-
-        purviewClient.Setup(x => x.GetProtectionScopesAsync(It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new PurviewPaymentRequiredException("Payment required"));
-
-        cacheProvider.Setup(x => x.SetAsync(
-            It.IsAny<PaymentRequiredCacheKey>(),
-            It.IsAny<PaymentRequiredCacheEntry>(),
-            It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("cache unavailable"));
-
-        // Act
-        await RunBackgroundJobAsync(job, purviewClient.Object, cacheProvider.Object);
-
-        // Assert
-        cacheProvider.Verify(x => x.SetAsync(
-            It.Is<PaymentRequiredCacheKey>(key => key.TenantId == "tenant-123"),
-            It.Is<PaymentRequiredCacheEntry>(entry => entry.Message == "Payment required"),
-            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion
@@ -829,24 +804,6 @@ public sealed class ScopedContentProcessorTests
             protectedAppMetadata);
 
         return new ProcessContentRequest(contentToProcess, "user-123", "tenant-123");
-    }
-
-    private static async Task RunBackgroundJobAsync(BackgroundJobBase job, IPurviewClient purviewClient, ICacheProvider cacheProvider)
-    {
-        Func<Channel<BackgroundJobBase>, Task>? runner = null;
-        Mock<IChannelHandler> channelHandler = new();
-        PurviewSettings settings = new("TestApp") { MaxConcurrentJobConsumers = 1 };
-        Channel<BackgroundJobBase> channel = Channel.CreateUnbounded<BackgroundJobBase>();
-
-        channelHandler.Setup(x => x.AddRunner(It.IsAny<Func<Channel<BackgroundJobBase>, Task>>()))
-            .Callback<Func<Channel<BackgroundJobBase>, Task>>(callback => runner = callback);
-
-        _ = new BackgroundJobRunner(channelHandler.Object, purviewClient, cacheProvider, NullLogger.Instance, settings);
-
-        Assert.NotNull(runner);
-        await channel.Writer.WriteAsync(job);
-        channel.Writer.Complete();
-        await runner(channel);
     }
 
     private static PurviewSettings CreateValidPurviewSettings()

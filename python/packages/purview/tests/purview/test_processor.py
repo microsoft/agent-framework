@@ -234,7 +234,9 @@ class TestScopedContentProcessor:
     ) -> None:
         """Test _combine_policy_actions removes exact duplicate actions."""
         block_action = DlpActionInfo(action=DlpAction.BLOCK_ACCESS, restriction_action=RestrictionAction.BLOCK)
-        duplicate_block_action = DlpActionInfo(action=DlpAction.BLOCK_ACCESS, restriction_action=RestrictionAction.BLOCK)
+        duplicate_block_action = DlpActionInfo(
+            action=DlpAction.BLOCK_ACCESS, restriction_action=RestrictionAction.BLOCK
+        )
         restriction_only_action = DlpActionInfo(restriction_action=RestrictionAction.BLOCK)
 
         combined = processor._combine_policy_actions(
@@ -427,38 +429,6 @@ class TestScopedContentProcessor:
 
         cached = await cache.get(f"purview:payment_required:{request.tenant_id}")
         assert isinstance(cached, PurviewPaymentRequiredError)
-
-    async def test_background_scope_refresh_handles_payment_required_cache_failure(
-        self, mock_client: AsyncMock, process_content_request_factory
-    ) -> None:
-        """402 cache failures during background scope refresh are logged and not propagated."""
-        from agent_framework_purview._cache import InMemoryCacheProvider, create_protection_scopes_cache_key
-        from agent_framework_purview._exceptions import PurviewPaymentRequiredError
-        from agent_framework_purview._models import ProtectionScopesRequest
-
-        settings = PurviewSettings(
-            app_name="Test App",
-            tenant_id="12345678-1234-1234-1234-123456789012",
-            purview_app_location=PurviewAppLocation(
-                location_type=PurviewLocationType.APPLICATION, location_value="app-id"
-            ),
-        )
-
-        cache = InMemoryCacheProvider()
-        processor = ScopedContentProcessor(mock_client, settings, cache_provider=cache)
-        processor._cache.set = AsyncMock(side_effect=RuntimeError("cache unavailable"))  # type: ignore[method-assign]
-        mock_client.get_protection_scopes = AsyncMock(side_effect=PurviewPaymentRequiredError("nope"))
-
-        request = process_content_request_factory()
-        ps_req = ProtectionScopesRequest(
-            user_id=request.user_id,
-            tenant_id=request.tenant_id,
-            activities="uploadText",
-        )
-
-        await processor._refresh_protection_scopes_background(ps_req, create_protection_scopes_cache_key(ps_req), request)
-
-        processor._cache.set.assert_called_once()  # type: ignore[attr-defined]
 
     async def test_map_messages_with_user_id_in_additional_properties(self, mock_client: AsyncMock) -> None:
         """Test user_id extraction from message additional_properties."""
@@ -801,9 +771,7 @@ class TestScopedContentProcessorCaching:
         mock_client.get_protection_scopes.return_value = ProtectionScopesResponse(
             scope_identifier="scope-123", scopes=[]
         )
-        mock_client.process_content.return_value = ProcessContentResponse(
-            id="ok", protection_scope_state="notModified"
-        )
+        mock_client.process_content.return_value = ProcessContentResponse(id="ok", protection_scope_state="notModified")
 
         messages = [Message(role="user", contents=["Test"])]
 
@@ -827,15 +795,11 @@ class TestScopedContentProcessorCaching:
         processor = ScopedContentProcessor(mock_client, settings, cache_provider=cache_provider)
 
         mock_client.get_protection_scopes.side_effect = PurviewPaymentRequiredError("Payment required")
-        mock_client.process_content.return_value = ProcessContentResponse(
-            id="ok", protection_scope_state="notModified"
-        )
+        mock_client.process_content.return_value = ProcessContentResponse(id="ok", protection_scope_state="notModified")
 
         messages = [Message(role="user", contents=["Test"])]
 
-        await processor.process_messages(
-            messages, Activity.UPLOAD_TEXT, user_id="12345678-1234-1234-1234-123456789012"
-        )
+        await processor.process_messages(messages, Activity.UPLOAD_TEXT, user_id="12345678-1234-1234-1234-123456789012")
         await asyncio.gather(*list(processor._background_tasks))
 
         mock_client.get_protection_scopes.assert_called_once()

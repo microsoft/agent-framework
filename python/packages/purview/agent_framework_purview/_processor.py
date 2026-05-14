@@ -221,8 +221,7 @@ class ScopedContentProcessor:
             correlation_id=pc_request.correlation_id,
         )
 
-        # A 402 discovered by background scope warmup applies to subsequent calls;
-        # the first cold-cache call still returns the foreground ProcessContent result.
+        # Check for tenant-level 402 exception cache first
         tenant_payment_cache_key = f"purview:payment_required:{pc_request.tenant_id}"
         cached_payment_exception = await self._cache.get(tenant_payment_cache_key)
         if isinstance(cached_payment_exception, PurviewPaymentRequiredError):
@@ -312,13 +311,7 @@ class ScopedContentProcessor:
                 await self._send_content_activities_background(ca_req)
         except PurviewPaymentRequiredError as ex:
             tenant_payment_cache_key = f"purview:payment_required:{ps_req.tenant_id}"
-            try:
-                await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=ttl_seconds)
-            except Exception as cache_ex:
-                logger.warning(
-                    "Background protection scopes refresh failed to cache payment required state: %s",
-                    cache_ex,
-                )
+            await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=ttl_seconds)
             logger.warning("Background protection scopes refresh failed with payment required: %s", ex)
         except Exception as ex:
             logger.warning("Background protection scopes refresh failed: %s", ex)
@@ -348,17 +341,10 @@ class ScopedContentProcessor:
     def _combine_policy_actions(
         existing: list[DlpActionInfo] | None, new_actions: list[DlpActionInfo]
     ) -> list[DlpActionInfo]:
-        combined: list[DlpActionInfo] = []
-        seen: set[tuple[DlpAction | None, RestrictionAction | None]] = set()
-
+        combined: dict[tuple[DlpAction | None, RestrictionAction | None], DlpActionInfo] = {}
         for action_info in (existing or []) + new_actions:
-            key = (action_info.action, action_info.restriction_action)
-            if key in seen:
-                continue
-            seen.add(key)
-            combined.append(action_info)
-
-        return combined
+            combined.setdefault((action_info.action, action_info.restriction_action), action_info)
+        return list(combined.values())
 
     @staticmethod
     def _check_applicable_scopes(

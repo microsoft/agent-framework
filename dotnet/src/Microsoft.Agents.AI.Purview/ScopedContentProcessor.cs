@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Purview.Models.Common;
@@ -193,9 +194,6 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     {
         ProtectionScopesRequest psRequest = CreateProtectionScopesRequest(pcRequest, pcRequest.UserId, pcRequest.TenantId, pcRequest.CorrelationId);
 
-        // Like the SDK tenant-scope sentinel cache, a 402 discovered by background
-        // scope warmup applies to subsequent calls; the first cold-cache call still
-        // returns the foreground ProcessContent result.
         PaymentRequiredCacheEntry? cachedPaymentRequired = await this._cacheProvider.GetAsync<PaymentRequiredCacheKey, PaymentRequiredCacheEntry>(
             new PaymentRequiredCacheKey(pcRequest.TenantId),
             cancellationToken).ConfigureAwait(false);
@@ -214,8 +212,6 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             return await this.ProcessWithCachedScopesAsync(pcRequest, cacheResponse, cacheKey, cancellationToken).ConfigureAwait(false);
         }
 
-        // Cache miss: match the SDK parallel path by warming protection scopes in the
-        // background while ProcessContent runs immediately in the foreground.
         try
         {
             this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey, pcRequest));
@@ -296,19 +292,11 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         {
             List<DlpActionInfo> combinedActions = [];
             HashSet<(DlpAction Action, RestrictionAction? RestrictionAction)> seenActions = [];
+            IEnumerable<DlpActionInfo> allActions = pcResponse.PolicyActions is null
+                ? actionInfos
+                : pcResponse.PolicyActions.Concat(actionInfos);
 
-            if (pcResponse.PolicyActions != null)
-            {
-                foreach (DlpActionInfo actionInfo in pcResponse.PolicyActions)
-                {
-                    if (seenActions.Add((actionInfo.Action, actionInfo.RestrictionAction)))
-                    {
-                        combinedActions.Add(actionInfo);
-                    }
-                }
-            }
-
-            foreach (DlpActionInfo actionInfo in actionInfos)
+            foreach (DlpActionInfo actionInfo in allActions)
             {
                 if (seenActions.Add((actionInfo.Action, actionInfo.RestrictionAction)))
                 {
@@ -350,7 +338,11 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 
             foreach (var location in scope.Locations ?? Array.Empty<PolicyLocation>())
             {
-                locationMatch = location.DataType.EndsWith(locationType, StringComparison.OrdinalIgnoreCase) && location.Value.Equals(locationValue, StringComparison.OrdinalIgnoreCase);
+                if (location.DataType.EndsWith(locationType, StringComparison.OrdinalIgnoreCase) && location.Value.Equals(locationValue, StringComparison.OrdinalIgnoreCase))
+                {
+                    locationMatch = true;
+                    break;
+                }
             }
 
             if (activityMatch && locationMatch)

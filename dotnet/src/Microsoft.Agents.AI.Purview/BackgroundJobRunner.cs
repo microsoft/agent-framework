@@ -79,7 +79,7 @@ internal sealed class BackgroundJobRunner : IBackgroundJobRunner
                 try
                 {
                     ProtectionScopesResponse response = await this._purviewClient.GetProtectionScopesAsync(scopeRetrievalJob.Request, CancellationToken.None).ConfigureAwait(false);
-                    await this.SetCacheBestEffortAsync(scopeRetrievalJob.CacheKey, response, "protection scopes").ConfigureAwait(false);
+                    await this._cacheProvider.SetAsync(scopeRetrievalJob.CacheKey, response, CancellationToken.None).ConfigureAwait(false);
                     (bool shouldProcess, List<DlpActionInfo> _, ExecutionMode _) = ScopedContentProcessor.CheckApplicableScopes(scopeRetrievalJob.ProcessContentRequest, response);
                     if (!shouldProcess)
                     {
@@ -90,28 +90,13 @@ internal sealed class BackgroundJobRunner : IBackgroundJobRunner
                 }
                 catch (PurviewPaymentRequiredException ex)
                 {
-                    await this.SetCacheBestEffortAsync(
+                    await this._cacheProvider.SetAsync(
                         new PaymentRequiredCacheKey(scopeRetrievalJob.Request.TenantId),
                         new PaymentRequiredCacheEntry(ex.Message),
-                        "payment required state").ConfigureAwait(false);
+                        CancellationToken.None).ConfigureAwait(false);
                 }
 
                 break;
-        }
-    }
-
-    private async Task SetCacheBestEffortAsync<TKey, TValue>(TKey key, TValue value, string cacheEntryName)
-    {
-        try
-        {
-            await this._cacheProvider.SetAsync(key, value, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            if (this._logger.IsEnabled(LogLevel.Warning))
-            {
-                this._logger.LogWarning(ex, "Failed to cache {CacheEntryName} for background scope retrieval.", cacheEntryName);
-            }
         }
     }
 

@@ -255,6 +255,8 @@ async def run_with_custom_cache_provider() -> None:
     blocked_text = settings.get("blocked_prompt_message") or "Prompt blocked by policy"
     await run_policy_flow("custom cache", agent, user_id, blocked_text)
 
+
+async def run_with_default_cache() -> None:
     """Demonstrate using the default built-in cache."""
     endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not endpoint:
@@ -303,6 +305,11 @@ async def main() -> None:
         await run_with_custom_cache_provider()
     except Exception as ex:  # pragma: no cover - demo resilience
         print(f"Custom cache provider path failed: {ex}")
+
+    try:
+        await run_with_default_cache()
+    except Exception as ex:  # pragma: no cover - demo resilience
+        print(f"Default cache path failed: {ex}")
 
 
 if __name__ == "__main__":
