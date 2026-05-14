@@ -1,9 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Harness.Shared.Console.Commands;
-using Harness.Shared.Console.Observers;
+using Harness.ConsoleReactiveComponents;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 
 namespace Harness.Shared.Console;
 
@@ -15,200 +13,58 @@ public static class HarnessConsole
 {
     /// <summary>
     /// Runs an interactive console session with the specified agent.
-    /// Supports streaming output, tool call display, spinner animation,
-    /// optional planning UX with structured output, and the <c>/todos</c> command.
+    /// Constructs the reactive UI component and the <see cref="HarnessAgentRunner"/>,
+    /// wires them together, and awaits the component's <see cref="HarnessAppComponent.ShutdownTask"/>
+    /// (which completes when the user types <c>/exit</c>).
     /// </summary>
     /// <param name="agent">The agent to interact with.</param>
-    /// <param name="title">The title displayed in the console header.</param>
-    /// <param name="userPrompt">A short prompt to the user, displayed below the title.</param>
+    /// <param name="userPrompt">A short prompt to the user, displayed as a placeholder in the input area.</param>
     /// <param name="options">Optional configuration options for the console session.</param>
-    public static async Task RunAgentAsync(AIAgent agent, string title, string userPrompt, HarnessConsoleOptions? options = null)
+    public static async Task RunAgentAsync(AIAgent agent, string userPrompt, HarnessConsoleOptions? options = null)
     {
         options ??= new();
 
-        if (options.EnablePlanningUx
-            && (string.IsNullOrWhiteSpace(options.PlanningModeName) || string.IsNullOrWhiteSpace(options.ExecutionModeName)))
-        {
-            throw new ArgumentException(
-                "When EnablePlanningUx is true, both PlanningModeName and ExecutionModeName must be configured.",
-                nameof(options));
-        }
+        // Null means use defaults; an explicit (possibly empty) list means use exactly what was provided.
+        var observers = options.Observers
+            ?? HarnessConsoleOptions.BuildDefaultObservers();
+        var commandHandlers = options.CommandHandlers
+            ?? HarnessConsoleOptions.BuildDefaultCommandHandlers(agent, options.ModeColors);
 
-        System.Console.WriteLine($"=== {title} ===");
-        System.Console.WriteLine(userPrompt);
-
-        var todoProvider = agent.GetService<TodoProvider>();
         var modeProvider = agent.GetService<AgentModeProvider>();
-
-        // Build command handlers.
-        var commandHandlers = new List<ICommandHandler>
-        {
-            new TodoCommandHandler(todoProvider),
-            new ModeCommandHandler(modeProvider, options.ModeColors),
-        };
-
-        var commands = commandHandlers
-            .Select(h => h.GetHelpText())
-            .Where(t => t is not null)
-            .Append("exit (quit)");
-
-        System.Console.WriteLine($"Commands: {string.Join(", ", commands)}");
-        System.Console.WriteLine();
+        var messageInjector = agent.GetService<MessageInjectingChatClient>();
 
         AgentSession session = await agent.CreateSessionAsync();
-        using var writer = new ConsoleWriter(options.ModeColors);
-        writer.CurrentMode = modeProvider?.GetMode(session);
 
-        string prompt = BuildUserPrompt(modeProvider, session);
-        string? userInput = await writer.ReadLineAsync(prompt);
+        using var component = new HarnessAppComponent(
+            placeholder: userPrompt,
+            initialMode: modeProvider?.GetMode(session),
+            inputEnabled: messageInjector is not null,
+            runnerFactory: ux => new HarnessAgentRunner(
+                agent: agent,
+                session: session,
+                modeProvider: modeProvider,
+                messageInjector: messageInjector,
+                commandHandlers: commandHandlers,
+                observers: observers,
+                ux: ux),
+            modeColors: options.ModeColors);
 
-        // Main loop to run a command or agent and get the next user command/input.
-        while (!string.IsNullOrWhiteSpace(userInput) && !userInput.Equals("exit", StringComparison.OrdinalIgnoreCase))
+        // Trigger the initial render of the component now that state is seeded.
+        component.Render();
+
+        try
         {
-            // Check command handlers first — first one to handle wins.
-            bool handled = false;
-            foreach (var handler in commandHandlers)
-            {
-                if (await handler.TryHandleAsync(userInput, session).ConfigureAwait(false))
-                {
-                    handled = true;
-                    break;
-                }
-            }
-
-            if (!handled)
-            {
-                await RunAgentTurnAsync(agent, session, modeProvider, options, writer, userInput);
-            }
-
-            writer.CurrentMode = modeProvider?.GetMode(session);
-            prompt = BuildUserPrompt(modeProvider, session);
-            userInput = await writer.ReadLineAsync(prompt);
+            await component.ShutdownTask.ConfigureAwait(false);
+        }
+        finally
+        {
+            component.Deactivate();
         }
 
         System.Console.ResetColor();
+        System.Console.Write(AnsiEscapes.ResetScrollRegion);
+        System.Console.Write(AnsiEscapes.EraseEntireScreen);
+        System.Console.Write(AnsiEscapes.MoveCursor(1, 1));
         System.Console.WriteLine("Goodbye!");
-    }
-
-    /// <summary>
-    /// Runs one or more agent invocations for a single user turn, using the current
-    /// observers. Re-invokes automatically for tool approvals and mode-driven follow-ups
-    /// (e.g., planning clarification loops).
-    /// </summary>
-    private static async Task RunAgentTurnAsync(
-        AIAgent agent,
-        AgentSession session,
-        AgentModeProvider? modeProvider,
-        HarnessConsoleOptions options,
-        ConsoleWriter writer,
-        string userInput)
-    {
-        IList<ChatMessage>? nextMessages = [new ChatMessage(ChatRole.User, userInput)];
-
-        while (nextMessages is not null)
-        {
-            // Build observers for this invocation (may change between iterations due to mode changes).
-            var observers = CreateObservers(options, modeProvider, session);
-
-            // Build run options — observers may inject ResponseFormat, etc.
-            var runOptions = new AgentRunOptions();
-            foreach (var observer in observers)
-            {
-                observer.ConfigureRunOptions(runOptions);
-            }
-
-            // Stream the response, fanning out to all observers.
-            writer.CurrentMode = modeProvider?.GetMode(session);
-            writer.WriteResponseHeader();
-
-            try
-            {
-                await foreach (var update in agent.RunStreamingAsync(nextMessages, session, runOptions))
-                {
-                    // Update mode color if the mode changed during streaming.
-                    if (modeProvider is not null)
-                    {
-                        string currentMode = modeProvider.GetMode(session);
-                        if (currentMode != writer.CurrentMode)
-                        {
-                            writer.CurrentMode = currentMode;
-                        }
-                    }
-
-                    foreach (var content in update.Contents)
-                    {
-                        foreach (var observer in observers)
-                        {
-                            await observer.OnContentAsync(writer, content);
-                        }
-                    }
-
-                    if (!string.IsNullOrEmpty(update.Text))
-                    {
-                        foreach (var observer in observers)
-                        {
-                            await observer.OnTextAsync(writer, update.Text);
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                await writer.WriteInfoLineAsync($"❌ Stream error: {ex.GetType().Name}:\n{ex}", ConsoleColor.Red);
-            }
-
-            // Collect messages from all observers.
-            var combinedMessages = new List<ChatMessage>();
-            bool hasObserverMessages = false;
-            foreach (var observer in observers)
-            {
-                var messages = await observer.OnStreamCompleteAsync(writer, agent, session, options);
-                if (messages is { Count: > 0 })
-                {
-                    combinedMessages.AddRange(messages);
-                    hasObserverMessages = true;
-                }
-            }
-
-            await writer.WriteStreamFooterAsync(hasFollowUpMessages: hasObserverMessages);
-            nextMessages = combinedMessages.Count > 0 ? combinedMessages : null;
-        }
-    }
-
-    private static List<ConsoleObserver> CreateObservers(HarnessConsoleOptions options, AgentModeProvider? modeProvider, AgentSession session)
-    {
-        var observers = new List<ConsoleObserver>
-        {
-            new ToolCallDisplayObserver(),
-            new ToolApprovalObserver(),
-            new ErrorDisplayObserver(),
-            new ReasoningDisplayObserver(),
-            new UsageDisplayObserver(options.MaxContextWindowTokens, options.MaxOutputTokens),
-        };
-
-        // Add the appropriate output observer based on the current mode.
-        if (options.EnablePlanningUx
-            && modeProvider is not null
-            && string.Equals(modeProvider.GetMode(session), options.PlanningModeName, StringComparison.OrdinalIgnoreCase))
-        {
-            observers.Add(new PlanningOutputObserver(modeProvider));
-        }
-        else
-        {
-            observers.Add(new TextOutputObserver());
-        }
-
-        return observers;
-    }
-
-    private static string BuildUserPrompt(AgentModeProvider? modeProvider, AgentSession session)
-    {
-        if (modeProvider is not null)
-        {
-            string mode = modeProvider.GetMode(session);
-            return $"[{mode}] You: ";
-        }
-
-        return "You: ";
     }
 }

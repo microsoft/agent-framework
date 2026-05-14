@@ -99,6 +99,30 @@ The `AGUIChatClient` supports:
 - Integration with `Agent` for client-side history management
 - Interrupt metadata passthrough (`availableInterrupts` and `resume`)
 
+## Tool Return Helpers
+
+Use `state_update` when a backend tool needs to send different payloads to the model, the UI, and shared state. The `text` value remains the LLM-bound tool result, `tool_result` becomes the AG-UI `ToolCallResultEvent.content` for frontend rendering, and `state` is merged into durable shared state.
+
+```python
+from agent_framework import Content, tool
+from agent_framework.ag_ui import state_update
+
+@tool
+async def get_weather(city: str) -> Content:
+    data = await fetch_weather(city)
+    return state_update(
+        text=f"{city}: {data['temp']}°C and {data['conditions']}",
+        tool_result={
+            "component": "weather-card",
+            "city": city,
+            "temperature": data["temp"],
+            "conditions": data["conditions"],
+            "humidity": data["humidity"],
+        },
+        state={"weather": {"city": city, **data}},
+    )
+```
+
 ## Documentation
 
 - **[Getting Started Tutorial](getting_started/)** - Step-by-step guide to building AG-UI servers and clients

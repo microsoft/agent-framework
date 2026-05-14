@@ -10,7 +10,10 @@
     "conversation_count": 1,
     "min_action_count": 2,
     "max_action_count": -1,
-    "min_response_count": 0,
+    "min_response_count": 1,
+    "max_response_count": 1,
+    "min_message_count": 0,
+    "max_message_count": 0,
     "actions": {
       "start": [
         "check_system"

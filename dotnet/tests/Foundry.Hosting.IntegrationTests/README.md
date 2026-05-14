@@ -195,7 +195,6 @@ human-only operation; CI only adds and deletes versions under existing agents.
 | `HappyPathHostedAgentFixture` | `happy-path` | `it-happy-path` | Round trip, streaming, multi turn (`previous_response_id` and `conversation_id`), `stored=false` flag in three combinations, instructions obeyed. |
 | `ToolCallingHostedAgentFixture` | `tool-calling` | `it-tool-calling` | Server side AIFunction invocation; arguments; multi turn referencing prior tool result. |
 | `ToolCallingApprovalHostedAgentFixture` | `tool-calling-approval` | `it-tool-calling-approval` | Approval requests raised, approved, denied. |
-| `ToolboxHostedAgentFixture` | `toolbox` | `it-toolbox` | Server registered toolbox tool callable; client side additions visible (placeholder). |
 | `McpToolboxHostedAgentFixture` | `mcp-toolbox` | `it-mcp-toolbox` | MCP backed tool invocation against `https://learn.microsoft.com/api/mcp` (placeholder). |
 | `CustomStorageHostedAgentFixture` | `custom-storage` | `it-custom-storage` | Round trip with custom `IResponsesStorageProvider`; multi turn reads from the custom store (placeholder). |
 | `AzureSearchRagHostedAgentFixture` | `azure-search-rag` | `it-azure-search-rag` | RAG against a real Azure AI Search index seeded with Contoso Outdoors documents; verifies the model cites the retrieved sources. |

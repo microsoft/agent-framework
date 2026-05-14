@@ -15,7 +15,7 @@ from agent_framework_ag_ui._run_common import (
     _extract_tool_result_state,
     _normalize_resume_interrupts,
 )
-from agent_framework_ag_ui._state import TOOL_RESULT_STATE_KEY
+from agent_framework_ag_ui._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 
 
 class TestNormalizeResumeInterrupts:
@@ -140,6 +140,15 @@ class TestStateUpdateHelper:
             TOOL_RESULT_STATE_KEY: {"weather": {"temp": 14}},
         }
 
+    def test_builds_text_content_with_display_marker(self):
+        """state_update can carry a UI display payload without requiring state."""
+        c = state_update(text="14°C, foggy", tool_result={"temp": 14, "conditions": "foggy"})
+        assert c.type == "text"
+        assert c.text == "14°C, foggy"
+        assert c.additional_properties == {
+            TOOL_RESULT_DISPLAY_KEY: '{"temp": 14, "conditions": "foggy"}',
+        }
+
     def test_empty_text_is_allowed(self):
         """State-only tools can omit the text argument."""
         c = state_update(state={"steps": ["a", "b"]})
@@ -164,6 +173,18 @@ class TestStateUpdateHelper:
         assert TOOL_RESULT_STATE_KEY in c.additional_properties
         inner = c.additional_properties[TOOL_RESULT_STATE_KEY]
         assert inner is not caller_state
+
+    def test_tool_result_without_text_falls_back_to_display_payload(self):
+        """Display-only tools use the serialized display payload as LLM text."""
+        c = state_update(tool_result={"temp": 14, "conditions": "foggy"})
+        assert c.text == '{"temp": 14, "conditions": "foggy"}'
+        assert c.additional_properties[TOOL_RESULT_DISPLAY_KEY] == '{"temp": 14, "conditions": "foggy"}'
+
+    def test_string_tool_result_is_not_json_encoded_again(self):
+        """A pre-serialized display string passes through verbatim."""
+        c = state_update(text="Weather summary", tool_result='{"temp":14}')
+        assert c.text == "Weather summary"
+        assert c.additional_properties[TOOL_RESULT_DISPLAY_KEY] == '{"temp":14}'
 
 
 class TestExtractToolResultState:
@@ -265,6 +286,60 @@ class TestEmitToolResultWithState:
         assert result_events[0].content == "Weather: 14°C"
         assert TOOL_RESULT_STATE_KEY not in result_events[0].content
 
+    def test_display_payload_routes_to_ui_only(self):
+        """A display marker overrides only the UI event, not the LLM-bound tool result."""
+        tool_return = state_update(
+            text="Weather: 14°C",
+            tool_result={"temp": 14, "conditions": "foggy"},
+        )
+        content = Content.from_function_result(call_id="c1", result=[tool_return])
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+        assert len(result_events) == 1
+        assert result_events[0].content == '{"temp": 14, "conditions": "foggy"}'
+        assert flow.tool_results[-1]["content"] == "Weather: 14°C"
+        assert TOOL_RESULT_DISPLAY_KEY not in result_events[0].content
+        assert TOOL_RESULT_DISPLAY_KEY not in flow.tool_results[-1]["content"]
+
+    def test_plain_tool_result_uses_existing_content_for_both_channels(self):
+        """Without a display marker, UI and LLM channels keep the existing derivation."""
+        content = Content.from_function_result(call_id="c1", result="plain result")
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+        assert len(result_events) == 1
+        assert result_events[0].content == "plain result"
+        assert flow.tool_results[-1]["content"] == "plain result"
+
+    def test_display_only_payload_falls_back_to_llm_content(self):
+        """When text is empty, both channels receive the serialized display payload."""
+        tool_return = state_update(tool_result={"temp": 14})
+        content = Content.from_function_result(call_id="c1", result=[tool_return])
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+        assert result_events[0].content == '{"temp": 14}'
+        assert flow.tool_results[-1]["content"] == '{"temp": 14}'
+
+    def test_pre_serialized_display_string_routes_verbatim(self):
+        """String display payloads pass through without JSON double-encoding."""
+        tool_return = state_update(text="Weather summary", tool_result='{"temp":14}')
+        content = Content.from_function_result(call_id="c1", result=[tool_return])
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+        assert result_events[0].content == '{"temp":14}'
+        assert flow.tool_results[-1]["content"] == "Weather summary"
+
     def test_coexists_with_active_predictive_state_handler(self):
         """Both predictive and deterministic state produce a single coalesced snapshot.
 
@@ -346,3 +421,31 @@ class TestEmitMcpToolResultWithState:
 
         events = _emit_mcp_tool_result(content, flow)
         assert all(e.type != EventType.STATE_SNAPSHOT for e in events)
+
+
+class TestEmitMcpToolResultWithDisplay:
+    """MCP tool results must honour the display marker so UI consumers can
+    render structured payloads while ``flow.tool_results`` keeps the LLM
+    string. MCP outputs do not pass through ``parse_result``; the marker
+    rides on the outer content's ``additional_properties``.
+    """
+
+    def test_mcp_tool_result_routes_display_payload_to_ui_only(self):
+        import json as _json
+
+        display_payload = {"rows": [{"id": 1, "name": "alpha"}, {"id": 2, "name": "beta"}]}
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_disp",
+            output="2 rows returned",
+            additional_properties={TOOL_RESULT_DISPLAY_KEY: display_payload},
+        )
+        flow = FlowState()
+
+        events = _emit_mcp_tool_result(content, flow)
+        result_events = [e for e in events if e.type == EventType.TOOL_CALL_RESULT]
+
+        assert len(result_events) == 1
+        # UI event carries the structured display payload.
+        assert _json.loads(result_events[0].content) == display_payload
+        # LLM-side accumulator keeps the short text.
+        assert flow.tool_results[-1]["content"] == "2 rows returned"

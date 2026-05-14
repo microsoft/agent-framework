@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Harness.ConsoleReactiveComponents;
+using Harness.Shared.Console.ToolFormatters;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -7,86 +9,103 @@ namespace Harness.Shared.Console.Observers;
 
 /// <summary>
 /// Collects <see cref="ToolApprovalRequestContent"/> items during the response stream,
-/// displays approval-needed notifications inline, and prompts the user for approval
-/// decisions after the stream completes.
+/// displays approval-needed notifications inline, and after the stream completes returns
+/// one <see cref="ChoiceFollowUpQuestion"/> per pending approval request. Each question's
+/// continuation produces a separate <see cref="ChatMessage"/> carrying the approval
+/// response content.
 /// </summary>
-internal sealed class ToolApprovalObserver : ConsoleObserver
+public sealed class ToolApprovalObserver : ConsoleObserver
 {
     private readonly List<ToolApprovalRequestContent> _approvalRequests = [];
+    private readonly IReadOnlyList<ToolCallFormatter> _formatters;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ToolApprovalObserver"/> class.
+    /// </summary>
+    /// <param name="formatters">Optional list of tool formatters. When <see langword="null"/>,
+    /// the default formatters from <see cref="ToolCallFormatter.BuildDefaultToolFormatters"/> are used.</param>
+    public ToolApprovalObserver(IReadOnlyList<ToolCallFormatter>? formatters = null)
+    {
+        this._formatters = formatters ?? ToolCallFormatter.BuildDefaultToolFormatters();
+    }
 
     /// <inheritdoc/>
-    public override async Task OnContentAsync(ConsoleWriter writer, AIContent content)
+    public override async Task OnContentAsync(IUXStateDriver ux, AIContent content, AIAgent agent, AgentSession session)
     {
         if (content is ToolApprovalRequestContent approvalRequest)
         {
             this._approvalRequests.Add(approvalRequest);
             string toolName = approvalRequest.ToolCall is FunctionCallContent fc
-                ? ToolCallFormatter.Format(fc)
+                ? ToolCallFormatter.Format(this._formatters, fc)
                 : approvalRequest.ToolCall?.ToString() ?? "unknown";
-            await writer.WriteInfoLineAsync($"⚠️ Approval needed: {toolName}", ConsoleColor.Yellow);
+            await ux.WriteInfoLineAsync($"⚠️ Approval needed: {toolName}", ConsoleColor.Yellow);
         }
     }
 
     /// <inheritdoc/>
-    public override async Task<IList<ChatMessage>?> OnStreamCompleteAsync(
-        ConsoleWriter writer,
+    public override Task<IList<FollowUpAction>?> OnStreamCompleteAsync(
+        IUXStateDriver ux,
         AIAgent agent,
-        AgentSession session,
-        HarnessConsoleOptions options)
+        AgentSession session)
     {
         if (this._approvalRequests.Count == 0)
         {
-            return null;
+            return Task.FromResult<IList<FollowUpAction>?>(null);
         }
 
-        var messages = await PromptForApprovalsAsync(writer, this._approvalRequests);
+        var actions = new List<FollowUpAction>(this._approvalRequests.Count);
+        foreach (var request in this._approvalRequests)
+        {
+            actions.Add(this.BuildApprovalQuestion(request));
+        }
+
         this._approvalRequests.Clear();
-        return messages;
+        return Task.FromResult<IList<FollowUpAction>?>(actions);
     }
 
-    private static async Task<List<ChatMessage>?> PromptForApprovalsAsync(ConsoleWriter writer, List<ToolApprovalRequestContent> approvalRequests)
+    private ChoiceFollowUpQuestion BuildApprovalQuestion(ToolApprovalRequestContent request)
     {
-        if (approvalRequests.Count == 0)
+        string toolName = request.ToolCall is FunctionCallContent fc
+            ? ToolCallFormatter.Format(this._formatters, fc)
+            : request.ToolCall?.ToString() ?? "unknown";
+
+        var choices = new List<string>
         {
-            return null;
-        }
+            "Approve this call",
+            "Always approve this tool (any arguments)",
+            "Always approve this tool with these arguments",
+            "Deny",
+        };
 
-        var responses = new List<AIContent>();
-        foreach (var request in approvalRequests)
-        {
-            string toolName = request.ToolCall is FunctionCallContent fc
-                ? ToolCallFormatter.Format(fc)
-                : request.ToolCall?.ToString() ?? "unknown";
+        string prompt = $"🔐 Tool approval: {toolName}";
 
-            var choices = new List<string>
+        return new ChoiceFollowUpQuestion(
+            Prompt: prompt,
+            Choices: choices,
+            AllowCustomText: false,
+            Continuation: async (selection, ux) =>
             {
-                "Approve this call",
-                "Always approve this tool (any arguments)",
-                "Always approve this tool with these arguments",
-                "Deny",
-            };
+                AIContent response = selection switch
+                {
+                    "Always approve this tool (any arguments)" => request.CreateAlwaysApproveToolResponse("User chose to always approve this tool"),
+                    "Always approve this tool with these arguments" => request.CreateAlwaysApproveToolWithArgumentsResponse("User chose to always approve this tool with these arguments"),
+                    "Deny" => request.CreateResponse(approved: false, reason: "User denied"),
+                    _ => request.CreateResponse(approved: true, reason: "User approved"),
+                };
 
-            string selection = await writer.ReadSelectionAsync($"🔐 Tool approval: {toolName}", choices);
-            AIContent response = selection switch
-            {
-                "Always approve this tool (any arguments)" => request.CreateAlwaysApproveToolResponse("User chose to always approve this tool"),
-                "Always approve this tool with these arguments" => request.CreateAlwaysApproveToolWithArgumentsResponse("User chose to always approve this tool with these arguments"),
-                "Deny" => request.CreateResponse(approved: false, reason: "User denied"),
-                _ => request.CreateResponse(approved: true, reason: "User approved"),
-            };
+                string action = selection switch
+                {
+                    "Always approve this tool (any arguments)" => "✅ Always approved (any args)",
+                    "Always approve this tool with these arguments" => "✅ Always approved (these args)",
+                    "Deny" => "❌ Denied",
+                    _ => "✅ Approved",
+                };
 
-            string action = selection switch
-            {
-                "Always approve this tool (any arguments)" => "✅ Always approved (any args)",
-                "Always approve this tool with these arguments" => "✅ Always approved (these args)",
-                "Deny" => "❌ Denied",
-                _ => "✅ Approved",
-            };
-            await writer.WriteInfoLineAsync($"   {action}", ConsoleColor.DarkGray);
+                ConsoleColor answerColor = selection == "Deny" ? ConsoleColor.Red : ConsoleColor.Green;
+                string formatted = $"🔹 {prompt}\n   └─ {AnsiEscapes.SetForegroundColor(answerColor)}{action}{AnsiEscapes.ResetAttributes}";
+                await ux.WriteInfoLineAsync(formatted, ConsoleColor.Gray).ConfigureAwait(false);
 
-            responses.Add(response);
-        }
-
-        return [new ChatMessage(ChatRole.User, responses)];
+                return new ChatMessage(ChatRole.User, [response]);
+            });
     }
 }

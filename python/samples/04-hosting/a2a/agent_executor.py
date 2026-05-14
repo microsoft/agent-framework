@@ -21,7 +21,6 @@ from a2a.types import (
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
-    TextPart,
 )
 
 if TYPE_CHECKING:
@@ -56,8 +55,7 @@ class AgentFrameworkExecutor(AgentExecutor):
             TaskStatusUpdateEvent(
                 task_id=task_id,
                 context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
+                status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
             )
         )
 
@@ -68,10 +66,10 @@ class AgentFrameworkExecutor(AgentExecutor):
             response_parts: list[Part] = []
             for msg in response.messages:
                 if msg.text:
-                    response_parts.append(TextPart(text=msg.text))
+                    response_parts.append(Part(text=msg.text))
 
             if not response_parts:
-                response_parts.append(TextPart(text=str(response)))
+                response_parts.append(Part(text=str(response)))
 
             # Publish the agent's response as a completed message
             await event_queue.enqueue_event(
@@ -79,14 +77,13 @@ class AgentFrameworkExecutor(AgentExecutor):
                     task_id=task_id,
                     context_id=context_id,
                     status=TaskStatus(
-                        state=TaskState.completed,
+                        state=TaskState.TASK_STATE_COMPLETED,
                         message=Message(
                             message_id=str(uuid.uuid4()),
-                            role=Role.agent,
+                            role=Role.ROLE_AGENT,
                             parts=response_parts,
                         ),
                     ),
-                    final=True,
                 )
             )
         except asyncio.CancelledError:
@@ -97,14 +94,13 @@ class AgentFrameworkExecutor(AgentExecutor):
                     task_id=task_id,
                     context_id=context_id,
                     status=TaskStatus(
-                        state=TaskState.failed,
+                        state=TaskState.TASK_STATE_FAILED,
                         message=Message(
                             message_id=str(uuid.uuid4()),
-                            role=Role.agent,
-                            parts=[TextPart(text=f"Agent error: {e}")],
+                            role=Role.ROLE_AGENT,
+                            parts=[Part(text=f"Agent error: {e}")],
                         ),
                     ),
-                    final=True,
                 )
             )
 
@@ -117,7 +113,6 @@ class AgentFrameworkExecutor(AgentExecutor):
             TaskStatusUpdateEvent(
                 task_id=task_id,
                 context_id=context_id,
-                status=TaskStatus(state=TaskState.canceled),
-                final=True,
+                status=TaskStatus(state=TaskState.TASK_STATE_CANCELED),
             )
         )

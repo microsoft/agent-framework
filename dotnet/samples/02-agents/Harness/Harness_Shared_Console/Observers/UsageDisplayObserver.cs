@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace Harness.Shared.Console.Observers;
@@ -7,7 +8,7 @@ namespace Harness.Shared.Console.Observers;
 /// <summary>
 /// Displays token usage statistics (📊) from the response stream.
 /// </summary>
-internal sealed class UsageDisplayObserver : ConsoleObserver
+public sealed class UsageDisplayObserver : ConsoleObserver
 {
     private readonly int? _maxContextWindowTokens;
     private readonly int? _maxOutputTokens;
@@ -24,19 +25,21 @@ internal sealed class UsageDisplayObserver : ConsoleObserver
     }
 
     /// <inheritdoc/>
-    public override async Task OnContentAsync(ConsoleWriter writer, AIContent content)
+    public override Task OnContentAsync(IUXStateDriver ux, AIContent content, AIAgent agent, AgentSession session)
     {
         if (content is UsageContent usage)
         {
             if (usage.Details is not null)
             {
-                await writer.WriteInfoLineAsync(this.FormatUsageBreakdown(usage.Details), ConsoleColor.DarkGray);
+                ux.SetUsageText(this.FormatUsageBreakdown(usage.Details));
             }
             else
             {
-                await writer.WriteInfoLineAsync("📊 Tokens —", ConsoleColor.DarkGray);
+                ux.SetUsageText("📊 Tokens —");
             }
         }
+
+        return Task.CompletedTask;
     }
 
     private string FormatUsageBreakdown(UsageDetails details)

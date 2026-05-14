@@ -38,6 +38,8 @@ jobs:
       dotnetChanges: ${{ steps.filter.outputs.dotnet }}
       cosmosDbChanges: ${{ steps.filter.outputs.cosmosdb }}
       foundryHostingChanges: ${{ steps.filter.outputs.foundryHosting }}
+      functionsChanged: ${{ steps.filter.outputs.functions }}
+      coreChanged: ${{ steps.filter.outputs.core }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -63,6 +65,24 @@ jobs:
               - 'dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-AzureSearchRag/**'
               - 'dotnet/Directory.Packages.props'
               - 'dotnet/tests/Foundry.Hosting.IntegrationTests/scripts/it-build-image.ps1'
+              - '.github/workflows/dotnet-build-and-test.yml'
+            functions:
+              - 'dotnet/src/Microsoft.Agents.AI.DurableTask/**'
+              - 'dotnet/src/Microsoft.Agents.AI.Hosting.AzureFunctions/**'
+              - 'dotnet/tests/Microsoft.Agents.AI.DurableTask.IntegrationTests/**'
+              - 'dotnet/tests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests/**'
+              - '.github/actions/azure-functions-integration-setup/**'
+              - '.github/workflows/dotnet-build-and-test.yml'
+            core:
+              - 'dotnet/src/Microsoft.Agents.AI/**'
+              - 'dotnet/src/Microsoft.Agents.AI.Abstractions/**'
+              - 'dotnet/src/Microsoft.Agents.AI.OpenAI/**'
+              - 'dotnet/src/Microsoft.Agents.AI.Workflows/**'
+              - 'dotnet/src/Microsoft.Agents.AI.Workflows.Generators/**'
+              - 'dotnet/eng/scripts/New-FilteredSolution.ps1'
+              - 'dotnet/tests/Directory.Build.props'
+              - 'dotnet/Directory.Packages.props'
+              - 'dotnet/global.json'
               - '.github/workflows/dotnet-build-and-test.yml'
       # run only if 'dotnet' files were changed
       - name: dotnet tests
@@ -211,10 +231,11 @@ jobs:
             Verbose         = $true
           }
           ./dotnet/eng/scripts/New-FilteredSolution.ps1 @commonArgs `
-            -TestProjectNameFilter "*UnitTests*" `
+            -TestProjectNameIncludeFilter "*UnitTests*" `
             -OutputPath dotnet/filtered-unit.slnx
           ./dotnet/eng/scripts/New-FilteredSolution.ps1 @commonArgs `
-            -TestProjectNameFilter "*IntegrationTests*" `
+            -TestProjectNameIncludeFilter "*IntegrationTests*" `
+            -TestProjectNameExcludeFilter "*DurableTask.IntegrationTests*","*AzureFunctions.IntegrationTests*" `
             -OutputPath dotnet/filtered-integration.slnx
 
       - name: Run Unit Tests
@@ -255,14 +276,6 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-        # This setup action is required for both Durable Task and Azure Functions integration tests.
-        # We only run it on Ubuntu since the Durable Task and Azure Functions features are not available
-        # on .NET Framework (net472) which is what we use the Windows runner for.
-      - name: Set up Durable Task and Azure Functions Integration Test Emulators
-        if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest'
-        uses: ./.github/actions/azure-functions-integration-setup
-        id: azure-functions-setup
 
       - name: Run Integration Tests
         shell: pwsh
@@ -416,11 +429,110 @@ jobs:
           AZURE_SEARCH_INDEX_NAME: ${{ secrets.AZURE_SEARCH_INDEX_NAME }}
           # IT_HOSTED_AGENT_IMAGE was exported into $GITHUB_ENV by the previous step.
 
+  # DurableTask and AzureFunctions integration tests (ubuntu/net10.0 only).
+  # Split from main dotnet-test job for path-based filtering and parallelism.
+  dotnet-test-functions:
+    needs: [paths-filter]
+    if: >
+      github.event_name != 'pull_request' &&
+      (needs.paths-filter.outputs.functionsChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true' ||
+       github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    environment: integration
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .
+            .github
+            dotnet
+            python
+            declarative-agents
+
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v5.2.0
+        with:
+          global-json-file: ${{ github.workspace }}/dotnet/global.json
+
+      - name: Build functions integration test projects
+        shell: bash
+        working-directory: dotnet
+        run: |
+          dotnet build ./tests/Microsoft.Agents.AI.DurableTask.IntegrationTests -c Release -f net10.0 --warnaserror
+          dotnet build ./tests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests -c Release -f net10.0 --warnaserror
+
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Durable Task and Azure Functions Integration Test Emulators
+        uses: ./.github/actions/azure-functions-integration-setup
+        id: azure-functions-setup
+
+      - name: Run Functions Integration Tests
+        shell: pwsh
+        working-directory: dotnet
+        run: |
+          # Run DurableTask integration tests
+          dotnet test `
+            --project ./tests/Microsoft.Agents.AI.DurableTask.IntegrationTests `
+            -f net10.0 `
+            -c Release `
+            --no-build -v Normal `
+            --report-xunit-trx `
+            --report-junit `
+            --results-directory ../IntegrationTestResults/ `
+            --ignore-exit-code 8 `
+            --filter-not-trait "Category=IntegrationDisabled" `
+            --parallel-algorithm aggressive `
+            --max-threads 2.0x
+
+          # Run AzureFunctions integration tests
+          dotnet test `
+            --project ./tests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests `
+            -f net10.0 `
+            -c Release `
+            --no-build -v Normal `
+            --report-xunit-trx `
+            --report-junit `
+            --results-directory ../IntegrationTestResults/ `
+            --ignore-exit-code 8 `
+            --filter-not-trait "Category=IntegrationDisabled" `
+            --parallel-algorithm aggressive `
+            --max-threads 2.0x
+        env:
+          # OpenAI Models
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_CHAT_MODEL_NAME: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+          OPENAI_REASONING_MODEL_NAME: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
+          # Azure OpenAI Models
+          AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+          # Azure AI Foundry
+          AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
+          AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+          AZURE_AI_BING_CONNECTION_ID: ${{ vars.AZURE_AI_BING_CONNECTION_ID }}
+
+      - name: Upload functions test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-test-results-functions-net10.0-ubuntu-latest
+          path: IntegrationTestResults/**/*.junit
+          if-no-files-found: ignore
+
   # This final job is required to satisfy the merge queue. It must only run (or succeed) if no tests failed
   dotnet-build-and-test-check:
     if: always()
     runs-on: ubuntu-latest
-    needs: [dotnet-build, dotnet-test, dotnet-foundry-hosted-it]
+    needs: [dotnet-build, dotnet-test, dotnet-foundry-hosted-it, dotnet-test-functions]
     steps:
       - name: Get Date
         shell: bash
@@ -467,7 +579,7 @@ jobs:
       github.event_name != 'pull_request' &&
       (contains(join(needs.*.result, ','), 'success') ||
        contains(join(needs.*.result, ','), 'failure'))
-    needs: [dotnet-test]
+    needs: [dotnet-test, dotnet-test-functions]
     runs-on: ubuntu-latest
     defaults:
       run:
