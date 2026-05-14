@@ -28,6 +28,23 @@ public static class A2AServerServiceCollectionExtensions
     /// <param name="agentBuilder">The agent builder whose name identifies the agent.</param>
     /// <param name="configureOptions">An optional callback to configure <see cref="A2AServerRegistrationOptions"/>.</param>
     /// <returns>The <paramref name="agentBuilder"/> for chaining.</returns>
+    /// <remarks>
+    /// <para>
+    /// <strong>Trust model.</strong> The A2A <c>contextId</c> arrives from the wire
+    /// and is treated as a chain-resume identifier — <em>not</em> as an authorization
+    /// token. The <see cref="AgentSessionStore"/> contract carries no principal/owner
+    /// dimension, so when a persistent store is registered any caller who knows or
+    /// guesses another caller's <c>contextId</c> can resume that other caller's
+    /// persisted thread. Hosts that serve more than one user must compose a principal
+    /// dimension into the lookup key — typically by calling
+    /// <c>UseClaimsBasedSessionIsolation(...)</c> from
+    /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c> (or by registering a custom
+    /// <see cref="SessionIsolationKeyProvider"/>). When no isolation provider is
+    /// registered, behavior is unchanged — the bare <c>contextId</c> is used as the
+    /// conversation identifier, which is appropriate for first-run / single-user /
+    /// prototyping scenarios but unsafe for multi-user hosts.
+    /// </para>
+    /// </remarks>
     public static IHostedAgentBuilder AddA2AServer(this IHostedAgentBuilder agentBuilder, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {
         ArgumentNullException.ThrowIfNull(agentBuilder);
@@ -46,6 +63,13 @@ public static class A2AServerServiceCollectionExtensions
     /// <param name="agentName">The name of the agent to create an A2A server for.</param>
     /// <param name="configureOptions">An optional callback to configure <see cref="A2AServerRegistrationOptions"/>.</param>
     /// <returns>The <paramref name="builder"/> for chaining.</returns>
+    /// <remarks>
+    /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
+    /// for guidance on multi-user hosts (the wire <c>contextId</c> is a chain-resume
+    /// identifier, not an authorization token; multi-user hosts must compose a
+    /// principal dimension via <c>UseClaimsBasedSessionIsolation(...)</c> or a custom
+    /// <see cref="SessionIsolationKeyProvider"/>).
+    /// </remarks>
     public static IHostApplicationBuilder AddA2AServer(this IHostApplicationBuilder builder, string agentName, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -65,6 +89,13 @@ public static class A2AServerServiceCollectionExtensions
     /// <param name="agent">The agent instance to create an A2A server for.</param>
     /// <param name="configureOptions">An optional callback to configure <see cref="A2AServerRegistrationOptions"/>.</param>
     /// <returns>The <paramref name="builder"/> for chaining.</returns>
+    /// <remarks>
+    /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
+    /// for guidance on multi-user hosts (the wire <c>contextId</c> is a chain-resume
+    /// identifier, not an authorization token; multi-user hosts must compose a
+    /// principal dimension via <c>UseClaimsBasedSessionIsolation(...)</c> or a custom
+    /// <see cref="SessionIsolationKeyProvider"/>).
+    /// </remarks>
     public static IHostApplicationBuilder AddA2AServer(this IHostApplicationBuilder builder, AIAgent agent, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -83,6 +114,13 @@ public static class A2AServerServiceCollectionExtensions
     /// <param name="agentName">The name of the agent to create an A2A server for.</param>
     /// <param name="configureOptions">An optional callback to configure <see cref="A2AServerRegistrationOptions"/>.</param>
     /// <returns>The <paramref name="services"/> for chaining.</returns>
+    /// <remarks>
+    /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
+    /// for guidance on multi-user hosts (the wire <c>contextId</c> is a chain-resume
+    /// identifier, not an authorization token; multi-user hosts must compose a
+    /// principal dimension via <c>UseClaimsBasedSessionIsolation(...)</c> or a custom
+    /// <see cref="SessionIsolationKeyProvider"/>).
+    /// </remarks>
     public static IServiceCollection AddA2AServer(this IServiceCollection services, string agentName, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -114,6 +152,13 @@ public static class A2AServerServiceCollectionExtensions
     /// <param name="agent">The agent instance to create an A2A server for.</param>
     /// <param name="configureOptions">An optional callback to configure <see cref="A2AServerRegistrationOptions"/>.</param>
     /// <returns>The <paramref name="services"/> for chaining.</returns>
+    /// <remarks>
+    /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
+    /// for guidance on multi-user hosts (the wire <c>contextId</c> is a chain-resume
+    /// identifier, not an authorization token; multi-user hosts must compose a
+    /// principal dimension via <c>UseClaimsBasedSessionIsolation(...)</c> or a custom
+    /// <see cref="SessionIsolationKeyProvider"/>).
+    /// </remarks>
     public static IServiceCollection AddA2AServer(this IServiceCollection services, AIAgent agent, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {
         ArgumentNullException.ThrowIfNull(services);

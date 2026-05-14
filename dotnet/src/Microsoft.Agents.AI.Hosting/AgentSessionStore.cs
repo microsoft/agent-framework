@@ -11,9 +11,39 @@ namespace Microsoft.Agents.AI.Hosting;
 /// Defines the contract for storing and retrieving agent conversation threads.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Implementations of this interface enable persistent storage of conversation threads,
 /// allowing conversations to be resumed across HTTP requests, application restarts,
 /// or different service instances in hosted scenarios.
+/// </para>
+/// <para>
+/// <strong>Trust model.</strong> The <c>conversationId</c> passed to
+/// <see cref="GetSessionAsync"/> and <see cref="SaveSessionAsync"/> typically originates
+/// from the wire (for example, an AG-UI <c>RunAgentInput.ThreadId</c> or an A2A
+/// <c>contextId</c>). It is a chain-resume identifier, <em>not</em> an authorization
+/// token, and the <c>(agent, conversationId)</c> tuple carries no principal/owner
+/// dimension. Hosts that serve more than one user from the same registered store must
+/// therefore compose a principal dimension into the lookup key, otherwise any caller
+/// who knows or guesses another caller's <c>conversationId</c> can resume
+/// that other caller's persisted thread. The framework provides
+/// <see cref="IsolationKeyScopedAgentSessionStore"/> as a decorator that rewrites
+/// <c>conversationId</c> to include an isolation key resolved from a
+/// <see cref="SessionIsolationKeyProvider"/> (for example, the ASP.NET Core
+/// <c>ClaimsIdentitySessionIsolationKeyProvider</c> wired up via
+/// <c>UseClaimsBasedSessionIsolation(...)</c>). When no provider is registered, the
+/// store behaves as a single-namespace persistence layer — appropriate for
+/// single-user / first-run / prototyping scenarios but unsafe for multi-user hosts.
+/// </para>
+/// <para>
+/// <strong>Implementer guidance.</strong> Implementations should treat
+/// <c>conversationId</c> as opaque: do not parse it, do not impose length
+/// or character-set constraints on it, and do not assume it round-trips to the value
+/// the caller originally supplied (decorators such as
+/// <see cref="IsolationKeyScopedAgentSessionStore"/> may rewrite it before forwarding).
+/// Be aware that any logging, telemetry, or audit sink that surfaces
+/// <c>conversationId</c> will also surface the isolation prefix when a
+/// scoping decorator is in the chain.
+/// </para>
 /// </remarks>
 public abstract class AgentSessionStore
 {
