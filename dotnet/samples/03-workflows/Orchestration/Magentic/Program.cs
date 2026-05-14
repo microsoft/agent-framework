@@ -183,7 +183,7 @@ public static class Program
 
     private static void PauseIfInteractive()
     {
-        if (Console.IsInputRedirected)
+        if (Console.IsInputRedirected || Console.IsOutputRedirected)
         {
             return;
         }
