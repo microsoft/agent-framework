@@ -34,7 +34,12 @@ public sealed class InputWaiterTests : IDisposable
     [Fact]
     public async Task InputWaiter_WaitForInputAsync_BlocksUntilSignaledAsync()
     {
-        Task waitTask = this._waiter.WaitForInputAsync(TimeSpan.FromSeconds(5));
+        // Use the no-timeout overload: the wait must only be released by SignalInput.
+        // Passing a finite timeout here is racy on slow hosts: if the test thread is
+        // paused longer than the timeout (e.g., heavy CI load or GC) before the
+        // assertion runs, SemaphoreSlim's internal timer fires and waitTask completes
+        // on its own, causing the "should not complete before signaled" check to flake.
+        Task waitTask = this._waiter.WaitForInputAsync(CancellationToken.None);
 
         Task completedBeforeSignal = await Task.WhenAny(waitTask, Task.Delay(100));
         completedBeforeSignal.Should().NotBeSameAs(
