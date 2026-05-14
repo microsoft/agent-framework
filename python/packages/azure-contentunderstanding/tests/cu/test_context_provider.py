@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -561,6 +562,27 @@ class TestOutputFiltering:
         provider = _make_provider()
         rendered = provider._render_for_llm(pdf_analysis_result, "custom_name.pdf")
         assert "source: custom_name.pdf" in rendered
+
+    def test_page_markers_passed_through_to_llm_input(self, pdf_analysis_result: AnalysisResult) -> None:
+        """Decision H: MAF must not strip page markers emitted by the SDK helper.
+
+        Today the SDK helper (``azure.ai.contentunderstanding.to_llm_input``)
+        injects ``<!-- page N -->`` markers per page. Per
+        ``cognitive-services/ContentUnderstanding-Docs#249`` (Decision 4) it
+        will switch to ``<!-- InputPageNumber: N -->`` once the service ships
+        the marker natively. Either format must reach the LLM unchanged --
+        this test guards against MAF accidentally regex-stripping them.
+        """
+        provider = _make_provider()
+        rendered = provider._render_for_llm(pdf_analysis_result, "report.pdf")
+
+        legacy = re.findall(r"<!--\s*page\s+\d+\s*-->", rendered)
+        future = re.findall(r"<!--\s*InputPageNumber:\s*\d+\s*-->", rendered)
+        # PDF fixture has 5 pages; expect 5 markers in whichever format is in use.
+        assert len(legacy) == 5 or len(future) == 5, (
+            "Expected SDK-injected page markers to be passed through to LLM input. "
+            f"Found legacy={len(legacy)}, future={len(future)}."
+        )
 
 
 class TestDuplicateDocumentKey:
