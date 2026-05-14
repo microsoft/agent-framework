@@ -53,7 +53,7 @@ using var executeCode = new HyperlightExecuteCodeFunction(
 // Built-in JavaScript (QuickJS) — default
 var jsOptions = HyperlightCodeActProviderOptions.CreateForJavaScript();
 
-// Custom Wasm guest module see hyperlight-sandbox docs for creating a custom wasm module
+// Custom Wasm guest module. See the Hyperlight Sandbox docs for creating a custom Wasm module.
 var wasmOptions = HyperlightCodeActProviderOptions.CreateForWasm("/path/to/guest.aot");
 ```
 
