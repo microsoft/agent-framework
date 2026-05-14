@@ -51,9 +51,7 @@ internal sealed class DevUIAuthFilter : IEndpointFilter
 
         if (!isLoopback && !this._options.AllowRemoteAccess)
         {
-            this._logger.LogWarning(
-                "Rejected non-loopback DevUI request from {RemoteIp}. Set DevUIOptions.AllowRemoteAccess to permit remote callers.",
-                remoteIp);
+            DevUILog.RejectedNonLoopbackRequest(this._logger, remoteIp);
             return Results.Problem(
                 statusCode: StatusCodes.Status403Forbidden,
                 title: "DevUI access denied",

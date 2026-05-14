@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use a ChatClientAgent with the Harness AIContextProviders
+// This sample demonstrates how to use a HarnessAgent with the Harness AIContextProviders
 // (TodoProvider and AgentModeProvider) for interactive research tasks with web search
 // capabilities powered by Azure AI Foundry.
 // The agent plans research tasks, creates a todo list, gets user approval,
@@ -17,7 +17,6 @@ using System.ClientModel.Primitives;
 using Azure.Identity;
 using Harness.Shared.Console;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Responses;
@@ -29,7 +28,7 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYME
 const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
 
-// Create a ChatClientAgent with the Harness providers (TodoProvider and AgentModeProvider)
+// Create a HarnessAgent with the Harness providers (TodoProvider and AgentModeProvider)
 // and research-focused instructions including the mandatory planning workflow.
 var instructions =
     """
@@ -110,13 +109,9 @@ var instructions =
     - Check for relevant previously downloaded data / findings before starting new research.
     """;
 
-// Create a compaction strategy based on the model's context window.
-// gpt-5.4: 1,050,000 token context window, 128,000 max output tokens.
-// Defaults: tool result eviction at 50% of input budget, truncation at 80%.
-var compactionStrategy = new ContextWindowCompactionStrategy(
-    maxContextWindowTokens: MaxContextWindowTokens,
-    maxOutputTokens: MaxOutputTokens);
-
+// Create the agent using AsHarnessAgent, which pre-configures function invocation,
+// per-service-call chat history persistence, and in-loop compaction.
+// Then wrap with UseToolApproval to allow auto-approving tools once confirmed.
 AIAgent agent =
     // Create an OpenAIClient that communicates with the Foundry responses service.
     new OpenAIClient(
@@ -130,49 +125,32 @@ AIAgent agent =
             RetryPolicy = new ClientRetryPolicy(3)          // Enable retries to improve resiliency.
         })
     .GetResponsesClient()
-    .AsIChatClientWithStoredOutputDisabled(deploymentName)  // We want to manage chat history locally (not stored in the responses service), so that we can manage compaction ourselves.
-
-    // Build a ChatClient Pipeline
-    .AsBuilder()
-    .UseFunctionInvocation()                                // We are building our own stack from scratch so we need to include Function Invocation ourselves.
-    .UseMessageInjection()                                  // Allow message injection during the function call loop.
-    .UsePerServiceCallChatHistoryPersistence()              // Save chat history updates to the session after each service call, rather than only at the end of the run.
-    .UseAIContextProviders(new CompactionProvider(compactionStrategy))  // Add Compaction before each service call to responses so that long function invocation loops don't overflow the context.
-
-    // Build our agent on top of the ChatClient Pipeline
-    .BuildAIAgent(
-        new ChatClientAgentOptions
+    .AsIChatClientWithStoredOutputDisabled(deploymentName)   // We want to manage chat history locally (not stored in the responses service), so that we can manage compaction ourselves.
+    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    {
+        Name = "ResearchAgent",
+        Description = "A research assistant that plans and executes research tasks.",
+        AIContextProviders =
+        [
+            new TodoProvider(),         // Add an AIContextProvider to allow the agent to create a TODO list, which is stored in the session.
+            new AgentModeProvider(),    // Add an AIContextProvider that tracks the agent mode and allows switching mode. Current mode is stored in the session.
+            new FileMemoryProvider(     // Add an AIContextProvider that can store memories in files under a session specific working folder.
+                new FileSystemAgentFileStore(Path.Combine(AppContext.BaseDirectory, "agent-files")),
+                (_) => new FileMemoryState() { WorkingFolder = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss") + "_" + Guid.NewGuid().ToString() })
+        ],
+        ChatOptions = new ChatOptions
         {
-            Name = "ResearchAgent",
-            Description = "A research assistant that plans and executes research tasks.",
-            UseProvidedChatClientAsIs = true,                           // Since we built our own stack from scratch we need to tell the agent not to also add defaults like Function Invocation.
-            RequirePerServiceCallChatHistoryPersistence = true,         // Since we are added the per service call persistence ChatClient, we need to tell the agent to not also store chat history at the end of the run.
-            ChatHistoryProvider = new InMemoryChatHistoryProvider(      // Store chat history in memory in the session object. Will persist if the session is persisted.
-                new InMemoryChatHistoryProviderOptions
-                {
-                    ChatReducer = compactionStrategy.AsChatReducer(),   // Run compaction on the InMemory chat history when it gets too large.
-                }),
-            AIContextProviders =
+            Instructions = instructions,
+            Tools =
             [
-                new TodoProvider(),         // Add an AIContextProvider to allow the agent to create a TODO list, which is stored in the session.
-                new AgentModeProvider(),    // Add an AIContextProvider that tracks the agent mode and allows switching mode. Current mode is stored in the session.
-                new FileMemoryProvider(     // Add an AIContextProvider that can store memories in files under a session specific working folder.
-                    new FileSystemAgentFileStore(Path.Combine(AppContext.BaseDirectory, "agent-files")),
-                    (_) => new FileMemoryState() { WorkingFolder = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss") + "_" + Guid.NewGuid().ToString() })
+                ResponseTool.CreateWebSearchTool().AsAITool(),          // Add the foundry hosted web search tool that runs in the service.
+                new WebBrowsingTool(                                    // Add a local web browsing tool that converts html to markdown.
+                    new WebBrowsingToolOptions { AllowPublicNetworks = true }),
             ],
-            ChatOptions = new ChatOptions
-            {
-                Instructions = instructions,
-                Tools =
-                [
-                    ResponseTool.CreateWebSearchTool().AsAITool(),          // Add the foundry hosted web search tool that runs in the service.
-                    new WebBrowsingTool(                                    // Add a local web browsing tool that converts html to markdown.
-                        new WebBrowsingToolOptions { AllowPublicNetworks = true }),
-                ],
-                MaxOutputTokens = MaxOutputTokens,                          // Set a high token limit for long research tasks with many tool calls and long outputs.
-                Reasoning = new() { Effort = ReasoningEffort.Medium },
-            },
-        })
+            MaxOutputTokens = MaxOutputTokens,                          // Set a high token limit for long research tasks with many tool calls and long outputs.
+            Reasoning = new() { Effort = ReasoningEffort.Medium },
+        },
+    })
     .AsBuilder()
     .UseToolApproval()                                                      // Add the ability to auto approve tools once a user has said they don't want to be asked again. Approval rules are tied to the session.
     .Build();

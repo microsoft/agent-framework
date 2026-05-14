@@ -145,6 +145,8 @@ public sealed class FoundryEvals : IAgentEvaluator
 
         bool hasContext = payloads.Any(p => p.Context is not null);
         bool hasTools = payloads.Any(p => p.ToolDefinitions is { Count: > 0 });
+        bool hasGroundTruth = payloads.Any(p => p.GroundTruth is not null);
+        bool allHaveGroundTruth = payloads.Count > 0 && payloads.All(p => p.GroundTruth is not null);
 
         // Filter out tool evaluators if no items have tools; auto-add ToolCallAccuracy if tools present
         var evaluators = FilterToolEvaluators(this._evaluatorNames, hasTools);
@@ -153,13 +155,27 @@ public sealed class FoundryEvals : IAgentEvaluator
             evaluators = [.. evaluators, ToolCallAccuracy];
         }
 
+        // Fail fast if a ground-truth evaluator (e.g. similarity) is requested but not
+        // every item carries an ExpectedOutput. Reference-based evaluators score each
+        // item against its own ground truth, so even one missing value will surface as
+        // a provider-side validation error. Catch it here with a clearer message.
+        var missingGroundTruth = FoundryEvalConverter.FindMissingGroundTruthEvaluators(evaluators, allHaveGroundTruth);
+        if (missingGroundTruth.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "The following evaluator(s) require a ground-truth/expected output on every item but " +
+                $"at least one item is missing an {nameof(EvalItem.ExpectedOutput)}: {string.Join(", ", missingGroundTruth)}. " +
+                "Provide an expected output per item (for example via the 'expectedOutput' parameter on EvaluateAsync), " +
+                "or set 'includePerAgent: false' so the evaluator only runs on the overall item.");
+        }
+
         // 2. Create the evaluation definition
         var createEvalPayload = new WireCreateEvalRequest
         {
             Name = evalName,
             DataSourceConfig = new WireCustomDataSourceConfig
             {
-                ItemSchema = FoundryEvalConverter.BuildItemSchema(hasContext, hasTools),
+                ItemSchema = FoundryEvalConverter.BuildItemSchema(hasContext, hasTools, hasGroundTruth),
             },
             TestingCriteria = FoundryEvalConverter.BuildTestingCriteria(
                 evaluators, this._model, includeDataMapping: true),
@@ -822,15 +838,15 @@ public sealed class FoundryEvals : IAgentEvaluator
         var result = new EvalItemResult(itemId, status, scores);
 
         // Extract error info from sample
-        if (outputItem.TryGetProperty("sample", out var sample))
+        if (outputItem.TryGetProperty("sample", out var sample) && sample.ValueKind == JsonValueKind.Object)
         {
-            if (sample.TryGetProperty("error", out var errObj))
+            if (sample.TryGetProperty("error", out var errObj) && errObj.ValueKind == JsonValueKind.Object)
             {
                 result.ErrorCode = errObj.TryGetProperty("code", out var code) ? code.GetString() : null;
                 result.ErrorMessage = errObj.TryGetProperty("message", out var msg) ? msg.GetString() : null;
             }
 
-            if (sample.TryGetProperty("usage", out var usage) && usage.TryGetProperty("total_tokens", out var tt) && tt.ValueKind == JsonValueKind.Number)
+            if (sample.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object && usage.TryGetProperty("total_tokens", out var tt) && tt.ValueKind == JsonValueKind.Number)
             {
                 var tokenUsage = new Dictionary<string, int>();
                 if (usage.TryGetProperty("prompt_tokens", out var pt) && pt.ValueKind == JsonValueKind.Number)
@@ -886,7 +902,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         }
 
         // Extract response_id from datasource_item
-        if (outputItem.TryGetProperty("datasource_item", out var dsItem))
+        if (outputItem.TryGetProperty("datasource_item", out var dsItem) && dsItem.ValueKind == JsonValueKind.Object)
         {
             if (dsItem.TryGetProperty("resp_id", out var respId))
             {

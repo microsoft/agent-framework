@@ -3,11 +3,15 @@
 """Focused tests for server functionality."""
 
 import asyncio
+import inspect
 import tempfile
 from pathlib import Path
 
 import pytest
+from conftest import MockAgent
+from fastapi.testclient import TestClient
 
+import agent_framework_devui
 from agent_framework_devui import DevServer
 from agent_framework_devui._utils import extract_executor_message_types, select_primary_input_type
 from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
@@ -99,11 +103,11 @@ async def test_server_execution_streaming(test_entities_dir):
 
 def test_configuration():
     """Test basic configuration."""
-    server = DevServer(entities_dir="test", port=9000, host="localhost")
+    server = DevServer(entities_dir="test", port=9000, host="localhost", auth_enabled=False)
     assert server.port == 9000
     assert server.host == "localhost"
     assert server.entities_dir == "test"
-    assert server.cors_origins == ["*"]
+    assert server.cors_origins == []
     assert server.ui_enabled
 
 
@@ -252,15 +256,18 @@ async def test_api_restrictions_in_user_mode():
     """Test that developer APIs are restricted in user mode."""
     from fastapi.testclient import TestClient
 
-    # Create servers with different modes
-    dev_server = DevServer(mode="developer")
-    user_server = DevServer(mode="user")
+    # Create servers with different modes. auth_enabled=False isolates this test
+    # to mode behavior — auth has its own dedicated suite.
+    dev_server = DevServer(mode="developer", auth_enabled=False)
+    user_server = DevServer(mode="user", auth_enabled=False)
 
     dev_app = dev_server.create_app()
     user_app = user_server.create_app()
 
-    dev_client = TestClient(dev_app)
-    user_client = TestClient(user_app)
+    # base_url sets the Host header to a loopback alias so the loopback
+    # host-header allowlist accepts the request.
+    dev_client = TestClient(dev_app, base_url="http://127.0.0.1")
+    user_client = TestClient(user_app, base_url="http://127.0.0.1")
 
     # Test 1: Health endpoint should work in both modes
     assert dev_client.get("/health").status_code == 200
@@ -403,3 +410,171 @@ async def test_checkpoint_api_endpoints(test_entities_dir):
     # Test delete non-existent checkpoint
     deleted = await storage.delete("nonexistent")
     assert deleted is False
+
+
+# =============================================================================
+# Security posture: default CORS, auth, host-header, and streaming headers.
+# =============================================================================
+
+
+def _server_with_mock_agent(**kwargs) -> DevServer:
+    """Build a DevServer with one in-memory mock agent registered."""
+    server = DevServer(**kwargs)
+    server.set_pending_entities([MockAgent(id="mock", name="Mock", response_text="hi")])
+    return server
+
+
+def test_streaming_response_does_not_hardcode_acao_header():
+    """A streaming /v1/responses must not set Access-Control-Allow-Origin itself.
+
+    The endpoint previously hardcoded `Access-Control-Allow-Origin: *` on the
+    StreamingResponse, bypassing CORSMiddleware. With no Origin header on the
+    request, CORSMiddleware never adds ACAO — so any ACAO we see proves the
+    streaming handler is still setting it.
+    """
+    server = _server_with_mock_agent(auth_token="s3cret")
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.post(
+            "/v1/responses",
+            json={"metadata": {"entity_id": "mock"}, "input": "hello", "stream": True},
+            headers={"Authorization": "Bearer s3cret"},
+        )
+
+        assert "access-control-allow-origin" not in {k.lower() for k in response.headers}, (
+            "Streaming response sets ACAO directly, bypassing CORSMiddleware"
+        )
+
+
+def test_cors_default_does_not_allow_arbitrary_origin_even_on_localhost():
+    """Default CORS must not echo Access-Control-Allow-Origin to arbitrary origins.
+
+    Previous default was `["*"]` on localhost binds, which let any webpage the
+    developer visited read DevUI's responses. Default is now `[]` — opt in by
+    passing `cors_origins=[...]` explicitly.
+    """
+    server = _server_with_mock_agent(host="127.0.0.1", auth_token="s3cret")
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        preflight = client.options(
+            "/v1/entities",
+            headers={
+                "Origin": "https://evil.example",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert preflight.headers.get("access-control-allow-origin") not in ("*", "https://evil.example")
+
+        actual = client.get(
+            "/v1/entities",
+            headers={"Origin": "https://evil.example", "Authorization": "Bearer s3cret"},
+        )
+        assert actual.headers.get("access-control-allow-origin") not in ("*", "https://evil.example")
+
+
+def test_devserver_requires_auth_by_default(monkeypatch):
+    """A bare DevServer() must reject unauthenticated /v1/* requests.
+
+    Previously auth was opt-in via DEVUI_AUTH_TOKEN env var; the new default is
+    auth-on so a bare `devui ./agents` invocation does not expose an open API.
+    """
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = DevServer()
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.get("/v1/entities")
+
+    assert response.status_code == 401
+
+
+def test_devserver_auth_can_be_explicitly_disabled(monkeypatch):
+    """Callers can opt out of auth with auth_enabled=False (escape hatch for tests / trusted hosts)."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = _server_with_mock_agent(auth_enabled=False)
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.get("/v1/entities")
+
+    assert response.status_code == 200
+
+
+def test_devserver_accepts_request_with_valid_bearer_token(monkeypatch):
+    """When auth is on, supplying the configured Bearer token grants access."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = DevServer(auth_token="s3cret")
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.get("/v1/entities", headers={"Authorization": "Bearer s3cret"})
+
+    assert response.status_code == 200
+
+
+def test_meta_endpoint_requires_auth(monkeypatch):
+    """/meta exposes capability flags (deployment, instrumentation, version) — gate it behind auth.
+
+    Previously /meta was in the auth-bypass list alongside /health and /, so any
+    unauthenticated caller could read the deployment's capability flags.
+    """
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = DevServer(auth_token="s3cret")
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        unauth = client.get("/meta")
+        assert unauth.status_code == 401
+
+        ok = client.get("/meta", headers={"Authorization": "Bearer s3cret"})
+        assert ok.status_code == 200
+
+
+def test_loopback_bind_rejects_non_allowlisted_host_header(monkeypatch):
+    """A loopback-bound server must reject requests with a non-loopback Host header.
+
+    On a loopback bind, only Host values that name a loopback address are valid;
+    anything else (e.g. an external hostname that happens to resolve to 127.0.0.1)
+    is rejected before any handler runs.
+    """
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = DevServer(host="127.0.0.1", auth_enabled=False)
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        rebound = client.get("/health", headers={"Host": "evil.example"})
+        assert rebound.status_code == 400
+
+        ok = client.get("/health", headers={"Host": "127.0.0.1"})
+        assert ok.status_code == 200
+
+        ok_localhost = client.get("/health", headers={"Host": "localhost:8080"})
+        assert ok_localhost.status_code == 200
+
+
+def test_serve_defaults_to_auth_enabled():
+    """`serve()`'s public signature must default to auth_enabled=True."""
+    sig = inspect.signature(agent_framework_devui.serve)
+    assert sig.parameters["auth_enabled"].default is True, (
+        "serve() must default to auth_enabled=True so `devui ./agents` is secure out of the box"
+    )
+
+
+def test_cli_enables_auth_by_default_and_supports_no_auth_optout():
+    """`devui ./agents` must produce auth-enabled config; `--no-auth` is the explicit escape hatch."""
+    from agent_framework_devui._cli import create_cli_parser
+
+    parser = create_cli_parser()
+
+    default_args = parser.parse_args([])
+    assert default_args.no_auth is False, "Default CLI invocation should leave auth on"
+
+    optout_args = parser.parse_args(["--no-auth"])
+    assert optout_args.no_auth is True

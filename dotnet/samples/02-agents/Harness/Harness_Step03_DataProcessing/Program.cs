@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use a ChatClientAgent with the FileAccessProvider
+// This sample demonstrates how to use a HarnessAgent with the FileAccessProvider
 // to give an agent access to a folder of CSV data files. The agent can read, analyze,
 // and extract information from the data, then write results back as new files.
 //
@@ -17,7 +17,6 @@ using System.ClientModel.Primitives;
 using Azure.Identity;
 using Harness.Shared.Console;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Responses;
@@ -57,11 +56,7 @@ var instructions =
     - Always explain what you learned and what you are going to do next between tool calls, so the user can follow along with your thought process.
     """;
 
-// Create a compaction strategy based on the model's context window.
-var compactionStrategy = new ContextWindowCompactionStrategy(
-    maxContextWindowTokens: MaxContextWindowTokens,
-    maxOutputTokens: MaxOutputTokens);
-
+// Create the chat client from the OpenAI provider.
 AIAgent agent =
     new OpenAIClient(
         new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
@@ -72,36 +67,20 @@ AIAgent agent =
         })
     .GetResponsesClient()
     .AsIChatClientWithStoredOutputDisabled(deploymentName)
-
-    .AsBuilder()
-    .UseFunctionInvocation()
-    .UsePerServiceCallChatHistoryPersistence()
-    .UseAIContextProviders(new CompactionProvider(compactionStrategy))
-
-    .BuildAIAgent(
-        new ChatClientAgentOptions
+    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    {
+        Name = "DataAnalyst",
+        Description = "A data analyst assistant that reads, analyzes, and processes data files.",
+        AIContextProviders =
+        [
+            new FileAccessProvider(fileStore),
+        ],
+        ChatOptions = new ChatOptions
         {
-            Name = "DataAnalyst",
-            Description = "A data analyst assistant that reads, analyzes, and processes data files.",
-            UseProvidedChatClientAsIs = true,
-            RequirePerServiceCallChatHistoryPersistence = true,
-            ChatHistoryProvider = new InMemoryChatHistoryProvider(
-                new InMemoryChatHistoryProviderOptions
-                {
-                    ChatReducer = compactionStrategy.AsChatReducer(),
-                }),
-            AIContextProviders =
-            [
-                new FileAccessProvider(fileStore),
-            ],
-            ChatOptions = new ChatOptions
-            {
-                Instructions = instructions,
-                MaxOutputTokens = MaxOutputTokens,
-            },
-        })
-    .AsBuilder()
-    .Build();
+            Instructions = instructions,
+            MaxOutputTokens = MaxOutputTokens,
+        },
+    });
 
 // Run the interactive console session.
 await HarnessConsole.RunAgentAsync(

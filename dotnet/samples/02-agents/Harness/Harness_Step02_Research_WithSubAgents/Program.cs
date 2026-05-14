@@ -22,6 +22,9 @@ using OpenAI.Responses;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
 
+const int MaxContextWindowTokens = 1_050_000;
+const int MaxOutputTokens = 128_000;
+
 // --- Sub-agent: Web Search Agent ---
 // This agent can search the web and is used by the parent agent to look up stock prices.
 AIAgent webSearchAgent =
@@ -34,20 +37,19 @@ AIAgent webSearchAgent =
         })
     .GetResponsesClient()
     .AsIChatClientWithStoredOutputDisabled(deploymentName)
-    .AsAIAgent(
-        new ChatClientAgentOptions
+    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    {
+        Name = "WebSearchAgent",
+        Description = "An agent that can search the web to find information.",
+        ChatOptions = new ChatOptions
         {
-            Name = "WebSearchAgent",
-            Description = "An agent that can search the web to find information.",
-            ChatOptions = new ChatOptions
-            {
-                Instructions = "You are a web search assistant. When asked to find information, use the web search tool to look it up and return a concise, factual answer.",
-                Tools =
-                [
-                    ResponseTool.CreateWebSearchTool().AsAITool(),
-                ],
-            },
-        });
+            Instructions = "You are a web search assistant. When asked to find information, use the web search tool to look it up and return a concise, factual answer.",
+            Tools =
+            [
+                ResponseTool.CreateWebSearchTool().AsAITool(),
+            ],
+        },
+    });
 
 // --- Parent agent: Stock Price Researcher ---
 // This agent orchestrates the sub-agent to look up stock prices in parallel.
@@ -83,21 +85,20 @@ AIAgent parentAgent =
         })
     .GetResponsesClient()
     .AsIChatClientWithStoredOutputDisabled(deploymentName)
-    .AsAIAgent(
-        new ChatClientAgentOptions
+    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    {
+        Name = "StockPriceResearcher",
+        Description = "An agent that researches stock prices using sub-agents.",
+        AIContextProviders =
+        [
+            new SubAgentsProvider([webSearchAgent]),
+        ],
+        ChatOptions = new ChatOptions
         {
-            Name = "StockPriceResearcher",
-            Description = "An agent that researches stock prices using sub-agents.",
-            AIContextProviders =
-            [
-                new SubAgentsProvider([webSearchAgent]),
-            ],
-            ChatOptions = new ChatOptions
-            {
-                Instructions = parentInstructions,
-                MaxOutputTokens = 16_000,
-            },
-        });
+            Instructions = parentInstructions,
+            MaxOutputTokens = 16_000,
+        },
+    });
 
 // Run the interactive console session.
 await HarnessConsole.RunAgentAsync(
