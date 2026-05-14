@@ -32,7 +32,7 @@ DelegateToTeamAsync
        ├─> CHECK: IsRequestSatisfied? → PrepareFinalAnswerAsync
        ├─> CHECK: IsInLoop OR !IsProgressBeingMade? → Increment StallCount
        │    └─> Else: Decrement StallCount (min 0)
-       ├─> CHECK: IsStalled (StallCount >= MaxStallCount)? → ResetAndReplanAsync
+       ├─> CHECK: IsStalled (StallCount > MaxStallCount)? → ResetAndReplanAsync
        ├─> Validate NextSpeaker → Fallback to first participant if empty
        ├─> CHECK: Invalid NextSpeaker? → Warning + PrepareFinalAnswerAsync
        └─> Send instruction + TurnToken to next agent
@@ -70,7 +70,7 @@ ResetAndReplanAsync
 |-----------|-------------|-------------------|
 | `MaxRoundLimit_Terminates_Workflow` | RoundCount exceeds MaxRoundCount | Workflow terminates with "maximum round count limit" message |
 | `MaxResetLimit_Terminates_Workflow` | ResetCount exceeds MaxResetCount | Workflow terminates with "maximum reset count limit" message |
-| `MaxStallCount_Triggers_Reset` | StallCount reaches MaxStallCount | ResetAndReplanAsync called, ResetChatSignal sent |
+| `MaxStallCount_Triggers_Reset` | StallCount exceeds MaxStallCount | ResetAndReplanAsync called, ResetChatSignal sent |
 
 ### 4. Stall Detection Tests
 
@@ -79,7 +79,7 @@ ResetAndReplanAsync
 | `Stall_IsInLoop_Increments_StallCount` | ProgressLedger reports IsInLoop=true | StallCount incremented |
 | `Stall_NoProgress_Increments_StallCount` | ProgressLedger reports IsProgressBeingMade=false | StallCount incremented |
 | `Progress_Made_Decrements_StallCount` | ProgressLedger reports progress being made | StallCount decremented (min 0) |
-| `Consecutive_Stalls_Trigger_Reset` | Multiple stalls in a row reach MaxStallCount | Reset and replan triggered |
+| `Consecutive_Stalls_Trigger_Reset` | Multiple stalls in a row exceed MaxStallCount | Reset and replan triggered |
 
 ### 5. Progress Ledger Validation Tests
 
@@ -107,11 +107,16 @@ ResetAndReplanAsync
 
 ### 8. Checkpoint/Resume Tests
 
+> **Note:** Direct checkpoint-state inspection tests (`Checkpoint_Saves_TaskContext`,
+> `Checkpoint_Preserves_ProgressLedger`) are **skipped** — the serialized checkpoint format is an
+> internal implementation detail. Checkpoint resume is instead verified behaviorally through
+> plan-review workflows that pause and resume across checkpoint boundaries.
+
 | Test Name | Description | Expected Behavior |
 |-----------|-------------|-------------------|
-| `Checkpoint_Saves_TaskContext` | Workflow checkpointed mid-execution | MagenticTaskContext state serialized |
-| `Checkpoint_Resume_Continues_Correctly` | Resume from checkpoint | TaskContext restored, execution continues from saved state |
-| `Checkpoint_Preserves_ProgressLedger` | Resume preserves ledger state | ProgressLedger state correctly restored |
+| `Checkpoint_Saves_TaskContext` | ~~Workflow checkpointed mid-execution~~ | *Skipped — internal format* |
+| `Checkpoint_Resume_Continues_Correctly` | Resume from checkpoint | TaskContext restored, execution continues from saved state (behaviorally covered by plan-review tests) |
+| `Checkpoint_Preserves_ProgressLedger` | ~~Resume preserves ledger state~~ | *Skipped — internal format* |
 
 ### 9. Edge Cases
 

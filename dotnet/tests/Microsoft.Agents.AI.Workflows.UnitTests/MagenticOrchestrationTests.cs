@@ -264,7 +264,8 @@ public class MagenticOrchestrationTests
     {
         // Arrange: First progress ledger returns empty next_speaker, which should fall back to first participant.
         // Round 1: empty speaker → fallback to Worker (first participant) → Worker echoes
-        // Round 2 (after Worker responds, TakeTurnAsync re-enters): new plan + satisfied ledger → final answer
+        // Round 2 (after Worker responds): RunCoordinationRoundAsync → satisfied ledger → final answer
+        // Note: No replan on agent return — only progress ledger is created on subsequent turns.
         List<ChatMessage> factsResponse1 = CreatePlanResponse("Facts about the task");
         List<ChatMessage> planResponse1 = CreatePlanResponse("Step 1: Execute");
         List<ChatMessage> emptyNextSpeakerLedger = CreateProgressLedgerResponse(
@@ -274,9 +275,7 @@ public class MagenticOrchestrationTests
             nextSpeaker: "",  // Empty - should fall back to first participant
             instructionOrQuestion: "Please help with this task");
 
-        // Round 2 responses (after Worker echoes back, orchestrator re-enters TakeTurnAsync → UpdatePlanAndDelegateAsync)
-        List<ChatMessage> factsResponse2 = CreatePlanResponse("Updated facts");
-        List<ChatMessage> planResponse2 = CreatePlanResponse("Updated plan");
+        // Round 2: satisfied ledger + final answer (no replan on normal agent return)
         List<ChatMessage> satisfiedLedger = CreateProgressLedgerResponse(
             isRequestSatisfied: true,
             isInLoop: false,
@@ -287,7 +286,7 @@ public class MagenticOrchestrationTests
 
         TestReplayAgent manager = new(
             [factsResponse1, planResponse1, emptyNextSpeakerLedger,
-             factsResponse2, planResponse2, satisfiedLedger, finalAnswerResponse],
+             satisfiedLedger, finalAnswerResponse],
             name: "Manager");
         TestEchoAgent worker = new(name: "Worker");
 
@@ -677,8 +676,8 @@ public class MagenticOrchestrationTests
     [Fact]
     public async Task MaxResetLimit_Terminates_Workflow()
     {
-        // Arrange: MaxStallCount=1, MaxResets=1.
-        // Flow: facts1, plan1 → ledger1(stall: isInLoop=true) → StallCount=1 → IsStalled → ResetAndReplanAsync
+        // Arrange: MaxStallCount=0, MaxResets=1.
+        // Flow: facts1, plan1 → ledger1(stall: isInLoop=true) → StallCount=1 > 0 → IsStalled → ResetAndReplanAsync
         //       → ResetCount becomes 1 → facts2, plan2 → DelegateToTeamAsync
         //       → RunCoordinationRoundAsync: CheckLimits() detects ResetCount(1) >= MaxResetCount(1) → terminates
         List<ChatMessage> factsResponse1 = CreatePlanResponse("Initial facts");

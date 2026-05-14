@@ -79,8 +79,7 @@ Assessment:
 - Correctly matches Python's `stall_count > max_stall_count` behavior.
 - `MaxStallCount` should now be read as "number of stalls tolerated before reset".
 - Test setups that need reset on the first stalled ledger use `WithMaxStalls(0)`.
-- The original test plan text still describes `StallCount >= MaxStallCount`; that part of the plan
-  is stale relative to the chosen cross-language behavior.
+- The original test plan text has been updated to use `StallCount > MaxStallCount`.
 
 ### Stall-triggered plan reviews preserve the stalled flag
 
@@ -212,11 +211,11 @@ Summary: **2 complete, 1 mostly complete / 3 planned**.
 
 | Planned Test | Current Status | Notes |
 |---|---|---|
-| `Checkpoint_Saves_TaskContext` | Not implemented | No direct assertion on serialized `MagenticTaskContext`. |
+| `Checkpoint_Saves_TaskContext` | Intentionally skipped | Serialized checkpoint format is an internal detail; tested behaviorally instead. |
 | `Checkpoint_Resume_Continues_Correctly` | Behaviorally covered | Resume is exercised by approval, revision, multiple revision, and stall-with-signoff scenarios. |
-| `Checkpoint_Preserves_ProgressLedger` | Not implemented | No direct assertion that progress-ledger state survives checkpoint/restore. |
+| `Checkpoint_Preserves_ProgressLedger` | Intentionally skipped | Serialized checkpoint format is an internal detail; tested behaviorally instead. |
 
-Summary: **1 behaviorally covered, 2 not implemented / 3 planned**.
+Summary: **1 behaviorally covered, 2 intentionally skipped / 3 planned**.
 
 ### 9. Edge Cases
 
@@ -242,23 +241,20 @@ Summary: **1 behaviorally covered, 1 partial, 2 not implemented / 4 planned**.
 
 ## Review Findings and Recommended Follow-Up
 
-1. **Fix stale setup in `NextSpeaker_Empty_Falls_Back_To_First`.** The test still supplies
-   `factsResponse2` and `planResponse2` after the first progress ledger. Since normal agent return
-   no longer replans, those responses are consumed as invalid progress-ledger retry attempts before
-   the valid satisfied ledger. The test should be simplified to match the updated control flow:
-   initial facts, initial plan, empty-speaker ledger, satisfied ledger, final answer.
+1. **~~Fix stale setup in `NextSpeaker_Empty_Falls_Back_To_First`.~~** ✅ Addressed. The stale
+   `factsResponse2` and `planResponse2` have been removed. The test now matches the updated control
+   flow: initial facts, initial plan, empty-speaker ledger, satisfied ledger, final answer.
 
-2. **Clean up stale comments that describe the old stall threshold.** A few comments still describe
-   `MaxStallCount=1` or "reaches threshold" in old `>=` terms. The code and test setup now use
-   `>` semantics correctly, but comments should consistently say `StallCount > MaxStallCount`.
+2. **~~Clean up stale comments that describe the old stall threshold.~~** ✅ Addressed. Comments
+   now consistently use `StallCount > MaxStallCount` and `>` semantics.
 
-3. **Update the original test plan if it remains a living document.** The plan currently states
-   `IsStalled (StallCount >= MaxStallCount)`. The implemented and cross-language-aligned behavior is
-   now `StallCount > MaxStallCount`.
+3. **~~Update the original test plan if it remains a living document.~~** ✅ Addressed. The plan
+   now uses `StallCount > MaxStallCount` throughout.
 
-4. **Add direct checkpoint-state assertions if stable infrastructure exists.** Current tests prove
-   resume behavior works but do not inspect serialized `MagenticTaskContext` or progress-ledger
-   state.
+4. **Skip direct checkpoint-state assertions.** The serialized checkpoint format is an internal
+   implementation detail. Current tests prove resume behavior works through plan-review workflows
+   that pause and resume across checkpoint boundaries. Direct payload inspection is intentionally
+   omitted.
 
 5. **Strengthen instruction-delivery verification.** `Instruction_Message_Sent_When_Present`
    currently proves the flow completes with an instruction present. A stronger test would directly
@@ -271,7 +267,8 @@ Summary: **1 behaviorally covered, 1 partial, 2 not implemented / 4 planned**.
 
 The current Magentic E2E suite is a strong implementation of the original plan. It covers
 **21 fully built workflow tests** and includes important production fixes that align .NET with the
-Python Magentic orchestration model. The most important remaining work is cleanup and precision:
-remove stale response setup from one fallback test, align comments and the original plan text with
-the `>` stall threshold, and add direct state/edge-case tests if those behaviors need stronger
-contract coverage.
+Python Magentic orchestration model. The addressed follow-up items include: stale test setup
+cleanup in the empty-speaker fallback test, consistent `StallCount > MaxStallCount` comments and
+plan text, and an explicit decision to skip direct checkpoint-state inspection in favor of
+behavioral coverage. The remaining optional work is edge-case tests (zero participants,
+post-termination rejection) and stronger instruction-delivery verification.
