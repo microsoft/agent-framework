@@ -1196,6 +1196,53 @@ async def test_max_iterations_empty_final_response_is_not_returned(chat_client_b
     assert "configured limit" in response.messages[-1].text
 
 
+async def test_max_function_calls_ignores_tool_history_for_empty_final_response(
+    chat_client_base: SupportsChatGetResponse,
+):
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    original_get_response = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _empty_tool_choice_none_response(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        if options.get("tool_choice") == "none":
+            return ChatResponse(messages=Message(role="assistant", contents=[]))
+        return await original_get_response(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _empty_tool_choice_none_response  # type: ignore[attr-defined,method-assign]
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1": "v1"}')
+                ],
+            )
+        ),
+    ]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+    )
+
+    assert exec_counter == 1
+    assert any(c.type == "function_call" for msg in response.messages for c in msg.contents)
+    assert any(c.type == "function_result" for msg in response.messages for c in msg.contents)
+    assert "configured limit" in response.messages[-1].text
+
+
 async def test_streaming_max_iterations_empty_final_response_is_not_returned(
     chat_client_base: SupportsChatGetResponse,
 ):

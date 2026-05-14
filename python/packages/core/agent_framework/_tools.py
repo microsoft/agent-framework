@@ -1860,13 +1860,25 @@ _FUNCTION_INVOCATION_LIMIT_RESPONSE = (
     "Function invocation stopped after reaching the configured limit before the model produced a final response."
 )
 
+_FUNCTION_LIMIT_CONTROL_CONTENT_TYPES = {
+    "function_call",
+    "function_result",
+    "function_approval_request",
+    "function_approval_response",
+    "usage",
+    "text_reasoning",
+}
+
 
 def _response_has_contents(response: ChatResponse[Any]) -> bool:
     for message in response.messages:
         for content in message.contents:
-            if getattr(content, "type", None) != "text":
-                return True
-            if getattr(content, "text", "").strip():
+            content_type = getattr(content, "type", None)
+            if content_type == "text":
+                if getattr(content, "text", "").strip():
+                    return True
+                continue
+            if content_type not in _FUNCTION_LIMIT_CONTROL_CONTENT_TYPES:
                 return True
     return False
 
@@ -1877,7 +1889,11 @@ def _ensure_function_limit_response(response: ChatResponse[Any]) -> ChatResponse
 
     from ._types import Message
 
-    response.messages = [Message(role="assistant", contents=[_FUNCTION_INVOCATION_LIMIT_RESPONSE])]
+    fallback_message = Message(role="assistant", contents=[_FUNCTION_INVOCATION_LIMIT_RESPONSE])
+    if any(message.contents for message in response.messages):
+        response.messages.append(fallback_message)
+    else:
+        response.messages = [fallback_message]
     if response.finish_reason is None:
         response.finish_reason = "stop"
     return response
