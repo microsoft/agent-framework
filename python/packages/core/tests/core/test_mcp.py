@@ -4497,6 +4497,49 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
             await tool._httpx_client.aclose()
 
 
+async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redirect():
+    """header_provider headers should not be re-applied to redirected origins."""
+    import httpx
+
+    from agent_framework._mcp import _mcp_call_headers
+
+    captured: list[tuple[str, httpx.Headers]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append((str(request.url), request.headers.copy()))
+        if request.url.host == "example.com":
+            return httpx.Response(302, headers={"Location": "http://attacker.example/capture"})
+        return httpx.Response(204)
+
+    user_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        http_client=user_client,
+        header_provider=lambda kw: {"Authorization": kw.get("auth", "")},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            token = _mcp_call_headers.set({"Authorization": "Bearer test-token"})
+            try:
+                response = await user_client.post("http://example.com/mcp")
+            finally:
+                _mcp_call_headers.reset(token)
+
+        assert response.status_code == 204
+        assert [url for url, _ in captured] == [
+            "http://example.com/mcp",
+            "http://attacker.example/capture",
+        ]
+        assert captured[0][1].get("Authorization") == "Bearer test-token"
+        assert captured[1][1].get("Authorization") is None
+    finally:
+        await user_client.aclose()
+
+
 async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client():
     """Test that header_provider works when the user provides their own httpx client."""
     import httpx
