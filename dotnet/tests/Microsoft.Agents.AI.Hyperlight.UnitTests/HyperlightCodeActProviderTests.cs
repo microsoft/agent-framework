@@ -170,4 +170,67 @@ public sealed class HyperlightCodeActProviderTests
         // Assert
         Assert.Throws<System.ObjectDisposedException>(() => provider.AddTools(tool));
     }
+
+    [Fact]
+    public void CreateForPython_SetsWasmBackendAndBundledGuest()
+    {
+        // Act
+        var options = HyperlightCodeActProviderOptions.CreateForPython();
+
+        // Assert
+        Assert.Equal(HyperlightSandbox.Api.SandboxBackend.Wasm, options.Backend);
+        Assert.EndsWith("python-sandbox.aot", options.ModulePath);
+    }
+
+    [Fact]
+    public void CreateForWasm_SetsWasmBackendAndCustomPath()
+    {
+        // Act
+        var options = HyperlightCodeActProviderOptions.CreateForWasm("/path/to/guest.aot");
+
+        // Assert
+        Assert.Equal(HyperlightSandbox.Api.SandboxBackend.Wasm, options.Backend);
+        Assert.Equal("/path/to/guest.aot", options.ModulePath);
+    }
+
+    [Fact]
+    public void CreateForJavaScript_SetsJavaScriptBackend()
+    {
+        // Act
+        var options = HyperlightCodeActProviderOptions.CreateForJavaScript();
+
+        // Assert
+        Assert.Equal(HyperlightSandbox.Api.SandboxBackend.JavaScript, options.Backend);
+        Assert.Null(options.ModulePath);
+    }
+
+    [Fact]
+    public void DefaultCtor_EquivalentToCreateForJavaScript()
+    {
+        // Act
+        var options = new HyperlightCodeActProviderOptions();
+
+        // Assert
+        Assert.Equal(HyperlightSandbox.Api.SandboxBackend.JavaScript, options.Backend);
+        Assert.Null(options.ModulePath);
+    }
+
+    [Fact]
+    public void Ctor_WithPythonOptions_SeedsFromOptions()
+    {
+        // Arrange
+        var tool = AIFunctionFactory.Create(() => "x", name: "x");
+        var options = HyperlightCodeActProviderOptions.CreateForPython();
+        options.Tools = new[] { tool };
+        options.FileMounts = new[] { new FileMount("/h", "/m") };
+        options.AllowedDomains = new[] { new AllowedDomain("https://a") };
+
+        // Act
+        using var provider = new HyperlightCodeActProvider(options);
+
+        // Assert
+        Assert.Single(provider.GetTools());
+        Assert.Single(provider.GetFileMounts());
+        Assert.Single(provider.GetAllowedDomains());
+    }
 }

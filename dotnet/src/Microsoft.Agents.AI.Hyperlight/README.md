@@ -25,15 +25,46 @@ Both surfaces support:
 * Snapshot/restore per run so the guest starts from a known clean state
   every invocation.
 
+## Quick Start — Bundled Python Guest
+
+The simplest way to get started is with the bundled Python guest module.
+This package includes
+[`Hyperlight.HyperlightSandbox.Guest.Python`](https://www.nuget.org/packages/Hyperlight.HyperlightSandbox.Guest.Python),
+so no separate module path is needed:
+
+```csharp
+using Microsoft.Agents.AI.Hyperlight;
+
+// Use the bundled Python guest — no module path required
+var options = HyperlightCodeActProviderOptions.CreateForPython();
+using var provider = new HyperlightCodeActProvider(options);
+```
+
+Or with the standalone function:
+
+```csharp
+using var executeCode = new HyperlightExecuteCodeFunction(
+    HyperlightCodeActProviderOptions.CreateForPython());
+```
+
+## Other Backends
+
+```csharp
+// Built-in JavaScript (QuickJS) — default
+var jsOptions = HyperlightCodeActProviderOptions.CreateForJavaScript();
+
+// Custom Wasm guest module see hyperlight-sandbox docs for creating a custom wasm module
+var wasmOptions = HyperlightCodeActProviderOptions.CreateForWasm("/path/to/guest.aot");
+```
+
 ## Requirements
 
-* The `Hyperlight.HyperlightSandbox.Api` NuGet package, published from the
-  `src/sdk/dotnet` SDK in [hyperlight-dev/hyperlight-sandbox](https://github.com/hyperlight-dev/hyperlight-sandbox)
-  (the .NET API was added in [PR #46](https://github.com/hyperlight-dev/hyperlight-sandbox/pull/46),
-  now merged). Until the package is published to nuget.org the project
-  restore will fail; this project is intentionally `IsPackable=false` in
-  the meantime.
-* A Hyperlight Python guest module when using `SandboxBackend.Wasm`.
+* The [`Hyperlight.HyperlightSandbox.Api`](https://www.nuget.org/packages/Hyperlight.HyperlightSandbox.Api)
+  and [`Hyperlight.HyperlightSandbox.Guest.Python`](https://www.nuget.org/packages/Hyperlight.HyperlightSandbox.Guest.Python)
+  NuGet packages (included as dependencies).
+* A hypervisor: [KVM](https://help.ubuntu.com/community/KVM/Installation) (Linux),
+  [MSHV](https://github.com/rust-vmm/mshv), or
+  [Hyper-V](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/get-started/Install-Hyper-V) (Windows).
 
 ## Status
 
