@@ -150,6 +150,51 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithTextStartAdditionalProperties_PreservesAndMergesMetadataAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new TextMessageStartEvent
+            {
+                MessageId = "msg1",
+                Role = AGUIRoles.Assistant,
+                AdditionalProperties = new Dictionary<string, object?>
+                {
+                    ["startOnly"] = "from-start",
+                    ["textContentType"] = "PlainText"
+                }
+            },
+            new TextMessageContentEvent
+            {
+                MessageId = "msg1",
+                Delta = "Hello",
+                AdditionalProperties = new Dictionary<string, object?>
+                {
+                    ["contentOnly"] = "from-content",
+                    ["textContentType"] = "Markdown"
+                }
+            },
+            new TextMessageEndEvent { MessageId = "msg1" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        ChatResponseUpdate textUpdate = Assert.Single(updates);
+        TextContent content = Assert.IsType<TextContent>(textUpdate.Contents[0]);
+        Assert.NotNull(content.AdditionalProperties);
+        Assert.Equal("from-start", content.AdditionalProperties["startOnly"]);
+        Assert.Equal("from-content", content.AdditionalProperties["contentOnly"]);
+        Assert.Equal("Markdown", content.AdditionalProperties["textContentType"]);
+    }
+
+    [Fact]
     public async Task AsChatResponseUpdatesAsync_WithTextMessageStartWhileMessageInProgress_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
@@ -846,6 +891,26 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         Assert.Equal("move", delta[3].GetProperty("op").GetString());
         Assert.Equal("copy", delta[4].GetProperty("op").GetString());
         Assert.Equal("test", delta[5].GetProperty("op").GetString());
+    }
+
+    [Fact]
+    public void BaseEventJsonConverter_WithStateDeltaEvent_DeserializesStateDeltaEvent()
+    {
+        // Arrange
+        JsonElement originalDelta = JsonSerializer.SerializeToElement(new object[]
+        {
+            new { op = "replace", path = "/counter", value = 43 }
+        });
+        BaseEvent originalEvent = new StateDeltaEvent { Delta = originalDelta };
+        string json = JsonSerializer.Serialize(originalEvent, AGUIJsonSerializerContext.Default.Options);
+
+        // Act
+        BaseEvent? deserializedEvent = JsonSerializer.Deserialize<BaseEvent>(json, AGUIJsonSerializerContext.Default.Options);
+
+        // Assert
+        StateDeltaEvent stateDeltaEvent = Assert.IsType<StateDeltaEvent>(deserializedEvent);
+        Assert.NotNull(stateDeltaEvent.Delta);
+        Assert.Equal("replace", stateDeltaEvent.Delta.Value[0].GetProperty("op").GetString());
     }
 
     #endregion State Delta Tests
