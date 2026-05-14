@@ -39,7 +39,7 @@ public sealed class HyperlightCodeActProviderOptions
     /// Creates options targeting the <see cref="SandboxBackend.Wasm"/> backend
     /// with the bundled Python guest module from the
     /// <c>Hyperlight.HyperlightSandbox.Guest.Python</c> NuGet package.
-    /// No explicit module path is required.
+    /// No explicit module path needs to be provided by the caller.
     /// </summary>
     public static HyperlightCodeActProviderOptions CreateForPython()
         => new(SandboxBackend.Wasm, PythonGuestModule.GetModulePath());

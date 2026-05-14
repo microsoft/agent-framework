@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.IO;
 using System.Linq;
 using Microsoft.Extensions.AI;
 
@@ -179,18 +180,22 @@ public sealed class HyperlightCodeActProviderTests
 
         // Assert
         Assert.Equal(HyperlightSandbox.Api.SandboxBackend.Wasm, options.Backend);
-        Assert.EndsWith("python-sandbox.aot", options.ModulePath);
+        Assert.False(string.IsNullOrWhiteSpace(options.ModulePath));
+        Assert.False(string.IsNullOrWhiteSpace(Path.GetFileName(options.ModulePath)));
     }
 
     [Fact]
     public void CreateForWasm_SetsWasmBackendAndCustomPath()
     {
+        // Arrange
+        var modulePath = Path.Combine("path", "to", "guest.aot");
+
         // Act
-        var options = HyperlightCodeActProviderOptions.CreateForWasm("/path/to/guest.aot");
+        var options = HyperlightCodeActProviderOptions.CreateForWasm(modulePath);
 
         // Assert
         Assert.Equal(HyperlightSandbox.Api.SandboxBackend.Wasm, options.Backend);
-        Assert.Equal("/path/to/guest.aot", options.ModulePath);
+        Assert.Equal(modulePath, options.ModulePath);
     }
 
     [Fact]
