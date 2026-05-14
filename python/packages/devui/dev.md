@@ -60,6 +60,9 @@ devui
 
 This launches the UI with all example agents/workflows at http://localhost:8080
 
+DevUI is auth-enabled by default. Copy the generated token from startup logs and pass it as
+`Authorization: Bearer <token>` for direct API calls. Use `--no-auth` only for loopback-only local testing.
+
 ## 5. What You'll See
 
 - A web interface for testing agents interactively
@@ -74,6 +77,7 @@ You can also test via API calls:
 
 ```bash
 curl -X POST http://localhost:8080/v1/responses \
+  -H "Authorization: Bearer <devui-token>" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "weather_agent",
@@ -86,6 +90,7 @@ curl -X POST http://localhost:8080/v1/responses \
 ```bash
 # Create a conversation
 curl -X POST http://localhost:8080/v1/conversations \
+  -H "Authorization: Bearer <devui-token>" \
   -H "Content-Type: application/json" \
   -d '{"metadata": {"agent_id": "weather_agent"}}'
 
@@ -93,6 +98,7 @@ curl -X POST http://localhost:8080/v1/conversations \
 
 # Use conversation ID in requests
 curl -X POST http://localhost:8080/v1/responses \
+  -H "Authorization: Bearer <devui-token>" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "weather_agent",
@@ -102,6 +108,7 @@ curl -X POST http://localhost:8080/v1/responses \
 
 # Continue the conversation
 curl -X POST http://localhost:8080/v1/responses \
+  -H "Authorization: Bearer <devui-token>" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "weather_agent",
