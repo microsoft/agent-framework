@@ -21,6 +21,7 @@ from chatkit.types import (
     HiddenContextItem,
     ImageAttachment,
     SDKHiddenContextItem,
+    StructuredInputItem,
     TaskItem,
     ThreadItem,
     UserMessageItem,
@@ -526,6 +527,9 @@ class ThreadItemConverter:
                 return out if isinstance(out, list) else [out]
             case GeneratedImageItem():
                 # TODO(evmattso): Implement generated image handling in a future PR
+                return []
+            case StructuredInputItem():
+                # TODO: Implement structured input handling in a future PR
                 return []
             case _:
                 assert_never(item)
