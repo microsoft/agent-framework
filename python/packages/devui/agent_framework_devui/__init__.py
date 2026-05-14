@@ -96,7 +96,7 @@ def serve(
     ui_enabled: bool = True,
     instrumentation_enabled: bool = False,
     mode: str = "developer",
-    auth_enabled: bool = False,
+    auth_enabled: bool = True,
     auth_token: str | None = None,
 ) -> None:
     """Launch Agent Framework DevUI with simple API.
@@ -126,51 +126,28 @@ def serve(
     if not isinstance(port, int) or not (1 <= port <= 65535):
         raise ValueError(f"Invalid port: {port}. Must be integer between 1 and 65535")
 
-    # Security check: Warn if network-exposed without authentication
+    # Security check: warn loudly when network-exposed without authentication.
     if host not in ("127.0.0.1", "localhost") and not auth_enabled:
-        logger.warning("⚠️  WARNING: Exposing DevUI to network without authentication!")
-        logger.warning("⚠️  This is INSECURE - anyone on your network can access your agents")
-        logger.warning("💡 For network exposure, add --auth flag: devui --host 0.0.0.0 --auth")
+        logger.warning("WARNING: Exposing DevUI to the network with --no-auth.")
+        logger.warning("Anyone on your network can read agent metadata and trigger requests.")
+        logger.warning("Drop --no-auth and DevUI will require Bearer tokens.")
 
-    # Handle authentication configuration
-    if auth_enabled:
+    # Refuse to auto-generate a token for network-exposed binds. Auto-generated tokens
+    # are fine for localhost convenience; for anything else, require an explicit token.
+    if auth_enabled and not auth_token:
         import os
-        import secrets
 
-        # Check if token is in environment variable first
-        if not auth_token:
-            auth_token = os.environ.get("DEVUI_AUTH_TOKEN")
-
-        # Auto-generate token if STILL not provided
-        if not auth_token:
-            # Check if we're in a production-like environment
+        env_token = os.environ.get("DEVUI_AUTH_TOKEN")
+        if not env_token:
             is_production = (
-                host not in ("127.0.0.1", "localhost")  # Exposed to network
-                or os.environ.get("CI") == "true"  # Running in CI
-                or os.environ.get("KUBERNETES_SERVICE_HOST")  # Running in k8s
+                host not in ("127.0.0.1", "localhost")
+                or os.environ.get("CI") == "true"
+                or os.environ.get("KUBERNETES_SERVICE_HOST")
             )
-
             if is_production:
-                # REFUSE to start without explicit token
-                logger.error("❌ Authentication enabled but no token provided")
-                logger.error("❌ Auto-generated tokens are NOT secure for network-exposed deployments")
-                logger.error("💡 Set token: export DEVUI_AUTH_TOKEN=<your-secure-token>")
-                logger.error("💡 Or pass: serve(entities=[...], auth_token='your-token')")
+                logger.error("Authentication required but no token provided.")
+                logger.error("Set DEVUI_AUTH_TOKEN env var or pass auth_token='...' to serve().")
                 raise ValueError("DEVUI_AUTH_TOKEN required when host is not localhost")
-
-            # Development mode: auto-generate and show
-            auth_token = secrets.token_urlsafe(32)
-            logger.info("🔒 Authentication enabled with auto-generated token")
-            logger.info("\n" + "=" * 70)
-            logger.info("🔑 DEV TOKEN (localhost only, shown once):")
-            logger.info(f"   {auth_token}")
-            logger.info("=" * 70 + "\n")
-        else:
-            logger.info("🔒 Authentication enabled with provided token")
-
-        # Set environment variable for server to use
-        os.environ["AUTH_REQUIRED"] = "true"
-        os.environ["DEVUI_AUTH_TOKEN"] = auth_token
 
     # Enable instrumentation if requested
     if instrumentation_enabled:
@@ -187,6 +164,8 @@ def serve(
         cors_origins=cors_origins,
         ui_enabled=ui_enabled,
         mode=mode,
+        auth_enabled=auth_enabled,
+        auth_token=auth_token,
     )
 
     # Register in-memory entities if provided

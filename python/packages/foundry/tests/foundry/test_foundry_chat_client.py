@@ -435,7 +435,7 @@ async def test_chat_message_parsing_with_function_calls() -> None:
         Message(role="tool", contents=[function_result]),
     ]
 
-    prepared_messages = client._prepare_messages_for_openai(messages)
+    prepared_messages = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     assert prepared_messages == [
         {

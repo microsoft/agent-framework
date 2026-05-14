@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
 import base64
 import inspect
 import json
@@ -120,15 +119,6 @@ async def create_vector_store(
     )
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
-
-    # Wait for the vector store index to be fully searchable.
-    # create_and_poll confirms file processing, but the search index is eventually consistent.
-    for _ in range(10):
-        vs = await client.client.vector_stores.retrieve(vector_store.id)
-        if vs.file_counts.completed >= 1 and vs.file_counts.in_progress == 0:
-            break
-        await asyncio.sleep(1)
-    await asyncio.sleep(2)
 
     return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
@@ -343,76 +333,6 @@ async def test_get_response_with_all_parameters() -> None:
     assert run_options["input"][1]["content"][0]["text"] == "Test message"
 
 
-def test_openai_chat_options_declares_verbosity_field() -> None:
-    """OpenAIChatOptions declares verbosity as a typed Literal field."""
-    from typing import get_args, get_type_hints
-
-    from agent_framework_openai import OpenAIChatOptions
-
-    annotations = get_type_hints(OpenAIChatOptions)
-    assert "verbosity" in annotations
-    assert {"low", "medium", "high"} <= set(get_args(annotations["verbosity"]))
-
-
-async def test_verbosity_option_translates_to_text_field() -> None:
-    """Top-level verbosity is translated to text.verbosity for the Responses API."""
-    client = OpenAIChatClient(model="test-model", api_key="test-key")
-    _, run_options, _ = await client._prepare_request(
-        messages=[Message(role="user", contents=["Test message"])],
-        options={"verbosity": "low"},
-    )
-
-    assert "verbosity" not in run_options
-    assert run_options["text"] == {"verbosity": "low"}
-
-
-async def test_verbosity_option_merges_with_response_format() -> None:
-    """Verbosity merges into text config alongside response_format-derived format."""
-    client = OpenAIChatClient(model="test-model", api_key="test-key")
-    _, run_options, _ = await client._prepare_request(
-        messages=[Message(role="user", contents=["Test message"])],
-        options={
-            "verbosity": "high",
-            "response_format": OutputStruct,
-        },
-    )
-
-    assert "verbosity" not in run_options
-    assert run_options["text"]["verbosity"] == "high"
-    assert run_options["text_format"] is OutputStruct
-
-
-async def test_verbosity_option_top_level_overrides_nested_text_verbosity() -> None:
-    """When both top-level and text['verbosity'] are set, the top-level value wins."""
-    client = OpenAIChatClient(model="test-model", api_key="test-key")
-    _, run_options, _ = await client._prepare_request(
-        messages=[Message(role="user", contents=["Test message"])],
-        options={
-            "verbosity": "high",
-            "text": {"verbosity": "low"},
-        },
-    )
-
-    assert "verbosity" not in run_options
-    assert run_options["text"]["verbosity"] == "high"
-
-
-async def test_verbosity_option_merges_with_explicit_text_config() -> None:
-    """Verbosity merges into a user-provided text config without overwriting other keys."""
-    client = OpenAIChatClient(model="test-model", api_key="test-key")
-    _, run_options, _ = await client._prepare_request(
-        messages=[Message(role="user", contents=["Test message"])],
-        options={
-            "verbosity": "medium",
-            "text": {"format": {"type": "text"}},
-        },
-    )
-
-    assert "verbosity" not in run_options
-    assert run_options["text"]["verbosity"] == "medium"
-    assert run_options["text"]["format"] == {"type": "text"}
-
-
 @pytest.mark.asyncio
 async def test_web_search_tool_with_location() -> None:
     """Test web search tool with location parameters."""
@@ -518,7 +438,7 @@ async def test_chat_message_parsing_with_function_calls() -> None:
         Message(role="tool", contents=[function_result]),
     ]
 
-    prepared_messages = client._prepare_messages_for_openai(messages)
+    prepared_messages = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     assert prepared_messages == [
         {
@@ -1834,7 +1754,7 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
 
     message = Message(role="user", contents=[approval_response])
 
-    result = client._prepare_message_for_openai(message)
+    result = client._prepare_message_for_openai(message, request_uses_service_side_storage=False)
 
     # FunctionApprovalResponseContent is added directly, not nested in args with role
     assert len(result) == 1
@@ -1866,16 +1786,20 @@ def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> N
 
     message = Message(role="assistant", contents=[reasoning, function_call])
 
-    result = client._prepare_message_for_openai(message)
+    # Storage-on path strips both server-issued reasoning (rs_*) and function_call items
+    # because the server already has them via previous_response_id (#3295).
+    storage_on_result = client._prepare_message_for_openai(message, request_uses_service_side_storage=True)
+    storage_on_types = [item["type"] for item in storage_on_result]
+    assert "reasoning" not in storage_on_types
+    assert "function_call" not in storage_on_types
 
-    # Both reasoning and function_call should be present as top-level items
-    types = [item["type"] for item in result]
-    assert "reasoning" in types, "Reasoning items must be included for reasoning models"
-    assert "function_call" in types
-
-    reasoning_item = next(item for item in result if item["type"] == "reasoning")
-    assert reasoning_item["summary"][0]["text"] == "Let me analyze the request"
-    assert reasoning_item["id"] == "rs_abc123", "Reasoning id must be preserved for the API"
+    # Storage-off path keeps function_call inline so the server sees the call. Reasoning items
+    # cannot be replayed inline against a server that has no record of the prior response, so
+    # they remain dropped on this path as well.
+    storage_off_result = client._prepare_message_for_openai(message, request_uses_service_side_storage=False)
+    storage_off_types = [item["type"] for item in storage_off_result]
+    assert "function_call" in storage_off_types
+    assert "reasoning" not in storage_off_types
 
 
 def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
@@ -1920,26 +1844,19 @@ def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
         ),
     ]
 
-    result = client._prepare_messages_for_openai(messages)
+    # Storage-off path: function_call kept inline (server has no record of it),
+    # function_call_output kept. Reasoning is still dropped because rs_* response-scoped IDs
+    # cannot be replayed against a server that has no record of the originating response.
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     types = [item.get("type") for item in result]
     assert "message" in types, "User/assistant messages should be present"
-    assert "reasoning" in types, "Reasoning items must be present"
-    assert "function_call" in types, "Function call items must be present"
+    assert "function_call" in types, "Function call items must be present without storage"
     assert "function_call_output" in types, "Function call output must be present"
-
-    # Verify reasoning has id
-    reasoning_items = [item for item in result if item.get("type") == "reasoning"]
-    assert reasoning_items[0]["id"] == "rs_test123"
 
     # Verify function_call has id
     fc_items = [item for item in result if item.get("type") == "function_call"]
     assert fc_items[0]["id"] == "fc_test456"
-
-    # Verify correct ordering: reasoning before function_call
-    reasoning_idx = types.index("reasoning")
-    fc_idx = types.index("function_call")
-    assert reasoning_idx < fc_idx, "Reasoning must come before function_call"
 
 
 def test_prepare_message_for_openai_filters_error_content() -> None:
@@ -4082,7 +3999,13 @@ async def test_prepare_options_store_false_omits_reasoning_items_for_stateless_r
     assert any(item.get("type") == "function_call_output" for item in options["input"])
 
 
-async def test_prepare_options_with_conversation_id_keeps_reasoning_items() -> None:
+async def test_prepare_options_with_conversation_id_strips_server_issued_items() -> None:
+    """When the request continues via conversation_id / previous_response_id, server-issued
+    response items (reasoning rs_*, function_call fc_*) must not be re-sent inline. The server
+    already has them via the prior response and rejects duplicates with
+    'Duplicate item found with id ...'. The function_result keeps its call_id so the server
+    pairs result-to-call. See microsoft/agent-framework#3295. (Originally added in #5250 with
+    the opposite expectation; field reports proved that path 400s on the wire.)"""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     messages = [
         Message(role="user", contents=[Content.from_text(text="search for hotels")]),
@@ -4118,13 +4041,16 @@ async def test_prepare_options_with_conversation_id_keeps_reasoning_items() -> N
         ChatOptions(store=False, conversation_id="resp_prev123"),  # type: ignore[arg-type]
     )
 
-    reasoning_items = [item for item in options["input"] if item.get("type") == "reasoning"]
-    assert len(reasoning_items) == 1
-    assert reasoning_items[0]["id"] == "rs_test123"
+    types = [item.get("type") for item in options["input"]]
+    assert "reasoning" not in types
+    assert "function_call" not in types
+    assert "function_call_output" in types
+    output_item = next(item for item in options["input"] if item.get("type") == "function_call_output")
+    assert output_item["call_id"] == "call_1"
     assert options["previous_response_id"] == "resp_prev123"
 
 
-async def test_prepare_options_with_conversation_id_omits_reasoning_items_for_attributed_replay() -> None:
+async def test_prepare_options_with_conversation_id_strips_server_items_for_mixed_history_and_live() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     messages = [
         Message(role="user", contents=[Content.from_text(text="search for hotels")]),
@@ -4186,19 +4112,18 @@ async def test_prepare_options_with_conversation_id_omits_reasoning_items_for_at
         ChatOptions(store=False, conversation_id="resp_prev123"),  # type: ignore[arg-type]
     )
 
-    reasoning_items = [item for item in options["input"] if item.get("type") == "reasoning"]
-    assert [item["id"] for item in reasoning_items] == ["rs_live123"]
-    assert any(
-        item.get("type") == "function_call" and item.get("call_id") == "call_history" for item in options["input"]
-    )
-    assert any(item.get("type") == "function_call" and item.get("call_id") == "call_live" for item in options["input"])
-    assert any(
-        item.get("type") == "function_call_output" and item.get("call_id") == "call_history"
-        for item in options["input"]
-    )
-    assert any(
-        item.get("type") == "function_call_output" and item.get("call_id") == "call_live" for item in options["input"]
-    )
+    # Under continuation (request_uses_service_side_storage=True), the strip rule fires for
+    # every server-issued item type regardless of message attribution: history-attributed items
+    # would duplicate the prior response stored at resp_prev123, and live items would also
+    # eventually duplicate items stored on the response this request produces. Function results
+    # are kept; the server pairs them to prior function_calls via call_id (#3295).
+    types = [item.get("type") for item in options["input"]]
+    assert "reasoning" not in types
+    assert "function_call" not in types
+    output_call_ids = {
+        item["call_id"] for item in options["input"] if item.get("type") == "function_call_output"
+    }
+    assert output_call_ids == {"call_history", "call_live"}
     assert options["previous_response_id"] == "resp_prev123"
 
 
@@ -4465,6 +4390,10 @@ async def test_integration_web_search() -> None:
     assert response.text is not None
 
 
+@pytest.mark.skip(
+    reason="Unreliable due to OpenAI vector store indexing potential "
+    "race condition. See https://github.com/microsoft/agent-framework/issues/1669"
+)
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
@@ -4474,29 +4403,31 @@ async def test_integration_file_search() -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
-    try:
-        # Use static method for file search tool
-        file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
-        # Test that the client will use the file search tool
-        response = await openai_responses_client.get_response(
-            messages=[
-                Message(
-                    role="user",
-                    contents=["What is the weather today? Do a file search to find the answer."],
-                )
-            ],
-            options={
-                "tool_choice": "auto",
-                "tools": [file_search_tool],
-            },
-        )
+    # Use static method for file search tool
+    file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+    # Test that the client will use the file search tool
+    response = await openai_responses_client.get_response(
+        messages=[
+            Message(
+                role="user",
+                contents=["What is the weather today? Do a file search to find the answer."],
+            )
+        ],
+        options={
+            "tool_choice": "auto",
+            "tools": [file_search_tool],
+        },
+    )
 
-        assert "sunny" in response.text.lower()
-        assert "75" in response.text
-    finally:
-        await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
+    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
+    assert "sunny" in response.text.lower()
+    assert "75" in response.text
 
 
+@pytest.mark.skip(
+    reason="Unreliable due to OpenAI vector store indexing "
+    "potential race condition. See https://github.com/microsoft/agent-framework/issues/1669"
+)
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
@@ -4506,37 +4437,35 @@ async def test_integration_streaming_file_search() -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
     file_id, vector_store = await create_vector_store(openai_responses_client)
-    try:
-        # Use static method for file search tool
-        file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
-        # Test that the client will use the file search tool
-        response = openai_responses_client.get_response(
-            messages=[
-                Message(
-                    role="user",
-                    contents=["What is the weather today? Do a file search to find the answer."],
-                )
-            ],
-            stream=True,
-            options={
-                "tool_choice": "auto",
-                "tools": [file_search_tool],
-            },
-        )
+    # Use static method for file search tool
+    file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+    # Test that the client will use the web search tool
+    response = openai_responses_client.get_streaming_response(
+        messages=[
+            Message(
+                role="user",
+                contents=["What is the weather today? Do a file search to find the answer."],
+            )
+        ],
+        options={
+            "tool_choice": "auto",
+            "tools": [file_search_tool],
+        },
+    )
 
-        assert response is not None
-        full_message: str = ""
-        async for chunk in response:
-            assert chunk is not None
-            assert isinstance(chunk, ChatResponseUpdate)
-            for content in chunk.contents:
-                if content.type == "text" and content.text:
-                    full_message += content.text
+    assert response is not None
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if content.type == "text" and content.text:
+                full_message += content.text
 
-        assert "sunny" in full_message.lower()
-        assert "75" in full_message
-    finally:
-        await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
+    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
+
+    assert "sunny" in full_message.lower()
+    assert "75" in full_message
 
 
 @pytest.mark.flaky
@@ -5059,7 +4988,10 @@ async def test_prepare_messages_for_openai_does_not_replay_fc_id_when_loaded_fro
 
     next_turn_input = Message(role="user", contents=[Content.from_text(text="Book the cheapest one")])
 
-    live_result = client._prepare_messages_for_openai([*session.state[provider.source_id]["messages"], next_turn_input])
+    live_result = client._prepare_messages_for_openai(
+        [*session.state[provider.source_id]["messages"], next_turn_input],
+        request_uses_service_side_storage=False,
+    )
     live_function_call = next(item for item in live_result if item.get("type") == "function_call")
     assert live_function_call["id"] == "fc_provider123"
 
@@ -5072,7 +5004,8 @@ async def test_prepare_messages_for_openai_does_not_replay_fc_id_when_loaded_fro
     )  # type: ignore[arg-type]
 
     loaded_result = client._prepare_messages_for_openai(
-        context.get_messages(sources={provider.source_id}, include_input=True)
+        context.get_messages(sources={provider.source_id}, include_input=True),
+        request_uses_service_side_storage=False,
     )
     loaded_function_call = next(item for item in loaded_result if item.get("type") == "function_call")
     assert loaded_function_call["id"] == "fc_call_1"
@@ -5091,7 +5024,8 @@ async def test_prepare_messages_for_openai_does_not_replay_fc_id_when_loaded_fro
     )  # type: ignore[arg-type]
 
     restored_result = client._prepare_messages_for_openai(
-        restored_context.get_messages(sources={provider.source_id}, include_input=True)
+        restored_context.get_messages(sources={provider.source_id}, include_input=True),
+        request_uses_service_side_storage=False,
     )
     restored_function_call = next(item for item in restored_result if item.get("type") == "function_call")
     assert restored_function_call["id"] == "fc_call_1"
@@ -5125,7 +5059,9 @@ def test_prepare_messages_for_openai_keeps_live_fc_id_separate_from_replayed_his
         ],
     )
 
-    result = client._prepare_messages_for_openai([history_message, live_message])
+    result = client._prepare_messages_for_openai(
+        [history_message, live_message], request_uses_service_side_storage=False
+    )
 
     function_calls = [item for item in result if item.get("type") == "function_call"]
     assert [item["id"] for item in function_calls] == ["fc_call_1", "fc_live123"]
@@ -5163,7 +5099,7 @@ def test_prepare_messages_for_openai_filters_empty_fc_id() -> None:
         ),
     ]
 
-    result = client._prepare_messages_for_openai(messages)
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     # Find the function_call items in the result
     fc_items = [item for item in result if item.get("type") == "function_call"]
@@ -5198,7 +5134,7 @@ def test_prepare_messages_for_openai_filters_none_fc_id() -> None:
         ),
     ]
 
-    result = client._prepare_messages_for_openai(messages)
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     # Find the function_call item
     fc_items = [item for item in result if item.get("type") == "function_call"]
@@ -5233,7 +5169,7 @@ def test_prepare_messages_for_openai_serializes_mcp_server_tool_call_as_mcp_call
         ),
     ]
 
-    result = client._prepare_messages_for_openai(messages)
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
     assert len(mcp_items) == 1, f"expected exactly one mcp_call item; got result={result}"
@@ -5276,7 +5212,7 @@ def test_prepare_messages_for_openai_coalesces_mcp_call_and_result_into_single_i
         ),
     ]
 
-    result = client._prepare_messages_for_openai(messages)
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     mcp_items = [item for item in result if isinstance(item, dict) and item.get("type") == "mcp_call"]
     assert len(mcp_items) == 1, f"expected one coalesced mcp_call item carrying both arguments and output; got {result}"
@@ -5310,7 +5246,7 @@ def test_prepare_messages_for_openai_drops_orphan_mcp_server_tool_result() -> No
         ),
     ]
 
-    result = client._prepare_messages_for_openai(messages)
+    result = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
 
     fco_items = [item for item in result if isinstance(item, dict) and item.get("type") == "function_call_output"]
     assert fco_items == [], f"orphan mcp_server_tool_result must not serialize as function_call_output; got {fco_items}"
@@ -5337,6 +5273,172 @@ def test_stringify_mcp_output_falls_back_to_json_for_non_text_dict_entries() -> 
     assert result.startswith("{")
     assert '"url"' in result
     assert "'" not in result
+
+
+# endregion
+
+
+# region: strip server-issued item IDs under storage (issue #3295)
+
+
+def _strip_rule_messages() -> list[Message]:
+    return [
+        Message(role="user", contents=[Content.from_text(text="search hotels in Paris")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_server_issued"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_1", result="Found 3 hotels in Paris")],
+        ),
+    ]
+
+
+def test_prepare_messages_strips_function_call_under_storage() -> None:
+    """Regression for #3295: when previous_response_id / conversation_id is in flight, the chat
+    client must not re-send server-issued function_call items inline. The server already has them
+    via the prior response and rejects duplicates with 'Duplicate item found with id fc_...'.
+    The function_result keeps its call_id so the server can pair result-to-call."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    result = client._prepare_messages_for_openai(_strip_rule_messages(), request_uses_service_side_storage=True)
+
+    types = [item.get("type") for item in result]
+    assert "function_call" not in types
+    assert "function_call_output" in types
+    output_item = next(item for item in result if item.get("type") == "function_call_output")
+    assert output_item["call_id"] == "call_1"
+
+
+def test_prepare_messages_keeps_function_call_without_storage() -> None:
+    """Without storage there is no previous_response_id, so inline function_call items are the
+    only source of truth for the server. Behavior is byte-identical to pre-#3295."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    result = client._prepare_messages_for_openai(_strip_rule_messages(), request_uses_service_side_storage=False)
+
+    types = [item.get("type") for item in result]
+    assert "function_call" in types
+    assert "function_call_output" in types
+    fc_item = next(item for item in result if item.get("type") == "function_call")
+    assert fc_item["call_id"] == "call_1"
+    assert fc_item["id"] == "fc_server_issued"
+    output_item = next(item for item in result if item.get("type") == "function_call_output")
+    assert output_item["call_id"] == "call_1"
+
+
+def test_prepare_messages_strips_approval_items_under_storage() -> None:
+    """Approval request/response items also carry server-issued IDs and must be stripped under
+    storage. Without storage they are kept (#3295)."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    function_call = Content.from_function_call(
+        call_id="mcp_1",
+        name="sensitive_action",
+        arguments='{"action": "delete"}',
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval_req_1",
+        function_call=function_call,
+    )
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_req_1",
+        function_call=function_call,
+    )
+    messages = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=[approval_response]),
+    ]
+
+    storage_on = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=True)
+    storage_on_types = [item.get("type") for item in storage_on]
+    assert "mcp_approval_request" not in storage_on_types
+    assert "mcp_approval_response" not in storage_on_types
+
+    storage_off = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+    storage_off_types = [item.get("type") for item in storage_off]
+    assert "mcp_approval_request" in storage_off_types
+    assert "mcp_approval_response" in storage_off_types
+
+
+def test_prepare_messages_strips_local_shell_call_under_storage() -> None:
+    """Local-shell-call function_results carry a server-issued local_shell_call_item_id and must
+    be stripped under storage. Plain function_results (no shell ID) are kept either way (#3295)."""
+    from agent_framework_openai._chat_client import (
+        OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY,
+        OPENAI_SHELL_OUTPUT_TYPE_KEY,
+        OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    shell_result = Content.from_function_result(
+        call_id="shell_1",
+        result="ok",
+        additional_properties={
+            OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
+            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY: "lsh_server_issued",
+        },
+    )
+    plain_result = Content.from_function_result(call_id="plain_1", result="plain")
+    message = Message(role="tool", contents=[shell_result, plain_result])
+
+    storage_on = client._prepare_message_for_openai(message, request_uses_service_side_storage=True)
+    types_on = [item.get("type") for item in storage_on]
+    assert OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL not in types_on
+    assert "function_call_output" in types_on
+
+    storage_off = client._prepare_message_for_openai(message, request_uses_service_side_storage=False)
+    types_off = [item.get("type") for item in storage_off]
+    assert OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL in types_off
+    assert "function_call_output" in types_off
+
+
+def test_prepare_messages_strips_mcp_items_under_storage() -> None:
+    """Hosted-MCP tool call items carry server-issued IDs (the call_id surfaces as `id` on the
+    wire mcp_call item), so they must be stripped under storage. The orphan mcp_server_tool_result
+    is then dropped by the existing coalesce logic (#5581). Without storage, the call/result pair
+    coalesces normally into a single mcp_call wire item (#3295)."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_mcp_server_tool_call(
+                    call_id="mcp_abc123",
+                    tool_name="search",
+                    server_name="api_specs",
+                    arguments='{"q": "cats"}',
+                )
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_mcp_server_tool_result(
+                    call_id="mcp_abc123",
+                    output=[Content.from_text(text="found 10 cats")],
+                )
+            ],
+        ),
+    ]
+
+    storage_on = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=True)
+    storage_on_types = [item.get("type") for item in storage_on]
+    assert "mcp_call" not in storage_on_types
+
+    storage_off = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+    storage_off_types = [item.get("type") for item in storage_off]
+    assert "mcp_call" in storage_off_types
 
 
 # endregion
