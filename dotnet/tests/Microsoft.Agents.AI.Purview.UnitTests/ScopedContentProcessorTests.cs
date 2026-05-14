@@ -684,7 +684,7 @@ public sealed class ScopedContentProcessorTests
 
         // Act
         Assert.NotNull(runner);
-        await channel.Writer.WriteAsync(new ScopeRetrievalJob(request, cacheKey));
+        await channel.Writer.WriteAsync(new ScopeRetrievalJob(request, cacheKey, CreateProcessContentRequest()));
         channel.Writer.Complete();
         await runner(channel);
 
@@ -703,7 +703,7 @@ public sealed class ScopedContentProcessorTests
         Mock<ICacheProvider> cacheProvider = new();
         ProtectionScopesRequest request = CreateProtectionScopesRequest();
         ProtectionScopesCacheKey cacheKey = new(request);
-        ScopeRetrievalJob job = new(request, cacheKey);
+        ScopeRetrievalJob job = new(request, cacheKey, CreateProcessContentRequest());
 
         purviewClient.Setup(x => x.GetProtectionScopesAsync(It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProtectionScopesResponse());
@@ -723,13 +723,44 @@ public sealed class ScopedContentProcessorTests
     }
 
     [Fact]
+    public async Task BackgroundJobRunner_ScopeRetrievalNoApplicableScopes_QueuesContentActivityJobAsync()
+    {
+        // Arrange
+        Func<Channel<BackgroundJobBase>, Task>? runner = null;
+        Mock<IChannelHandler> channelHandler = new();
+        Mock<IPurviewClient> purviewClient = new();
+        Mock<ICacheProvider> cacheProvider = new();
+        PurviewSettings settings = new("TestApp") { MaxConcurrentJobConsumers = 1 };
+        ProtectionScopesRequest request = CreateProtectionScopesRequest();
+        ScopeRetrievalJob job = new(request, new ProtectionScopesCacheKey(request), CreateProcessContentRequest());
+        Channel<BackgroundJobBase> channel = Channel.CreateUnbounded<BackgroundJobBase>();
+
+        channelHandler.Setup(x => x.AddRunner(It.IsAny<Func<Channel<BackgroundJobBase>, Task>>()))
+            .Callback<Func<Channel<BackgroundJobBase>, Task>>(callback => runner = callback);
+
+        purviewClient.Setup(x => x.GetProtectionScopesAsync(It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProtectionScopesResponse { Scopes = [] });
+
+        _ = new BackgroundJobRunner(channelHandler.Object, purviewClient.Object, cacheProvider.Object, NullLogger.Instance, settings);
+
+        // Act
+        Assert.NotNull(runner);
+        await channel.Writer.WriteAsync(job);
+        channel.Writer.Complete();
+        await runner(channel);
+
+        // Assert
+        channelHandler.Verify(x => x.QueueJob(It.IsAny<ContentActivityJob>()), Times.Once);
+    }
+
+    [Fact]
     public async Task BackgroundJobRunner_ScopeRetrievalPaymentRequiredCacheWriteFailure_DoesNotThrowAsync()
     {
         // Arrange
         Mock<IPurviewClient> purviewClient = new();
         Mock<ICacheProvider> cacheProvider = new();
         ProtectionScopesRequest request = CreateProtectionScopesRequest();
-        ScopeRetrievalJob job = new(request, new ProtectionScopesCacheKey(request));
+        ScopeRetrievalJob job = new(request, new ProtectionScopesCacheKey(request), CreateProcessContentRequest());
 
         purviewClient.Setup(x => x.GetProtectionScopesAsync(It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new PurviewPaymentRequiredException("Payment required"));
@@ -764,6 +795,40 @@ public sealed class ScopedContentProcessorTests
                 new("microsoft.graph.policyLocationApplication", "app-123")
             ]
         };
+    }
+
+    private static ProcessContentRequest CreateProcessContentRequest()
+    {
+        PurviewTextContent content = new("Test content");
+        ProcessConversationMetadata metadata = new(content, "msg-123", false, "Test message", "test-correlation-id");
+        ActivityMetadata activityMetadata = new(Activity.UploadText);
+        DeviceMetadata deviceMetadata = new()
+        {
+            OperatingSystemSpecifications = new()
+            {
+                OperatingSystemPlatform = "Windows",
+                OperatingSystemVersion = "10"
+            }
+        };
+        IntegratedAppMetadata integratedAppMetadata = new()
+        {
+            Name = "TestApp",
+            Version = "1.0"
+        };
+        PolicyLocation policyLocation = new("microsoft.graph.policyLocationApplication", "app-123");
+        ProtectedAppMetadata protectedAppMetadata = new(policyLocation)
+        {
+            Name = "TestApp",
+            Version = "1.0"
+        };
+        ContentToProcess contentToProcess = new(
+            [metadata],
+            activityMetadata,
+            deviceMetadata,
+            integratedAppMetadata,
+            protectedAppMetadata);
+
+        return new ProcessContentRequest(contentToProcess, "user-123", "tenant-123");
     }
 
     private static async Task RunBackgroundJobAsync(BackgroundJobBase job, IPurviewClient purviewClient, ICacheProvider cacheProvider)

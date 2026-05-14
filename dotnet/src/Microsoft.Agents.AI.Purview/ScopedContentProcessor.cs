@@ -218,7 +218,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         // background while ProcessContent runs immediately in the foreground.
         try
         {
-            this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey));
+            this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey, pcRequest));
         }
         catch (PurviewJobException)
         {
@@ -328,7 +328,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <param name="pcRequest">The process content request.</param>
     /// <param name="psResponse">The protection scopes response that was returned for the process content request.</param>
     /// <returns>A bool indicating if the content needs to be processed. A list of applicable actions from the scopes response, and the execution mode for the process content request.</returns>
-    private static (bool shouldProcess, List<DlpActionInfo> dlpActions, ExecutionMode executionMode) CheckApplicableScopes(ProcessContentRequest pcRequest, ProtectionScopesResponse psResponse)
+    internal static (bool shouldProcess, List<DlpActionInfo> dlpActions, ExecutionMode executionMode) CheckApplicableScopes(ProcessContentRequest pcRequest, ProtectionScopesResponse psResponse)
     {
         ProtectionScopeActivities requestActivity = TranslateActivity(pcRequest.ContentToProcess.ActivityMetadata.Activity);
 

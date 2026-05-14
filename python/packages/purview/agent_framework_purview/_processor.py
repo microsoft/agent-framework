@@ -234,7 +234,7 @@ class ScopedContentProcessor:
         if cached_ps_resp is not None and isinstance(cached_ps_resp, ProtectionScopesResponse):
             return await self._process_with_cached_scopes(pc_request, cached_ps_resp, cache_key)
 
-        task = asyncio.create_task(self._refresh_protection_scopes_background(ps_req, cache_key))
+        task = asyncio.create_task(self._refresh_protection_scopes_background(ps_req, cache_key, pc_request))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return await self._call_process_content(pc_request, cache_key, dlp_actions=[])
@@ -293,7 +293,7 @@ class ScopedContentProcessor:
         return pc_resp
 
     async def _refresh_protection_scopes_background(
-        self, ps_req: ProtectionScopesRequest, cache_key: str
+        self, ps_req: ProtectionScopesRequest, cache_key: str, pc_request: ProcessContentRequest
     ) -> None:
         """Fetch protection scopes and warm the cache without blocking the foreground call."""
         ttl = self._settings.get("cache_ttl_seconds")
@@ -301,6 +301,15 @@ class ScopedContentProcessor:
         try:
             ps_resp = await self._client.get_protection_scopes(ps_req)
             await self._cache.set(cache_key, ps_resp, ttl_seconds=ttl_seconds)
+            should_process, _, _ = self._check_applicable_scopes(pc_request, ps_resp)
+            if not should_process:
+                ca_req = ContentActivitiesRequest(
+                    user_id=pc_request.user_id,
+                    tenant_id=pc_request.tenant_id,
+                    content_to_process=pc_request.content_to_process,
+                    correlation_id=pc_request.correlation_id,
+                )
+                await self._send_content_activities_background(ca_req)
         except PurviewPaymentRequiredError as ex:
             tenant_payment_cache_key = f"purview:payment_required:{ps_req.tenant_id}"
             try:

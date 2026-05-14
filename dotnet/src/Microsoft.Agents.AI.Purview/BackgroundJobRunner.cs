@@ -1,11 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Agents.AI.Purview.Models.Jobs;
+using Microsoft.Agents.AI.Purview.Models.Requests;
 using Microsoft.Agents.AI.Purview.Models.Responses;
 using Microsoft.Extensions.Logging;
 
@@ -78,6 +80,13 @@ internal sealed class BackgroundJobRunner : IBackgroundJobRunner
                 {
                     ProtectionScopesResponse response = await this._purviewClient.GetProtectionScopesAsync(scopeRetrievalJob.Request, CancellationToken.None).ConfigureAwait(false);
                     await this.SetCacheBestEffortAsync(scopeRetrievalJob.CacheKey, response, "protection scopes").ConfigureAwait(false);
+                    (bool shouldProcess, List<DlpActionInfo> _, ExecutionMode _) = ScopedContentProcessor.CheckApplicableScopes(scopeRetrievalJob.ProcessContentRequest, response);
+                    if (!shouldProcess)
+                    {
+                        ProcessContentRequest pcRequest = scopeRetrievalJob.ProcessContentRequest;
+                        ContentActivitiesRequest caRequest = new(pcRequest.UserId, pcRequest.TenantId, pcRequest.ContentToProcess, pcRequest.CorrelationId);
+                        this._channelHandler.QueueJob(new ContentActivityJob(caRequest));
+                    }
                 }
                 catch (PurviewPaymentRequiredException ex)
                 {

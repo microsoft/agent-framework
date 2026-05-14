@@ -19,10 +19,12 @@ internal sealed class ScopeRetrievalJob : BackgroundJobBase
     /// </summary>
     /// <param name="request">The protection scopes request to send to Purview.</param>
     /// <param name="cacheKey">The cache key used to store the response.</param>
-    public ScopeRetrievalJob(ProtectionScopesRequest request, ProtectionScopesCacheKey cacheKey)
+    /// <param name="processContentRequest">The original process content request that triggered scope retrieval.</param>
+    public ScopeRetrievalJob(ProtectionScopesRequest request, ProtectionScopesCacheKey cacheKey, ProcessContentRequest processContentRequest)
     {
         this.Request = request;
         this.CacheKey = cacheKey;
+        this.ProcessContentRequest = processContentRequest;
     }
 
     /// <summary>
@@ -34,4 +36,9 @@ internal sealed class ScopeRetrievalJob : BackgroundJobBase
     /// Gets the cache key used to store the response.
     /// </summary>
     public ProtectionScopesCacheKey CacheKey { get; }
+
+    /// <summary>
+    /// Gets the original process content request that triggered scope retrieval.
+    /// </summary>
+    public ProcessContentRequest ProcessContentRequest { get; }
 }

@@ -270,6 +270,7 @@ class TestScopedContentProcessor:
         # Protection scopes are refreshed in a background task.
         await asyncio.gather(*list(processor._background_tasks))
         mock_client.get_protection_scopes.assert_called_once()
+        mock_client.send_content_activities.assert_called_once()
 
     async def test_process_with_scopes_preserves_restriction_only_policy_actions(
         self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
@@ -455,7 +456,7 @@ class TestScopedContentProcessor:
             activities="uploadText",
         )
 
-        await processor._refresh_protection_scopes_background(ps_req, create_protection_scopes_cache_key(ps_req))
+        await processor._refresh_protection_scopes_background(ps_req, create_protection_scopes_cache_key(ps_req), request)
 
         processor._cache.set.assert_called_once()  # type: ignore[attr-defined]
 
