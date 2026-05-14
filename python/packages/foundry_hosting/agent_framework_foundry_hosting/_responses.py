@@ -9,8 +9,9 @@ import logging
 import os
 import tempfile
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Sequence
 from contextlib import suppress
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -1394,11 +1395,20 @@ def _convert_message_content(content: MessageContent) -> Content:
 # region Output Item Conversion
 
 
-def _arguments_to_str(arguments: str | Mapping[str, Any] | None) -> str:
+def _argument_json_default(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _arguments_to_str(arguments: Any | None) -> str:
     """Convert arguments to a JSON string.
 
     Args:
-        arguments: The arguments to convert, can be a string, mapping, or None.
+        arguments: The arguments to convert, can be a string, JSON-like object, or None.
 
     Returns:
         The arguments as a JSON string.
@@ -1407,7 +1417,7 @@ def _arguments_to_str(arguments: str | Mapping[str, Any] | None) -> str:
         return ""
     if isinstance(arguments, str):
         return arguments
-    return json.dumps(arguments)
+    return json.dumps(arguments, default=_argument_json_default)
 
 
 async def _to_outputs(

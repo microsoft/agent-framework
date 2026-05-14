@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -400,6 +401,36 @@ class TestStreaming:
         args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
+
+    async def test_function_call_streaming_serializes_dataclass_arguments(self) -> None:
+        @dataclass
+        class HandoffLikeRequest:
+            agent_response: AgentResponse
+
+        request = HandoffLikeRequest(
+            agent_response=AgentResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("Need more details")])]
+            )
+        )
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "handoff_to_refund", arguments=request)],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+        assert len(args_done) == 1
+
+        payload = json.loads(args_done[0]["data"]["arguments"])
+        assert payload["agent_response"]["type"] == "agent_response"
+        assert payload["agent_response"]["messages"][0]["contents"][0]["text"] == "Need more details"
 
     async def test_alternating_text_and_function_call(self) -> None:
         agent = _make_agent(
