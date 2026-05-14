@@ -90,7 +90,7 @@ Example values below are illustrative. For entries not backed by a single public
 column names the closest public surface, helper, or package-level initialization point that reads the
 variable.
 
-| package | class | env var | example value |
+| package | class/module | env var | example value |
 | --- | --- | --- | --- |
 | `agent-framework-anthropic` | `AnthropicClient` | `ANTHROPIC_API_KEY` | `sk-ant-api03-...` |
 | `agent-framework-anthropic` | `AnthropicClient` | `ANTHROPIC_CHAT_MODEL` | `claude-sonnet-4-5-20250929` |

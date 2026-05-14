@@ -1086,7 +1086,7 @@ def configure_otel_providers(
 
             connection_string = "InstrumentationKey=your_instrumentation_key_here;..."
             configure_azure_monitor(connection_string=connection_string)
-            # Optional: opt into capturing sensitive data (dev/test only)
+            # Optional: opt into capturing sensitive data
             enable_sensitive_telemetry()
 
     References:

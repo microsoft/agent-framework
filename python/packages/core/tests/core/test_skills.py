@@ -319,9 +319,7 @@ class TestDiscoverResourceFiles:
         refs = skill_dir / "references"
         refs.mkdir(parents=True)
         (refs / "doc.md").write_text("content", encoding="utf-8")
-        resources = FileSkillsSource._discover_resource_files(
-            str(skill_dir), directories=("references", "references")
-        )
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir), directories=("references", "references"))
         assert resources == ["references/doc.md"]
 
     def test_results_are_sorted(self, tmp_path: Path) -> None:
@@ -1675,9 +1673,7 @@ class TestValidateAndNormalizeDirectoryNames:
             FileSkillsSource._validate_and_normalize_directory_names(["   "])
 
     def test_multiple_directories(self) -> None:
-        result = FileSkillsSource._validate_and_normalize_directory_names(
-            [".", "references", "assets", "scripts"]
-        )
+        result = FileSkillsSource._validate_and_normalize_directory_names([".", "references", "assets", "scripts"])
         assert result == [".", "references", "assets", "scripts"]
 
     def test_default_resource_directories(self) -> None:
@@ -5498,9 +5494,7 @@ class TestArrayStyleScriptArgs:
             return "ok"
 
         assert isinstance(my_runner, SkillScriptRunner)
-        skill = FileSkill(
-            frontmatter=SkillFrontmatter(name="s", description="d"), content="c", path=f"{_ABS}/test"
-        )
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="c", path=f"{_ABS}/test")
         script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py")
         result = my_runner(skill, script, args=["--flag", "value"])
         assert result == "ok"

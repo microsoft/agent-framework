@@ -135,7 +135,7 @@ async def main():
     setup_logging()
     setup_tracing()
     setup_metrics()
-    # Instrumentation is enabled by default; call this to also capture sensitive data (dev/test only).
+    # Instrumentation is enabled by default; call this to also capture sensitive data.
     enable_sensitive_telemetry()
 
     await run_chat_client()
