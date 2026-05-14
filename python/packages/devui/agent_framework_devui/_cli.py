@@ -79,15 +79,15 @@ Examples:
     )
 
     parser.add_argument(
-        "--auth",
+        "--no-auth",
         action="store_true",
-        help="Enable authentication via Bearer token (required for deployed environments)",
+        help="Disable Bearer token authentication. DevUI is auth-enabled by default; use this to opt out.",
     )
 
     parser.add_argument(
         "--auth-token",
         type=str,
-        help="Custom authentication token (auto-generated if not provided with --auth)",
+        help="Custom Bearer token. Auto-generated and logged at startup when omitted.",
     )
 
     parser.add_argument("--version", action="version", version=f"Agent Framework DevUI {get_version()}")
@@ -184,7 +184,7 @@ def main() -> None:
             ui_enabled=ui_enabled,
             instrumentation_enabled=args.instrumentation,
             mode=mode,
-            auth_enabled=args.auth,
+            auth_enabled=not args.no_auth,
             auth_token=args.auth_token,  # Pass through explicit token only
         )
 

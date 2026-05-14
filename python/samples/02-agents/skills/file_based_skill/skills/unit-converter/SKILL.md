@@ -1,6 +1,12 @@
 ---
 name: unit-converter
 description: Convert between common units using a multiplication factor. Use when asked to convert miles, kilometers, pounds, or kilograms.
+license: MIT
+compatibility: Works with any model that supports tool use.
+allowed-tools: convert
+metadata:
+  author: agent-framework-samples
+  version: "1.0"
 ---
 
 ## Usage
