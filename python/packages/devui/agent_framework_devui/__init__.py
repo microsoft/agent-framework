@@ -94,6 +94,7 @@ def serve(
     auto_open: bool = False,
     cors_origins: list[str] | None = None,
     ui_enabled: bool = True,
+    instrumentation_enabled: bool = False,
     mode: str = "developer",
     auth_enabled: bool = True,
     auth_token: str | None = None,
@@ -108,6 +109,7 @@ def serve(
         auto_open: Whether to automatically open browser
         cors_origins: List of allowed CORS origins
         ui_enabled: Whether to enable the UI
+        instrumentation_enabled: Whether to enable OpenTelemetry instrumentation
         mode: Server mode - 'developer' (full access, verbose errors) or 'user' (restricted APIs, generic errors)
         auth_enabled: Whether to enable Bearer token authentication
         auth_token: Custom authentication token (auto-generated if not provided with auth_enabled=True)
@@ -123,6 +125,13 @@ def serve(
     # Validate port parameter
     if not isinstance(port, int) or not (1 <= port <= 65535):
         raise ValueError(f"Invalid port: {port}. Must be integer between 1 and 65535")
+
+    # Enable instrumentation if requested
+    if instrumentation_enabled:
+        from agent_framework.observability import enable_instrumentation
+
+        enable_instrumentation(enable_sensitive_data=True)
+        logger.info("Enabled Agent Framework instrumentation with sensitive data")
 
     # Create server with direct parameters
     server = DevServer(

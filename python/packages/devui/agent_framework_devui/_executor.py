@@ -98,7 +98,7 @@ class AgentFrameworkExecutor:
         try:
             from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
 
-            # Configure if instrumentation is enabled (on by default, via env var, or enable_sensitive_telemetry())
+            # Configure if instrumentation is enabled (via enable_instrumentation() or env var)
             if OBSERVABILITY_SETTINGS.ENABLED:
                 # Call configure_otel_providers to set up exporters.
                 # If OTEL_EXPORTER_OTLP_ENDPOINT is set, exporters will be created automatically.

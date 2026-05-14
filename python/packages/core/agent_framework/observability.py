@@ -3,6 +3,7 @@
 """Observability and OpenTelemetry helpers for Agent Framework.
 
 Commonly used exports:
+- enable_instrumentation
 - enable_sensitive_telemetry
 - configure_otel_providers
 - AgentTelemetryLayer
@@ -80,6 +81,7 @@ __all__ = [
     "configure_otel_providers",
     "create_metric_views",
     "create_resource",
+    "enable_instrumentation",
     "enable_sensitive_telemetry",
     "get_meter",
     "get_tracer",
@@ -970,6 +972,27 @@ def enable_sensitive_telemetry() -> None:
     global OBSERVABILITY_SETTINGS
     OBSERVABILITY_SETTINGS.enable_instrumentation = True
     OBSERVABILITY_SETTINGS.enable_sensitive_data = True
+
+
+def enable_instrumentation(
+    *,
+    enable_sensitive_data: bool | None = None,
+) -> None:
+    """Enable instrumentation for Microsoft Agent Framework.
+
+    Note that instrumentation is enabled by default, so this method is only necessary
+    if you need a programmatic way to enable it (e.g., if you are not sure whether the
+    environment variable ENABLE_INSTRUMENTATION is set to True or False and want to
+    ensure it is enabled).
+
+    Keyword Args:
+        enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
+            the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+    """
+    global OBSERVABILITY_SETTINGS
+    OBSERVABILITY_SETTINGS.enable_instrumentation = True
+    if enable_sensitive_data is not None:
+        OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
 
 
 def configure_otel_providers(
