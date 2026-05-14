@@ -1977,8 +1977,8 @@ def _content_items_text(items: Any) -> str | None:
     """Return concatenated text when a content item list only contains text."""
     if not isinstance(items, list):
         return None
-    content_items = cast(list[Any], items)
     text_parts: list[str] = []
+    content_items = cast(list[object], items)
     for item in content_items:
         if not isinstance(item, Content) or item.type != "text":
             return None
@@ -2007,9 +2007,9 @@ def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
         return [merged]
 
     if isinstance(existing, list) and isinstance(incoming, list):
-        existing_items = cast(list[Any], existing)
-        incoming_items = cast(list[Any], incoming)
-        return [*existing_items, *deepcopy(incoming_items)]
+        existing_list = cast(list[object], existing)
+        incoming_list = cast(list[object], incoming)
+        return [*existing_list, *deepcopy(incoming_list)]
     return deepcopy(incoming)
 
 
