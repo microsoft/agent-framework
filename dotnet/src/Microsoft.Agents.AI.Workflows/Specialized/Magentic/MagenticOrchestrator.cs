@@ -147,7 +147,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
         if (this._taskContext.IsTerminated)
         {
-            throw new InvalidOperationException("Magentic Orchestration has already been terminated and cannot process new messages. Please start a new session.");
+            throw new InvalidOperationException("This Magentic orchestration has already terminated. To process new messages, create a new workflow instance.");
         }
 
         if (response.IsApproved)
@@ -190,7 +190,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
     {
         if (this._taskContext?.IsTerminated == true)
         {
-            throw new InvalidOperationException("Magentic Orchestration has already been terminated and cannot process new messages. Please start a new session.");
+            throw new InvalidOperationException("This Magentic orchestration has already terminated. To process new messages, create a new workflow instance.");
         }
 
         if (this._taskContext == null)

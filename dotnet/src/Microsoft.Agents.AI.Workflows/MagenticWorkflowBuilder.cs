@@ -145,7 +145,7 @@ public class MagenticWorkflowBuilder(AIAgent managerAgent)
     {
         if (this._team.Count == 0)
         {
-            throw new InvalidOperationException("At least one participant must be added before building a Magentic workflow.");
+            throw new InvalidOperationException("At least one participant must be added via AddParticipants() before building the workflow.");
         }
 
         return this.ReduceToWorkflowBuilder().Build();
