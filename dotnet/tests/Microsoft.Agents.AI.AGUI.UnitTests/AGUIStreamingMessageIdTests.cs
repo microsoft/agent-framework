@@ -189,6 +189,53 @@ public sealed class AGUIStreamingMessageIdTests
         Assert.NotEqual(textStart.MessageId, toolCallResult.MessageId);
     }
 
+    [Fact]
+    public async Task ToolResults_WithTextContent_GeneratesDistinctMessageIdAsync()
+    {
+        FunctionCallContent functionCall = new("call_abc123", "GetWeather")
+        {
+            Arguments = new Dictionary<string, object?> { ["location"] = "San Francisco" }
+        };
+
+        List<ChatResponseUpdate> providerUpdates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, "Checking the weather"),
+            new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                Contents = [functionCall]
+            },
+            new ChatResponseUpdate
+            {
+                Role = ChatRole.Tool,
+                Contents =
+                [
+                    new TextContent("Tool says: "),
+                    new FunctionResultContent("call_abc123", "72F and sunny")
+                ]
+            }
+        ];
+
+        List<BaseEvent> aguiEvents = [];
+        await foreach (BaseEvent evt in providerUpdates.ToAsyncEnumerableAsync()
+            .AsAGUIEventStreamAsync("thread-1", "run-1", AGUIJsonSerializerContext.Default.Options))
+        {
+            aguiEvents.Add(evt);
+        }
+
+        TextMessageStartEvent[] textStarts = aguiEvents.OfType<TextMessageStartEvent>().ToArray();
+        TextMessageContentEvent toolText = Assert.Single(
+            aguiEvents.OfType<TextMessageContentEvent>(),
+            content => content.Delta == "Tool says: ");
+        ToolCallStartEvent toolCallStart = Assert.Single(aguiEvents.OfType<ToolCallStartEvent>());
+        ToolCallResultEvent toolCallResult = Assert.Single(aguiEvents.OfType<ToolCallResultEvent>());
+
+        Assert.Equal(textStarts[0].MessageId, toolCallStart.ParentMessageId);
+        Assert.NotEqual(textStarts[0].MessageId, toolCallResult.MessageId);
+        Assert.Equal(toolCallResult.MessageId, toolText.MessageId);
+        Assert.Equal(textStarts[^1].MessageId, toolCallResult.MessageId);
+    }
+
     /// <summary>
     /// When a provider properly sets MessageId (e.g., OpenAI), the AGUI pipeline
     /// produces valid events with correct messageId values.
