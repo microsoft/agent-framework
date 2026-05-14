@@ -3,12 +3,14 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Agents.AI.Purview.Models.Jobs;
 using Microsoft.Agents.AI.Purview.Models.Requests;
 using Microsoft.Agents.AI.Purview.Models.Responses;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace Microsoft.Agents.AI.Purview.UnitTests;
@@ -199,6 +201,69 @@ public sealed class ScopedContentProcessorTests
         // Assert
         Assert.False(result.shouldBlock);
         Assert.Equal("user-123", result.userId);
+    }
+
+    [Fact]
+    public async Task ProcessMessagesAsync_DeduplicatesCombinedPolicyActionsByActionAndRestrictionAsync()
+    {
+        // Arrange
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.User, "Test message")
+        ];
+        PurviewSettings settings = CreateValidPurviewSettings();
+        TokenInfo tokenInfo = new() { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+        DlpActionInfo processContentAction = new() { Action = DlpAction.BlockAccess, RestrictionAction = RestrictionAction.Block };
+        DlpActionInfo duplicateScopeAction = new() { Action = DlpAction.BlockAccess, RestrictionAction = RestrictionAction.Block };
+        DlpActionInfo restrictionOnlyAction = new() { RestrictionAction = RestrictionAction.Block };
+        ProcessContentResponse pcResponse = new()
+        {
+            PolicyActions =
+            [
+                processContentAction
+            ]
+        };
+        ProtectionScopesResponse psResponse = new()
+        {
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations =
+                    [
+                        new("microsoft.graph.policyLocationApplication", "app-123")
+                    ],
+                    ExecutionMode = ExecutionMode.EvaluateInline,
+                    PolicyActions =
+                    [
+                        duplicateScopeAction,
+                        restrictionOnlyAction
+                    ]
+                }
+            ]
+        };
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(psResponse);
+
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pcResponse);
+
+        // Act
+        await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(pcResponse.PolicyActions);
+        Assert.Equal(2, pcResponse.PolicyActions.Count);
+        Assert.Same(processContentAction, pcResponse.PolicyActions[0]);
+        Assert.Same(restrictionOnlyAction, pcResponse.PolicyActions[1]);
     }
 
     [Fact]
@@ -482,7 +547,7 @@ public sealed class ScopedContentProcessorTests
         await this._processor.ProcessMessagesAsync(
             messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
 
-        // Assert: ProcessContent runs inline; GetProtectionScopes is queued as a background job, not invoked inline.
+        // Assert: ProcessContent runs in the foreground; GetProtectionScopes is queued as a background job.
         this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
             It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Once);
         this._mockPurviewClient.Verify(x => x.GetProtectionScopesAsync(
@@ -587,6 +652,47 @@ public sealed class ScopedContentProcessorTests
         this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
             It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BackgroundJobRunner_ScopeRetrievalPaymentRequired_CachesForSubsequentCallsAsync()
+    {
+        // Arrange
+        Func<Channel<BackgroundJobBase>, Task>? runner = null;
+        Mock<IChannelHandler> channelHandler = new();
+        Mock<IPurviewClient> purviewClient = new();
+        Mock<ICacheProvider> cacheProvider = new();
+        PurviewSettings settings = new("TestApp") { MaxConcurrentJobConsumers = 1 };
+        ProtectionScopesRequest request = new("user-123", "tenant-123")
+        {
+            Activities = ProtectionScopeActivities.UploadText,
+            Locations =
+            [
+                new("microsoft.graph.policyLocationApplication", "app-123")
+            ]
+        };
+        ProtectionScopesCacheKey cacheKey = new(request);
+        Channel<BackgroundJobBase> channel = Channel.CreateUnbounded<BackgroundJobBase>();
+
+        channelHandler.Setup(x => x.AddRunner(It.IsAny<Func<Channel<BackgroundJobBase>, Task>>()))
+            .Callback<Func<Channel<BackgroundJobBase>, Task>>(callback => runner = callback);
+
+        purviewClient.Setup(x => x.GetProtectionScopesAsync(It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new PurviewPaymentRequiredException("Payment required"));
+
+        _ = new BackgroundJobRunner(channelHandler.Object, purviewClient.Object, cacheProvider.Object, NullLogger.Instance, settings);
+
+        // Act
+        Assert.NotNull(runner);
+        await channel.Writer.WriteAsync(new ScopeRetrievalJob(request, cacheKey));
+        channel.Writer.Complete();
+        await runner(channel);
+
+        // Assert
+        cacheProvider.Verify(x => x.SetAsync(
+            It.Is<PaymentRequiredCacheKey>(key => key.TenantId == "tenant-123"),
+            It.Is<PaymentRequiredCacheEntry>(entry => entry.Message == "Payment required"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

@@ -221,7 +221,8 @@ class ScopedContentProcessor:
             correlation_id=pc_request.correlation_id,
         )
 
-        # Check for tenant-level 402 exception cache first
+        # A 402 discovered by background scope warmup applies to subsequent calls;
+        # the first cold-cache call still returns the foreground ProcessContent result.
         tenant_payment_cache_key = f"purview:payment_required:{pc_request.tenant_id}"
         cached_payment_exception = await self._cache.get(tenant_payment_cache_key)
         if isinstance(cached_payment_exception, PurviewPaymentRequiredError):
@@ -338,7 +339,17 @@ class ScopedContentProcessor:
     def _combine_policy_actions(
         existing: list[DlpActionInfo] | None, new_actions: list[DlpActionInfo]
     ) -> list[DlpActionInfo]:
-        return (existing or []) + new_actions
+        combined: list[DlpActionInfo] = []
+        seen: set[tuple[DlpAction | None, RestrictionAction | None]] = set()
+
+        for action_info in (existing or []) + new_actions:
+            key = (action_info.action, action_info.restriction_action)
+            if key in seen:
+                continue
+            seen.add(key)
+            combined.append(action_info)
+
+        return combined
 
     @staticmethod
     def _check_applicable_scopes(

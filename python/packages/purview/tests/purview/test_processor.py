@@ -229,10 +229,25 @@ class TestScopedContentProcessor:
 
         assert combined == [existing_action, restriction_only_action]
 
+    async def test_combine_policy_actions_deduplicates_by_action_and_restriction(
+        self, processor: ScopedContentProcessor
+    ) -> None:
+        """Test _combine_policy_actions removes exact duplicate actions."""
+        block_action = DlpActionInfo(action=DlpAction.BLOCK_ACCESS, restriction_action=RestrictionAction.BLOCK)
+        duplicate_block_action = DlpActionInfo(action=DlpAction.BLOCK_ACCESS, restriction_action=RestrictionAction.BLOCK)
+        restriction_only_action = DlpActionInfo(restriction_action=RestrictionAction.BLOCK)
+
+        combined = processor._combine_policy_actions(
+            [block_action],
+            [duplicate_block_action, restriction_only_action],
+        )
+
+        assert combined == [block_action, restriction_only_action]
+
     async def test_process_with_scopes_calls_client_methods(
         self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
     ) -> None:
-        """Test _process_with_scopes calls process_content inline and warms scopes in background on cache miss."""
+        """Test _process_with_scopes calls process_content immediately and warms scopes in background on cache miss."""
         from agent_framework_purview._models import (
             ContentActivitiesResponse,
             ProtectionScopesResponse,
@@ -248,7 +263,7 @@ class TestScopedContentProcessor:
 
         response = await processor._process_with_scopes(request)
 
-        # On cache miss, ProcessContent runs inline and the response is returned.
+        # On cache miss, ProcessContent runs in the foreground and the response is returned.
         assert response.id == "response-123"
         mock_client.process_content.assert_called_once()
 
@@ -803,7 +818,7 @@ class TestScopedContentProcessorCaching:
     async def test_payment_required_exception_cached_at_tenant_level(
         self, mock_client: AsyncMock, settings: PurviewSettings
     ) -> None:
-        """Test that 402 payment required exceptions are cached at tenant level."""
+        """Test that background scope 402 returns once, then throws from the tenant-level cache."""
         from agent_framework_purview._cache import InMemoryCacheProvider
         from agent_framework_purview._exceptions import PurviewPaymentRequiredError
 

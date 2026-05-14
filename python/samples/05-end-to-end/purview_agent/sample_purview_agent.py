@@ -11,8 +11,8 @@ Shows:
 Note: Caching is automatic and enabled by default.
 
 Environment variables:
-- AZURE_OPENAI_ENDPOINT (required)
-- AZURE_OPENAI_MODEL (optional, defaults to gpt-4o-mini)
+- FOUNDRY_PROJECT_ENDPOINT (required)
+- FOUNDRY_MODEL (optional, defaults to gpt-4o-mini)
 - PURVIEW_CLIENT_APP_ID (required)
 - PURVIEW_USE_CERT_AUTH (optional, set to "true" for certificate auth)
 - PURVIEW_TENANT_ID (required if certificate auth)

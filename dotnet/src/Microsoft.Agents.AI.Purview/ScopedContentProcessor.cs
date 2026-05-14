@@ -193,6 +193,9 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     {
         ProtectionScopesRequest psRequest = CreateProtectionScopesRequest(pcRequest, pcRequest.UserId, pcRequest.TenantId, pcRequest.CorrelationId);
 
+        // Like the SDK tenant-scope sentinel cache, a 402 discovered by background
+        // scope warmup applies to subsequent calls; the first cold-cache call still
+        // returns the foreground ProcessContent result.
         PaymentRequiredCacheEntry? cachedPaymentRequired = await this._cacheProvider.GetAsync<PaymentRequiredCacheKey, PaymentRequiredCacheEntry>(
             new PaymentRequiredCacheKey(pcRequest.TenantId),
             cancellationToken).ConfigureAwait(false);
@@ -211,8 +214,8 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             return await this.ProcessWithCachedScopesAsync(pcRequest, cacheResponse, cacheKey, cancellationToken).ConfigureAwait(false);
         }
 
-        // Cache miss: queue a background job to warm the protection scopes cache and let
-        // ProcessContent run inline. The service still enforces applicable policies for this turn.
+        // Cache miss: match the SDK parallel path by warming protection scopes in the
+        // background while ProcessContent runs immediately in the foreground.
         try
         {
             this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey));
@@ -291,9 +294,29 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     {
         if (actionInfos?.Count > 0)
         {
-            pcResponse.PolicyActions = pcResponse.PolicyActions is null ?
-                actionInfos :
-                [.. pcResponse.PolicyActions, .. actionInfos];
+            List<DlpActionInfo> combinedActions = [];
+            HashSet<(DlpAction Action, RestrictionAction? RestrictionAction)> seenActions = [];
+
+            if (pcResponse.PolicyActions != null)
+            {
+                foreach (DlpActionInfo actionInfo in pcResponse.PolicyActions)
+                {
+                    if (seenActions.Add((actionInfo.Action, actionInfo.RestrictionAction)))
+                    {
+                        combinedActions.Add(actionInfo);
+                    }
+                }
+            }
+
+            foreach (DlpActionInfo actionInfo in actionInfos)
+            {
+                if (seenActions.Add((actionInfo.Action, actionInfo.RestrictionAction)))
+                {
+                    combinedActions.Add(actionInfo);
+                }
+            }
+
+            pcResponse.PolicyActions = combinedActions;
         }
 
         return pcResponse;

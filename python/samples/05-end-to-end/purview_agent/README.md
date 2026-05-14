@@ -3,7 +3,7 @@
 This getting-started sample shows how to attach Microsoft Purview policy evaluation to an Agent Framework `Agent` using the **middleware** approach.
 
 **What this sample demonstrates:**
-1. Configure an Azure OpenAI chat client
+1. Configure a Foundry chat client
 2. Add Purview policy enforcement middleware (`PurviewPolicyMiddleware`)
 3. Add Purview policy enforcement at the chat client level (`PurviewChatPolicyMiddleware`)
 4. Implement a custom cache provider for advanced caching scenarios
@@ -17,8 +17,8 @@ This getting-started sample shows how to attach Microsoft Purview policy evaluat
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `AZURE_OPENAI_ENDPOINT` | Yes | Azure OpenAI endpoint (https://<name>.openai.azure.com) |
-| `AZURE_OPENAI_MODEL` | Optional | Model deployment name (defaults inside SDK if omitted) |
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint, for example `https://<resource>.services.ai.azure.com/api/projects/<project>` |
+| `FOUNDRY_MODEL` | Optional | Model deployment name (defaults to `gpt-4o-mini`) |
 | `PURVIEW_CLIENT_APP_ID` | Yes* | Client (application) ID used for Purview authentication |
 | `PURVIEW_USE_CERT_AUTH` | Optional (`true`/`false`) | Switch between certificate and interactive auth |
 | `PURVIEW_TENANT_ID` | Yes (when cert auth on) | Tenant ID for certificate authentication |
@@ -31,7 +31,8 @@ This getting-started sample shows how to attach Microsoft Purview policy evaluat
 Opens a browser on first run to sign in.
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT = "https://your-openai-instance.openai.azure.com"
+$env:FOUNDRY_PROJECT_ENDPOINT = "https://<resource>.services.ai.azure.com/api/projects/<project>"
+$env:FOUNDRY_MODEL = "gpt-4o-mini"
 $env:PURVIEW_CLIENT_APP_ID = "00000000-0000-0000-0000-000000000000"
 ```
 
@@ -67,7 +68,7 @@ If interactive auth is used, a browser window will appear the first time.
 The sample demonstrates three different scenarios:
 
 ### A. Agent Middleware (`run_with_agent_middleware`)
-1. Builds an Azure OpenAI chat client (using the environment endpoint / deployment)
+1. Builds a Foundry chat client (using the environment project endpoint / deployment)
 2. Chooses credential mode (certificate vs interactive)
 3. Creates `PurviewPolicyMiddleware` with `PurviewSettings`
 4. Injects middleware into the agent at construction
