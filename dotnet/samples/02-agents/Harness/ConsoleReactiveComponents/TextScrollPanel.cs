@@ -9,8 +9,9 @@ namespace Harness.ConsoleReactiveComponents;
 /// </summary>
 public record TextScrollPanelProps : ConsoleReactiveProps
 {
-    /// <summary>Gets the items to render in the scroll panel.</summary>
-    public IReadOnlyList<object> Items { get; init; } = [];
+    /// <summary>Gets the items to render in the scroll panel. Each item is a pre-rendered
+    /// console string (may include ANSI escape sequences and newlines).</summary>
+    public IReadOnlyList<string> Items { get; init; } = [];
 }
 
 /// <summary>
@@ -20,21 +21,17 @@ public record TextScrollPanelProps : ConsoleReactiveProps
 public record TextScrollPanelState(int RenderedCount = 0) : ConsoleReactiveState;
 
 /// <summary>
-/// A component that renders items within a scroll area using a custom render delegate.
+/// A component that renders pre-rendered string items within a scroll area.
 /// All items are considered finalized — only new items since the last render are output.
 /// Use <see cref="Reset"/> to force a full re-render.
 /// </summary>
 public class TextScrollPanel : ConsoleReactiveComponent<TextScrollPanelProps, TextScrollPanelState>
 {
-    private readonly Func<object, string> _renderItem;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="TextScrollPanel"/> class.
     /// </summary>
-    /// <param name="renderItem">A delegate that renders a single item and returns the text to display (may contain newlines).</param>
-    public TextScrollPanel(Func<object, string> renderItem)
+    public TextScrollPanel()
     {
-        this._renderItem = renderItem;
         this.State = new TextScrollPanelState();
     }
 
@@ -60,8 +57,7 @@ public class TextScrollPanel : ConsoleReactiveComponent<TextScrollPanelProps, Te
         // Output only new items since last rendered
         for (int i = state.RenderedCount; i < props.Items.Count; i++)
         {
-            string text = this._renderItem(props.Items[i]);
-            Console.Write(text);
+            Console.Write(props.Items[i]);
         }
 
         // Update state to track what we've rendered
