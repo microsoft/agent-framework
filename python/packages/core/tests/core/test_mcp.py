@@ -4227,6 +4227,9 @@ async def test_mcp_tool_call_tool_forwards_tool_list_meta():
             self.session.call_tool = AsyncMock(
                 return_value=types.CallToolResult(content=[types.TextContent(type="text", text="result")])
             )
+            self.session.list_prompts = AsyncMock(
+                return_value=types.ListPromptsResult(prompts=[])
+            )
 
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
             return None
@@ -4234,6 +4237,7 @@ async def test_mcp_tool_call_tool_forwards_tool_list_meta():
     server = TestServer(name="test_server")
     async with server:
         await server.load_tools()
+        await server.load_prompts()
 
         with trace.use_span(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)):
             await server.call_tool("WorkIQSharePoint.readSmallBinaryFile", fileId="file-1")

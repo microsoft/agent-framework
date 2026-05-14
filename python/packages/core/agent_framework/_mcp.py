@@ -977,7 +977,6 @@ class MCPTool:
 
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
-        self._tool_call_meta_by_name.clear()
 
         params: types.PaginatedRequestParams | None = None
         while True:
@@ -1028,6 +1027,7 @@ class MCPTool:
 
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
+        self._tool_call_meta_by_name.clear()
 
         params: types.PaginatedRequestParams | None = None
         while True:
