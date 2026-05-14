@@ -221,11 +221,14 @@ def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpoin
     if not isinstance(context_id, str) or not context_id:
         raise RuntimeError("Invalid checkpoint context id: must be a non-empty string.")
     # Reject any segment that is not a single safe path component. This covers
-    # POSIX/Windows separators, NUL bytes, drive letters, all-dot segments
-    # (``.``, ``..``, ``...``, ...), and embedded URL-encoded forms once
-    # decoded by the framework. We deliberately do not attempt to "sanitize"
-    # by stripping characters because that can introduce collisions between
-    # distinct ids.
+    # POSIX/Windows separators, NUL bytes, drive letters, and all-dot segments
+    # (``.``, ``..``, ``...``, ...). We deliberately do not URL-decode the id
+    # here: the hosting layer never decodes context ids before joining them, so
+    # forms such as ``%2e%2e`` are accepted as literal directory names. Do NOT
+    # add decoding here without re-validating after the decode -- decode-then-
+    # join is exactly the pattern that reintroduces traversal. We also do not
+    # attempt to "sanitize" by stripping characters because that can introduce
+    # collisions between distinct ids.
     if (
         "/" in context_id
         or "\\" in context_id
