@@ -8,7 +8,7 @@ import inspect
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
+from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -794,7 +794,35 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         tools = list(self._tools)
         if context_tools:
             tools.extend(normalize_tools(context_tools))  # type: ignore[arg-type]
-        return self._prepare_tools(tools) if tools else None
+        if not tools:
+            return None
+        copilot_tools = self._prepare_tools(tools)
+        self._ensure_unique_copilot_tool_names(copilot_tools)
+        return copilot_tools
+
+    @staticmethod
+    def _ensure_unique_copilot_tool_names(tools: Sequence[CopilotTool]) -> None:
+        seen: set[str] = set()
+        for tool in tools:
+            name = RawGitHubCopilotAgent._get_copilot_tool_name(tool)
+            if name is None:
+                continue
+            if name in seen:
+                raise ValueError(f"Duplicate tool name '{name}'. GitHub Copilot session tools must have unique names.")
+            seen.add(name)
+
+    @staticmethod
+    def _get_copilot_tool_name(tool: CopilotTool) -> str | None:
+        if isinstance(tool, Mapping):
+            tool_mapping = cast(Mapping[str, Any], tool)
+            function = tool_mapping.get("function")
+            if isinstance(function, Mapping):
+                function_mapping = cast(Mapping[str, Any], function)
+                name = function_mapping.get("name")
+                return name if isinstance(name, str) else None
+            return None
+        name = getattr(tool, "name", None)
+        return name if isinstance(name, str) else None
 
     def _tool_to_copilot_tool(self, ai_func: FunctionTool) -> CopilotTool:
         """Convert an FunctionTool to a Copilot SDK tool."""
