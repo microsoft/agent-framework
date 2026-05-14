@@ -73,6 +73,26 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// it will be used to persist conversation sessions across requests using the AG-UI thread ID as the
     /// conversation identifier. If no session store is registered, sessions are ephemeral (not persisted).
     /// </para>
+    /// <para>
+    /// <strong>Trust model.</strong> The AG-UI <c>RunAgentInput.ThreadId</c> arrives
+    /// from the wire and is treated as a chain-resume identifier — <em>not</em> as an
+    /// authorization token. The <see cref="AgentSessionStore"/> contract carries no
+    /// principal/owner dimension, so when a persistent store is registered any caller
+    /// who knows or guesses another caller's <c>ThreadId</c> can resume that other
+    /// caller's persisted thread. Hosts that serve more than one user must compose a
+    /// principal dimension into the lookup key. The recommended way is to wrap the
+    /// keyed <see cref="AgentSessionStore"/> in
+    /// <see cref="IsolationKeyScopedAgentSessionStore"/>, typically by calling
+    /// <c>UseClaimsBasedSessionIsolation(...)</c> from
+    /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c> (or by registering a custom
+    /// <see cref="SessionIsolationKeyProvider"/>) and registering the store via the
+    /// <c>WithSessionStore(...)</c> / <c>WithInMemorySessionStore(...)</c> helpers on
+    /// <see cref="IHostedAgentBuilder"/> so that the wrapper is applied. When no
+    /// isolation provider is registered, behavior is unchanged — the bare
+    /// <c>ThreadId</c> is used as the conversation identifier, which is appropriate
+    /// for first-run / single-user / prototyping scenarios but unsafe for
+    /// multi-user hosts.
+    /// </para>
     /// </remarks>
     public static IEndpointConventionBuilder MapAGUI(
         this IEndpointRouteBuilder endpoints,
