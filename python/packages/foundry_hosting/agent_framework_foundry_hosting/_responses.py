@@ -11,6 +11,7 @@ import tempfile
 import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import suppress
+from pathlib import Path
 from typing import Protocol, cast
 
 from agent_framework import (
@@ -203,6 +204,44 @@ class FileBasedFunctionApprovalStorage:
 
     async def load_approval_request(self, approval_request_id: str) -> Content:
         return await asyncio.to_thread(self._load_sync, approval_request_id)
+
+
+def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpointStorage:
+    """Build a ``FileCheckpointStorage`` for ``context_id`` rooted under ``root``.
+
+    ``context_id`` originates from caller-controlled fields such as
+    ``previous_response_id`` or from server-generated fields such as
+    ``conversation_id`` / ``response_id``. In every case it must be treated as
+    an untrusted single path segment: path separators, drive letters, parent
+    references and similar would otherwise let the resulting directory escape
+    the configured checkpoint root (CWE-22). The check resolves the joined
+    path and verifies it stays under the resolved root before any directory is
+    created on disk.
+    """
+    if not isinstance(context_id, str) or not context_id:
+        raise RuntimeError("Invalid checkpoint context id: must be a non-empty string.")
+    # Reject any segment that is not a single safe path component. This covers
+    # POSIX/Windows separators, NUL bytes, drive letters, all-dot segments
+    # (``.``, ``..``, ``...``, ...), and embedded URL-encoded forms once
+    # decoded by the framework. We deliberately do not attempt to "sanitize"
+    # by stripping characters because that can introduce collisions between
+    # distinct ids.
+    if (
+        "/" in context_id
+        or "\\" in context_id
+        or "\x00" in context_id
+        # All-dot segments (``.``, ``..``, ``...``, ...) reduce to "" after stripping dots.
+        or context_id.strip(".") == ""
+        or os.path.isabs(context_id)
+        or os.path.splitdrive(context_id)[0]
+    ):
+        raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
+
+    root_path = Path(root).resolve()
+    storage_path = (root_path / context_id).resolve()
+    if not storage_path.is_relative_to(root_path):
+        raise RuntimeError(f"Invalid checkpoint context id: {context_id!r}")
+    return FileCheckpointStorage(storage_path)
 
 
 class ResponsesHostServer(ResponsesAgentServerHost):
@@ -400,7 +439,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         latest_checkpoint_id: str | None = None
         restore_storage: FileCheckpointStorage | None = None
         if context_id is not None:
-            restore_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
+            restore_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, context_id)
             latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
             if latest_checkpoint is not None:
                 latest_checkpoint_id = latest_checkpoint.checkpoint_id
@@ -414,7 +453,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # supplied, restore_storage points at the *prior* response's
         # directory and write_storage points at the *current* response's.
         write_context_id = context.conversation_id or context.response_id
-        write_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, write_context_id))
+        write_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, write_context_id)
 
         # Multi-turn pattern: when we have a prior checkpoint, restore it
         # first (drive the workflow back to idle with prior state intact),

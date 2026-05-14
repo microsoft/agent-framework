@@ -11,7 +11,7 @@ the registered _handle_create handler.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -20,6 +20,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     Content,
+    FileCheckpointStorage,
     HistoryProvider,
     Message,
     RawAgent,
@@ -2649,6 +2650,85 @@ class TestFunctionApprovalRoundTrip:
         # The handler raises a KeyError when the storage lookup misses;
         # the hosting layer surfaces this as a 5xx response.
         assert resp.status_code >= 500
+
+
+# endregion
+
+
+# region Checkpoint context path validation
+
+
+class TestCheckpointContextPathValidation:
+    """Regression tests for the path-traversal hardening of checkpoint storage.
+
+    These tests guard against CWE-22 in the workflow hosting path. The hosting
+    code joins caller-supplied identifiers (``previous_response_id``) and
+    server-generated identifiers (``conversation_id`` / ``response_id``) under
+    the configured checkpoint root. Without validation, traversal segments
+    such as ``../../escape`` or absolute paths cause directory creation
+    outside the intended root.
+    """
+
+    @staticmethod
+    def _helper() -> Callable[[str, str], FileCheckpointStorage]:
+        from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
+            _checkpoint_storage_for_context,
+        )
+
+        return _checkpoint_storage_for_context
+
+    def test_valid_segment_creates_storage_under_root(self, tmp_path: Any) -> None:
+        helper = self._helper()
+        storage = helper(str(tmp_path), "resp_abc123")
+        assert storage.storage_path.is_dir()
+        assert storage.storage_path.parent == tmp_path.resolve()
+
+    @pytest.mark.parametrize(
+        "bad_id",
+        [
+            # Original MSRC repro: traversal embedded inside an id-shaped value.
+            "caresp_x/../../service-data/api-made-dir" + "A" * 14,
+            # Variant report repros.
+            "../../escape",
+            "..",
+            ".",
+            "...",
+            "/tmp/escape",
+            "/absolute/path",
+            "C:\\temp\\escape",
+            "..\\..\\escape",
+            "foo\\..\\bar",
+            "foo/bar",
+            "with\x00null",
+            "",
+        ],
+    )
+    def test_traversal_and_separator_payloads_are_rejected(self, tmp_path: Any, bad_id: str) -> None:
+        helper = self._helper()
+        before = sorted(p.name for p in tmp_path.parent.iterdir())
+        with pytest.raises(RuntimeError):
+            helper(str(tmp_path), bad_id)
+        # Ensure no escape directory was created adjacent to (or above) the root.
+        after = sorted(p.name for p in tmp_path.parent.iterdir())
+        assert before == after, f"Unexpected filesystem artifacts created for payload {bad_id!r}"
+        # And nothing inside the root either.
+        assert list(tmp_path.iterdir()) == []
+
+    def test_non_string_context_id_is_rejected(self, tmp_path: Any) -> None:
+        helper = self._helper()
+        with pytest.raises(RuntimeError):
+            helper(str(tmp_path), None)  # type: ignore[arg-type]
+
+    def test_url_encoded_traversal_is_treated_as_literal_segment(self, tmp_path: Any) -> None:
+        """URL-encoded traversal should not decode to traversal at the filesystem layer.
+
+        The hosting layer never URL-decodes ids before using them; the helper
+        should accept ``%2e%2e`` as a single literal segment (no escape).
+        """
+        helper = self._helper()
+        storage = helper(str(tmp_path), "%2e%2e")
+        assert storage.storage_path.parent == tmp_path.resolve()
+        assert storage.storage_path.name == "%2e%2e"
 
 
 # endregion
