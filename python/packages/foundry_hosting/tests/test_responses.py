@@ -2689,6 +2689,8 @@ class TestCheckpointContextPathValidation:
         "bad_id",
         [
             # Original MSRC repro: traversal embedded inside an id-shaped value.
+            # The 14 ``A``s pad the suffix to mimic the exact length of the
+            # ``api-made-dir<14-char-suffix>`` segment from the original report.
             "caresp_x/../../service-data/api-made-dir" + "A" * 14,
             # Variant report repros.
             "../../escape",
