@@ -287,4 +287,67 @@ public class AgentResponseTests
         Assert.NotNull(update.AdditionalProperties);
         Assert.Equal("value", update.AdditionalProperties!["key"]);
     }
+
+    [Fact]
+    public void Constructor_WithNullChatResponse_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new AgentResponse((ChatResponse)null!));
+    }
+
+    [Fact]
+    public void Text_WithOnlyNonTextContent_ReturnsEmptyString()
+    {
+        // Arrange
+        AgentResponse response = new(
+        [
+            new ChatMessage(
+                ChatRole.Assistant,
+                [
+                    new DataContent("data:image/png;base64,aGVsbG8="),
+                    new FunctionCallContent("callId1", "fc1"),
+                    new FunctionResultContent("callId1", "result"),
+                ])
+        ]);
+
+        // Act & Assert
+        Assert.Equal(string.Empty, response.Text);
+    }
+
+    [Fact]
+    public void Text_AfterSettingMessagesToNull_ReturnsEmptyString()
+    {
+        // Arrange
+        AgentResponse response = new(new ChatMessage(ChatRole.Assistant, "hello"));
+
+        // Act
+        response.Messages = null!;
+
+        // Assert
+        Assert.Equal(string.Empty, response.Text);
+    }
+
+    [Fact]
+    public void ToAgentResponseUpdates_WithMultipleMessages_PreservesOrder()
+    {
+        // Arrange
+        AgentResponse response = new(
+        [
+            new ChatMessage(ChatRole.Assistant, "first") { MessageId = "msg1" },
+            new ChatMessage(ChatRole.Assistant, "second") { MessageId = "msg2" },
+            new ChatMessage(ChatRole.Assistant, "third") { MessageId = "msg3" },
+        ]);
+
+        // Act
+        AgentResponseUpdate[] updates = response.ToAgentResponseUpdates();
+
+        // Assert
+        Assert.Equal(3, updates.Length);
+        Assert.Equal("msg1", updates[0].MessageId);
+        Assert.Equal("first", updates[0].Text);
+        Assert.Equal("msg2", updates[1].MessageId);
+        Assert.Equal("second", updates[1].Text);
+        Assert.Equal("msg3", updates[2].MessageId);
+        Assert.Equal("third", updates[2].Text);
+    }
 }
