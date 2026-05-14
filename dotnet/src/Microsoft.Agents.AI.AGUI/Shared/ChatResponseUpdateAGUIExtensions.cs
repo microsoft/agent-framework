@@ -57,6 +57,34 @@ internal static class ChatResponseUpdateAGUIExtensions
         return copiedProperties;
     }
 
+    private static AdditionalPropertiesDictionary? MergeAdditionalProperties(
+        AdditionalPropertiesDictionary? startProperties,
+        AdditionalPropertiesDictionary? contentProperties)
+    {
+        if (startProperties is not { Count: > 0 })
+        {
+            return contentProperties;
+        }
+
+        if (contentProperties is not { Count: > 0 })
+        {
+            return startProperties;
+        }
+
+        AdditionalPropertiesDictionary mergedProperties = [];
+        foreach (KeyValuePair<string, object?> property in startProperties)
+        {
+            mergedProperties[property.Key] = property.Value;
+        }
+
+        foreach (KeyValuePair<string, object?> property in contentProperties)
+        {
+            mergedProperties[property.Key] = property.Value;
+        }
+
+        return mergedProperties;
+    }
+
     private static bool IsReservedProperty(string key, string[] reservedPropertyNames)
     {
         foreach (string reservedPropertyName in reservedPropertyNames)
@@ -228,6 +256,7 @@ internal static class ChatResponseUpdateAGUIExtensions
         private string? _currentMessageId;
         private string? _conversationId;
         private string? _responseId;
+        private AdditionalPropertiesDictionary? _textStartAdditionalProperties;
 
         public void SetConversationAndResponseIds(string? conversationId, string? responseId)
         {
@@ -244,13 +273,15 @@ internal static class ChatResponseUpdateAGUIExtensions
 
             this._currentRole = AGUIChatMessageExtensions.MapChatRole(textStart.Role);
             this._currentMessageId = textStart.MessageId;
+            this._textStartAdditionalProperties = CopyAdditionalProperties(textStart);
         }
 
         internal ChatResponseUpdate EmitTextUpdate(TextMessageContentEvent textContent)
         {
+            AdditionalPropertiesDictionary? contentAdditionalProperties = CopyAdditionalProperties(textContent);
             TextContent content = new(textContent.Delta)
             {
-                AdditionalProperties = CopyAdditionalProperties(textContent)
+                AdditionalProperties = MergeAdditionalProperties(this._textStartAdditionalProperties, contentAdditionalProperties)
             };
 
             return new ChatResponseUpdate(
@@ -272,6 +303,7 @@ internal static class ChatResponseUpdateAGUIExtensions
             }
             this._currentRole = default;
             this._currentMessageId = null;
+            this._textStartAdditionalProperties = null;
         }
     }
 
