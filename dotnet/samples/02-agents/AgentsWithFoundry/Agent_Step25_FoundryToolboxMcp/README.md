@@ -19,10 +19,11 @@ Set the following environment variables:
 ```powershell
 $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
-$env:FOUNDRY_TOOLBOX_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project/toolsets/research_toolbox/mcp?api-version=2025-05-01-preview"
 ```
 
-The `<name>` segment of `FOUNDRY_TOOLBOX_ENDPOINT` must match the `ToolboxName` constant in `Program.cs`.
+The sample creates a toolbox named `research_toolbox` in your Foundry project on
+startup, then connects to its MCP endpoint at
+`{AZURE_AI_PROJECT_ENDPOINT}/toolboxes/research_toolbox/mcp?api-version=v{version}`.
 
 ## Run the sample
 

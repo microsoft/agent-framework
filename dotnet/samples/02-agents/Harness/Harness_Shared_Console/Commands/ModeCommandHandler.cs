@@ -7,7 +7,7 @@ namespace Harness.Shared.Console.Commands;
 /// <summary>
 /// Handles the <c>/mode</c> command to display or switch the current agent mode.
 /// </summary>
-internal sealed class ModeCommandHandler : CommandHandler
+public sealed class ModeCommandHandler : CommandHandler
 {
     private readonly AgentModeProvider? _modeProvider;
     private readonly IReadOnlyDictionary<string, ConsoleColor>? _modeColors;
@@ -27,7 +27,7 @@ internal sealed class ModeCommandHandler : CommandHandler
     public override string? GetHelpText() => this._modeProvider is not null ? "/mode [plan|execute] (show or switch mode)" : null;
 
     /// <inheritdoc/>
-    public override async ValueTask<bool> TryHandleAsync(string input, AgentSession session, HarnessUXContainer ux)
+    public override async ValueTask<bool> TryHandleAsync(string input, AgentSession session, IUXStateDriver ux)
     {
         if (!input.StartsWith("/mode ", StringComparison.OrdinalIgnoreCase) && !input.Equals("/mode", StringComparison.OrdinalIgnoreCase))
         {

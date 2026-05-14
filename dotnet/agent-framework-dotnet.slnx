@@ -242,6 +242,7 @@
     <Project Path="samples/03-workflows/Declarative/HostedWorkflow/HostedWorkflow.csproj" />
     <Project Path="samples/03-workflows/Declarative/InputArguments/InputArguments.csproj" />
     <Project Path="samples/03-workflows/Declarative/InvokeFunctionTool/InvokeFunctionTool.csproj" />
+    <Project Path="samples/03-workflows/Declarative/InvokeFoundryToolboxMcp/InvokeFoundryToolboxMcp.csproj" />
     <Project Path="samples/03-workflows/Declarative/InvokeHttpRequest/InvokeHttpRequest.csproj" />
     <Project Path="samples/03-workflows/Declarative/InvokeMcpTool/InvokeMcpTool.csproj" />
     <Project Path="samples/03-workflows/Declarative/Marketing/Marketing.csproj" />
@@ -298,6 +299,7 @@
   </Folder>
   <Folder Name="/Samples/03-workflows/Evaluation/">
     <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowEval/Evaluation_WorkflowEval.csproj" />
+    <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowExpectedOutputs/Evaluation_WorkflowExpectedOutputs.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/">
   </Folder>

@@ -100,10 +100,7 @@ public static class DevUIExtensions
 
         if (options.AllowRemoteAccess && !tokenConfigured && options.ConfigureEndpoints is null)
         {
-            logger.LogWarning(
-                "DevUI is configured with AllowRemoteAccess=true and no authentication. " +
-                "Set DevUIOptions.AuthToken, the {EnvVar} environment variable, or attach an authorization policy via ConfigureEndpoints.",
-                DevUIOptions.AuthTokenEnvironmentVariable);
+            DevUILog.InsecurelyExposed(logger, DevUIOptions.AuthTokenEnvironmentVariable);
         }
     }
 }
