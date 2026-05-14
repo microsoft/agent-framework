@@ -251,8 +251,6 @@ class TestScopedContentProcessor:
         # On cache miss, ProcessContent runs inline and the response is returned.
         assert response.id == "response-123"
         mock_client.process_content.assert_called_once()
-        pc_request = mock_client.process_content.call_args.args[0]
-        assert pc_request.process_inline is True
 
         # Protection scopes are refreshed in a background task.
         await asyncio.gather(*list(processor._background_tasks))

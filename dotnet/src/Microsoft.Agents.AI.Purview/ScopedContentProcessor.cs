@@ -193,6 +193,15 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     {
         ProtectionScopesRequest psRequest = CreateProtectionScopesRequest(pcRequest, pcRequest.UserId, pcRequest.TenantId, pcRequest.CorrelationId);
 
+        PaymentRequiredCacheEntry? cachedPaymentRequired = await this._cacheProvider.GetAsync<PaymentRequiredCacheKey, PaymentRequiredCacheEntry>(
+            new PaymentRequiredCacheKey(pcRequest.TenantId),
+            cancellationToken).ConfigureAwait(false);
+
+        if (cachedPaymentRequired != null)
+        {
+            throw new PurviewPaymentRequiredException(cachedPaymentRequired.Message ?? "Payment required");
+        }
+
         ProtectionScopesCacheKey cacheKey = new(psRequest);
 
         ProtectionScopesResponse? cacheResponse = await this._cacheProvider.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(cacheKey, cancellationToken).ConfigureAwait(false);
@@ -231,6 +240,8 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 
         if (shouldProcess)
         {
+            pcRequest.ProcessInline = executionMode == ExecutionMode.EvaluateInline;
+
             if (executionMode == ExecutionMode.EvaluateOffline)
             {
                 this._channelHandler.QueueJob(new ProcessContentJob(pcRequest));

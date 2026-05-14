@@ -18,6 +18,8 @@ namespace Microsoft.Agents.AI.Purview.Serialization;
 [JsonSerializable(typeof(ContentActivitiesRequest))]
 [JsonSerializable(typeof(ContentActivitiesResponse))]
 [JsonSerializable(typeof(ProtectionScopesCacheKey))]
+[JsonSerializable(typeof(PaymentRequiredCacheKey))]
+[JsonSerializable(typeof(PaymentRequiredCacheEntry))]
 internal sealed partial class SourceGenerationContext : JsonSerializerContext;
 
 /// <summary>

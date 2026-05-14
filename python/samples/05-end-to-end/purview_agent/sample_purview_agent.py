@@ -138,12 +138,12 @@ def build_credential() -> Any:
 
 
 async def run_with_agent_middleware() -> None:
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not endpoint:
-        print("Skipping run: AZURE_OPENAI_ENDPOINT not set")
+        print("Skipping run: FOUNDRY_PROJECT_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
+    deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
     client = FoundryChatClient(model=deployment, project_endpoint=endpoint, credential=AzureCliCredential())
 
@@ -176,12 +176,12 @@ async def run_with_agent_middleware() -> None:
 
 
 async def run_with_chat_middleware() -> None:
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not endpoint:
-        print("Skipping chat middleware run: AZURE_OPENAI_ENDPOINT not set")
+        print("Skipping chat middleware run: FOUNDRY_PROJECT_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_MODEL", default="gpt-4o-mini")
+    deployment = os.environ.get("FOUNDRY_MODEL", default="gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
 
     client = FoundryChatClient(
@@ -226,12 +226,12 @@ async def run_with_chat_middleware() -> None:
 
 async def run_with_custom_cache_provider() -> None:
     """Demonstrate implementing and using a custom cache provider."""
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not endpoint:
-        print("Skipping custom cache provider run: AZURE_OPENAI_ENDPOINT not set")
+        print("Skipping custom cache provider run: FOUNDRY_PROJECT_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
+    deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
     client = FoundryChatClient(model=deployment, project_endpoint=endpoint, credential=AzureCliCredential())
 
@@ -268,12 +268,12 @@ async def run_with_custom_cache_provider() -> None:
     print("Second response (custom provider):\n", second)
 
     """Demonstrate using the default built-in cache."""
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not endpoint:
-        print("Skipping default cache run: AZURE_OPENAI_ENDPOINT not set")
+        print("Skipping default cache run: FOUNDRY_PROJECT_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
+    deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
     client = FoundryChatClient(model=deployment, project_endpoint=endpoint, credential=AzureCliCredential())
 

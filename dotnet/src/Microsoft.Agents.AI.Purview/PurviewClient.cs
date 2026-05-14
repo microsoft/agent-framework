@@ -130,6 +130,11 @@ internal sealed class PurviewClient : IPurviewClient
                 message.Headers.Add("If-None-Match", request.ScopeIdentifier);
             }
 
+            if (request.ProcessInline)
+            {
+                message.Headers.Add("Prefer", "evaluateInline");
+            }
+
             string content = JsonSerializer.Serialize(request, PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProcessContentRequest)));
             message.Content = new StringContent(content, Encoding.UTF8, "application/json");
 

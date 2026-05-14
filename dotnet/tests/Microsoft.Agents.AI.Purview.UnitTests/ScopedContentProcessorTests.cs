@@ -562,6 +562,33 @@ public sealed class ScopedContentProcessorTests
             It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task ProcessMessagesAsync_WithCachedPaymentRequiredState_ThrowsPaymentRequiredAsync()
+    {
+        // Arrange
+        var messages = new List<ChatMessage>
+        {
+            new (ChatRole.User, "Test message")
+        };
+        var settings = CreateValidPurviewSettings();
+        var tokenInfo = new TokenInfo { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+
+        this._mockCacheProvider.Setup(x => x.GetAsync<PaymentRequiredCacheKey, PaymentRequiredCacheEntry>(
+            It.IsAny<PaymentRequiredCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PaymentRequiredCacheEntry("Payment required"));
+
+        // Act + Assert
+        await Assert.ThrowsAsync<PurviewPaymentRequiredException>(() =>
+            this._processor.ProcessMessagesAsync(
+                messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None));
+
+        this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()), Times.Never);
+    }
+
     #endregion
 
     #region Helper Methods

@@ -6,6 +6,7 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Agents.AI.Purview.Models.Jobs;
+using Microsoft.Agents.AI.Purview.Models.Responses;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Purview;
@@ -75,7 +76,7 @@ internal sealed class BackgroundJobRunner : IBackgroundJobRunner
             case ScopeRetrievalJob scopeRetrievalJob:
                 try
                 {
-                    var response = await this._purviewClient.GetProtectionScopesAsync(scopeRetrievalJob.Request, CancellationToken.None).ConfigureAwait(false);
+                    ProtectionScopesResponse response = await this._purviewClient.GetProtectionScopesAsync(scopeRetrievalJob.Request, CancellationToken.None).ConfigureAwait(false);
                     await this._cacheProvider.SetAsync(scopeRetrievalJob.CacheKey, response, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (PurviewPaymentRequiredException ex)

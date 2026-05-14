@@ -236,7 +236,6 @@ class ScopedContentProcessor:
         task = asyncio.create_task(self._refresh_protection_scopes_background(ps_req, cache_key))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
-        pc_request.process_inline = True
         return await self._call_process_content(pc_request, cache_key, dlp_actions=[])
 
     async def _process_with_cached_scopes(
