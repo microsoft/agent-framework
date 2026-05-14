@@ -188,6 +188,11 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
     protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
     {
+        if (this._taskContext?.IsTerminated == true)
+        {
+            throw new InvalidOperationException("Magentic Orchestration has already been terminated and cannot process new messages. Please start a new session.");
+        }
+
         if (this._taskContext == null)
         {
             // First Turn: Initialize the task context and create the initial plan

@@ -1183,6 +1183,80 @@ public class MagenticOrchestrationTests
             .WithMessage("*participant*");
     }
 
+    [Fact]
+    public async Task Terminated_Context_Rejects_New_Messages()
+    {
+        // Arrange: Run a workflow to completion so IsTerminated=true, then send another message.
+        // The framework accepts the message (TrySendMessageAsync returns true), but Magentic
+        // should error out internally, surfacing as a WorkflowErrorEvent.
+        List<ChatMessage> factsResponse = CreatePlanResponse("Facts");
+        List<ChatMessage> planResponse = CreatePlanResponse("The plan");
+        List<ChatMessage> satisfiedLedger = CreateProgressLedgerResponse(
+            isRequestSatisfied: true,
+            isInLoop: false,
+            isProgressBeingMade: true,
+            nextSpeaker: "Worker",
+            instructionOrQuestion: "Done");
+        List<ChatMessage> finalAnswerResponse = CreateFinalAnswerResponse("Task done");
+
+        TestReplayAgent manager = new(
+            [factsResponse, planResponse, satisfiedLedger, finalAnswerResponse],
+            name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+
+        InProcessExecutionEnvironment environment = ExecutionEnvironment.InProcess_Lockstep
+            .ToWorkflowExecutionEnvironment()
+            .WithCheckpointing(CheckpointManager.CreateInMemory());
+
+        await using StreamingRun run = await environment.OpenStreamingAsync(workflow);
+
+        // Send the initial messages and run to completion
+        await run.TrySendMessageAsync(new List<ChatMessage> { new(ChatRole.User, "Do the task") });
+        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
+
+        // Drain the stream to completion — workflow yields output and sets IsTerminated=true
+        WorkflowOutputEvent? output = null;
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false).ConfigureAwait(false))
+        {
+            if (evt is WorkflowOutputEvent o)
+            {
+                output = o;
+            }
+        }
+
+        output.Should().NotBeNull("workflow should have completed with output");
+
+        // Act: Send a new message after termination — framework accepts it, but Magentic errors out
+        bool accepted = await run.TrySendMessageAsync(new List<ChatMessage> { new(ChatRole.User, "Another message") });
+        accepted.Should().BeTrue("framework does not have a terminal state — it always queues messages");
+
+        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
+
+        // Watch for the error
+        WorkflowErrorEvent? errorEvent = null;
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false).ConfigureAwait(false))
+        {
+            if (evt is WorkflowErrorEvent e)
+            {
+                errorEvent = e;
+            }
+        }
+
+        // Assert: Magentic should have rejected the message with an InvalidOperationException
+        // (may be wrapped in TargetInvocationException by the framework's reflection-based dispatch)
+        errorEvent.Should().NotBeNull("sending a message after termination should produce a WorkflowErrorEvent");
+        Exception actual = errorEvent!.Exception is System.Reflection.TargetInvocationException tie && tie.InnerException != null
+            ? tie.InnerException
+            : errorEvent.Exception!;
+        actual.Should().BeOfType<InvalidOperationException>();
+        actual.Message.Should().Contain("terminated");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
