@@ -1165,6 +1165,24 @@ public class MagenticOrchestrationTests
         fourthResult.Result![0].Text.Should().Contain("Completed after multiple revisions");
     }
 
+    [Fact]
+    public void Empty_Team_Build_Throws()
+    {
+        // Arrange: No participants added to the builder.
+        TestReplayAgent manager = new(
+            [CreatePlanResponse("Facts"), CreatePlanResponse("Plan")],
+            name: "Manager");
+
+        MagenticWorkflowBuilder builder = new MagenticWorkflowBuilder(manager)
+            // No .AddParticipants() — empty team
+            .RequirePlanSignoff(false);
+
+        // Act & Assert: Build() should throw because the team is empty.
+        Action buildAction = () => builder.Build();
+        buildAction.Should().Throw<InvalidOperationException>()
+            .WithMessage("*participant*");
+    }
+
     #region Helper Methods
 
     private sealed record WorkflowRunResult(
