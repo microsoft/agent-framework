@@ -62,7 +62,7 @@ public static class WorkflowBuilderExtensions
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>(IsAllowedTypeAndMatchingCondition)!;
 
-#if NET6_0_OR_GREATER
+#if NET
         if (targets.TryGetNonEnumeratedCount(out int count) && count == 1)
 #else
         if (targets is ICollection<ExecutorBinding> { Count: 1 })
@@ -111,7 +111,7 @@ public static class WorkflowBuilderExtensions
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
 
-#if NET6_0_OR_GREATER
+#if NET
         if (targets.TryGetNonEnumeratedCount(out int count) && count == 1)
 #else
         if (targets is ICollection<ExecutorBinding> { Count: 1 })
