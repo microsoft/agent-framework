@@ -58,7 +58,7 @@ internal class MagenticTaskContext(List<ChatMessage> taskDefinition, List<AIAgen
 
     public bool IsTerminated { get; internal set; }
 
-    public bool IsStalled => this.TaskCounters.StallCount >= this.TaskLimits.MaxStallCount;
+    public bool IsStalled => this.TaskCounters.StallCount > this.TaskLimits.MaxStallCount;
 
     public (bool HitRoundLimit, bool HitResetLimit) CheckLimits()
     {
