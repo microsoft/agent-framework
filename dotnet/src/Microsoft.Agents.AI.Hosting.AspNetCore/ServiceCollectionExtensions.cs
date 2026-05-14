@@ -27,7 +27,7 @@ public static class ServiceCollectionExtensions
         ClaimsIdentitySessionIsolationKeyProviderOptions? options = null)
     {
         options ??= new();
-        ServiceDescriptor descriptor = new(typeof(SessionIsolationKeyProvider), CreateIsolationKeyProvider, ServiceLifetime.Scoped);
+        ServiceDescriptor descriptor = new(typeof(SessionIsolationKeyProvider), CreateIsolationKeyProvider, ServiceLifetime.Singleton);
         services.Add(descriptor);
 
         return services;
