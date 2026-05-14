@@ -22,7 +22,7 @@ What this example shows:
 - executor_completed events (type='executor_completed') contain the messages sent via ctx.send_message() in event.data
 - How to generically observe all executor I/O through workflow streaming events
 
-This approach allows you to enable_instrumentation any workflow for observability without
+This approach allows you to instrument any workflow for observability without
 changing the executor implementations.
 
 Prerequisites:

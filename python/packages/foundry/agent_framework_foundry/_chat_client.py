@@ -291,7 +291,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
                 "Install it with: pip install azure-monitor-opentelemetry"
             ) from exc
 
-        from agent_framework.observability import create_metric_views, create_resource, enable_instrumentation
+        from agent_framework.observability import create_metric_views, create_resource, enable_sensitive_telemetry
 
         if "resource" not in kwargs:
             kwargs["resource"] = create_resource()
@@ -302,7 +302,8 @@ class RawFoundryChatClient(  # type: ignore[misc]
             **kwargs,
         )
 
-        enable_instrumentation(enable_sensitive_data=enable_sensitive_data)
+        if enable_sensitive_data:
+            enable_sensitive_telemetry()
 
     # region Tool factory methods (override OpenAI defaults with Foundry versions)
 

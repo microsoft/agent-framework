@@ -186,7 +186,7 @@ The package follows a flat import structure:
 
 - **Components**: Import from `agent_framework.<component>`
   ```python
-  from agent_framework.observability import enable_instrumentation, configure_otel_providers
+  from agent_framework.observability import enable_sensitive_telemetry, configure_otel_providers
   ```
 
 - **Connectors**: Import from `agent_framework.<vendor/platform>`

@@ -3,7 +3,7 @@
 """Observability and OpenTelemetry helpers for Agent Framework.
 
 Commonly used exports:
-- enable_instrumentation
+- enable_sensitive_telemetry
 - configure_otel_providers
 - AgentTelemetryLayer
 - ChatTelemetryLayer
@@ -80,7 +80,7 @@ __all__ = [
     "configure_otel_providers",
     "create_metric_views",
     "create_resource",
-    "enable_instrumentation",
+    "enable_sensitive_telemetry",
     "get_meter",
     "get_tracer",
 ]
@@ -643,8 +643,8 @@ class ObservabilitySettings:
         Sensitive events should only be enabled on test and development environments.
 
     Keyword Args:
-        enable_instrumentation: Enable OpenTelemetry diagnostics. Default is False.
-            Can be set via environment variable ENABLE_INSTRUMENTATION.
+        enable_instrumentation: Enable OpenTelemetry diagnostics. Default is True.
+            Can be disabled by setting environment variable ENABLE_INSTRUMENTATION=false.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
             Can be set via environment variable ENABLE_SENSITIVE_DATA.
         enable_console_exporters: Enable console exporters for traces, logs, and metrics.
@@ -659,12 +659,12 @@ class ObservabilitySettings:
             from agent_framework import ObservabilitySettings
 
             # Using environment variables
-            # Set ENABLE_INSTRUMENTATION=true
+            # Instrumentation is enabled by default; set ENABLE_INSTRUMENTATION=false to disable.
             # Set ENABLE_CONSOLE_EXPORTERS=true
             settings = ObservabilitySettings()
 
             # Or passing parameters directly
-            settings = ObservabilitySettings(enable_instrumentation=True, enable_console_exporters=True)
+            settings = ObservabilitySettings(enable_console_exporters=True)
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -677,7 +677,10 @@ class ObservabilitySettings:
             env_file_encoding=env_file_encoding,
             **kwargs,
         )
-        self.enable_instrumentation: bool = data.get("enable_instrumentation") or False
+        # `enable_instrumentation` is defaulted to True if not set
+        instrumentation_value = data.get("enable_instrumentation")
+        self.enable_instrumentation: bool = True if instrumentation_value is None else instrumentation_value
+
         self.enable_sensitive_data: bool = data.get("enable_sensitive_data") or False
         self.enable_console_exporters: bool = data.get("enable_console_exporters") or False
         self.vs_code_extension_port: int | None = data.get("vs_code_extension_port")
@@ -951,30 +954,22 @@ def _read_int_env(name: str, *, default: int | None = None) -> int | None:
         return default
 
 
-def enable_instrumentation(
-    *,
-    enable_sensitive_data: bool | None = None,
-) -> None:
-    """Enable instrumentation for your application.
+def enable_sensitive_telemetry() -> None:
+    """Enable capture of sensitive data in telemetry for your application.
 
-    Calling this method implies you want to enable observability in your application.
+    Instrumentation is enabled by default; this method exists to opt-in to capturing
+    sensitive event payloads (e.g., chat messages, tool arguments).
 
-    This method does not configure exporters or providers.
-    It only updates the global variables that trigger the instrumentation code.
-    If you have already set the environment variable ENABLE_INSTRUMENTATION=true,
-    calling this method has no effect, unless you want to enable or disable sensitive data events.
+    This method does not configure exporters or providers. It also ensures that
+    instrumentation is enabled (in case it was explicitly disabled via the
+    ENABLE_INSTRUMENTATION environment variable).
 
-    Keyword Args:
-        enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
-            the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+    Warning:
+        Sensitive events should only be enabled on test and development environments.
     """
     global OBSERVABILITY_SETTINGS
     OBSERVABILITY_SETTINGS.enable_instrumentation = True
-    if enable_sensitive_data is not None:
-        OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
-    else:
-        # Re-read from current environment in case env vars were set after import (e.g. load_dotenv())
-        OBSERVABILITY_SETTINGS.enable_sensitive_data = _read_bool_env("ENABLE_SENSITIVE_DATA")
+    OBSERVABILITY_SETTINGS.enable_sensitive_data = True
 
 
 def configure_otel_providers(
@@ -1008,7 +1003,7 @@ def configure_otel_providers(
         Since you can only setup one provider per signal type (logs, traces, metrics),
         you can choose to use this method and take the exporter and provider that we created.
         Alternatively, you can setup the providers yourself, or through another library
-        (e.g., Azure Monitor) and just call `enable_instrumentation()` to enable instrumentation.
+        (e.g., Azure Monitor) and just call `enable_sensitive_telemetry()` to opt-in to sensitive data capture.
 
     Note:
         By default, the Agent Framework emits metrics with the prefixes `agent_framework`
@@ -1042,7 +1037,6 @@ def configure_otel_providers(
             from agent_framework.observability import configure_otel_providers
 
             # Using environment variables (recommended)
-            # Set ENABLE_INSTRUMENTATION=true
             # Set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
             configure_otel_providers()
 
@@ -1087,12 +1081,13 @@ def configure_otel_providers(
         .. code-block:: python
 
             # when azure monitor is installed
-            from agent_framework.observability import enable_instrumentation
+            from agent_framework.observability import enable_sensitive_telemetry
             from azure.monitor.opentelemetry import configure_azure_monitor
 
             connection_string = "InstrumentationKey=your_instrumentation_key_here;..."
             configure_azure_monitor(connection_string=connection_string)
-            enable_instrumentation()
+            # Optional: opt into capturing sensitive data (dev/test only)
+            enable_sensitive_telemetry()
 
     References:
         - https://opentelemetry.io/docs/languages/sdk-configuration/general/

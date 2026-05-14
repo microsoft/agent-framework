@@ -7,7 +7,7 @@ from typing import Annotated
 
 from agent_framework import Message, tool
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.observability import enable_instrumentation
+from agent_framework.observability import enable_sensitive_telemetry
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from opentelemetry._logs import set_logger_provider
@@ -135,7 +135,8 @@ async def main():
     setup_logging()
     setup_tracing()
     setup_metrics()
-    enable_instrumentation()
+    # Instrumentation is enabled by default; call this to also capture sensitive data (dev/test only).
+    enable_sensitive_telemetry()
 
     await run_chat_client()
 

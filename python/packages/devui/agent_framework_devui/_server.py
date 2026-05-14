@@ -518,7 +518,7 @@ class DevServer:
                 framework="agent_framework",
                 runtime="python",  # Python DevUI backend
                 capabilities={
-                    "instrumentation": os.getenv("ENABLE_INSTRUMENTATION") == "true",
+                    "instrumentation": os.getenv("ENABLE_INSTRUMENTATION", "true").lower() != "false",
                     "openai_proxy": openai_executor.is_configured,
                     "deployment": True,  # Deployment feature is available
                 },

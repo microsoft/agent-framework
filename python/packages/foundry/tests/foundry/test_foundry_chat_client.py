@@ -249,7 +249,7 @@ async def test_configure_azure_monitor() -> None:
         ),
         patch("agent_framework.observability.create_metric_views", mock_views),
         patch("agent_framework.observability.create_resource", return_value=mock_resource),
-        patch("agent_framework.observability.enable_instrumentation", mock_enable),
+        patch("agent_framework.observability.enable_sensitive_telemetry", mock_enable),
     ):
         await client.configure_azure_monitor(enable_sensitive_data=True)
 
@@ -259,7 +259,7 @@ async def test_configure_azure_monitor() -> None:
     assert call_kwargs["connection_string"] == "InstrumentationKey=test-key;IngestionEndpoint=https://test.endpoint"
     assert call_kwargs["views"] == []
     assert call_kwargs["resource"] is mock_resource
-    mock_enable.assert_called_once_with(enable_sensitive_data=True)
+    mock_enable.assert_called_once()
 
 
 async def test_configure_azure_monitor_resource_not_found() -> None:
@@ -324,7 +324,7 @@ async def test_configure_azure_monitor_with_custom_resource() -> None:
         ),
         patch("agent_framework.observability.create_metric_views", return_value=[]),
         patch("agent_framework.observability.create_resource") as mock_create_resource,
-        patch("agent_framework.observability.enable_instrumentation"),
+        patch("agent_framework.observability.enable_sensitive_telemetry"),
     ):
         await client.configure_azure_monitor(resource=custom_resource)
 

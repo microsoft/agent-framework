@@ -248,8 +248,8 @@ services:
       - AZURE_OPENAI_API_KEY=\${AZURE_OPENAI_API_KEY}
       - AZURE_OPENAI_ENDPOINT=\${AZURE_OPENAI_ENDPOINT}
       - AZURE_OPENAI_MODEL=\${AZURE_OPENAI_MODEL}
-      # Optional: Enable instrumentation
-      - ENABLE_INSTRUMENTATION=\${ENABLE_INSTRUMENTATION:-false}
+      # Optional: Disable instrumentation (enabled by default)
+      - ENABLE_INSTRUMENTATION=\${ENABLE_INSTRUMENTATION:-true}
     ports:
       - "8080:8080"
     restart: unless-stopped

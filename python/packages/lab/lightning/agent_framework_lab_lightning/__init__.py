@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import importlib.metadata
 
-from agent_framework.observability import enable_instrumentation
 from agentlightning.tracer import (  # type: ignore[reportMissingImports]
     AgentOpsTracer,  # type: ignore[reportMissingImports, import-not-found]
 )
@@ -26,7 +25,6 @@ class AgentFrameworkTracer(AgentOpsTracer):  # type: ignore
 
     def init(self) -> None:
         """Initialize the agent-framework-lab-lightning for training."""
-        enable_instrumentation()
         super().init()  # pyright: ignore[reportUnknownMemberType]
 
     def teardown(self) -> None:
