@@ -7,7 +7,7 @@ namespace Harness.Shared.Console.Commands;
 /// <summary>
 /// Handles the <c>/todos</c> command to display the current todo list.
 /// </summary>
-internal sealed class TodoCommandHandler : CommandHandler
+public sealed class TodoCommandHandler : CommandHandler
 {
     private readonly TodoProvider? _todoProvider;
 
@@ -24,7 +24,7 @@ internal sealed class TodoCommandHandler : CommandHandler
     public override string? GetHelpText() => this._todoProvider is not null ? "/todos (show todo list)" : null;
 
     /// <inheritdoc/>
-    public override async ValueTask<bool> TryHandleAsync(string input, AgentSession session, HarnessUXContainer ux)
+    public override async ValueTask<bool> TryHandleAsync(string input, AgentSession session, IUXStateDriver ux)
     {
         if (!input.Equals("/todos", StringComparison.OrdinalIgnoreCase))
         {
