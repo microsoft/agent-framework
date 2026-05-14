@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 public class MagenticOrchestrationTests
 {
     [Fact]
-    public async Task Task_Completes_When_RequestSatisfied()
+    public async Task Task_Completes_When_RequestSatisfiedAsync()
     {
         // Arrange: Manager reports task satisfied on first coordination round
         // Each response must have unique message IDs, so create separate instances
@@ -53,7 +53,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task PlanReview_Approved_Proceeds()
+    public async Task PlanReview_Approved_ProceedsAsync()
     {
         // Arrange: Human approves initial plan
         List<ChatMessage> factsResponse = CreatePlanResponse("Facts about executing the plan");
@@ -105,7 +105,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task Initial_Plan_Emits_PlanCreatedEvent()
+    public async Task Initial_Plan_Emits_PlanCreatedEventAsync()
     {
         // Arrange
         List<ChatMessage> factsResponse = CreatePlanResponse("Facts about the task");
@@ -143,7 +143,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task NextSpeaker_Invalid_Triggers_FinalAnswer()
+    public async Task NextSpeaker_Invalid_Triggers_FinalAnswerAsync()
     {
         // Arrange: ProgressLedger returns invalid next_speaker
         List<ChatMessage> factsResponse = CreatePlanResponse("Facts about the task");
@@ -182,7 +182,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task ProgressLedger_Updated_Event_Emitted()
+    public async Task ProgressLedger_Updated_Event_EmittedAsync()
     {
         // Arrange
         List<ChatMessage> factsResponse = CreatePlanResponse("Facts about the task");
@@ -221,7 +221,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task PlanSignoff_Disabled_Proceeds_Immediately()
+    public async Task PlanSignoff_Disabled_Proceeds_ImmediatelyAsync()
     {
         // Arrange: requirePlanSignoff=false should mean no plan review request
         List<ChatMessage> factsResponse = CreatePlanResponse("Task facts");
@@ -260,7 +260,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task NextSpeaker_Empty_Falls_Back_To_First()
+    public async Task NextSpeaker_Empty_Falls_Back_To_FirstAsync()
     {
         // Arrange: First progress ledger returns empty next_speaker, which should fall back to first participant.
         // Round 1: empty speaker → fallback to Worker (first participant) → Worker echoes
@@ -311,7 +311,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task Task_Completes_After_Multiple_Rounds()
+    public async Task Task_Completes_After_Multiple_RoundsAsync()
     {
         // Arrange: Round 1 delegates to Worker (not satisfied), round 2 completes
         // Manager turn sequence: facts1, plan1, ledger1(not satisfied), ledger2(satisfied), finalAnswer
@@ -361,7 +361,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task PlanReview_Revised_Triggers_Replan()
+    public async Task PlanReview_Revised_Triggers_ReplanAsync()
     {
         // Arrange: Human rejects initial plan with revision, triggering a replan.
         // Flow: facts1, plan1 → PlanCreatedEvent → plan review (pending)
@@ -440,7 +440,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task MaxRoundLimit_Terminates_Workflow()
+    public async Task MaxRoundLimit_Terminates_WorkflowAsync()
     {
         // Arrange: MaxRounds=1, so round 1 delegates to Worker, round 2 hits limit and terminates.
         // Manager turns: facts1, plan1, ledger1(not satisfied→delegates), then limit hit before ledger.
@@ -477,7 +477,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task MaxStallCount_Triggers_Reset()
+    public async Task MaxStallCount_Triggers_ResetAsync()
     {
         // Arrange: MaxStallCount=0, so one stall (isInLoop=true, StallCount=1 > 0) triggers ResetAndReplanAsync.
         // Flow: facts1, plan1 → round1 ledger(stall: isInLoop=true) → StallCount=1 → IsStalled → Reset
@@ -530,7 +530,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task Instruction_Message_Sent_When_Present()
+    public async Task Instruction_Message_Sent_When_PresentAsync()
     {
         // Arrange: Progress ledger has a non-empty instruction_or_question.
         // The orchestrator should send the instruction as a ChatMessage before delegating to the next agent.
@@ -581,7 +581,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task PlanReview_On_Stall_Replan()
+    public async Task PlanReview_On_Stall_ReplanAsync()
     {
         // Arrange: Plan signoff enabled, stall triggers reset, replan requires new plan review.
         // Flow: facts1, plan1 → PlanCreatedEvent → plan review (pending)
@@ -674,7 +674,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task MaxResetLimit_Terminates_Workflow()
+    public async Task MaxResetLimit_Terminates_WorkflowAsync()
     {
         // Arrange: MaxStallCount=0, MaxResets=1.
         // Flow: facts1, plan1 → ledger1(stall: isInLoop=true) → StallCount=1 > 0 → IsStalled → ResetAndReplanAsync
@@ -718,7 +718,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task ProgressLedger_Retry_On_Parse_Failure()
+    public async Task ProgressLedger_Retry_On_Parse_FailureAsync()
     {
         // Arrange: First progress ledger attempt returns invalid JSON (triggers parse failure + warning),
         // second attempt returns valid JSON (satisfied=true).
@@ -761,7 +761,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task ProgressLedger_Max_Retries_Triggers_Reset()
+    public async Task ProgressLedger_Max_Retries_Triggers_ResetAsync()
     {
         // Arrange: All 3 progress ledger retry attempts return invalid JSON → exception → ResetAndReplanAsync.
         // After reset: new plan, valid ledger (satisfied), final answer.
@@ -814,7 +814,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task Stall_NoProgress_Increments_StallCount()
+    public async Task Stall_NoProgress_Increments_StallCountAsync()
     {
         // Arrange: MaxStallCount=0, progress ledger reports IsProgressBeingMade=false (not IsInLoop).
         // This exercises the alternative stall trigger: !IsProgressBeingMade.
@@ -867,7 +867,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task Task_Delegates_To_Correct_Agent()
+    public async Task Task_Delegates_To_Correct_AgentAsync()
     {
         // Arrange: Two participants (WorkerA, WorkerB). Manager selects "WorkerA" as next speaker.
         // We verify that WorkerA produces a response update event and WorkerB does not.
@@ -927,7 +927,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task Progress_Made_Decrements_StallCount()
+    public async Task Progress_Made_Decrements_StallCountAsync()
     {
         // Arrange: MaxStallCount=3, so a single stall won't trigger reset.
         // Round 1: isInLoop=true (stall count → 1), delegates to Worker
@@ -996,7 +996,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task Consecutive_Stalls_Trigger_Reset()
+    public async Task Consecutive_Stalls_Trigger_ResetAsync()
     {
         // Arrange: MaxStallCount=1 — two consecutive stalls trigger reset (StallCount 2 > 1).
         // Round 1: isInLoop=true (stall count → 1), delegates to Worker
@@ -1065,7 +1065,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task PlanReview_Multiple_Revisions()
+    public async Task PlanReview_Multiple_RevisionsAsync()
     {
         // Arrange: Human rejects the plan twice before approving on the third review.
         // Flow: facts1, plan1 → PlanCreatedEvent → plan review (pending)
@@ -1184,7 +1184,7 @@ public class MagenticOrchestrationTests
     }
 
     [Fact]
-    public async Task Terminated_Context_Rejects_New_Messages()
+    public async Task Terminated_Context_Rejects_New_MessagesAsync()
     {
         // Arrange: Run a workflow to completion so IsTerminated=true, then send another message.
         // The framework accepts the message (TrySendMessageAsync returns true), but Magentic
