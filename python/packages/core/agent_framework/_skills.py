@@ -1430,6 +1430,13 @@ DEFAULT_RESOURCE_EXTENSIONS: Final[tuple[str, ...]] = (
 )
 DEFAULT_SCRIPT_EXTENSIONS: Final[tuple[str, ...]] = (".py",)
 
+# "." means the skill directory root itself (files directly in the skill folder).
+ROOT_DIRECTORY_INDICATOR: Final[str] = "."
+
+# Standard subdirectory names per https://agentskills.io/specification#directory-structure
+DEFAULT_RESOURCE_DIRECTORIES: Final[tuple[str, ...]] = ("references", "assets")
+DEFAULT_SCRIPT_DIRECTORIES: Final[tuple[str, ...]] = ("scripts",)
+
 # region Patterns and prompt template
 
 # Matches YAML frontmatter delimited by "---" lines.
@@ -1650,6 +1657,8 @@ class SkillsProvider(ContextProvider):
         script_runner: SkillScriptRunner | None = None,
         resource_extensions: tuple[str, ...] | None = None,
         script_extensions: tuple[str, ...] | None = None,
+        resource_directories: Sequence[str] | None = None,
+        script_directories: Sequence[str] | None = None,
         instruction_template: str | None = None,
         require_script_approval: bool = False,
         disable_caching: bool = False,
@@ -1672,6 +1681,15 @@ class SkillsProvider(ContextProvider):
                 ``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``.
             script_extensions: File extensions recognized as discoverable
                 scripts.  Defaults to ``(".py",)``.
+            resource_directories: Relative directory paths to scan for
+                resource files within each skill directory.  Use ``"."``
+                to include files at the skill root level.  Defaults to
+                ``("references", "assets")`` per the agentskills.io
+                specification.
+            script_directories: Relative directory paths to scan for
+                script files within each skill directory.  Use ``"."``
+                to include files at the skill root level.  Defaults to
+                ``("scripts",)`` per the agentskills.io specification.
             instruction_template: Custom system-prompt template for
                 advertising skills.  Must contain a ``{skills}`` placeholder.
                 Uses a built-in template when ``None``.
@@ -1701,6 +1719,8 @@ class SkillsProvider(ContextProvider):
                 script_runner=script_runner,
                 resource_extensions=resource_extensions,
                 script_extensions=script_extensions,
+                resource_directories=resource_directories,
+                script_directories=script_directories,
             )
         )
         return cls(
@@ -2186,7 +2206,15 @@ class FileSkillsSource(SkillsSource):
 
     Recursively scans the configured *skill_paths* directories for
     ``SKILL.md`` files (up to 2 levels deep), parses their YAML frontmatter,
-    and discovers associated resource and script files from subdirectories.
+    and discovers associated resource and script files from spec-defined
+    subdirectories.
+
+    By default, resources are discovered from ``references/`` and ``assets/``
+    subdirectories, and scripts from ``scripts/``, per the
+    `agentskills.io specification
+    <https://agentskills.io/specification>`_.  Use *resource_directories*
+    and *script_directories* to customize which subdirectories are scanned.
+    Pass ``"."`` to include files at the skill root level.
 
     Security: file-based metadata is XML-escaped before prompt injection,
     and resource reads are guarded against path traversal and symlink escape.
@@ -2200,14 +2228,15 @@ class FileSkillsSource(SkillsSource):
             source = FileSkillsSource(skill_paths="./skills")
             skills = await source.get_skills()
 
-        With a script runner and custom extensions:
+        With a script runner and custom directories:
 
         .. code-block:: python
 
             source = FileSkillsSource(
                 skill_paths=["./skills", "./more-skills"],
                 script_runner=my_runner,
-                script_extensions=(".py", ".sh"),
+                resource_directories=[".", "references", "assets"],
+                script_directories=["scripts"],
             )
     """
 
@@ -2218,6 +2247,8 @@ class FileSkillsSource(SkillsSource):
         script_runner: SkillScriptRunner | None = None,
         resource_extensions: tuple[str, ...] | None = None,
         script_extensions: tuple[str, ...] | None = None,
+        resource_directories: Sequence[str] | None = None,
+        script_directories: Sequence[str] | None = None,
     ) -> None:
         """Initialize a FileSkillsSource.
 
@@ -2237,6 +2268,18 @@ class FileSkillsSource(SkillsSource):
                 ``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``.
             script_extensions: File extensions recognized as discoverable
                 scripts.  Defaults to ``(".py",)``.
+            resource_directories: Relative directory paths to scan for
+                resource files within each skill directory.  Use ``"."``
+                to include files at the skill root level.  Defaults to
+                ``("references", "assets")`` per the
+                `agentskills.io specification
+                <https://agentskills.io/specification>`_.
+            script_directories: Relative directory paths to scan for
+                script files within each skill directory.  Use ``"."``
+                to include files at the skill root level.  Defaults to
+                ``("scripts",)`` per the
+                `agentskills.io specification
+                <https://agentskills.io/specification>`_.
         """
         if isinstance(skill_paths, (str, Path)):
             self._skill_paths: list[str] = [str(skill_paths)]
@@ -2246,6 +2289,17 @@ class FileSkillsSource(SkillsSource):
         self._script_runner = script_runner
         self._resource_extensions = resource_extensions or DEFAULT_RESOURCE_EXTENSIONS
         self._script_extensions = script_extensions or DEFAULT_SCRIPT_EXTENSIONS
+
+        self._resource_directories: tuple[str, ...] = (
+            tuple(FileSkillsSource._validate_and_normalize_directory_names(resource_directories))
+            if resource_directories is not None
+            else DEFAULT_RESOURCE_DIRECTORIES
+        )
+        self._script_directories: tuple[str, ...] = (
+            tuple(FileSkillsSource._validate_and_normalize_directory_names(script_directories))
+            if script_directories is not None
+            else DEFAULT_SCRIPT_DIRECTORIES
+        )
 
     async def get_skills(self) -> list[Skill]:
         """Discover and return all file-based skills from configured paths.
@@ -2284,12 +2338,16 @@ class FileSkillsSource(SkillsSource):
             )
 
             # Discover and attach file-based resources
-            for rn in FileSkillsSource._discover_resource_files(skill_path, self._resource_extensions):
+            for rn in FileSkillsSource._discover_resource_files(
+                skill_path, self._resource_extensions, self._resource_directories
+            ):
                 resource_full_path = FileSkillsSource._get_validated_resource_path(skill_path, rn)
                 file_skill.resources.append(_FileSkillResource(name=rn, full_path=resource_full_path))
 
             # Discover and attach file-based scripts as SkillScript instances
-            for sn in FileSkillsSource._discover_script_files(skill_path, self._script_extensions):
+            for sn in FileSkillsSource._discover_script_files(
+                skill_path, self._script_extensions, self._script_directories
+            ):
                 script_full_path = os.path.normpath(os.path.join(skill_path, sn))  # noqa: ASYNC240
                 file_skill.scripts.append(
                     FileSkillScript(name=sn, full_path=script_full_path, runner=self._script_runner)
@@ -2370,115 +2428,273 @@ class FileSkillsSource(SkillsSource):
         return False
 
     @staticmethod
+    def _validate_and_normalize_directory_names(
+        directories: Sequence[str],
+    ) -> list[str]:
+        """Validate and normalize relative directory names.
+
+        Ensures each entry is a safe relative path.  The ``"."`` root indicator
+        is passed through unchanged.  Entries containing ``..`` segments or
+        representing absolute paths are rejected with a warning and skipped.
+        Empty or whitespace-only entries raise :class:`ValueError`.
+
+        Args:
+            directories: Sequence of relative directory names to validate.
+
+        Returns:
+            A list of validated, normalized directory names.
+
+        Raises:
+            ValueError: If any entry is empty or whitespace-only.
+        """
+        result: list[str] = []
+        for directory in directories:
+            if not directory or not directory.strip():
+                raise ValueError("Directory names must not be empty or whitespace.")
+
+            # Normalize separators: backslash → forward slash, strip leading ./ and trailing /
+            normalized = PurePosixPath(directory.replace("\\", "/")).as_posix()
+
+            # "." and "./" both normalize to "." — treat as root indicator
+            if normalized == ROOT_DIRECTORY_INDICATOR:
+                result.append(ROOT_DIRECTORY_INDICATOR)
+                continue
+
+            # Reject absolute paths (check both POSIX and Windows-style roots
+            # so validation is consistent regardless of the host OS)
+            if (
+                os.path.isabs(directory)
+                or normalized.startswith("/")
+                or re.match(r"^[A-Za-z]:[/\\]", directory)
+            ):
+                logger.warning(
+                    "Skipping directory '%s': absolute paths are not allowed.",
+                    directory,
+                )
+                continue
+
+            # Reject paths containing ".." segments
+            if any(segment == ".." for segment in normalized.split("/")):
+                logger.warning(
+                    "Skipping directory '%s': parent traversal ('..') is not allowed.",
+                    directory,
+                )
+                continue
+
+            result.append(normalized)
+        return result
+
+    @staticmethod
     def _discover_resource_files(
         skill_dir_path: str,
         extensions: tuple[str, ...] = DEFAULT_RESOURCE_EXTENSIONS,
+        directories: tuple[str, ...] = DEFAULT_RESOURCE_DIRECTORIES,
     ) -> list[str]:
-        """Scan a skill directory for resource files matching *extensions*.
+        """Scan configured subdirectories for resource files matching *extensions*.
 
-        Recursively walks *skill_dir_path* and collects files whose extension
-        is in *extensions*, excluding ``SKILL.md`` itself.  Each candidate is
-        validated against path-traversal and symlink-escape checks; unsafe
-        files are skipped with a warning.
+        Scans each directory in *directories* within *skill_dir_path* for files
+        whose extension is in *extensions*, excluding ``SKILL.md`` itself.
+        Use ``"."`` in *directories* to include files at the skill root level.
+        Each candidate is validated against path-traversal and symlink-escape
+        checks; unsafe files are skipped with a warning.
 
         Args:
             skill_dir_path: Absolute path to the skill directory to scan.
             extensions: Tuple of allowed file extensions (e.g. ``(".md", ".json")``).
+            directories: Relative subdirectory paths to scan for resources.
 
         Returns:
-            Relative resource paths (forward-slash-separated) for every
+            Sorted relative resource paths (forward-slash-separated) for every
             discovered file that passes security checks.
         """
         skill_dir = Path(skill_dir_path).absolute()
         root_directory_path = str(skill_dir)
         resources: list[str] = []
         normalized_extensions = {e.lower() for e in extensions}
+        seen_directories: set[str] = set()
 
-        for resource_file in skill_dir.rglob("*"):
-            if not resource_file.is_file():
+        for directory in directories:
+            is_root = directory == ROOT_DIRECTORY_INDICATOR
+            target_dir = skill_dir if is_root else (skill_dir / directory)
+
+            # Deduplicate after resolving to avoid scanning the same directory twice.
+            # Use normcase for case-insensitive dedup on case-insensitive filesystems.
+            resolved_target = str(Path(os.path.normpath(target_dir)).absolute())
+            dedup_key = os.path.normcase(resolved_target)
+            if dedup_key in seen_directories:
+                continue
+            seen_directories.add(dedup_key)
+
+            if not target_dir.is_dir():
                 continue
 
-            if resource_file.name.upper() == SKILL_FILE_NAME.upper():
-                continue
+            # Directory-level containment and symlink checks for non-root directories
+            if not is_root:
+                if not FileSkillsSource._is_path_within_directory(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping resource directory '%s': resolves outside skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
 
-            if resource_file.suffix.lower() not in normalized_extensions:
-                continue
+                if FileSkillsSource._has_symlink_in_path(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping resource directory '%s': symlink detected in path under skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
 
-            resource_full_path = str(Path(os.path.normpath(resource_file)).absolute())
-
-            if not FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
+            # Scan top-level files only (non-recursive) within this directory
+            try:
+                entries = list(target_dir.iterdir())
+            except OSError:
                 logger.warning(
-                    "Skipping resource '%s': resolves outside skill directory '%s'",
-                    resource_file,
+                    "Failed to list resource directory '%s' in skill directory '%s'; skipping.",
+                    directory,
                     skill_dir_path,
                 )
                 continue
 
-            if FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
-                logger.warning(
-                    "Skipping resource '%s': symlink detected in path under skill directory '%s'",
-                    resource_file,
-                    skill_dir_path,
-                )
-                continue
+            for resource_file in entries:
+                if not resource_file.is_file():
+                    continue
 
-            rel_path = resource_file.relative_to(skill_dir)
-            resources.append(FileSkillsSource._normalize_resource_path(str(rel_path)))
+                if resource_file.name.upper() == SKILL_FILE_NAME.upper():
+                    continue
 
+                if resource_file.suffix.lower() not in normalized_extensions:
+                    continue
+
+                resource_full_path = str(Path(os.path.normpath(resource_file)).absolute())
+
+                # Containment check: file must resolve within the target directory
+                if not FileSkillsSource._is_path_within_directory(resource_full_path, resolved_target):
+                    logger.warning(
+                        "Skipping resource '%s': resolves outside target directory '%s'",
+                        resource_file,
+                        directory,
+                    )
+                    continue
+
+                if FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
+                    logger.warning(
+                        "Skipping resource '%s': symlink detected in path under skill directory '%s'",
+                        resource_file,
+                        skill_dir_path,
+                    )
+                    continue
+
+                rel_path = resource_file.relative_to(skill_dir)
+                resources.append(FileSkillsSource._normalize_resource_path(str(rel_path)))
+
+        resources.sort()
         return resources
 
     @staticmethod
     def _discover_script_files(
         skill_dir_path: str,
         extensions: tuple[str, ...] = DEFAULT_SCRIPT_EXTENSIONS,
+        directories: tuple[str, ...] = DEFAULT_SCRIPT_DIRECTORIES,
     ) -> list[str]:
-        """Scan a skill directory for script files matching *extensions*.
+        """Scan configured subdirectories for script files matching *extensions*.
 
-        Recursively walks *skill_dir_path* and collects files whose extension
-        is in *extensions*.  Each candidate is validated against path-traversal
-        and symlink-escape checks; unsafe files are skipped with a warning.
+        Scans each directory in *directories* within *skill_dir_path* for files
+        whose extension is in *extensions*.  Use ``"."`` in *directories* to
+        include files at the skill root level.  Each candidate is validated
+        against path-traversal and symlink-escape checks; unsafe files are
+        skipped with a warning.
 
         Args:
             skill_dir_path: Absolute path to the skill directory to scan.
             extensions: Tuple of allowed script extensions (e.g. ``(".py",)``).
+            directories: Relative subdirectory paths to scan for scripts.
 
         Returns:
-            Relative script paths (forward-slash-separated) for every
+            Sorted relative script paths (forward-slash-separated) for every
             discovered file that passes security checks.
         """
         skill_dir = Path(skill_dir_path).absolute()
         root_directory_path = str(skill_dir)
         scripts: list[str] = []
         normalized_extensions = {e.lower() for e in extensions}
+        seen_directories: set[str] = set()
 
-        for script_file in skill_dir.rglob("*"):
-            if not script_file.is_file():
+        for directory in directories:
+            is_root = directory == ROOT_DIRECTORY_INDICATOR
+            target_dir = skill_dir if is_root else (skill_dir / directory)
+
+            # Deduplicate after resolving to avoid scanning the same directory twice.
+            # Use normcase for case-insensitive dedup on case-insensitive filesystems.
+            resolved_target = str(Path(os.path.normpath(target_dir)).absolute())
+            dedup_key = os.path.normcase(resolved_target)
+            if dedup_key in seen_directories:
+                continue
+            seen_directories.add(dedup_key)
+
+            if not target_dir.is_dir():
                 continue
 
-            if script_file.suffix.lower() not in normalized_extensions:
-                continue
+            # Directory-level containment and symlink checks for non-root directories
+            if not is_root:
+                if not FileSkillsSource._is_path_within_directory(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping script directory '%s': resolves outside skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
 
-            script_full_path = str(Path(os.path.normpath(script_file)).absolute())
+                if FileSkillsSource._has_symlink_in_path(resolved_target, root_directory_path):
+                    logger.warning(
+                        "Skipping script directory '%s': symlink detected in path under skill directory '%s'",
+                        directory,
+                        skill_dir_path,
+                    )
+                    continue
 
-            if not FileSkillsSource._is_path_within_directory(script_full_path, root_directory_path):
+            # Scan top-level files only (non-recursive) within this directory
+            try:
+                entries = list(target_dir.iterdir())
+            except OSError:
                 logger.warning(
-                    "Skipping script '%s': resolves outside skill directory '%s'",
-                    script_file,
+                    "Failed to list script directory '%s' in skill directory '%s'; skipping.",
+                    directory,
                     skill_dir_path,
                 )
                 continue
 
-            if FileSkillsSource._has_symlink_in_path(script_full_path, root_directory_path):
-                logger.warning(
-                    "Skipping script '%s': symlink detected in path under skill directory '%s'",
-                    script_file,
-                    skill_dir_path,
-                )
-                continue
+            for script_file in entries:
+                if not script_file.is_file():
+                    continue
 
-            rel_path = script_file.relative_to(skill_dir)
-            scripts.append(FileSkillsSource._normalize_resource_path(str(rel_path)))
+                if script_file.suffix.lower() not in normalized_extensions:
+                    continue
 
+                script_full_path = str(Path(os.path.normpath(script_file)).absolute())
+
+                # Containment check: file must resolve within the target directory
+                if not FileSkillsSource._is_path_within_directory(script_full_path, resolved_target):
+                    logger.warning(
+                        "Skipping script '%s': resolves outside target directory '%s'",
+                        script_file,
+                        directory,
+                    )
+                    continue
+
+                if FileSkillsSource._has_symlink_in_path(script_full_path, root_directory_path):
+                    logger.warning(
+                        "Skipping script '%s': symlink detected in path under skill directory '%s'",
+                        script_file,
+                        skill_dir_path,
+                    )
+                    continue
+
+                rel_path = script_file.relative_to(skill_dir)
+                scripts.append(FileSkillsSource._normalize_resource_path(str(rel_path)))
+
+        scripts.sort()
         return scripts
 
     @staticmethod
