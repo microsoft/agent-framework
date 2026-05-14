@@ -36,10 +36,12 @@ public sealed class SwitchBuilder
         Throw.IfNull(executors);
 
         HashSet<int> indicies = [];
+        int executorIndex = 0;
 
         foreach (ExecutorBinding executor in executors)
         {
-            Throw.IfNull(executor);
+            Throw.IfNull(executor, $"{nameof(executors)}[{executorIndex}]");
+            executorIndex++;
 
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
             {
@@ -66,9 +68,12 @@ public sealed class SwitchBuilder
     {
         Throw.IfNull(executors);
 
+        int executorIndex = 0;
+
         foreach (ExecutorBinding executor in executors)
         {
-            Throw.IfNull(executor);
+            Throw.IfNull(executor, $"{nameof(executors)}[{executorIndex}]");
+            executorIndex++;
 
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
             {

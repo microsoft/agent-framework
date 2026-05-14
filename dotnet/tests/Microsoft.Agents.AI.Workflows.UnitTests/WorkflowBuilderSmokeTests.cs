@@ -445,9 +445,9 @@ public partial class WorkflowBuilderSmokeTests
         // Act/Assert
         Assert.Throws<ArgumentNullException>("predicate", () => switchBuilder.AddCase<string>(null!, [target]));
         Assert.Throws<ArgumentNullException>("executors", () => switchBuilder.AddCase<string>(_ => true, null!));
-        Assert.Throws<ArgumentNullException>("executor", () => switchBuilder.AddCase<string>(_ => true, [target, null!]));
+        Assert.Throws<ArgumentNullException>("executors[1]", () => switchBuilder.AddCase<string>(_ => true, [target, null!]));
         Assert.Throws<ArgumentNullException>("executors", () => switchBuilder.WithDefault(null!));
-        Assert.Throws<ArgumentNullException>("executor", () => switchBuilder.WithDefault([target, null!]));
+        Assert.Throws<ArgumentNullException>("executors[1]", () => switchBuilder.WithDefault([target, null!]));
     }
 
     /// <summary>
