@@ -193,6 +193,30 @@ public sealed class OpenAIResponsesSerializationTests : ConformanceTestBase
     }
 
     [Fact]
+    public void Deserialize_CreateRequestWithLogprobs_RoundTripsFields()
+    {
+        const string Json = """
+        {
+          "model": "gpt-4o-mini",
+          "input": "Return token probabilities.",
+          "logprobs": true,
+          "top_logprobs": 3
+        }
+        """;
+
+        CreateResponse? request = JsonSerializer.Deserialize(Json, OpenAIHostingJsonContext.Default.CreateResponse);
+        string reserializedJson = JsonSerializer.Serialize(request, OpenAIHostingJsonContext.Default.CreateResponse);
+        using var doc = JsonDocument.Parse(reserializedJson);
+        var root = doc.RootElement;
+
+        Assert.NotNull(request);
+        Assert.True(request.Logprobs);
+        Assert.Equal(3, request.TopLogprobs);
+        Assert.True(root.GetProperty("logprobs").GetBoolean());
+        Assert.Equal(3, root.GetProperty("top_logprobs").GetInt32());
+    }
+
+    [Fact]
     public void Serialize_NullableFields_AreOmittedWhenNull()
     {
         // Arrange
@@ -533,6 +557,42 @@ public sealed class OpenAIResponsesSerializationTests : ConformanceTestBase
         Assert.Equal(0.7, response.Temperature);
         Assert.Equal(0.9, response.TopP);
         Assert.Equal(150, response.MaxOutputTokens);
+    }
+
+    [Fact]
+    public void Deserialize_ResponseWithLogprobs_RoundTripsFields()
+    {
+        const string Json = """
+        {
+          "id": "resp_logprobs",
+          "object": "response",
+          "created_at": 1715000000,
+          "model": "gpt-4o-mini",
+          "status": "completed",
+          "output": [],
+          "usage": {
+            "input_tokens": 0,
+            "input_tokens_details": { "cached_tokens": 0 },
+            "output_tokens": 0,
+            "output_tokens_details": { "reasoning_tokens": 0 },
+            "total_tokens": 0
+          },
+          "tools": [],
+          "logprobs": true,
+          "top_logprobs": 3
+        }
+        """;
+
+        Response? response = JsonSerializer.Deserialize(Json, OpenAIHostingJsonContext.Default.Response);
+        string reserializedJson = JsonSerializer.Serialize(response, OpenAIHostingJsonContext.Default.Response);
+        using var doc = JsonDocument.Parse(reserializedJson);
+        var root = doc.RootElement;
+
+        Assert.NotNull(response);
+        Assert.True(response.Logprobs);
+        Assert.Equal(3, response.TopLogprobs);
+        Assert.True(root.GetProperty("logprobs").GetBoolean());
+        Assert.Equal(3, root.GetProperty("top_logprobs").GetInt32());
     }
 
     [Fact]
