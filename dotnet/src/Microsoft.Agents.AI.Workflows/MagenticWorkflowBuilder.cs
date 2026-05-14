@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks;
@@ -140,7 +141,15 @@ public class MagenticWorkflowBuilder(AIAgent managerAgent)
     }
 
     /// <inheritdoc cref="WorkflowBuilder.Build"/>
-    public Workflow Build() => this.ReduceToWorkflowBuilder().Build();
+    public Workflow Build()
+    {
+        if (this._team.Count == 0)
+        {
+            throw new InvalidOperationException("At least one participant must be added via AddParticipants() before building the workflow.");
+        }
+
+        return this.ReduceToWorkflowBuilder().Build();
+    }
 
     private TaskLimits Limits => new(
         MaxRoundCount: this._maxRounds,
