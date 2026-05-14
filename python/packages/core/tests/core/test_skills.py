@@ -3518,7 +3518,6 @@ class TestSkillsProviderFactories:
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
         args_desc = run_tool.parameters()["properties"]["args"]["description"]
-        assert "without leading dashes" in args_desc
         assert "script implementation or configured runner" in args_desc
 
     async def test_require_script_approval_sets_approval_mode(self) -> None:
@@ -4744,12 +4743,16 @@ class TestCreateScriptElement:
     def test_name_only(self) -> None:
         s = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/scripts/run.py")
         elem = _create_script_element(s)
-        assert elem == '  <script name="run.py"/>'
+        assert 'name="run.py"' in elem
+        assert "<parameters_schema>" in elem
+        assert '"type": "array"' in elem
 
     def test_with_description(self) -> None:
         s = FileSkillScript(name="run.py", description="Execute script.", full_path=f"{_ABS}/test/scripts/run.py")
         elem = _create_script_element(s)
-        assert elem == '  <script name="run.py" description="Execute script."/>'
+        assert 'name="run.py"' in elem
+        assert 'description="Execute script."' in elem
+        assert "<parameters_schema>" in elem
 
     def test_xml_escapes_name(self) -> None:
         s = FileSkillScript(name='script"special', full_path=f"{_ABS}/test/scripts/s.py")
@@ -4776,10 +4779,12 @@ class TestCreateScriptElement:
         assert "query" in elem
         assert "&quot;" not in elem
 
-    def test_no_parameters_for_file_script(self) -> None:
+    def test_file_script_includes_array_parameters(self) -> None:
         s = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/scripts/run.py")
         elem = _create_script_element(s)
-        assert "<parameters_schema>" not in elem
+        assert "<parameters_schema>" in elem
+        assert '"type": "array"' in elem
+        assert '"type": "string"' in elem
 
 
 # ---------------------------------------------------------------------------
@@ -4800,7 +4805,7 @@ class TestSkillScriptParametersSchema:
 
     def test_none_for_file_based_script(self) -> None:
         script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/scripts/run.py")
-        assert script.parameters_schema is None
+        assert script.parameters_schema == {"type": "array", "items": {"type": "string"}}
 
     def test_no_params_function_returns_none(self) -> None:
         def noop() -> None:
@@ -5407,3 +5412,169 @@ class TestInlineSkillContentCaching:
         second = skill.content
         assert first is second  # Same object (cached)
         assert "<name>test-skill</name>" in first
+
+
+# ---------------------------------------------------------------------------
+# Tests: Array-style (list[str]) script arguments
+# ---------------------------------------------------------------------------
+
+
+class TestArrayStyleScriptArgs:
+    """Tests for list[str] arguments on skill scripts (port of .NET PR #5475)."""
+
+    async def test_inline_script_rejects_list_args(self) -> None:
+        """InlineSkillScript.run() raises TypeError when args is a list."""
+        script = InlineSkillScript(name="greet", function=lambda name="world": f"hello {name}")
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        with pytest.raises(TypeError, match="requires keyword arguments"):
+            await script.run(skill, args=["hello", "--name", "Alice"])
+
+    async def test_inline_script_error_message_mentions_script_name(self) -> None:
+        """The TypeError message includes the script name for debugging."""
+        script = InlineSkillScript(name="my-script", function=lambda: None)
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
+        with pytest.raises(TypeError, match="my-script"):
+            await script.run(skill, args=["arg1"])
+
+    async def test_file_script_passes_list_to_runner(self) -> None:
+        """FileSkillScript.run() passes list[str] args through to the runner."""
+        captured: dict[str, Any] = {}
+
+        def runner(skill: Any, script: Any, args: Any = None) -> str:
+            captured["args"] = args
+            return "ok"
+
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py", runner=runner)
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="my-skill", description="d"), content="c", path=f"{_ABS}/test"
+        )
+        result = await script.run(skill, args=["input.docx", "--output", "result.idx"])
+        assert result == "ok"
+        assert captured["args"] == ["input.docx", "--output", "result.idx"]
+
+    async def test_file_script_passes_dict_to_runner(self) -> None:
+        """FileSkillScript.run() still passes dict args through to the runner."""
+        captured: dict[str, Any] = {}
+
+        def runner(skill: Any, script: Any, args: Any = None) -> str:
+            captured["args"] = args
+            return "ok"
+
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py", runner=runner)
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="my-skill", description="d"), content="c", path=f"{_ABS}/test"
+        )
+        result = await script.run(skill, args={"key": "val"})
+        assert result == "ok"
+        assert captured["args"] == {"key": "val"}
+
+    async def test_file_script_passes_none_to_runner(self) -> None:
+        """FileSkillScript.run() passes None args through to the runner."""
+        captured: dict[str, Any] = {}
+
+        def runner(skill: Any, script: Any, args: Any = None) -> str:
+            captured["args"] = args
+            return "ok"
+
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py", runner=runner)
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="my-skill", description="d"), content="c", path=f"{_ABS}/test"
+        )
+        result = await script.run(skill)
+        assert result == "ok"
+        assert captured["args"] is None
+
+    def test_file_script_parameters_schema_returns_array(self) -> None:
+        """FileSkillScript.parameters_schema returns the string-array JSON schema."""
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py")
+        assert script.parameters_schema == {"type": "array", "items": {"type": "string"}}
+
+    async def test_runner_protocol_accepts_list_args(self) -> None:
+        """A runner accepting list[str] args satisfies the SkillScriptRunner protocol."""
+        captured: dict[str, Any] = {}
+
+        def my_runner(skill: Any, script: Any, args: Any = None) -> str:
+            captured["args"] = args
+            return "ok"
+
+        assert isinstance(my_runner, SkillScriptRunner)
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="s", description="d"), content="c", path=f"{_ABS}/test"
+        )
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py")
+        result = my_runner(skill, script, args=["--flag", "value"])
+        assert result == "ok"
+        assert captured["args"] == ["--flag", "value"]
+
+    async def test_tool_schema_accepts_array_args(self) -> None:
+        """The run_skill_script tool schema accepts array-style args via oneOf."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill.scripts.append(InlineSkillScript(name="s1", function=lambda: None))
+
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+        args_schema = run_tool.parameters()["properties"]["args"]
+        assert "oneOf" in args_schema
+        types = [s.get("type") for s in args_schema["oneOf"]]
+        assert "object" in types
+        assert "array" in types
+        assert "null" in types
+
+    async def test_run_skill_script_with_list_args_via_provider(self) -> None:
+        """End-to-end: list args flow through provider to file-based script runner."""
+        captured: dict[str, Any] = {}
+
+        def runner(skill: Any, script: Any, args: Any = None) -> str:
+            captured["args"] = args
+            return "list_result"
+
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py", runner=runner)
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="my-skill", description="test"),
+            content="Body",
+            path=f"{_ABS}/test",
+            scripts=[script],
+        )
+
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+        result = await run_tool.func(skill_name="my-skill", script_name="run.py", args=["input.docx", "--verbose"])
+        assert result == "list_result"
+        assert captured["args"] == ["input.docx", "--verbose"]
+
+    async def test_run_skill_script_inline_with_list_args_returns_error(self) -> None:
+        """Inline script called with list args through provider returns error (TypeError caught)."""
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill.scripts.append(InlineSkillScript(name="s1", function=lambda: "ok"))
+
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+        result = await run_tool.func(skill_name="my-skill", script_name="s1", args=["arg1"])
+        assert "Error" in result
+        assert "Failed to run" in result
+
+    def test_file_skill_content_includes_scripts_block(self) -> None:
+        """FileSkill.content appends a <scripts> block when scripts are present."""
+        script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py")
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="my-skill", description="test"),
+            content="---\nname: my-skill\n---\nBody",
+            path=f"{_ABS}/test",
+            scripts=[script],
+        )
+        assert "<scripts>" in skill.content
+        assert 'name="run.py"' in skill.content
+        assert "<parameters_schema>" in skill.content
+        assert '"type": "array"' in skill.content
+
+    def test_file_skill_content_no_scripts_no_block(self) -> None:
+        """FileSkill.content does not append a <scripts> block when no scripts."""
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="my-skill", description="test"),
+            content="---\nname: my-skill\n---\nBody",
+            path=f"{_ABS}/test",
+        )
+        assert "<scripts>" not in skill.content

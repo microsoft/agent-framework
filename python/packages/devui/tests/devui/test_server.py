@@ -4,8 +4,10 @@
 
 import asyncio
 import inspect
+import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import MockAgent
@@ -492,7 +494,7 @@ def test_devserver_requires_auth_by_default(monkeypatch):
 
 
 def test_devserver_auth_can_be_explicitly_disabled(monkeypatch):
-    """Callers can opt out of auth with auth_enabled=False (escape hatch for tests / trusted hosts)."""
+    """Callers can opt out of auth on loopback (escape hatch for tests / trusted local hosts)."""
     monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
 
     server = _server_with_mock_agent(auth_enabled=False)
@@ -502,6 +504,106 @@ def test_devserver_auth_can_be_explicitly_disabled(monkeypatch):
         response = client.get("/v1/entities")
 
     assert response.status_code == 200
+
+
+def test_devserver_rejects_non_loopback_no_auth(monkeypatch):
+    """Non-loopback binds must not be network-reachable without authentication."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="authentication cannot be disabled"):
+        DevServer(host="0.0.0.0", auth_enabled=False)
+
+    with pytest.raises(ValueError, match="authentication cannot be disabled"):
+        DevServer(host="devui.example", auth_enabled=False)
+
+
+def test_devserver_rejects_non_loopback_without_explicit_token(monkeypatch):
+    """Network-reachable auth requires an operator-provided token, not a generated token."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="DEVUI_AUTH_TOKEN or auth_token"):
+        DevServer(host="0.0.0.0")
+
+
+def test_devserver_allows_non_loopback_with_explicit_token(monkeypatch):
+    """A network-reachable bind is allowed when auth has an explicit token."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = DevServer(host="0.0.0.0", auth_token="s3cret")
+
+    assert server.auth_enabled is True
+    assert server.auth_token == "s3cret"
+
+
+def test_devserver_allows_non_loopback_with_env_token(monkeypatch):
+    """A network-reachable bind is allowed when auth uses DEVUI_AUTH_TOKEN."""
+    monkeypatch.setenv("DEVUI_AUTH_TOKEN", "env-s3cret")
+
+    server = DevServer(host="0.0.0.0")
+
+    assert server.auth_enabled is True
+    assert server.auth_token == "env-s3cret"
+
+
+def test_devserver_allows_loopback_no_auth(monkeypatch):
+    """Unauthenticated DevUI remains available for local-only development and tests."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    for host in ("127.0.0.1", "localhost"):
+        server = DevServer(host=host, auth_enabled=False)
+        assert server.auth_enabled is False
+        assert server.auth_token is None
+
+
+def test_devserver_loopback_auth_auto_generates_token(monkeypatch):
+    """Loopback auth-enabled usage may still use a generated development token."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = DevServer(host="127.0.0.1")
+
+    assert server.auth_enabled is True
+    assert server.auth_token
+
+
+def test_serve_rejects_non_loopback_no_auth(monkeypatch):
+    """The public serve() helper must inherit the DevServer network-auth invariant."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="authentication cannot be disabled"):
+        agent_framework_devui.serve(entities=[], host="0.0.0.0", auth_enabled=False, ui_enabled=False)
+
+
+def test_serve_rejects_non_loopback_without_explicit_token(monkeypatch):
+    """serve() must not maintain a weaker generated-token path for network binds."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="DEVUI_AUTH_TOKEN or auth_token"):
+        agent_framework_devui.serve(entities=[], host="0.0.0.0", ui_enabled=False)
+
+
+def test_serve_allows_non_loopback_with_explicit_token(monkeypatch):
+    """serve() accepts a network bind when an explicit token is provided."""
+    import uvicorn
+
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+    run_args = {}
+
+    def fake_run(_app, *, host, port, **_kwargs):
+        run_args["host"] = host
+        run_args["port"] = port
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+
+    agent_framework_devui.serve(
+        entities=[],
+        host="0.0.0.0",
+        port=9090,
+        auth_token="s3cret",
+        auto_open=False,
+        ui_enabled=False,
+    )
+
+    assert run_args == {"host": "0.0.0.0", "port": 9090}
 
 
 def test_devserver_accepts_request_with_valid_bearer_token(monkeypatch):
@@ -567,8 +669,8 @@ def test_serve_defaults_to_auth_enabled():
     )
 
 
-def test_cli_enables_auth_by_default_and_supports_no_auth_optout():
-    """`devui ./agents` must produce auth-enabled config; `--no-auth` is the explicit escape hatch."""
+def test_cli_enables_auth_by_default_and_supports_loopback_no_auth_optout():
+    """`devui ./agents` must produce auth-enabled config; `--no-auth` is the loopback-only escape hatch."""
     from agent_framework_devui._cli import create_cli_parser
 
     parser = create_cli_parser()
@@ -578,3 +680,76 @@ def test_cli_enables_auth_by_default_and_supports_no_auth_optout():
 
     optout_args = parser.parse_args(["--no-auth"])
     assert optout_args.no_auth is True
+
+    help_text = parser.format_help()
+    assert "loopback-only" in help_text
+    assert "Non-loopback hosts require auth" in help_text
+
+
+def _run_cli_with_fake_uvicorn(monkeypatch, tmp_path: Path, *args: str) -> dict[str, Any]:
+    """Run the DevUI CLI without binding a socket."""
+    import uvicorn
+
+    from agent_framework_devui import _cli
+
+    run_args: dict[str, Any] = {}
+
+    def fake_run(_app, *, host, port, **_kwargs):
+        run_args["host"] = host
+        run_args["port"] = port
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", ["devui", str(tmp_path), "--no-open", "--headless", *args])
+
+    _cli.main()
+
+    return run_args
+
+
+def test_cli_allows_loopback_no_auth_without_binding_socket(monkeypatch, tmp_path):
+    """`devui --no-auth` remains valid on the default loopback host."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    run_args = _run_cli_with_fake_uvicorn(monkeypatch, tmp_path, "--no-auth")
+
+    assert run_args == {"host": "127.0.0.1", "port": 8080}
+
+
+def test_cli_rejects_non_loopback_no_auth_before_binding_socket(monkeypatch, tmp_path, capsys):
+    """`devui --host 0.0.0.0 --no-auth` must fail through shared server validation."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run_cli_with_fake_uvicorn(monkeypatch, tmp_path, "--host", "0.0.0.0", "--no-auth")
+
+    assert exc_info.value.code == 1
+    assert "authentication cannot be disabled" in capsys.readouterr().err
+
+
+def test_cli_rejects_non_loopback_without_explicit_token_before_binding_socket(monkeypatch, tmp_path, capsys):
+    """`devui --host 0.0.0.0` must fail when neither --auth-token nor DEVUI_AUTH_TOKEN is set."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _run_cli_with_fake_uvicorn(monkeypatch, tmp_path, "--host", "0.0.0.0")
+
+    assert exc_info.value.code == 1
+    assert "DEVUI_AUTH_TOKEN or auth_token" in capsys.readouterr().err
+
+
+def test_cli_allows_non_loopback_with_auth_token_without_binding_socket(monkeypatch, tmp_path):
+    """`devui --host 0.0.0.0 --auth-token ...` starts with token auth enabled."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    run_args = _run_cli_with_fake_uvicorn(monkeypatch, tmp_path, "--host", "0.0.0.0", "--auth-token", "s3cret")
+
+    assert run_args == {"host": "0.0.0.0", "port": 8080}
+
+
+def test_cli_allows_non_loopback_with_env_token_without_binding_socket(monkeypatch, tmp_path):
+    """`DEVUI_AUTH_TOKEN=... devui --host 0.0.0.0` starts with token auth enabled."""
+    monkeypatch.setenv("DEVUI_AUTH_TOKEN", "env-s3cret")
+
+    run_args = _run_cli_with_fake_uvicorn(monkeypatch, tmp_path, "--host", "0.0.0.0")
+
+    assert run_args == {"host": "0.0.0.0", "port": 8080}

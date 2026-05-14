@@ -480,6 +480,17 @@ internal static class WorkflowSamples
 
         new SampleDefinition
         {
+            Name = "Workflow_Declarative_InvokeFoundryToolboxMcp",
+            ProjectPath = "samples/03-workflows/Declarative/InvokeFoundryToolboxMcp",
+            RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME", "FOUNDRY_TOOLBOX_NAME", "FOUNDRY_AGENT_TOOLSET_API_VERSION"],
+            Inputs = ["How do I use Azure OpenAI with my data?"],
+            InputDelayMs = 3000,
+            ExpectedOutputDescription = ["The output should show a workflow using Foundry Toolbox MCP tools to search Microsoft Learn documentation and web search to provide a summary of results."],
+        },
+
+        new SampleDefinition
+        {
             Name = "Workflow_Declarative_InvokeMcpTool",
             ProjectPath = "samples/03-workflows/Declarative/InvokeMcpTool",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],

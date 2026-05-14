@@ -54,6 +54,8 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     private bool _emitAgentResponseUpdateEvents;
     private HandoffToolCallFilteringBehavior _toolCallFilteringBehavior = HandoffToolCallFilteringBehavior.HandoffOnly;
     private bool _returnToPrevious;
+    private string? _name;
+    private string? _description;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HandoffsWorkflowBuilder"/> class with no handoff relationships.
@@ -94,6 +96,20 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     public TBuilder WithHandoffInstructions(string? instructions)
     {
         this.HandoffInstructions = instructions ?? DefaultHandoffInstructions;
+        return (TBuilder)this;
+    }
+
+    /// <inheritdoc cref="WorkflowBuilder.WithName(string)"/>
+    public TBuilder WithName(string name)
+    {
+        this._name = name;
+        return (TBuilder)this;
+    }
+
+    /// <inheritdoc cref="WorkflowBuilder.WithDescription(string)"/>
+    public TBuilder WithDescription(string description)
+    {
+        this._description = description;
         return (TBuilder)this;
     }
 
@@ -330,7 +346,16 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
             builder.AddEdge(start, executors[this._initialAgent.Id]);
         }
 
-        // Build the workflow.
+        if (!string.IsNullOrWhiteSpace(this._name))
+        {
+            builder.WithName(this._name);
+        }
+
+        if (!string.IsNullOrWhiteSpace(this._description))
+        {
+            builder.WithDescription(this._description);
+        }
+
         return builder.WithOutputFrom(end).Build();
     }
 }
