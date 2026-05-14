@@ -54,6 +54,9 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     private bool _emitAgentResponseUpdateEvents;
     private HandoffToolCallFilteringBehavior _toolCallFilteringBehavior = HandoffToolCallFilteringBehavior.HandoffOnly;
     private bool _returnToPrevious;
+    private bool _autonomousMode;
+    private string? _autonomousModePrompt;
+    private int? _autonomousModeTurnLimit;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HandoffsWorkflowBuilder"/> class with no handoff relationships.
@@ -139,6 +142,34 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
     public TBuilder EnableReturnToPrevious()
     {
         this._returnToPrevious = true;
+        return (TBuilder)this;
+    }
+
+    /// <summary>
+    /// Enables autonomous mode for all agents in the workflow.
+    /// </summary>
+    /// <remarks>
+    /// In autonomous mode, when an agent responds without requesting a handoff, it is immediately
+    /// re-invoked with a synthetic user message (the <paramref name="prompt"/>) rather than
+    /// returning control to the user. The agent continues iterating until it requests a handoff
+    /// or the <paramref name="turnLimit"/> is reached. After the turn limit is exceeded, control
+    /// is returned to the user as in the default human-in-the-loop behavior.
+    /// </remarks>
+    /// <param name="prompt">
+    /// The message to inject as a user turn when re-invoking an agent in autonomous mode.
+    /// If <see langword="null"/>, a default prompt is used.
+    /// </param>
+    /// <param name="turnLimit">
+    /// The maximum number of autonomous continuation turns per agent per incoming turn.
+    /// The counter resets at the beginning of each new turn (each incoming <see cref="HandoffState"/>).
+    /// If <see langword="null"/>, the default limit is used.
+    /// </param>
+    /// <returns>The updated builder instance.</returns>
+    public TBuilder EnableAutonomousMode(string? prompt = null, int? turnLimit = null)
+    {
+        this._autonomousMode = true;
+        this._autonomousModePrompt = prompt;
+        this._autonomousModeTurnLimit = turnLimit;
         return (TBuilder)this;
     }
 
@@ -247,7 +278,10 @@ public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkfl
         HandoffAgentExecutorOptions options = new(this.HandoffInstructions,
                                                   this._emitAgentResponseEvents,
                                                   this._emitAgentResponseUpdateEvents,
-                                                  this._toolCallFilteringBehavior);
+                                                  this._toolCallFilteringBehavior,
+                                                  autonomousMode: this._autonomousMode,
+                                                  autonomousModePrompt: this._autonomousModePrompt,
+                                                  autonomousModeTurnLimit: this._autonomousModeTurnLimit);
 
         // There are two types of ids being used in this method, and it is critical that we are clear about
         // which one we are using, and where.

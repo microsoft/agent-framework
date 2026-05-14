@@ -201,6 +201,189 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         Func<Task> runStreamingAsync = async () => await executor.HandleAsync(state, testContext);
         await runStreamingAsync.Should().NotThrowAsync();
     }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_AutonomousMode_Disabled_DoesNotContinueWithoutHandoff()
+    {
+        // Arrange: agent with 3 prepared turns; autonomous mode OFF
+        TestRunContext testContext = await PrepareHandoffSharedStateAsync();
+        TestReplayAgent agent = new(
+        [
+            TestReplayAgent.ToChatMessages("Turn 0 response"),
+            TestReplayAgent.ToChatMessages("Turn 1 response"),
+            TestReplayAgent.ToChatMessages("Turn 2 response"),
+        ], TestAgentId, TestAgentName);
+
+        HandoffAgentExecutorOptions options = new("",
+                                                  emitAgentResponseEvents: false,
+                                                  emitAgentResponseUpdateEvents: false,
+                                                  HandoffToolCallFilteringBehavior.None,
+                                                  autonomousMode: false);
+
+        HandoffAgentExecutor executor = new(agent, [], options);
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        HandoffState message = new(new(false), null);
+        await executor.HandleAsync(message, testContext.BindWorkflowContext(executor.Id));
+
+        // Assert: without autonomous mode, the agent is called exactly once
+        agent.Turn.Should().Be(1);
+        HandoffState sentState = testContext.QueuedMessages[executor.Id].Should().ContainSingle()
+                                                                         .Which.Message.Should().BeOfType<HandoffState>()
+                                                                         .Subject;
+        sentState.RequestedHandoffTargetAgentId.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task Test_HandoffAgentExecutor_AutonomousMode_InvokesAgentExactlyOnePlusTurnLimitTimes(int turnLimit)
+    {
+        // Arrange: agent with many prepared turns; no handoff ever requested; autonomous mode ON
+        // We prepare (turnLimit + 2) turns to detect off-by-one errors. TestReplayAgent stops
+        // incrementing Turn when prepared messages are exhausted, so preparing exactly (turnLimit + 1)
+        // turns would fail to detect if the implementation invokes the agent one extra time.
+        int totalTurns = turnLimit + 2;
+        TestReplayAgent agent = new(
+            Enumerable.Range(0, totalTurns)
+                      .Select(i => TestReplayAgent.ToChatMessages($"Turn {i} response"))
+                      .ToList(),
+            TestAgentId, TestAgentName);
+
+        TestRunContext testContext = await PrepareHandoffSharedStateAsync();
+
+        HandoffAgentExecutorOptions options = new("",
+                                                  emitAgentResponseEvents: false,
+                                                  emitAgentResponseUpdateEvents: false,
+                                                  HandoffToolCallFilteringBehavior.None,
+                                                  autonomousMode: true,
+                                                  autonomousModeTurnLimit: turnLimit);
+
+        HandoffAgentExecutor executor = new(agent, [], options);
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        HandoffState message = new(new(false), null);
+        await executor.HandleAsync(message, testContext.BindWorkflowContext(executor.Id));
+
+        // Assert: agent is called once for the initial turn plus once per autonomous turn
+        int expectedInvocations = 1 + turnLimit;
+        agent.Turn.Should().Be(expectedInvocations);
+
+        // The final HandoffState should have no requested handoff (turn limit exhausted)
+        HandoffState sentState = testContext.QueuedMessages[executor.Id].Should().ContainSingle()
+                                                                         .Which.Message.Should().BeOfType<HandoffState>()
+                                                                         .Subject;
+        sentState.RequestedHandoffTargetAgentId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_AutonomousMode_HandoffDuringAutonomousTurn_RoutesToTarget()
+    {
+        // Arrange: agent returns a plain response on turn 0, then a handoff on turn 1 (the first autonomous turn)
+        TestEchoAgent targetAgent = new("target-agent", "Target Agent");
+
+        string handoffFunctionName = $"{HandoffWorkflowBuilder.FunctionPrefix}1"; // first (only) handoff target
+        string handoffCallId = Guid.NewGuid().ToString("N");
+
+        List<List<ChatMessage>> agentTurns =
+        [
+            TestReplayAgent.ToChatMessages("Initial response — no handoff yet"),
+            [new ChatMessage(ChatRole.Assistant, [new FunctionCallContent(handoffCallId, handoffFunctionName)])
+             {
+                 MessageId = Guid.NewGuid().ToString("N"),
+             }],
+        ];
+
+        TestReplayAgent agent = new(agentTurns, TestAgentId, TestAgentName);
+
+        TestRunContext testContext = await PrepareHandoffSharedStateAsync();
+
+        HandoffTarget handoffTarget = new(targetAgent);
+        HandoffAgentExecutorOptions options = new("",
+                                                  emitAgentResponseEvents: false,
+                                                  emitAgentResponseUpdateEvents: false,
+                                                  HandoffToolCallFilteringBehavior.None,
+                                                  autonomousMode: true,
+                                                  autonomousModeTurnLimit: 5);
+
+        HandoffAgentExecutor executor = new(agent, [handoffTarget], options);
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        HandoffState message = new(new(false), null);
+        await executor.HandleAsync(message, testContext.BindWorkflowContext(executor.Id));
+
+        // Assert: agent was called twice (initial + 1 autonomous turn that triggered handoff)
+        agent.Turn.Should().Be(2);
+
+        // The final HandoffState should name the target agent
+        HandoffState sentState = testContext.QueuedMessages[executor.Id].Should().ContainSingle()
+                                                                         .Which.Message.Should().BeOfType<HandoffState>()
+                                                                         .Subject;
+        sentState.RequestedHandoffTargetAgentId.Should().Be(targetAgent.Id);
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_AutonomousMode_AddsAutonomousPromptToConversation()
+    {
+        // Arrange: one turn without handoff, turn limit = 1 → one autonomous invocation
+        TestRunContext testContext = await PrepareHandoffSharedStateAsync();
+        TestReplayAgent agent = new(
+        [
+            TestReplayAgent.ToChatMessages("First response"),
+            TestReplayAgent.ToChatMessages("Second response (autonomous)"),
+        ], TestAgentId, TestAgentName);
+
+        const string CustomPrompt = "Continue your work autonomously.";
+
+        HandoffAgentExecutorOptions options = new("",
+                                                  emitAgentResponseEvents: false,
+                                                  emitAgentResponseUpdateEvents: false,
+                                                  HandoffToolCallFilteringBehavior.None,
+                                                  autonomousMode: true,
+                                                  autonomousModePrompt: CustomPrompt,
+                                                  autonomousModeTurnLimit: 1);
+
+        HandoffAgentExecutor executor = new(agent, [], options);
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        HandoffState message = new(new(false), null);
+        await executor.HandleAsync(message, testContext.BindWorkflowContext(executor.Id));
+
+        // Assert: the autonomous prompt was added to the shared conversation as a user message
+        HandoffSharedState? sharedState = await testContext
+            .BindWorkflowContext(nameof(HandoffStartExecutor))
+            .ReadStateAsync<HandoffSharedState>(HandoffConstants.HandoffSharedStateKey,
+                                                HandoffConstants.HandoffSharedStateScope);
+
+        sharedState.Should().NotBeNull();
+        sharedState!.Conversation.History.Should().Contain(
+            m => m.Role == ChatRole.User && m.Text == CustomPrompt,
+            because: "the autonomous mode prompt should be injected as a user message");
+    }
+
+    [Fact]
+    public async Task Test_HandoffWorkflowBuilder_EnableAutonomousMode_SetsOptionsOnExecutors()
+    {
+        // Arrange
+        TestEchoAgent initialAgent = new("initial", "Initial");
+        TestEchoAgent targetAgent = new("target", "Target");
+
+        // Act – build a workflow with autonomous mode enabled and verify no exception is thrown
+        Workflow workflow = new HandoffWorkflowBuilder(initialAgent)
+            .WithHandoff(initialAgent, targetAgent)
+            .EnableAutonomousMode(prompt: "Keep going.", turnLimit: 10)
+            .Build();
+
+        // Assert: the workflow was built without error and contains the expected executors
+        workflow.Should().NotBeNull();
+        workflow.ExecutorBindings.Should().ContainKey(HandoffAgentExecutor.IdFor(initialAgent));
+        workflow.ExecutorBindings.Should().ContainKey(HandoffAgentExecutor.IdFor(targetAgent));
+    }
 }
 
 internal sealed record Challenge(string Value);
