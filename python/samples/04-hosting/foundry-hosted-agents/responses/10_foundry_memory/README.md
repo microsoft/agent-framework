@@ -117,6 +117,6 @@ When deploying, make sure `MEMORY_STORE_NAME` and `FOUNDRY_MEMORY_SCOPE` are set
 azd env set MEMORY_STORE_NAME "agent_framework_memory"
 ```
 
-If these are not set, running `azd ai agent init -m <agent-manifest.yaml>` will prompt you to enter them interactively.
+If these are not set, running `azd ai agent init -m <agent.manifest.yaml>` will prompt you to enter them interactively.
 
 The deployed agent's Managed Identity needs **Azure AI User** on the Foundry project to read and write memories at runtime. Make sure you have run `provision_memory_store.py` against the same Foundry project before deploying — otherwise the agent will fail on the first turn when it tries to read from a non-existent store.
