@@ -17,14 +17,14 @@ Reviewed files:
 
 ## Executive Summary
 
-The current implementation contains **22 Magentic end-to-end tests** in
+The current implementation contains **23 Magentic end-to-end tests** in
 `MagenticOrchestrationTests.cs`. The suite builds real workflows through
 `MagenticWorkflowBuilder.Build()` and exercises the orchestrator through streaming workflow
 execution, pending plan-review requests, checkpoint/resume, event collection, participant routing,
-reset/replan flows, build-time validation, and yielded final outputs.
+reset/replan flows, build-time validation, post-termination rejection, and yielded final outputs.
 
-The implementation is fully aligned with the original plan. All major planned orchestration paths
-are covered:
+The implementation is fully aligned with the original plan. All planned orchestration paths are
+covered:
 
 - `MagenticTaskContext.IsStalled` uses `StallCount > MaxStallCount`.
 - `MaxStallCount` should be read as the number of stalls tolerated before reset.
@@ -34,10 +34,10 @@ are covered:
   checkpoint boundaries.
 - `MagenticWorkflowBuilder.Build()` now validates that at least one participant is present,
   throwing `InvalidOperationException` on empty team.
-- Post-termination input rejection is intentionally skipped because the framework does not have a
-  non-erroneous terminal state — it always accepts queued messages. The `IsTerminated` guard in
-  `ProcessPlanReviewAsync` is a defensive check against corrupted internal state, not a
-  user-observable behavior testable through the E2E streaming API.
+- `MagenticOrchestrator.TakeTurnAsync()` now guards against post-termination messages, matching
+  the existing guard in `ProcessPlanReviewAsync`. The framework accepts the message
+  (`TrySendMessageAsync` returns true), but the orchestrator throws `InvalidOperationException`
+  which surfaces as a `WorkflowErrorEvent`.
 
 ## Production Implementation Findings
 
@@ -94,6 +94,17 @@ Assessment: **Complete.** This is a new production behavior added alongside the 
 previously allowed building with an empty team, which would crash at runtime when trying to select
 the first participant as a fallback speaker.
 
+### Post-termination message rejection
+
+`MagenticOrchestrator.TakeTurnAsync()` now checks `IsTerminated` before processing any turn. This
+matches the existing guard in `ProcessPlanReviewAsync`. The framework does not have a non-erroneous
+terminal state — `TrySendMessageAsync` always returns true — but the Magentic orchestrator
+explicitly throws `InvalidOperationException`, which surfaces as a `WorkflowErrorEvent`.
+
+Assessment: **Complete.** New production guard added to `TakeTurnAsync`. Tested by
+`Terminated_Context_Rejects_New_Messages` which sends a chat message after the workflow yields
+output and verifies the resulting `WorkflowErrorEvent`.
+
 ## Implemented Test Inventory
 
 | Test | Original Plan Area | Current Assessment |
@@ -120,6 +131,7 @@ the first participant as a fallback speaker.
 | `Consecutive_Stalls_Trigger_Reset` | Stall detection | Complete. Consecutive stalls exceed `MaxStallCount` and reset/replan. |
 | `PlanReview_Multiple_Revisions` | Plan review | Complete. Multiple revisions are handled before approval and completion. |
 | `Empty_Team_Build_Throws` | Edge case / empty team | Complete. `Build()` throws `InvalidOperationException` when no participants are added. New production validation added. |
+| `Terminated_Context_Rejects_New_Messages` | Edge case / post-termination | Complete. Framework accepts the message, but Magentic throws `InvalidOperationException` surfaced as `WorkflowErrorEvent`. New production guard added to `TakeTurnAsync`. |
 
 ## Coverage Against Original Plan
 
@@ -213,28 +225,39 @@ Summary: **1 behaviorally covered, 2 intentionally skipped / 3 planned**.
 | `Empty_Team_Handling` | Complete | `Build()` throws `InvalidOperationException` when no participants are added. Production validation added. |
 | `Single_Agent_Team` | Behaviorally covered | Most tests run with one participant, but there is no dedicated single-agent edge-case test. |
 | `Instruction_Message_Sent_When_Present` | Complete | Two-round flow proves the instruction code path executes. Instruction content is internal messaging delivered via `context.SendMessageAsync()` and is not observable from the E2E event stream without custom test infrastructure. |
-| `Terminated_Context_Rejects_New_Messages` | Intentionally skipped | The framework does not have a non-erroneous terminal state — `TrySendMessageAsync` always accepts queued messages. The `IsTerminated` guard in `ProcessPlanReviewAsync` is a defensive check against corrupted internal state, not a user-observable behavior testable through the E2E streaming API. |
+| `Terminated_Context_Rejects_New_Messages` | Complete | Framework accepts the queued message, but the Magentic orchestrator throws `InvalidOperationException` which surfaces as `WorkflowErrorEvent`. Production guard added to `TakeTurnAsync`. |
 
-Summary: **2 complete, 1 behaviorally covered, 1 intentionally skipped / 4 planned**.
+Summary: **3 complete, 1 behaviorally covered / 4 planned**.
 
 ## Success Criteria Assessment
 
 | Success Criterion | Assessment |
 |---|---|
-| All logical forks in `MagenticOrchestrator` are covered by at least one test | **Met.** All user-visible orchestration branches are covered. The only untested code path is the `IsTerminated` defensive guard in `ProcessPlanReviewAsync`, which cannot be reached through normal workflow execution. |
+| All logical forks in `MagenticOrchestrator` are covered by at least one test | **Met.** All orchestration branches are covered, including the newly added `IsTerminated` guard in `TakeTurnAsync`. |
 | Tests use the same patterns as `HandoffOrchestrationTests` | **Met.** Tests use fully built workflows, streaming execution, checkpoint managers, pending requests, event collection, and output assertions. |
 | Tests run against fully-built workflows | **Met.** Tests build through `MagenticWorkflowBuilder(...).Build()`. |
 | Each test verifies specific event emissions and state changes | **Met.** Event/output assertions are strong; direct internal counter and checkpoint payload inspection are intentionally avoided. |
 | Tests cover both `requirePlanSignoff=true` and `false` paths | **Met.** Signoff and no-signoff flows are both exercised. |
 | Checkpoint/resume functionality is verified | **Behaviorally met.** Resume is exercised through plan-review workflows; direct checkpoint-state checking is intentionally skipped. |
 
+## Production Changes Made During Test Implementation
+
+Two production behavior changes were introduced alongside the tests:
+
+1. **`MagenticWorkflowBuilder.Build()`** — throws `InvalidOperationException` when the team list
+   is empty, preventing a runtime crash when the orchestrator tries to select a fallback speaker.
+
+2. **`MagenticOrchestrator.TakeTurnAsync()`** — added `IsTerminated` guard matching the existing
+   one in `ProcessPlanReviewAsync`. This ensures that both entry points (new messages and plan
+   review responses) consistently reject interaction after the workflow has terminated.
+
 ## Overall Conclusion
 
-The Magentic E2E suite is a complete implementation of the original plan. It contains **22 tests**
+The Magentic E2E suite is a complete implementation of the original plan. It contains **23 tests**
 covering all production behavior: planning, plan review, checkpointed resume, participant routing,
 progress-ledger retries, warning paths, final-answer generation, reset/replan behavior, the updated
-`StallCount > MaxStallCount` stall threshold, and build-time validation of the team list.
+`StallCount > MaxStallCount` stall threshold, build-time validation of the team list, and
+post-termination message rejection.
 
-The two intentionally skipped items (direct checkpoint payload inspection and post-termination input
-rejection) are not testable through the E2E streaming API without exposing internal implementation
-details or relying on framework-level behavior that does not currently exist.
+The two intentionally skipped items (direct checkpoint payload inspection) are not testable through
+the E2E streaming API without exposing internal implementation details.
