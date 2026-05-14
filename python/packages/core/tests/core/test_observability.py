@@ -3715,3 +3715,135 @@ async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvar
     agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
     assert len(agent_spans) == 1
     assert agent_spans[0].status.status_code == StatusCode.ERROR
+
+
+# region Test heavy operations skipped when span is not recording
+#
+# When ``ENABLE_INSTRUMENTATION`` is on (the default) but no OpenTelemetry
+# tracer provider has been configured, the global provider is the
+# ``ProxyTracerProvider`` which returns non-recording spans. The telemetry
+# layers gate sensitive-data serialization (``_capture_messages``) on
+# ``span.is_recording()`` so that we don't pay the JSON-serialization cost
+# when the span is going to be dropped anyway. The tests below verify that
+# behavior by patching ``get_tracer`` to return a ``NoOpTracer``.
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_capture_messages_skipped_when_span_not_recording(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Heavy message serialization is skipped when no provider is configured (non-streaming)."""
+    from opentelemetry.trace import NoOpTracer
+
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test"])]
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
+    ):
+        response = await client.get_response(messages=messages, options={"model": "Test"})
+
+    assert response is not None
+    # Sensitive-data serialization must be skipped because span.is_recording() is False.
+    assert mock_capture_messages.call_count == 0
+    # _capture_response still runs so that metric histograms continue to record.
+    assert mock_capture_response.call_count == 1
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_streaming_capture_messages_skipped_when_span_not_recording(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Heavy message serialization is skipped when no provider is configured (streaming)."""
+    from opentelemetry.trace import NoOpTracer
+
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test"])]
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
+    ):
+        updates: list[ChatResponseUpdate] = []
+        stream = client.get_response(messages=messages, stream=True, options={"model": "Test"})
+        async for update in stream:
+            updates.append(update)
+        await stream.get_final_response()
+
+    assert len(updates) == 2
+    assert mock_capture_messages.call_count == 0
+    assert mock_capture_response.call_count == 1
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_capture_messages_skipped_when_span_not_recording(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Agent heavy serialization is skipped when no provider is configured (non-streaming)."""
+    from opentelemetry.trace import NoOpTracer
+
+    agent = mock_chat_agent()
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
+    ):
+        response = await agent.run("Test message")
+
+    assert response is not None
+    assert mock_capture_messages.call_count == 0
+    assert mock_capture_response.call_count == 1
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_streaming_capture_messages_skipped_when_span_not_recording(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Agent heavy serialization is skipped when no provider is configured (streaming)."""
+    from opentelemetry.trace import NoOpTracer
+
+    agent = mock_chat_agent()
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
+    ):
+        updates: list[Any] = []
+        stream = agent.run("Test message", stream=True)
+        async for update in stream:
+            updates.append(update)
+        await stream.get_final_response()
+
+    assert len(updates) == 2
+    assert mock_capture_messages.call_count == 0
+    assert mock_capture_response.call_count == 1
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_capture_messages_called_when_span_recording(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Sanity check: with a real recording provider, sensitive-data capture still runs."""
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test"])]
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_response") as mock_capture_response,
+    ):
+        response = await client.get_response(messages=messages, options={"model": "Test"})
+
+    assert response is not None
+    # Two _capture_messages calls: one for input, one for output messages.
+    assert mock_capture_messages.call_count == 2
+    assert mock_capture_response.call_count == 1

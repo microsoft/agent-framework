@@ -1275,7 +1275,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         if stream:
             span = _start_streaming_span(attributes, OtelAttr.REQUEST_MODEL)
 
-            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                 _capture_messages(
                     span=span,
                     provider_name=provider_name,
@@ -1339,6 +1339,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
                         and isinstance(response, ChatResponse)
                         and response.messages
+                        and span.is_recording()
                     ):
                         _capture_messages(
                             span=span,
@@ -1369,7 +1370,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
         async def _get_response() -> ChatResponse:
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                     _capture_messages(
                         span=span,
                         provider_name=provider_name,
@@ -1403,7 +1404,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     duration=duration,
                 )
                 _mark_inner_response_telemetry_captured(response)
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages and span.is_recording():
                     finish_reason = cast(
                         "FinishReason | None",
                         response.finish_reason if response.finish_reason in FINISH_REASON_MAP else None,
@@ -1547,7 +1548,7 @@ class AgentTelemetryLayer:
         if stream:
             span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
 
-            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                 _capture_messages(
                     span=span,
                     provider_name=provider_name,
@@ -1608,6 +1609,7 @@ class AgentTelemetryLayer:
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
                         and isinstance(response, AgentResponse)
                         and response.messages
+                        and span.is_recording()
                     ):
                         _capture_messages(
                             span=span,
@@ -1640,7 +1642,7 @@ class AgentTelemetryLayer:
         async def _run() -> AgentResponse[Any]:
             try:
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
-                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                         _capture_messages(
                             span=span,
                             provider_name=provider_name,
@@ -1664,7 +1666,7 @@ class AgentTelemetryLayer:
                         )
                         _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
                         _capture_response(span=span, attributes=response_attributes, duration=duration)
-                        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+                        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages and span.is_recording():
                             _capture_messages(
                                 span=span,
                                 provider_name=provider_name,
