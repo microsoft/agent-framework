@@ -50,10 +50,6 @@ public sealed class ScopedContentProcessorTests
         this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(tokenInfo);
 
-        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
-            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProtectionScopesResponse?)null);
-
         var psResponse = new ProtectionScopesResponse
         {
             Scopes =
@@ -70,8 +66,8 @@ public sealed class ScopedContentProcessorTests
             ]
         };
 
-        this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
-            It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
         var pcResponse = new ProcessContentResponse
@@ -109,10 +105,6 @@ public sealed class ScopedContentProcessorTests
         this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(tokenInfo);
 
-        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
-            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProtectionScopesResponse?)null);
-
         var psResponse = new ProtectionScopesResponse
         {
             Scopes =
@@ -129,8 +121,8 @@ public sealed class ScopedContentProcessorTests
             ]
         };
 
-        this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
-            It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
         var pcResponse = new ProcessContentResponse
@@ -168,10 +160,6 @@ public sealed class ScopedContentProcessorTests
         this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(tokenInfo);
 
-        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
-            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProtectionScopesResponse?)null);
-
         var psResponse = new ProtectionScopesResponse
         {
             Scopes =
@@ -188,8 +176,8 @@ public sealed class ScopedContentProcessorTests
             ]
         };
 
-        this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
-            It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
         var pcResponse = new ProcessContentResponse
@@ -279,12 +267,9 @@ public sealed class ScopedContentProcessorTests
         this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(tokenInfo);
 
-        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
-            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProtectionScopesResponse?)null);
-
         var psResponse = new ProtectionScopesResponse
         {
+            ScopeIdentifier = "etag-1",
             Scopes =
             [
                 new()
@@ -299,8 +284,8 @@ public sealed class ScopedContentProcessorTests
             ]
         };
 
-        this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
-            It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
         var pcResponse = new ProcessContentResponse
@@ -336,10 +321,6 @@ public sealed class ScopedContentProcessorTests
         this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(tokenInfo);
 
-        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
-            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProtectionScopesResponse?)null);
-
         var psResponse = new ProtectionScopesResponse
         {
             Scopes =
@@ -355,8 +336,8 @@ public sealed class ScopedContentProcessorTests
             ]
         };
 
-        this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
-            It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
         // Act
@@ -432,13 +413,9 @@ public sealed class ScopedContentProcessorTests
         this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(tokenInfo);
 
+        var psResponse = new ProtectionScopesResponse { Scopes = [] };
         this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
             It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProtectionScopesResponse?)null);
-
-        var psResponse = new ProtectionScopesResponse { Scopes = [] };
-        this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
-            It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
         // Act
@@ -467,13 +444,9 @@ public sealed class ScopedContentProcessorTests
         this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(tokenInfo);
 
+        var psResponse = new ProtectionScopesResponse { Scopes = [] };
         this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
             It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProtectionScopesResponse?)null);
-
-        var psResponse = new ProtectionScopesResponse { Scopes = [] };
-        this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
-            It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
         // Act
@@ -482,6 +455,111 @@ public sealed class ScopedContentProcessorTests
 
         // Assert
         Assert.Equal(userId, result.userId);
+    }
+
+    [Fact]
+    public async Task ProcessMessagesAsync_CacheMiss_QueuesScopeRetrievalJobAndCallsProcessContentAsync()
+    {
+        // Arrange
+        var messages = new List<ChatMessage>
+        {
+            new (ChatRole.User, "Test message")
+        };
+        var settings = CreateValidPurviewSettings();
+        var tokenInfo = new TokenInfo { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProtectionScopesResponse?)null);
+
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProcessContentResponse());
+
+        // Act
+        await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert: ProcessContent runs inline; GetProtectionScopes is queued as a background job, not invoked inline.
+        this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        this._mockPurviewClient.Verify(x => x.GetProtectionScopesAsync(
+            It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessMessagesAsync_CacheMiss_WithProcessContentBlockAction_ReturnsShouldBlockTrueAsync()
+    {
+        // Arrange
+        var messages = new List<ChatMessage>
+        {
+            new (ChatRole.User, "Test message")
+        };
+        var settings = CreateValidPurviewSettings();
+        var tokenInfo = new TokenInfo { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProtectionScopesResponse?)null);
+
+        var pcResponse = new ProcessContentResponse
+        {
+            PolicyActions =
+            [
+                new() { Action = DlpAction.BlockAccess }
+            ]
+        };
+
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pcResponse);
+
+        // Act
+        var result = await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert
+        Assert.True(result.shouldBlock);
+        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessMessagesAsync_CacheMiss_StillCallsProcessContentWhenScopeJobCannotQueueAsync()
+    {
+        // Arrange
+        var messages = new List<ChatMessage>
+        {
+            new (ChatRole.User, "Test message")
+        };
+        var settings = CreateValidPurviewSettings();
+        var tokenInfo = new TokenInfo { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProtectionScopesResponse?)null);
+
+        this._mockChannelHandler.Setup(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()))
+            .Throws(new PurviewJobException("queue unavailable"));
+
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProcessContentResponse());
+
+        // Act
+        await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert: scope warmup is attempted, and ProcessContent still runs when it can't be queued.
+        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()), Times.Once);
+        this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

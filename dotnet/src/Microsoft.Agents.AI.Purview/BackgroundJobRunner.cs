@@ -16,6 +16,7 @@ internal sealed class BackgroundJobRunner : IBackgroundJobRunner
 {
     private readonly IChannelHandler _channelHandler;
     private readonly IPurviewClient _purviewClient;
+    private readonly ICacheProvider _cacheProvider;
     private readonly ILogger _logger;
 
     /// <summary>
@@ -23,12 +24,14 @@ internal sealed class BackgroundJobRunner : IBackgroundJobRunner
     /// </summary>
     /// <param name="channelHandler">The channel handler used to manage job channels.</param>
     /// <param name="purviewClient">The Purview client used to send requests to Purview.</param>
+    /// <param name="cacheProvider">The cache provider used to store protection scopes results.</param>
     /// <param name="logger">The logger used to log information about background jobs.</param>
     /// <param name="purviewSettings">The settings used to configure Purview client behavior.</param>
-    public BackgroundJobRunner(IChannelHandler channelHandler, IPurviewClient purviewClient, ILogger logger, PurviewSettings purviewSettings)
+    public BackgroundJobRunner(IChannelHandler channelHandler, IPurviewClient purviewClient, ICacheProvider cacheProvider, ILogger logger, PurviewSettings purviewSettings)
     {
         this._channelHandler = channelHandler;
         this._purviewClient = purviewClient;
+        this._cacheProvider = cacheProvider;
         this._logger = logger;
 
         for (int i = 0; i < purviewSettings.MaxConcurrentJobConsumers; i++)
@@ -67,6 +70,10 @@ internal sealed class BackgroundJobRunner : IBackgroundJobRunner
                 break;
             case ContentActivityJob contentActivityJob:
                 _ = await this._purviewClient.SendContentActivitiesAsync(contentActivityJob.Request, CancellationToken.None).ConfigureAwait(false);
+                break;
+            case ScopeRetrievalJob scopeRetrievalJob:
+                var response = await this._purviewClient.GetProtectionScopesAsync(scopeRetrievalJob.Request, CancellationToken.None).ConfigureAwait(false);
+                await this._cacheProvider.SetAsync(scopeRetrievalJob.CacheKey, response, CancellationToken.None).ConfigureAwait(false);
                 break;
         }
     }

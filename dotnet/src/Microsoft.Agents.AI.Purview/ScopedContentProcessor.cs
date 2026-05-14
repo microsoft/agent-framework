@@ -197,18 +197,34 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 
         ProtectionScopesResponse? cacheResponse = await this._cacheProvider.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(cacheKey, cancellationToken).ConfigureAwait(false);
 
-        ProtectionScopesResponse psResponse;
-
         if (cacheResponse != null)
         {
-            psResponse = cacheResponse;
-        }
-        else
-        {
-            psResponse = await this._purviewClient.GetProtectionScopesAsync(psRequest, cancellationToken).ConfigureAwait(false);
-            await this._cacheProvider.SetAsync(cacheKey, psResponse, cancellationToken).ConfigureAwait(false);
+            return await this.ProcessWithCachedScopesAsync(pcRequest, cacheResponse, cacheKey, cancellationToken).ConfigureAwait(false);
         }
 
+        // Cache miss: queue a background job to warm the protection scopes cache and let
+        // ProcessContent run inline. The service still enforces applicable policies for this turn.
+        try
+        {
+            this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey));
+        }
+        catch (PurviewJobException)
+        {
+            // QueueJob already logs failures. Scope warmup is best effort; don't block ProcessContent.
+        }
+
+        return await this.CallProcessContentAsync(pcRequest, cacheKey, dlpActions: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Apply locally-cached protection scopes to the request and dispatch ProcessContent appropriately.
+    /// </summary>
+    private async Task<ProcessContentResponse> ProcessWithCachedScopesAsync(
+        ProcessContentRequest pcRequest,
+        ProtectionScopesResponse psResponse,
+        ProtectionScopesCacheKey cacheKey,
+        CancellationToken cancellationToken)
+    {
         pcRequest.ScopeIdentifier = psResponse.ScopeIdentifier;
 
         (bool shouldProcess, List<DlpActionInfo> dlpActions, ExecutionMode executionMode) = CheckApplicableScopes(pcRequest, psResponse);
@@ -221,21 +237,37 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
                 return new ProcessContentResponse();
             }
 
-            ProcessContentResponse pcResponse = await this._purviewClient.ProcessContentAsync(pcRequest, cancellationToken).ConfigureAwait(false);
-
-            if (pcResponse.ProtectionScopeState == ProtectionScopeState.Modified)
-            {
-                await this._cacheProvider.RemoveAsync(cacheKey, cancellationToken).ConfigureAwait(false);
-            }
-
-            pcResponse = CombinePolicyActions(pcResponse, dlpActions);
-            return pcResponse;
+            return await this.CallProcessContentAsync(pcRequest, cacheKey, dlpActions, cancellationToken).ConfigureAwait(false);
         }
 
         ContentActivitiesRequest caRequest = new(pcRequest.UserId, pcRequest.TenantId, pcRequest.ContentToProcess, pcRequest.CorrelationId);
         this._channelHandler.QueueJob(new ContentActivityJob(caRequest));
 
         return new ProcessContentResponse();
+    }
+
+    /// <summary>
+    /// Call ProcessContent and invalidate the protection scopes cache when the response indicates the cached scopes are stale.
+    /// </summary>
+    private async Task<ProcessContentResponse> CallProcessContentAsync(
+        ProcessContentRequest pcRequest,
+        ProtectionScopesCacheKey cacheKey,
+        List<DlpActionInfo>? dlpActions,
+        CancellationToken cancellationToken)
+    {
+        ProcessContentResponse pcResponse = await this._purviewClient.ProcessContentAsync(pcRequest, cancellationToken).ConfigureAwait(false);
+
+        if (pcRequest.ScopeIdentifier != null && pcResponse.ProtectionScopeState == ProtectionScopeState.Modified)
+        {
+            await this._cacheProvider.RemoveAsync(cacheKey, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (dlpActions?.Count > 0)
+        {
+            pcResponse = CombinePolicyActions(pcResponse, dlpActions);
+        }
+
+        return pcResponse;
     }
 
     /// <summary>
