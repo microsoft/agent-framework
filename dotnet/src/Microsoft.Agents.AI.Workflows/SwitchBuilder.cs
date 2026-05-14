@@ -40,6 +40,7 @@ public sealed class SwitchBuilder
 
         foreach (ExecutorBinding executor in executors)
         {
+            // Explicit name: null element inside the collection argument.
             Throw.IfNull(executor, $"{nameof(executors)}[{executorIndex++}]");
 
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
@@ -71,6 +72,7 @@ public sealed class SwitchBuilder
 
         foreach (ExecutorBinding executor in executors)
         {
+            // Explicit name: null element inside the collection argument.
             Throw.IfNull(executor, $"{nameof(executors)}[{executorIndex++}]");
 
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
