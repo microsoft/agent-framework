@@ -804,7 +804,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             else cast(str | None, (options or {}).get("conversation_id") or self.default_options.get("conversation_id"))
         )
         if service_stores_history:
-            return []
+            raise AgentInvalidRequestException(
+                "require_per_service_call_history_persistence cannot be used "
+                "when the chat client is configured to store history. Set "
+                "store=False to persist each service call through the configured "
+                "HistoryProvider."
+            )
 
         if conversation_id is not None:
             raise AgentInvalidRequestException(
