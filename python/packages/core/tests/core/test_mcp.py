@@ -4227,9 +4227,7 @@ async def test_mcp_tool_call_tool_forwards_tool_list_meta():
             self.session.call_tool = AsyncMock(
                 return_value=types.CallToolResult(content=[types.TextContent(type="text", text="result")])
             )
-            self.session.list_prompts = AsyncMock(
-                return_value=types.ListPromptsResult(prompts=[])
-            )
+            self.session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
 
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
             return None

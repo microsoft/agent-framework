@@ -4120,9 +4120,7 @@ async def test_prepare_options_with_conversation_id_strips_server_items_for_mixe
     types = [item.get("type") for item in options["input"]]
     assert "reasoning" not in types
     assert "function_call" not in types
-    output_call_ids = {
-        item["call_id"] for item in options["input"] if item.get("type") == "function_call_output"
-    }
+    output_call_ids = {item["call_id"] for item in options["input"] if item.get("type") == "function_call_output"}
     assert output_call_ids == {"call_history", "call_live"}
     assert options["previous_response_id"] == "resp_prev123"
 

@@ -1429,9 +1429,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         props = content.additional_properties or {}
                         # Local-shell variant serializes as `local_shell_call` carrying a server-issued id;
                         # plain function_call_output pairs by call_id and is safe under storage.
-                        if (
-                            props.get(OPENAI_SHELL_OUTPUT_TYPE_KEY) == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL
-                            and props.get(OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY)
+                        if props.get(
+                            OPENAI_SHELL_OUTPUT_TYPE_KEY
+                        ) == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL and props.get(
+                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
                         ):
                             continue
                     new_args: dict[str, Any] = {}
