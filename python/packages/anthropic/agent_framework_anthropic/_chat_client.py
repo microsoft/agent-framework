@@ -76,7 +76,6 @@ logger = logging.getLogger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
-STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -632,12 +631,17 @@ class RawAnthropicClient(
         if tools_config := self._prepare_tools_for_anthropic(options):
             run_options.update(tools_config)
 
-        # response_format - use native output_format for structured outputs
+        # response_format - emit Anthropic's GA ``output_config.format`` shape.
+        # The deprecated ``output_format`` parameter (gated by the
+        # ``structured-outputs-2025-11-13`` beta flag) produced concatenated /
+        # malformed JSON when combined with tools — the GA path does not.
+        # Merge into any caller-supplied ``output_config`` so e.g. the
+        # adaptive-thinking ``effort`` setting survives the transformation.
         response_format = options.get("response_format")
         if response_format is not None:
-            run_options["output_format"] = self._prepare_response_format(response_format)
-            # Add the structured outputs beta flag
-            run_options["betas"].add(STRUCTURED_OUTPUTS_BETA_FLAG)
+            output_config = dict(run_options.get("output_config") or {})
+            output_config["format"] = self._prepare_response_format(response_format)
+            run_options["output_config"] = output_config
 
         return run_options
 
@@ -657,7 +661,7 @@ class RawAnthropicClient(
         }
 
     def _prepare_response_format(self, response_format: type[BaseModel] | dict[str, Any]) -> dict[str, Any]:
-        """Prepare the output_format parameter for structured output.
+        """Build the ``output_config.format`` payload for Anthropic structured outputs.
 
         Args:
             response_format: Either a Pydantic model class or a dict with the schema specification.
@@ -665,7 +669,8 @@ class RawAnthropicClient(
                 or direct format with "schema" key, or the raw schema dict itself.
 
         Returns:
-            A dictionary representing the output_format for Anthropic's structured outputs.
+            A ``{"type": "json_schema", "schema": ...}`` dict — the value placed
+            under ``output_config["format"]`` on the GA structured-outputs path.
         """
         if isinstance(response_format, dict):
             if "json_schema" in response_format:
