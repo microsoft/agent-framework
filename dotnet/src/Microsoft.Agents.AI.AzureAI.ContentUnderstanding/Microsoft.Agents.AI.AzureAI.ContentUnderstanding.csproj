@@ -3,6 +3,11 @@
   <PropertyGroup>
     <VersionSuffix>preview</VersionSuffix>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Scaffolding-only suppression: RT0002 (unused ProjectReference) and RT0003 (unused PackageReference)
+         fire because no source code uses these references yet. Remove these codes from NoWarn in Phase 5
+         once ContentUnderstandingContextProvider consumes Microsoft.Agents.AI, Microsoft.Extensions.AI,
+         Azure.AI.ContentUnderstanding, Azure.AI.Projects, and OpenAI. -->
+    <NoWarn>$(NoWarn);RT0002;RT0003</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
