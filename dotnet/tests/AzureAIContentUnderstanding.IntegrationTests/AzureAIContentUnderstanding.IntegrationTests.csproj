@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CS8793</NoWarn>
+    <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
+    <InjectSharedIntegrationTestAzureCredentialsCode>True</InjectSharedIntegrationTestAzureCredentialsCode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.AzureAI.ContentUnderstanding\Microsoft.Agents.AI.AzureAI.ContentUnderstanding.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.ContentUnderstanding" />
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+
+</Project>
