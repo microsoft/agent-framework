@@ -1513,6 +1513,97 @@ YAML_INDENTED_KV_RE = re.compile(
 # must not start or end with a hyphen, and must not contain consecutive hyphens.
 VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$")
 
+# Block scalar indicator characters recognised by the lightweight YAML parser.
+_BLOCK_SCALAR_INDICATORS = ("|", ">")
+
+
+def _parse_yaml_scalar_value(yaml_content: str, kv_match: re.Match[str]) -> str:
+    """Resolve the scalar value for an unquoted YAML key-value match.
+
+    If the captured value starts with a YAML block scalar indicator (``|`` or
+    ``>``), the function reads subsequent indented continuation lines, strips
+    the common leading indentation, and joins them according to the scalar
+    style (literal preserves newlines, folded replaces them with spaces).
+
+    Chomping indicators are respected per YAML 1.2 §8.1.1.2:
+
+    * ``-`` (strip) — final line break and trailing empty lines excluded
+    * ``+`` (keep) — final line break and any trailing empty lines preserved
+    * default (clip) — final line break preserved, trailing empty lines excluded
+
+    For plain (non-block-scalar) values the captured text is returned as-is.
+    Note: explicit indentation indicators (e.g. ``|2``) are not supported;
+    indentation is auto-detected from the common leading whitespace.
+    """
+    value: str = kv_match.group(3)
+
+    if not value or value[0] not in _BLOCK_SCALAR_INDICATORS:
+        return value
+
+    scalar_style = value[0]
+    keep_trailing_newline = len(value) > 1 and value[1] == "+"
+    strip_trailing_newline = len(value) > 1 and value[1] == "-"
+
+    # Find the start of the next line after this key-value match.
+    next_line_start = yaml_content.find("\n", kv_match.end())
+    if next_line_start < 0:
+        return value
+    next_line_start += 1  # skip the newline character itself
+
+    # Collect indented continuation lines (or blank lines within the block).
+    block_lines: list[str] = []
+    pos = next_line_start
+    while pos < len(yaml_content):
+        line_end = yaml_content.find("\n", pos)
+        if line_end < 0:
+            line = yaml_content[pos:]
+            line_end = len(yaml_content)
+        else:
+            line = yaml_content[pos:line_end]
+
+        if not line or line.isspace():
+            # Blank / whitespace-only lines are part of the block.
+            block_lines.append("")
+            pos = line_end + 1 if line_end < len(yaml_content) else line_end
+            continue
+
+        if line[0] not in (" ", "\t"):
+            # Non-indented, non-blank line — end of the block.
+            break
+
+        block_lines.append(line)
+        pos = line_end + 1 if line_end < len(yaml_content) else line_end
+
+    # Strip trailing blank lines collected from the block.
+    while block_lines and block_lines[-1] == "":
+        block_lines.pop()
+
+    if not block_lines:
+        return ""
+
+    # Determine the common leading indentation across non-empty lines.
+    # Only space/tab characters count as indentation (matches YAML semantics).
+    def _indent_width(s: str) -> int:
+        i = 0
+        while i < len(s) and s[i] in (" ", "\t"):
+            i += 1
+        return i
+
+    common_indent = min(_indent_width(line) for line in block_lines if line)
+    normalized = [line[common_indent:] if line else "" for line in block_lines]
+
+    # Literal preserves newlines; folded joins non-empty lines with spaces.
+    parsed = "\n".join(normalized) if scalar_style == "|" else " ".join(line for line in normalized if line)
+
+    if keep_trailing_newline:
+        return parsed + "\n"
+    if strip_trailing_newline:
+        return parsed
+    # Clip (default): literal gets a trailing newline, folded does not.
+    if scalar_style == "|":
+        return parsed + "\n"
+    return parsed
+
 
 # Default system prompt template for advertising available skills to the model.
 # Use {skills} as the placeholder for the generated skills XML list.
@@ -2879,7 +2970,9 @@ class FileSkillsSource(SkillsSource):
 
         for kv_match in YAML_KV_RE.finditer(yaml_content):
             key = kv_match.group(1)
-            value = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
+            value = (
+                kv_match.group(2) if kv_match.group(2) is not None else _parse_yaml_scalar_value(yaml_content, kv_match)
+            )
 
             key_lower = key.lower()
             if key_lower == "name":

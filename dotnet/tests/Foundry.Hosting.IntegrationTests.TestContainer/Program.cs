@@ -7,6 +7,7 @@ using Azure.Identity;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Models;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Foundry;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
 
@@ -34,6 +35,7 @@ AIAgent agent = scenario switch
     "tool-calling-approval" => CreateToolCallingApprovalAgent(projectClient, deployment),
     "mcp-toolbox" => CreateMcpToolboxAgent(projectClient, deployment),
     "custom-storage" => CreateCustomStorageAgent(projectClient, deployment),
+    "memory" => await CreateMemoryAgentAsync(projectClient, deployment).ConfigureAwait(false),
     "azure-search-rag" => CreateAzureSearchRagAgent(projectClient, deployment),
     "session-files" => CreateSessionFilesAgent(projectClient, deployment),
     _ => throw new InvalidOperationException($"Unknown IT_SCENARIO '{scenario}'.")
@@ -178,6 +180,34 @@ static AIAgent CreateSessionFilesAgent(AIProjectClient client, string deployment
             AIFunctionFactory.Create(ListFiles),
             AIFunctionFactory.Create(ReadFile)
         ]);
+
+// Memory scenario. The agent uses FoundryMemoryProvider scoped per user via the
+// HostedSessionContext that the hosting layer applies from the platform isolation headers.
+// In production the platform sets the headers; here we rely on the default
+// PlatformHostedSessionIsolationKeyProvider that AgentFrameworkResponseHandler resolves.
+static async Task<AIAgent> CreateMemoryAgentAsync(AIProjectClient client, string deployment)
+{
+    var embedding = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
+    var memoryStoreName = Environment.GetEnvironmentVariable("IT_MEMORY_STORE_ID") ?? "it-memory-store";
+
+    var memoryProvider = new FoundryMemoryProvider(
+        client,
+        memoryStoreName,
+        stateInitializer: HostedFoundryMemoryProviderScopes.PerUser());
+
+    await memoryProvider.EnsureMemoryStoreCreatedAsync(deployment, embedding, "Memory store for hosted-memory IT scenario.").ConfigureAwait(false);
+
+    return client.AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = "memory-agent",
+        ChatOptions = new ChatOptions
+        {
+            ModelId = deployment,
+            Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details."
+        },
+        AIContextProviders = [memoryProvider]
+    });
+}
 
 [Description("Returns the current UTC date and time as an ISO 8601 string.")]
 static string GetUtcNow() => DateTime.UtcNow.ToString("o");
