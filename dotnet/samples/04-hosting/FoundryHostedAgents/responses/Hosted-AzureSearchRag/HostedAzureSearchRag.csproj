@@ -11,7 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.Projects" VersionOverride="2.1.0-beta.1" />
+    <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="Azure.Search.Documents" />
     <PackageReference Include="DotNetEnv" />
@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj" />
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
+    <ProjectReference Include="..\Hosted_Shared_Contributor_Setup\Hosted_Shared_Contributor_Setup.csproj" />
   </ItemGroup>
 
   <!-- For end-users: uncomment the PackageReference below and remove the ProjectReferences above

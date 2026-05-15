@@ -431,23 +431,23 @@ public class FoundryAgentTests
     }
 
     [Fact]
-    public void AgentEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNonNull()
+    public void AgentEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNull()
     {
         FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider());
 
-        Assert.NotNull(agent.GetService<ProjectOpenAIClient>());
+        Assert.Null(agent.GetService<ProjectOpenAIClient>());
     }
 
     [Fact]
-    public void AgentEndpointConstructor_GetServiceAIProjectClient_ReturnsNull()
+    public void AgentEndpointConstructor_GetServiceAIProjectClient_ReturnsNonNull()
     {
         FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider());
 
-        Assert.Null(agent.GetService<AIProjectClient>());
+        Assert.NotNull(agent.GetService<AIProjectClient>());
     }
 
     [Fact]
-    public void ProjectEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNonNull()
+    public void ProjectEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNull()
     {
         FoundryAgent agent = new(
             s_testEndpoint,
@@ -455,7 +455,7 @@ public class FoundryAgentTests
             model: "gpt-4o-mini",
             instructions: "Test");
 
-        Assert.NotNull(agent.GetService<ProjectOpenAIClient>());
+        Assert.Null(agent.GetService<ProjectOpenAIClient>());
     }
 
     [Fact]
@@ -665,18 +665,14 @@ public class FoundryAgentTests
     }
 
     [Fact]
-    public void AgentEndpointConstructor_PropagatesUserAgentApplicationId_ToProjectLevelClient()
+    public void AgentEndpointConstructor_PreservesUserAgentApplicationId()
     {
-        // The MEAI policy adds its own User-Agent header so we cannot reliably observe the OpenAI SDK's
-        // application-id stamp in the outbound request. Verify the value is propagated onto the
-        // project-level client's options via the public ProjectOpenAIClient surface.
         ProjectOpenAIClientOptions opts = new() { UserAgentApplicationId = "my-app-id" };
 
         FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
 
-        ProjectOpenAIClient? projectClient = agent.GetService<ProjectOpenAIClient>();
-        Assert.NotNull(projectClient);
         // Caller's UserAgentApplicationId is preserved on the per-agent options bag verbatim.
+        Assert.NotNull(agent);
         Assert.Equal("my-app-id", opts.UserAgentApplicationId);
     }
 
