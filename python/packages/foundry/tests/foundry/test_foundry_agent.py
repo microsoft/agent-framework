@@ -17,6 +17,7 @@ from agent_framework import (
     ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     tool,
 )
@@ -200,6 +201,34 @@ async def test_raw_foundry_agent_chat_client_prepare_options_accepts_function_to
     assert result == {
         "extra_body": {"agent_reference": {"name": "test-agent", "type": "agent_reference"}},
     }
+
+
+async def test_raw_foundry_agent_chat_client_prepare_options_forwards_context_instructions() -> None:
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    result = await client._prepare_options(
+        messages=[
+            Message(role="system", contents=[Content.from_text("Use available skills.")]),
+            Message(role="developer", contents=[Content.from_text("Prefer deterministic answers.")]),
+            Message(role="user", contents=[Content.from_text("run cats-name")]),
+        ],
+        options={"instructions": "Base instructions."},
+    )
+
+    assert result["instructions"] == "Base instructions.\nUse available skills.\nPrefer deterministic answers."
+    assert result["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "run cats-name"}],
+        }
+    ]
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_fields() -> None:

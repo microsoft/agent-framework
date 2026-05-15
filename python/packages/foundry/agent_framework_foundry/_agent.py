@@ -338,10 +338,17 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
                     )
 
         # Prepare messages: extract system/developer messages as instructions
-        prepared_messages, _instructions = self._prepare_messages_for_azure_ai(messages)
+        prepared_messages, context_instructions = self._prepare_messages_for_azure_ai(messages)
+        prepare_options = dict(options)
+        base_instructions = cast(str | None, prepare_options.pop("instructions", None))
+        instructions = "\n".join(
+            instruction for instruction in (base_instructions, context_instructions) if instruction
+        )
 
         # Call parent prepare_options (OpenAI Responses API format)
-        run_options = await super()._prepare_options(prepared_messages, options, **kwargs)
+        run_options = await super()._prepare_options(prepared_messages, prepare_options, **kwargs)
+        if instructions:
+            run_options["instructions"] = instructions
 
         # Apply Azure AI schema transforms
         if "input" in run_options and isinstance(run_options["input"], list):
