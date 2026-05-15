@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -272,46 +273,16 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 
     internal static AIContent ConvertContentBlock(ContentBlock block)
     {
-        return block switch
+        // Delegate to the MCP SDK's canonical converter. It maps every known
+        // ContentBlock subtype (Text/Image/Audio/EmbeddedResource/ToolUse/ToolResult)
+        // and sets RawRepresentation + AdditionalProperties from block.Meta.
+        // It intentionally returns null for ResourceLinkBlock — map that to
+        // UriContent here so callers always receive a usable AIContent.
+        return block.ToAIContent() ?? block switch
         {
-            TextContentBlock text => new TextContent(text.Text),
-            ImageContentBlock image => CreateDataContent(image.Data, image.MimeType ?? "image/*"),
-            AudioContentBlock audio => CreateDataContent(audio.Data, audio.MimeType ?? "audio/*"),
-            EmbeddedResourceBlock embedded => ConvertEmbeddedResource(embedded),
-            _ => new TextContent(block.ToString() ?? string.Empty),
+            ResourceLinkBlock link => new UriContent(link.Uri, link.MimeType ?? "application/octet-stream") { RawRepresentation = link },
+            _ => new TextContent(block.ToString() ?? string.Empty) { RawRepresentation = block },
         };
-    }
-
-    private static AIContent ConvertEmbeddedResource(EmbeddedResourceBlock block)
-    {
-        return block.Resource switch
-        {
-            TextResourceContents text => new TextContent(text.Text),
-            BlobResourceContents blob => CreateDataContent(blob.Blob, blob.MimeType ?? "application/octet-stream"),
-            _ => new TextContent(block.ToString() ?? string.Empty),
-        };
-    }
-
-    private static DataContent CreateDataContent(ReadOnlyMemory<byte> base64Utf8Data, string mediaType)
-    {
-        if (base64Utf8Data.IsEmpty)
-        {
-            return new DataContent($"data:{mediaType};base64,", mediaType);
-        }
-
-#if NET8_0_OR_GREATER
-        string base64 = Encoding.UTF8.GetString(base64Utf8Data.Span);
-#else
-        string base64 = Encoding.UTF8.GetString(base64Utf8Data.ToArray());
-#endif
-
-        // If it's already a data URI, use it directly
-        if (base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-        {
-            return new DataContent(base64, mediaType);
-        }
-
-        return new DataContent($"data:{mediaType};base64,{base64}", mediaType);
     }
 
     private static string SerializeToolsList(IEnumerable<Tool> tools)

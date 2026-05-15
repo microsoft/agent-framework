@@ -445,8 +445,9 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        result.Should().BeOfType<TextContent>()
-            .Which.Text.Should().Be("hello world");
+        TextContent textContent = result.Should().BeOfType<TextContent>().Subject;
+        textContent.Text.Should().Be("hello world");
+        textContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
@@ -462,13 +463,17 @@ public sealed class DefaultMcpToolHandlerTests
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
         dataContent.MediaType.Should().Be("image/png");
         dataContent.Uri.Should().Be("data:image/png;base64,");
+        dataContent.Data.IsEmpty.Should().BeTrue();
+        dataContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
     public void ConvertContentBlock_ImageContentBlock_WithBase64Payload_ShouldReturnDataContent()
     {
         // Arrange
-        byte[] base64Bytes = Encoding.UTF8.GetBytes("iVBORw0KGgo=");
+        const string Base64Payload = "iVBORw0KGgo=";
+        byte[] base64Bytes = Encoding.UTF8.GetBytes(Base64Payload);
+        byte[] expectedDecoded = Convert.FromBase64String(Base64Payload);
         ImageContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = "image/png" };
 
         // Act
@@ -477,39 +482,9 @@ public sealed class DefaultMcpToolHandlerTests
         // Assert
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
         dataContent.MediaType.Should().Be("image/png");
-        dataContent.Uri.Should().Be("data:image/png;base64,iVBORw0KGgo=");
-    }
-
-    [Fact]
-    public void ConvertContentBlock_ImageContentBlock_WithDataUri_ShouldReturnDataContentDirectly()
-    {
-        // Arrange
-        const string DataUri = "data:image/jpeg;base64,/9j/4AAQ";
-        byte[] dataUriBytes = Encoding.UTF8.GetBytes(DataUri);
-        ImageContentBlock block = new() { Data = new ReadOnlyMemory<byte>(dataUriBytes), MimeType = "image/jpeg" };
-
-        // Act
-        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
-
-        // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("image/jpeg");
-        dataContent.Uri.Should().Be(DataUri);
-    }
-
-    [Fact]
-    public void ConvertContentBlock_ImageContentBlock_WithNullMimeType_ShouldDefaultToImageWildcard()
-    {
-        // Arrange
-        byte[] base64Bytes = Encoding.UTF8.GetBytes("iVBORw0KGgo=");
-        ImageContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = null! };
-
-        // Act
-        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
-
-        // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("image/*");
+        dataContent.Data.ToArray().Should().BeEquivalentTo(expectedDecoded);
+        dataContent.Uri.Should().Be($"data:image/png;base64,{Base64Payload}");
+        dataContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
@@ -525,13 +500,17 @@ public sealed class DefaultMcpToolHandlerTests
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
         dataContent.MediaType.Should().Be("audio/wav");
         dataContent.Uri.Should().Be("data:audio/wav;base64,");
+        dataContent.Data.IsEmpty.Should().BeTrue();
+        dataContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
     public void ConvertContentBlock_AudioContentBlock_WithBase64Payload_ShouldReturnDataContent()
     {
         // Arrange
-        byte[] base64Bytes = Encoding.UTF8.GetBytes("UklGRiQA");
+        const string Base64Payload = "UklGRiQA";
+        byte[] base64Bytes = Encoding.UTF8.GetBytes(Base64Payload);
+        byte[] expectedDecoded = Convert.FromBase64String(Base64Payload);
         AudioContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = "audio/wav" };
 
         // Act
@@ -540,39 +519,9 @@ public sealed class DefaultMcpToolHandlerTests
         // Assert
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
         dataContent.MediaType.Should().Be("audio/wav");
-        dataContent.Uri.Should().Be("data:audio/wav;base64,UklGRiQA");
-    }
-
-    [Fact]
-    public void ConvertContentBlock_AudioContentBlock_WithDataUri_ShouldReturnDataContentDirectly()
-    {
-        // Arrange
-        const string DataUri = "data:audio/mp3;base64,//uQxAAA";
-        byte[] dataUriBytes = Encoding.UTF8.GetBytes(DataUri);
-        AudioContentBlock block = new() { Data = new ReadOnlyMemory<byte>(dataUriBytes), MimeType = "audio/mp3" };
-
-        // Act
-        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
-
-        // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("audio/mp3");
-        dataContent.Uri.Should().Be(DataUri);
-    }
-
-    [Fact]
-    public void ConvertContentBlock_AudioContentBlock_WithNullMimeType_ShouldDefaultToAudioWildcard()
-    {
-        // Arrange
-        byte[] base64Bytes = Encoding.UTF8.GetBytes("UklGRiQA");
-        AudioContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = null! };
-
-        // Act
-        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
-
-        // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("audio/*");
+        dataContent.Data.ToArray().Should().BeEquivalentTo(expectedDecoded);
+        dataContent.Uri.Should().Be($"data:audio/wav;base64,{Base64Payload}");
+        dataContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
@@ -593,15 +542,18 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        result.Should().BeOfType<TextContent>()
-            .Which.Text.Should().Be("embedded text payload");
+        TextContent textContent = result.Should().BeOfType<TextContent>().Subject;
+        textContent.Text.Should().Be("embedded text payload");
+        textContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
     public void ConvertContentBlock_EmbeddedResourceBlock_WithBlobResource_ShouldReturnDataContent()
     {
         // Arrange
-        byte[] base64Bytes = Encoding.UTF8.GetBytes("UklGRiQA");
+        const string Base64Payload = "UklGRiQA";
+        byte[] base64Bytes = Encoding.UTF8.GetBytes(Base64Payload);
+        byte[] expectedDecoded = Convert.FromBase64String(Base64Payload);
         EmbeddedResourceBlock block = new()
         {
             Resource = new BlobResourceContents
@@ -618,21 +570,129 @@ public sealed class DefaultMcpToolHandlerTests
         // Assert
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
         dataContent.MediaType.Should().Be("application/zip");
-        dataContent.Uri.Should().Be("data:application/zip;base64,UklGRiQA");
+        dataContent.Data.ToArray().Should().BeEquivalentTo(expectedDecoded);
+        dataContent.Uri.Should().Be($"data:application/zip;base64,{Base64Payload}");
+        dataContent.RawRepresentation.Should().BeSameAs(block);
     }
 
     [Fact]
-    public void ConvertContentBlock_EmbeddedResourceBlock_WithBlobResource_NullMimeType_DefaultsToOctetStream()
+    public void ConvertContentBlock_ResourceLinkBlock_WithUri_ShouldReturnUriContent()
     {
         // Arrange
-        byte[] base64Bytes = Encoding.UTF8.GetBytes("UklGRiQA");
-        EmbeddedResourceBlock block = new()
+        ResourceLinkBlock block = new()
         {
-            Resource = new BlobResourceContents
+            Uri = "https://example.com/resource.bin",
+            Name = "resource.bin",
+            MimeType = "application/zip",
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
+        uriContent.Uri.ToString().Should().Be("https://example.com/resource.bin");
+        uriContent.MediaType.Should().Be("application/zip");
+        uriContent.RawRepresentation.Should().BeSameAs(block);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ResourceLinkBlock_WithNullMimeType_ShouldDefaultToOctetStream()
+    {
+        // Arrange
+        ResourceLinkBlock block = new()
+        {
+            Uri = "https://example.com/resource",
+            Name = "resource",
+            MimeType = null,
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
+        uriContent.Uri.ToString().Should().Be("https://example.com/resource");
+        uriContent.MediaType.Should().Be("application/octet-stream");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ToolUseContentBlock_ShouldReturnFunctionCallContent()
+    {
+        // Arrange
+        using JsonDocument input = JsonDocument.Parse("{\"city\":\"Seattle\",\"unit\":\"celsius\"}");
+        ToolUseContentBlock block = new()
+        {
+            Id = "call-1",
+            Name = "get_weather",
+            Input = input.RootElement.Clone(),
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        FunctionCallContent call = result.Should().BeOfType<FunctionCallContent>().Subject;
+        call.CallId.Should().Be("call-1");
+        call.Name.Should().Be("get_weather");
+        call.Arguments.Should().NotBeNull();
+        call.Arguments!.Should().ContainKey("city");
+        call.RawRepresentation.Should().BeSameAs(block);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ToolResultContentBlock_NotError_ShouldReturnFunctionResultContent()
+    {
+        // Arrange
+        ToolResultContentBlock block = new()
+        {
+            ToolUseId = "call-1",
+            Content = [new TextContentBlock { Text = "ok" }],
+            IsError = false,
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        FunctionResultContent functionResult = result.Should().BeOfType<FunctionResultContent>().Subject;
+        functionResult.CallId.Should().Be("call-1");
+        functionResult.Exception.Should().BeNull();
+        functionResult.RawRepresentation.Should().BeSameAs(block);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ToolResultContentBlock_WithIsError_ShouldSetException()
+    {
+        // Arrange
+        ToolResultContentBlock block = new()
+        {
+            ToolUseId = "call-2",
+            Content = [new TextContentBlock { Text = "boom" }],
+            IsError = true,
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        FunctionResultContent functionResult = result.Should().BeOfType<FunctionResultContent>().Subject;
+        functionResult.CallId.Should().Be("call-2");
+        functionResult.Exception.Should().NotBeNull();
+        functionResult.RawRepresentation.Should().BeSameAs(block);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_BlockWithMeta_ShouldPropagateToAdditionalProperties()
+    {
+        // Arrange
+        TextContentBlock block = new()
+        {
+            Text = "hello",
+            Meta = new System.Text.Json.Nodes.JsonObject
             {
-                Blob = new ReadOnlyMemory<byte>(base64Bytes),
-                Uri = "resource://example.bin",
-                MimeType = null!,
+                ["traceId"] = "abc-123",
+                ["priority"] = 7,
             },
         };
 
@@ -640,9 +700,9 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("application/octet-stream");
-        dataContent.Uri.Should().Be("data:application/octet-stream;base64,UklGRiQA");
+        result.AdditionalProperties.Should().NotBeNull();
+        result.AdditionalProperties!.Should().ContainKey("traceId");
+        result.AdditionalProperties.Should().ContainKey("priority");
     }
 
     #endregion
