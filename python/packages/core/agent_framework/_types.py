@@ -1758,12 +1758,14 @@ class Message(SerializationMixin):
 
         Remarks:
             Concatenates the text of every ``TextContent`` in :attr:`contents`
-            without inserting whitespace. Multiple ``TextContent`` blocks are
-            usually a streaming-coalescing artefact (one logical token stream
-            split across deltas), so any spacing the model intended is already
-            inside the chunks. Joining with ``" "`` would inject spurious
-            whitespace mid-token, which corrupts structured JSON output and
-            shows up as field-validation failures downstream.
+            without inserting any separator. Whatever spacing or punctuation
+            the model produced is already inside the chunks, so the join must
+            not add to it — inserting a space would inject whitespace mid-token
+            (a path like ``"report_lines/sofp.json"`` becomes
+            ``"re port_ lines/sof p.jso n"``) and corrupts structured JSON
+            output downstream. This also matches the separator-free behaviour
+            of ``_coalesce_text_content`` (via ``Content.__add__``), which is
+            applied to streamed responses by ``_finalize_response``.
         """
         return "".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
