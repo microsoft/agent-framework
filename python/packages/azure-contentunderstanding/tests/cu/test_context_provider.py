@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,7 +18,6 @@ from agent_framework_azure_contentunderstanding import (
     DocumentStatus,
 )
 from agent_framework_azure_contentunderstanding._detection import SUPPORTED_MEDIA_TYPES, derive_doc_key
-from agent_framework_azure_contentunderstanding._extraction import format_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -361,6 +361,7 @@ class TestBeforeRunPendingResolution:
                     "analysis_duration_s": None,
                     "upload_duration_s": None,
                     "result": None,
+                    "search_payload": None,
                     "error": None,
                 },
             },
@@ -400,6 +401,7 @@ class TestBeforeRunPendingFailure:
                     "analysis_duration_s": None,
                     "upload_duration_s": None,
                     "result": None,
+                    "search_payload": None,
                     "error": None,
                 },
             },
@@ -506,118 +508,81 @@ class TestListDocumentsTool:
 
 
 class TestOutputFiltering:
+    """Validate that output_sections controls what `_render_for_llm` emits.
+
+    Decisions baked in (see design-doc-llm-input-adoption.Zh-CN.md):
+      - Rendering is delegated to ``azure.ai.contentunderstanding.to_llm_input``.
+      - ``"markdown" in output_sections`` -> ``include_markdown=True``.
+      - ``"fields"   in output_sections`` -> ``include_fields=True``.
+      - ``metadata={"source": <filename>}`` is always supplied (decision E1).
+
+    Note: detailed field/JSON shape is owned by the SDK and exercised in the
+    SDK's own ``to_llm_input`` tests. We only assert MAF-level wiring here.
+    """
+
     def test_default_markdown_and_fields(self, pdf_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(pdf_analysis_result)
+        rendered = provider._render_for_llm(pdf_analysis_result, "report.pdf")
 
-        assert "markdown" in result
-        assert "fields" in result
-        assert "Contoso" in str(result["markdown"])
+        # YAML front matter with source key (decision E1).
+        assert "source: report.pdf" in rendered
+        # PDF fixture contains "Contoso" in its markdown body.
+        assert "Contoso" in rendered
 
     def test_markdown_only(self, pdf_analysis_result: AnalysisResult) -> None:
         provider = _make_provider(output_sections=["markdown"])
-        result = provider._extract_sections(pdf_analysis_result)
+        rendered = provider._render_for_llm(pdf_analysis_result, "report.pdf")
 
-        assert "markdown" in result
-        assert "fields" not in result
+        # Markdown body still present; no ``fields:`` front-matter section.
+        assert "Contoso" in rendered
+        assert "\nfields:" not in rendered
+        assert not rendered.startswith("fields:")
 
     def test_fields_only(self, invoice_analysis_result: AnalysisResult) -> None:
         provider = _make_provider(output_sections=["fields"])
-        result = provider._extract_sections(invoice_analysis_result)
+        rendered = provider._render_for_llm(invoice_analysis_result, "invoice.pdf")
 
-        assert "markdown" not in result
-        assert "fields" in result
-        fields = result["fields"]
-        assert isinstance(fields, dict)
-        assert "VendorName" in fields
+        # ``fields:`` YAML key is emitted; vendor name appears under it.
+        assert "fields:" in rendered
+        assert "VendorName" in rendered
+        assert "TechServe Global Partners" in rendered
 
     def test_field_values_extracted(self, invoice_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(invoice_analysis_result)
+        rendered = provider._render_for_llm(invoice_analysis_result, "invoice.pdf")
 
-        fields = result.get("fields")
-        assert isinstance(fields, dict)
-        assert "VendorName" in fields
-        assert fields["VendorName"]["value"] is not None
-        assert fields["VendorName"]["confidence"] is not None
+        # Both sections present.
+        assert "fields:" in rendered
+        # Field values visible to the LLM (vendor + a known line-item description).
+        assert "TechServe Global Partners" in rendered
+        assert "Consulting Services" in rendered
 
-    def test_invoice_field_extraction_matches_expected(self, invoice_analysis_result: AnalysisResult) -> None:
-        """Full invoice field extraction should match expected JSON structure.
+    def test_source_metadata_uses_filename(self, pdf_analysis_result: AnalysisResult) -> None:
+        """Decision E1: per-document ``source`` key carries the original filename."""
+        provider = _make_provider()
+        rendered = provider._render_for_llm(pdf_analysis_result, "custom_name.pdf")
+        assert "source: custom_name.pdf" in rendered
 
-        This test defines the complete expected output for all fields in the
-        invoice fixture, making it easy to review the extraction behavior at
-        a glance. Confidence is only present when the CU service provides it.
+    def test_page_markers_passed_through_to_llm_input(self, pdf_analysis_result: AnalysisResult) -> None:
+        """Decision H: MAF must not strip page markers emitted by the SDK helper.
+
+        Today the SDK helper (``azure.ai.contentunderstanding.to_llm_input``)
+        injects ``<!-- page N -->`` markers per page. Per
+        ``cognitive-services/ContentUnderstanding-Docs#249`` (Decision 4) it
+        will switch to ``<!-- InputPageNumber: N -->`` once the service ships
+        the marker natively. Either format must reach the LLM unchanged --
+        this test guards against MAF accidentally regex-stripping them.
         """
         provider = _make_provider()
-        result = provider._extract_sections(invoice_analysis_result)
-        fields = result.get("fields")
+        rendered = provider._render_for_llm(pdf_analysis_result, "report.pdf")
 
-        expected_fields = {
-            "VendorName": {
-                "type": "string",
-                "value": "TechServe Global Partners",
-                "confidence": 0.71,
-            },
-            "DueDate": {
-                "type": "date",
-                # SDK .value returns datetime.date for date fields
-                "value": fields["DueDate"]["value"],  # dynamic — date object
-                "confidence": 0.793,
-            },
-            "InvoiceDate": {
-                "type": "date",
-                "value": fields["InvoiceDate"]["value"],
-                "confidence": 0.693,
-            },
-            "InvoiceId": {
-                "type": "string",
-                "value": "INV-100",
-                "confidence": 0.489,
-            },
-            "AmountDue": {
-                "type": "object",
-                # No confidence — object types don't have it
-                "value": {
-                    "Amount": {"type": "number", "value": 610.0, "confidence": 0.758},
-                    "CurrencyCode": {"type": "string", "value": "USD"},
-                },
-            },
-            "SubtotalAmount": {
-                "type": "object",
-                "value": {
-                    "Amount": {"type": "number", "value": 100.0, "confidence": 0.902},
-                    "CurrencyCode": {"type": "string", "value": "USD"},
-                },
-            },
-            "LineItems": {
-                "type": "array",
-                "value": [
-                    {
-                        "type": "object",
-                        "value": {
-                            "Description": {"type": "string", "value": "Consulting Services", "confidence": 0.664},
-                            "Quantity": {"type": "number", "value": 2.0, "confidence": 0.957},
-                            "UnitPrice": {
-                                "type": "object",
-                                "value": {
-                                    "Amount": {"type": "number", "value": 30.0, "confidence": 0.956},
-                                    "CurrencyCode": {"type": "string", "value": "USD"},
-                                },
-                            },
-                        },
-                    },
-                    {
-                        "type": "object",
-                        "value": {
-                            "Description": {"type": "string", "value": "Document Fee", "confidence": 0.712},
-                            "Quantity": {"type": "number", "value": 3.0, "confidence": 0.939},
-                        },
-                    },
-                ],
-            },
-        }
-
-        assert fields == expected_fields
+        legacy = re.findall(r"<!--\s*page\s+\d+\s*-->", rendered)
+        future = re.findall(r"<!--\s*InputPageNumber:\s*\d+\s*-->", rendered)
+        # PDF fixture has 5 pages; expect 5 markers in whichever format is in use.
+        assert len(legacy) == 5 or len(future) == 5, (
+            "Expected SDK-injected page markers to be passed through to LLM input. "
+            f"Found legacy={len(legacy)}, future={len(future)}."
+        )
 
 
 class TestDuplicateDocumentKey:
@@ -1027,239 +992,63 @@ class TestErrorHandling:
 
 
 class TestMultiModalFixtures:
+    """Verify ``_render_for_llm`` produces sensible output for each modality.
+
+    Detailed shape of the YAML/Markdown payload is the SDK's responsibility and
+    is exercised by ``azure-ai-contentunderstanding`` tests. Here we only check
+    that the MAF wiring (filename surfaced as ``source``, key content visible)
+    works for each fixture kind.
+    """
+
     def test_pdf_fixture_loads(self, pdf_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(pdf_analysis_result)
-        assert "markdown" in result
-        assert "Contoso" in str(result["markdown"])
+        rendered = provider._render_for_llm(pdf_analysis_result, "report.pdf")
+        assert "source: report.pdf" in rendered
+        assert "Contoso" in rendered
 
     def test_audio_fixture_loads(self, audio_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(audio_analysis_result)
-        assert "markdown" in result
-        assert "Call Center" in str(result["markdown"])
+        rendered = provider._render_for_llm(audio_analysis_result, "call.mp3")
+        assert "source: call.mp3" in rendered
+        assert "Call Center" in rendered
 
     def test_video_fixture_loads(self, video_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(video_analysis_result)
-        assert "markdown" in result
-        # All 3 segments should be concatenated at top level (for file_search)
-        md = str(result["markdown"])
-        assert "Contoso Product Demo" in md
-        assert "real-time monitoring" in md
-        assert "contoso.com/cloud-manager" in md
-        # Duration should span all segments: (42000 - 1000) / 1000 = 41.0
-        assert result.get("duration_seconds") == 41.0
-        # kind from first segment
-        assert result.get("kind") == "audioVisual"
-        # resolution from first segment
-        assert result.get("resolution") == "640x480"
-        # Multi-segment: fields should be in per-segment list, not merged at top level
-        assert "fields" not in result  # no top-level fields for multi-segment
-        segments = result.get("segments")
-        assert isinstance(segments, list)
-        assert len(segments) == 3
-        # Each segment should have its own fields and time range
-        seg0 = segments[0]
-        assert "fields" in seg0
-        assert "Summary" in seg0["fields"]
-        assert seg0.get("start_time_s") == 1.0
-        assert seg0.get("end_time_s") == 14.0
-        seg2 = segments[2]
-        assert "fields" in seg2
-        assert "Summary" in seg2["fields"]
-        assert seg2.get("start_time_s") == 36.0
-        assert seg2.get("end_time_s") == 42.0
+        rendered = provider._render_for_llm(video_analysis_result, "demo.mp4")
+        assert "source: demo.mp4" in rendered
+        # All 3 segments should be visible in the rendered text.
+        assert "Contoso Product Demo" in rendered
+        assert "real-time monitoring" in rendered
+        assert "contoso.com/cloud-manager" in rendered
+        # Each segment must render its own YAML front matter with a timeRange entry.
+        # This guards against multi-segment results being collapsed into one block.
+        assert rendered.count("timeRange:") == 3
+        # Segments must be rendered in chronological order (1s, 15s, 36s starts).
+        assert (
+            rendered.index("Contoso Product Demo")
+            < rendered.index("real-time monitoring")
+            < rendered.index("contoso.com/cloud-manager")
+        )
 
     def test_image_fixture_loads(self, image_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(image_analysis_result)
-        assert "markdown" in result
+        rendered = provider._render_for_llm(image_analysis_result, "image.png")
+        assert "source: image.png" in rendered
+        # Non-empty body (image markdown caption from CU).
+        assert len(rendered) > len("source: image.png")
 
     def test_invoice_fixture_loads(self, invoice_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
-        result = provider._extract_sections(invoice_analysis_result)
-        assert "markdown" in result
-        assert "fields" in result
-        fields = result["fields"]
-        assert isinstance(fields, dict)
-        assert "VendorName" in fields
-        # Single-segment: should NOT have segments key
-        assert "segments" not in result
+        rendered = provider._render_for_llm(invoice_analysis_result, "invoice.pdf")
+        assert "source: invoice.pdf" in rendered
+        assert "fields:" in rendered
+        assert "VendorName" in rendered
 
 
-class TestFormatResult:
-    def test_format_includes_markdown_and_fields(self) -> None:
-        result: dict[str, object] = {
-            "markdown": "# Hello World",
-            "fields": {"Name": {"type": "string", "value": "Test", "confidence": 0.9}},
-        }
-        formatted = format_result("test.pdf", result)
-
-        assert 'Document analysis of "test.pdf"' in formatted
-        assert "# Hello World" in formatted
-        assert "Extracted Fields" in formatted
-        assert '"Name"' in formatted
-
-    def test_format_markdown_only(self) -> None:
-        result: dict[str, object] = {"markdown": "# Just Text"}
-        formatted = format_result("doc.pdf", result)
-
-        assert "# Just Text" in formatted
-        assert "Extracted Fields" not in formatted
-
-    def test_format_multi_segment_video(self) -> None:
-        """Multi-segment results should format each segment with its own content + fields."""
-        result: dict[str, object] = {
-            "kind": "audioVisual",
-            "duration_seconds": 41.0,
-            "resolution": "640x480",
-            "markdown": "scene1\n\n---\n\nscene2",  # concatenated for file_search
-            "segments": [
-                {
-                    "start_time_s": 1.0,
-                    "end_time_s": 14.0,
-                    "markdown": "Welcome to the Contoso demo.",
-                    "fields": {
-                        "Summary": {"type": "string", "value": "Product intro"},
-                        "Speakers": {
-                            "type": "object",
-                            "value": {"count": 1, "names": ["Host"]},
-                        },
-                    },
-                },
-                {
-                    "start_time_s": 15.0,
-                    "end_time_s": 31.0,
-                    "markdown": "Here we show real-time monitoring.",
-                    "fields": {
-                        "Summary": {"type": "string", "value": "Feature walkthrough"},
-                        "Speakers": {
-                            "type": "object",
-                            "value": {"count": 2, "names": ["Host", "Engineer"]},
-                        },
-                    },
-                },
-            ],
-        }
-        formatted = format_result("demo.mp4", result)
-
-        expected = (
-            'Video analysis of "demo.mp4":\n'
-            "Duration: 0:41 | Resolution: 640x480\n"
-            "\n### Segment 1 (0:01 - 0:14)\n"
-            "\n```markdown\nWelcome to the Contoso demo.\n```\n"
-            "\n**Fields:**\n```json\n"
-            "{\n"
-            '  "Summary": {\n'
-            '    "type": "string",\n'
-            '    "value": "Product intro"\n'
-            "  },\n"
-            '  "Speakers": {\n'
-            '    "type": "object",\n'
-            '    "value": {\n'
-            '      "count": 1,\n'
-            '      "names": [\n'
-            '        "Host"\n'
-            "      ]\n"
-            "    }\n"
-            "  }\n"
-            "}\n```\n"
-            "\n### Segment 2 (0:15 - 0:31)\n"
-            "\n```markdown\nHere we show real-time monitoring.\n```\n"
-            "\n**Fields:**\n```json\n"
-            "{\n"
-            '  "Summary": {\n'
-            '    "type": "string",\n'
-            '    "value": "Feature walkthrough"\n'
-            "  },\n"
-            '  "Speakers": {\n'
-            '    "type": "object",\n'
-            '    "value": {\n'
-            '      "count": 2,\n'
-            '      "names": [\n'
-            '        "Host",\n'
-            '        "Engineer"\n'
-            "      ]\n"
-            "    }\n"
-            "  }\n"
-            "}\n```"
-        )
-        assert formatted == expected
-
-        # Verify ordering: segment 1 markdown+fields appear before segment 2
-        seg1_pos = formatted.index("Segment 1")
-        seg2_pos = formatted.index("Segment 2")
-        contoso_pos = formatted.index("Welcome to the Contoso demo.")
-        monitoring_pos = formatted.index("Here we show real-time monitoring.")
-        intro_pos = formatted.index("Product intro")
-        walkthrough_pos = formatted.index("Feature walkthrough")
-        host_only_pos = formatted.index('"count": 1')
-        host_engineer_pos = formatted.index('"count": 2')
-        assert (
-            seg1_pos
-            < contoso_pos
-            < intro_pos
-            < host_only_pos
-            < seg2_pos
-            < monitoring_pos
-            < walkthrough_pos
-            < host_engineer_pos
-        )
-
-    def test_format_single_segment_no_segments_key(self) -> None:
-        """Single-segment results should NOT have segments key — flat format."""
-        result: dict[str, object] = {
-            "kind": "document",
-            "markdown": "# Invoice content",
-            "fields": {
-                "VendorName": {"type": "string", "value": "Contoso", "confidence": 0.95},
-                "ShippingAddress": {
-                    "type": "object",
-                    "value": {"street": "123 Main St", "city": "Redmond", "state": "WA"},
-                    "confidence": 0.88,
-                },
-            },
-        }
-        formatted = format_result("invoice.pdf", result)
-
-        expected = (
-            'Document analysis of "invoice.pdf":\n'
-            "\n## Content\n\n"
-            "```markdown\n# Invoice content\n```\n"
-            "\n## Extracted Fields\n\n"
-            "```json\n"
-            "{\n"
-            '  "VendorName": {\n'
-            '    "type": "string",\n'
-            '    "value": "Contoso",\n'
-            '    "confidence": 0.95\n'
-            "  },\n"
-            '  "ShippingAddress": {\n'
-            '    "type": "object",\n'
-            '    "value": {\n'
-            '      "street": "123 Main St",\n'
-            '      "city": "Redmond",\n'
-            '      "state": "WA"\n'
-            "    },\n"
-            '    "confidence": 0.88\n'
-            "  }\n"
-            "}\n"
-            "```"
-        )
-        assert formatted == expected
-
-        # Verify ordering: header → markdown content → fields
-        header_pos = formatted.index('Document analysis of "invoice.pdf"')
-        content_header_pos = formatted.index("## Content")
-        markdown_pos = formatted.index("# Invoice content")
-        fields_header_pos = formatted.index("## Extracted Fields")
-        vendor_pos = formatted.index("Contoso")
-        address_pos = formatted.index("ShippingAddress")
-        street_pos = formatted.index("123 Main St")
-        assert (
-            header_pos < content_header_pos < markdown_pos < fields_header_pos < vendor_pos < address_pos < street_pos
-        )
+# NOTE: ``TestFormatResult`` (4 tests) was deleted as part of the migration to
+# ``azure.ai.contentunderstanding.to_llm_input``. The legacy ``format_result``
+# helper no longer exists; rendering shape (YAML front matter + Markdown body,
+# segment serialization, reserved-key handling) is owned and tested by the SDK.
 
 
 class TestSupportedMediaTypes:
@@ -1589,6 +1378,7 @@ class TestFileSearchIntegration:
                     "analysis_duration_s": None,
                     "upload_duration_s": None,
                     "result": None,
+                    "search_payload": None,
                     "error": None,
                 },
             },
@@ -1693,6 +1483,7 @@ class TestSessionIsolation:
                     "analysis_duration_s": None,
                     "upload_duration_s": None,
                     "result": None,
+                    "search_payload": None,
                     "error": None,
                 },
             },
@@ -1869,10 +1660,15 @@ class TestAnalyzerAutoDetectionE2E:
 
 
 class TestWarningsExtraction:
-    """Verify that CU analysis warnings are included in extracted output."""
+    """Verify that CU RAI warnings are surfaced via ``to_llm_input`` rendering.
+
+    The SDK serializes ``result.warnings`` under the reserved ``rai_warnings``
+    YAML front-matter key. We also assert that the C1 telemetry filter strips
+    any internal ``LLMStats:`` telemetry lines that occasionally leak in.
+    """
 
     def test_warnings_included_when_present(self) -> None:
-        """Non-empty warnings list should appear with code/message/target (RAI warnings)."""
+        """Non-empty warnings should appear under ``rai_warnings`` front-matter key."""
         provider = _make_provider()
         fixture = {
             "contents": [
@@ -1895,32 +1691,57 @@ class TestWarningsExtraction:
             ],
         }
         result_obj = AnalysisResult(fixture)
-        extracted = provider._extract_sections(result_obj)
-        assert "warnings" in extracted
-        warnings = extracted["warnings"]
-        assert isinstance(warnings, list)
-        assert len(warnings) == 2
-        # First warning has code + message + target
-        assert warnings[0]["code"] == "ContentFiltered"
-        assert warnings[0]["message"] == "Content was filtered due to Responsible AI policy."
-        assert warnings[0]["target"] == "contents/0/markdown"
-        # Second warning has code + message but no target
-        assert warnings[1]["code"] == "ContentFiltered"
-        assert warnings[1]["message"] == "Violence content detected and filtered."
-        assert "target" not in warnings[1]
+        rendered = provider._render_for_llm(result_obj, "doc.pdf")
+
+        assert "rai_warnings:" in rendered
+        assert "ContentFiltered" in rendered
+        assert "Content was filtered due to Responsible AI policy." in rendered
+        assert "Violence content detected and filtered." in rendered
 
     def test_warnings_omitted_when_empty(self, pdf_analysis_result: AnalysisResult) -> None:
-        """Empty/None warnings should not appear in extracted result."""
+        """The PDF fixture has no warnings, so ``rai_warnings:`` should not appear."""
         provider = _make_provider()
-        extracted = provider._extract_sections(pdf_analysis_result)
-        assert "warnings" not in extracted
+        rendered = provider._render_for_llm(pdf_analysis_result, "report.pdf")
+        assert "rai_warnings:" not in rendered
+
+    def test_llm_stats_telemetry_filtered(self) -> None:
+        """Decision C1: ``LLMStats:`` telemetry list items must be stripped from output.
+
+        We exercise the filter directly because reproducing the upstream SDK bug
+        (telemetry strings leaking as top-level list items of ``rai_warnings``)
+        from a synthetic ``AnalysisResult`` is impractical — the SDK normalises
+        warnings through structured ``code``/``message`` fields. The regex is
+        a defensive belt that runs on the SDK output before it reaches the LLM.
+        """
+        from agent_framework_azure_contentunderstanding._context_provider import (
+            _RAI_TELEMETRY_LINE_RE,
+        )
+
+        sample = (
+            "---\n"
+            "rai_warnings:\n"
+            "  - LLMStats: completion_calls=2; embedding_calls=1; latency=7.71s\n"
+            "  - code: ContentFiltered\n"
+            "    message: Real warning message\n"
+            "---\n"
+            "# Body\n"
+        )
+        cleaned = _RAI_TELEMETRY_LINE_RE.sub("", sample)
+
+        # The telemetry list item is gone.
+        assert "LLMStats:" not in cleaned
+        # The legitimate warning survives.
+        assert "Real warning message" in cleaned
+        assert "code: ContentFiltered" in cleaned
+        # The markdown body is untouched.
+        assert "# Body" in cleaned
 
 
 class TestCategoryExtraction:
-    """Verify that content-level category is included in extracted output."""
+    """Verify category metadata (from classifier analyzers) is rendered into output."""
 
     def test_category_included_single_segment(self) -> None:
-        """Category from classifier analyzer should appear in single-segment output."""
+        """Category from classifier should appear under the ``category`` front-matter key."""
         provider = _make_provider()
         fixture = {
             "contents": [
@@ -1933,11 +1754,12 @@ class TestCategoryExtraction:
             ],
         }
         result_obj = AnalysisResult(fixture)
-        extracted = provider._extract_sections(result_obj)
-        assert extracted.get("category") == "Legal Contract"
+        rendered = provider._render_for_llm(result_obj, "contract.pdf")
+        assert "category:" in rendered
+        assert "Legal Contract" in rendered
 
     def test_category_in_multi_segment_video(self) -> None:
-        """Each segment should carry its own category in multi-segment output."""
+        """Each segment's category should be visible in the rendered text."""
         provider = _make_provider()
         fixture = {
             "contents": [
@@ -1972,39 +1794,33 @@ class TestCategoryExtraction:
             ],
         }
         result_obj = AnalysisResult(fixture)
-        extracted = provider._extract_sections(result_obj)
+        rendered = provider._render_for_llm(result_obj, "promo.mp4")
 
-        # Top-level metadata
-        assert extracted["kind"] == "audioVisual"
-        assert extracted["duration_seconds"] == 60.0
-
-        # Segments should have per-segment category
-        segments = extracted["segments"]
-        assert isinstance(segments, list)
-        assert len(segments) == 2
-
-        # First segment: ProductDemo
-        assert segments[0]["category"] == "ProductDemo"
-        assert segments[0]["start_time_s"] == 0.0
-        assert segments[0]["end_time_s"] == 30.0
-        assert segments[0]["markdown"] == "Opening scene with product showcase."
-        assert "Summary" in segments[0]["fields"]
-
-        # Second segment: Testimonial
-        assert segments[1]["category"] == "Testimonial"
-        assert segments[1]["start_time_s"] == 30.0
-        assert segments[1]["end_time_s"] == 60.0
-        assert segments[1]["markdown"] == "Customer testimonial segment."
-
-        # Top-level concatenated markdown for file_search
-        assert "Opening scene" in extracted["markdown"]
-        assert "Customer testimonial" in extracted["markdown"]
+        # Both segments' markdown content visible.
+        assert "Opening scene with product showcase." in rendered
+        assert "Customer testimonial segment." in rendered
+        # Both categories visible.
+        assert "ProductDemo" in rendered
+        assert "Testimonial" in rendered
+        # Segments must be rendered in source order, not arbitrary.
+        assert rendered.index("Opening scene with product showcase.") < rendered.index(
+            "Customer testimonial segment."
+        )
+        # Category-to-segment mapping must be correct. The SDK separates segments
+        # with a ``*****`` line, so split on it and verify each block carries the
+        # right category alongside the right markdown body.
+        blocks = rendered.split("*****")
+        assert len(blocks) == 2, f"expected 2 segment blocks, got {len(blocks)}"
+        assert "Opening scene with product showcase." in blocks[0]
+        assert "category: ProductDemo" in blocks[0]
+        assert "Customer testimonial segment." in blocks[1]
+        assert "category: Testimonial" in blocks[1]
 
     def test_category_omitted_when_none(self, pdf_analysis_result: AnalysisResult) -> None:
-        """No category should be in output when analyzer doesn't classify."""
+        """No category should be in output when the analyzer doesn't classify."""
         provider = _make_provider()
-        extracted = provider._extract_sections(pdf_analysis_result)
-        assert "category" not in extracted
+        rendered = provider._render_for_llm(pdf_analysis_result, "report.pdf")
+        assert "category:" not in rendered
 
 
 class TestContentRangeSupport:
