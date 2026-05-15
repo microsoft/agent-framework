@@ -548,19 +548,33 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
-            stream = self.run(
-                str(kwargs.get(arg_name, "")),
-                stream=True,
-                session=ctx.session if propagate_session else None,
-                function_invocation_kwargs=dict(ctx.kwargs),
-            )
-            if stream_callback is not None:
-                stream.with_transform_hook(stream_callback)
-            final_response = await stream.get_final_response()
-            if final_response.user_input_requests:
-                raise UserInputRequiredException(contents=final_response.user_input_requests)
-            # TODO(Copilot): update once #4331 merges
-            return final_response.text
+            session = ctx.session if propagate_session else None
+
+            # Isolate the child agent from the parent's server-side conversation.
+            # service_session_id would cause the child to send previous_response_id
+            # referencing the parent's pending tool_call, resulting in a 400 error.
+            saved_service_session_id = None
+            if session is not None and session.service_session_id is not None:
+                saved_service_session_id = session.service_session_id
+                session.service_session_id = None
+
+            try:
+                stream = self.run(
+                    str(kwargs.get(arg_name, "")),
+                    stream=True,
+                    session=session,
+                    function_invocation_kwargs=dict(ctx.kwargs),
+                )
+                if stream_callback is not None:
+                    stream.with_transform_hook(stream_callback)
+                final_response = await stream.get_final_response()
+                if final_response.user_input_requests:
+                    raise UserInputRequiredException(contents=final_response.user_input_requests)
+                # TODO(Copilot): update once #4331 merges
+                return final_response.text
+            finally:
+                if session is not None and saved_service_session_id is not None:
+                    session.service_session_id = saved_service_session_id
 
         return FunctionTool(
             name=tool_name,
