@@ -2023,6 +2023,205 @@ class TestGitHubCopilotAgentContextProviders:
         sent_prompt = mock_session.send_and_wait.call_args[0][0]
         assert "Injected by spy provider" in sent_prompt
 
+    async def test_provider_tools_passed_to_created_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that tools added by providers are available to a new Copilot session."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        def constructor_tool(arg: str) -> str:
+            """A constructor tool."""
+            return arg
+
+        def provider_tool(arg: str) -> str:
+            """A provider tool."""
+            return arg
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="tool-injector")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                context.extend_tools(self.source_id, [provider_tool])
+
+            async def after_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                pass
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            tools=[constructor_tool],
+            context_providers=[ToolInjectingProvider()],
+        )
+        session = agent.create_session()
+        await agent.run("Hello", session=session)
+
+        tools = mock_client.create_session.call_args.kwargs["tools"]
+        assert [tool.name for tool in tools] == ["constructor_tool", "provider_tool"]
+
+    async def test_provider_tool_name_conflict_with_constructor_tool_raises(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        def search(query: str) -> str:
+            """A constructor tool."""
+            return query
+
+        def provider_search(query: str) -> str:
+            """A provider tool."""
+            return query
+
+        provider_search.__name__ = "search"
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="tool-injector")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                context.extend_tools(self.source_id, [provider_search])
+
+            async def after_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                pass
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            tools=[search],
+            context_providers=[ToolInjectingProvider()],
+        )
+        session = agent.create_session()
+
+        with pytest.raises(AgentException, match="Duplicate tool name 'search'"):
+            await agent.run("Hello", session=session)
+
+        mock_client.create_session.assert_not_called()
+
+    async def test_duplicate_provider_tool_names_raise(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        def provider_search(query: str) -> str:
+            """A provider tool."""
+            return query
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self, source_id: str) -> None:
+                super().__init__(source_id=source_id)
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                context.extend_tools(self.source_id, [provider_search])
+
+            async def after_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                pass
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            context_providers=[ToolInjectingProvider("a"), ToolInjectingProvider("b")],
+        )
+        session = agent.create_session()
+
+        with pytest.raises(AgentException, match="Duplicate tool name 'provider_search'"):
+            await agent.run("Hello", session=session)
+
+        mock_client.create_session.assert_not_called()
+
+    async def test_provider_tools_passed_to_resumed_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that provider tools are also passed when resuming a Copilot session."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        def provider_tool(arg: str) -> str:
+            """A provider tool."""
+            return arg
+
+        class ToolInjectingProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="tool-injector")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                context.extend_tools(self.source_id, [provider_tool])
+
+            async def after_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                pass
+
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[ToolInjectingProvider()])
+        session = agent.create_session()
+
+        await agent.run("Hello", session=session)
+        await agent.run("Hello again", session=session)
+
+        tools = mock_client.resume_session.call_args.kwargs["tools"]
+        assert [tool.name for tool in tools] == ["provider_tool"]
+
     async def test_after_run_receives_response(
         self,
         mock_client: MagicMock,
