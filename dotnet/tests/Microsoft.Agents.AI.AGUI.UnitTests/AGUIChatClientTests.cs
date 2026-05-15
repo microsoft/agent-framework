@@ -244,6 +244,46 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
+    public async Task RunStreamingAsync_WithSession_SendsFullHistoryAfterThreadIdIsSetAsync()
+    {
+        // Arrange
+        var captureHandler = new StateCapturingTestDelegatingHandler();
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
+            new TextMessageContentEvent { MessageId = "msg1", Delta = "First response" },
+            new TextMessageEndEvent { MessageId = "msg1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run2" },
+            new TextMessageStartEvent { MessageId = "msg2", Role = AGUIRoles.Assistant },
+            new TextMessageContentEvent { MessageId = "msg2", Delta = "Second response" },
+            new TextMessageEndEvent { MessageId = "msg2" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run2" }
+        ]);
+        using HttpClient httpClient = new(captureHandler);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
+        AgentSession session = await agent.CreateSessionAsync();
+
+        // Act
+        await foreach (var _ in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "First")], session))
+        {
+        }
+
+        await foreach (var _ in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Second")], session))
+        {
+        }
+
+        // Assert
+        Assert.Equal([1, 3], captureHandler.CapturedMessageCounts);
+    }
+
+    [Fact]
     public async Task DeserializeSession_WithValidState_ReturnsChatClientAgentSessionAsync()
     {
         // Arrange
@@ -1686,10 +1726,12 @@ internal sealed class CapturingTestDelegatingHandler : DelegatingHandler
 internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
 {
     private readonly Queue<Func<HttpRequestMessage, Task<HttpResponseMessage>>> _responseFactories = new();
+    private readonly List<int> _capturedMessageCounts = [];
 
     public bool RequestWasMade { get; private set; }
     public JsonElement? CapturedState { get; private set; }
     public int CapturedMessageCount { get; private set; }
+    public IReadOnlyList<int> CapturedMessageCounts => this._capturedMessageCounts;
 
     public void AddResponse(BaseEvent[] events)
     {
@@ -1714,6 +1756,7 @@ internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
                 this.CapturedState = input.State;
             }
             this.CapturedMessageCount = input.Messages.Count();
+            this._capturedMessageCounts.Add(this.CapturedMessageCount);
         }
 
         if (this._responseFactories.Count == 0)

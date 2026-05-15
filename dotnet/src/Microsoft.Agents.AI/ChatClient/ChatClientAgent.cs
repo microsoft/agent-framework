@@ -38,6 +38,8 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public sealed partial class ChatClientAgent : AIAgent
 {
+    private const string AGUIProviderName = "ag-ui";
+
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly HashSet<string> _aiContextProviderStateKeys;
     private readonly AIAgentMetadata _agentMetadata;
@@ -815,7 +817,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
         if (!string.IsNullOrWhiteSpace(responseConversationId))
         {
-            if (this._agentOptions?.ChatHistoryProvider is not null)
+            if (this.ConversationIdIndicatesServiceManagedHistory && this._agentOptions?.ChatHistoryProvider is not null)
             {
                 // The agent has a ChatHistoryProvider configured, but the service returned a conversation id,
                 // meaning the service manages chat history server-side. Both cannot be used simultaneously.
@@ -929,6 +931,10 @@ public sealed partial class ChatClientAgent : AIAgent
         }
     }
 
+    // AG-UI uses ConversationId as a thread id, not as a signal that the service stores model history.
+    private bool ConversationIdIndicatesServiceManagedHistory =>
+        !string.Equals(this._agentMetadata.ProviderName, AGUIProviderName, StringComparison.Ordinal);
+
     /// <summary>
     /// Ensures that <see cref="AIAgent.CurrentRunContext"/> contains the resolved session.
     /// </summary>
@@ -976,12 +982,17 @@ public sealed partial class ChatClientAgent : AIAgent
 
     private ChatHistoryProvider? ResolveChatHistoryProvider(ChatOptions? chatOptions)
     {
-        ChatHistoryProvider? provider = chatOptions?.ConversationId is null ? this.ChatHistoryProvider : null;
+        ChatHistoryProvider? provider =
+            chatOptions?.ConversationId is null || !this.ConversationIdIndicatesServiceManagedHistory
+            ? this.ChatHistoryProvider
+            : null;
 
         // If someone provided an override ChatHistoryProvider via AdditionalProperties, we should use that instead.
         if (chatOptions?.AdditionalProperties?.TryGetValue(out ChatHistoryProvider? overrideProvider) is true)
         {
-            if (this._agentOptions?.ThrowOnChatHistoryProviderConflict is true && string.IsNullOrWhiteSpace(chatOptions?.ConversationId) is false)
+            if (this.ConversationIdIndicatesServiceManagedHistory &&
+                this._agentOptions?.ThrowOnChatHistoryProviderConflict is true &&
+                string.IsNullOrWhiteSpace(chatOptions?.ConversationId) is false)
             {
                 throw new InvalidOperationException(
                     $"Only {nameof(ChatClientAgentSession.ConversationId)} or {nameof(this.ChatHistoryProvider)} may be used, but not both. The current {nameof(ChatClientAgentSession)} has a {nameof(ChatClientAgentSession.ConversationId)} indicating server-side chat history management, but an override {nameof(this.ChatHistoryProvider)} was provided via {nameof(AgentRunOptions.AdditionalProperties)}.");
