@@ -7,6 +7,7 @@
       "src\\Microsoft.Agents.AI.AGUI\\Microsoft.Agents.AI.AGUI.csproj",
       "src\\Microsoft.Agents.AI.Anthropic\\Microsoft.Agents.AI.Anthropic.csproj",
       "src\\Microsoft.Agents.AI.GitHub.Copilot\\Microsoft.Agents.AI.GitHub.Copilot.csproj",
+      "src\\Microsoft.Agents.AI.Harness\\Microsoft.Agents.AI.Harness.csproj",
       "src\\Microsoft.Agents.AI.AzureAI.Persistent\\Microsoft.Agents.AI.AzureAI.Persistent.csproj",
       "src\\Microsoft.Agents.AI.Foundry\\Microsoft.Agents.AI.Foundry.csproj",
       "src\\Microsoft.Agents.AI.Foundry.Hosting\\Microsoft.Agents.AI.Foundry.Hosting.csproj",

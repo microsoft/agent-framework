@@ -433,6 +433,44 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     }
 
     [Fact]
+    public async Task InvokeMcpToolExecuteWithReservedListToolsNameAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        const string ListToolsToolName = "tools/list";
+        string? capturedToolName = null;
+        InvokeMcpTool model = this.CreateModel(
+            displayName: nameof(InvokeMcpToolExecuteWithReservedListToolsNameAsync),
+            serverUrl: TestServerUrl,
+            toolName: ListToolsToolName);
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, toolName, _, _, _, _) => capturedToolName = toolName)
+            .ReturnsAsync(new McpServerToolResultContent("list-tools-call-id")
+            {
+                Outputs = [new TextContent("{\"tools\":[]}")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        // Act
+        WorkflowEvent[] events = await this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        VerifyModel(model, action);
+        VerifyInvocationEvent(events);
+        Assert.Equal(ListToolsToolName, capturedToolName);
+    }
+
+    [Fact]
     public async Task InvokeMcpToolExecuteWithMultipleContentTypesAsync()
     {
         // Arrange - Tests handling of multiple content types in output

@@ -1,6 +1,12 @@
 ---
 name: volume-converter
 description: Convert between gallons and liters using a conversion factor.
+license: MIT
+compatibility: Works with any model that supports tool use.
+allowed-tools: convert
+metadata:
+  author: agent-framework-samples
+  version: "1.0"
 ---
 
 ## Usage

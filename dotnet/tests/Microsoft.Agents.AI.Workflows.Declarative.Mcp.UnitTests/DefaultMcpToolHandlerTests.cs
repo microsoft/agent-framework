@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -320,6 +321,92 @@ public sealed class DefaultMcpToolHandlerTests
 
     #endregion
 
+    #region Reserved Tools/List Tests
+
+    [Fact]
+    public void IsListToolsToolName_WithReservedName_ShouldReturnTrue()
+    {
+        // Act
+        bool result = DefaultMcpToolHandler.IsListToolsToolName(DefaultMcpToolHandler.ListToolsToolName);
+
+        // Assert
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsListToolsToolName_WithRegularToolName_ShouldReturnFalse()
+    {
+        // Act
+        bool result = DefaultMcpToolHandler.IsListToolsToolName("search");
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task InvokeToolAsync_WithListToolsArguments_ShouldThrowArgumentExceptionAsync()
+    {
+        // Arrange
+        DefaultMcpToolHandler handler = new();
+
+        try
+        {
+            // Act
+            Func<Task> act = async () => await handler.InvokeToolAsync(
+                serverUrl: "http://localhost:12345/mcp",
+                serverLabel: "test",
+                toolName: DefaultMcpToolHandler.ListToolsToolName,
+                arguments: new Dictionary<string, object?> { ["ignored"] = true },
+                headers: null,
+                connectionName: null);
+
+            // Assert
+            await act.Should().ThrowAsync<ArgumentException>()
+                .WithMessage("*does not accept tool arguments*");
+        }
+        finally
+        {
+            await handler.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task CreateListToolsResultContent_WithTools_ShouldSerializeToolMetadataAsync()
+    {
+        // Arrange
+        JsonElement inputSchema = JsonSerializer.Deserialize<JsonElement>(
+            """
+            {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                }
+              },
+              "required": [ "query" ]
+            }
+            """);
+        Tool tool = new()
+        {
+            Name = "search",
+            Description = "Searches documentation.",
+            InputSchema = inputSchema
+        };
+
+        // Act
+        McpServerToolResultContent result = DefaultMcpToolHandler.CreateListToolsResultContent([tool]);
+
+        // Assert
+        TextContent text = result.Outputs.Should().ContainSingle().Subject.Should().BeOfType<TextContent>().Subject;
+        using JsonDocument document = JsonDocument.Parse(text.Text);
+        JsonElement listedTool = document.RootElement.GetProperty("tools")[0];
+        listedTool.GetProperty("name").GetString().Should().Be("search");
+        listedTool.GetProperty("description").GetString().Should().Be("Searches documentation.");
+        listedTool.GetProperty("inputSchema").GetProperty("properties").GetProperty("query").GetProperty("type").GetString().Should().Be("string");
+    }
+
+    #endregion
+
     #region Interface Implementation Tests
 
     [Fact]
@@ -486,6 +573,76 @@ public sealed class DefaultMcpToolHandlerTests
         // Assert
         DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
         dataContent.MediaType.Should().Be("audio/*");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_EmbeddedResourceBlock_WithTextResource_ShouldReturnTextContent()
+    {
+        // Arrange
+        EmbeddedResourceBlock block = new()
+        {
+            Resource = new TextResourceContents
+            {
+                Text = "embedded text payload",
+                Uri = "resource://example",
+                MimeType = "text/plain",
+            },
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        result.Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("embedded text payload");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_EmbeddedResourceBlock_WithBlobResource_ShouldReturnDataContent()
+    {
+        // Arrange
+        byte[] base64Bytes = Encoding.UTF8.GetBytes("UklGRiQA");
+        EmbeddedResourceBlock block = new()
+        {
+            Resource = new BlobResourceContents
+            {
+                Blob = new ReadOnlyMemory<byte>(base64Bytes),
+                Uri = "resource://example.bin",
+                MimeType = "application/zip",
+            },
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
+        dataContent.MediaType.Should().Be("application/zip");
+        dataContent.Uri.Should().Be("data:application/zip;base64,UklGRiQA");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_EmbeddedResourceBlock_WithBlobResource_NullMimeType_DefaultsToOctetStream()
+    {
+        // Arrange
+        byte[] base64Bytes = Encoding.UTF8.GetBytes("UklGRiQA");
+        EmbeddedResourceBlock block = new()
+        {
+            Resource = new BlobResourceContents
+            {
+                Blob = new ReadOnlyMemory<byte>(base64Bytes),
+                Uri = "resource://example.bin",
+                MimeType = null!,
+            },
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
+        dataContent.MediaType.Should().Be("application/octet-stream");
+        dataContent.Uri.Should().Be("data:application/octet-stream;base64,UklGRiQA");
     }
 
     #endregion

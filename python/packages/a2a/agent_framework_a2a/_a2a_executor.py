@@ -78,7 +78,7 @@ class A2AExecutor(AgentExecutor):
             app = Starlette(
                 routes=[
                     *create_agent_card_routes(public_agent_card),
-                    *create_jsonrpc_routes(request_handler),
+                    *create_jsonrpc_routes(request_handler, "/"),
                 ],
             )
 

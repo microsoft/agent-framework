@@ -10,7 +10,7 @@ import os
 # warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 
-from agent_framework import Agent, ClassSkill, SkillsProvider
+from agent_framework import Agent, ClassSkill, SkillFrontmatter, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -49,10 +49,12 @@ class UnitConverterSkill(ClassSkill):
 
     def __init__(self) -> None:
         super().__init__(
-            name="unit-converter",
-            description=(
-                "Convert between common units using a multiplication factor. "
-                "Use when asked to convert miles, kilometers, pounds, or kilograms."
+            frontmatter=SkillFrontmatter(
+                name="unit-converter",
+                description=(
+                    "Convert between common units using a multiplication factor. "
+                    "Use when asked to convert miles, kilometers, pounds, or kilograms."
+                ),
             ),
         )
 
