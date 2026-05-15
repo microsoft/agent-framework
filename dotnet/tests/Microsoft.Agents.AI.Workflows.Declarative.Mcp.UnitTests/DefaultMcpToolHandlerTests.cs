@@ -617,6 +617,53 @@ public sealed class DefaultMcpToolHandlerTests
     }
 
     [Fact]
+    public void ConvertContentBlock_ResourceLinkBlock_WithMeta_ShouldPropagateToAdditionalProperties()
+    {
+        // Arrange
+        ResourceLinkBlock block = new()
+        {
+            Uri = "https://example.com/resource.bin",
+            Name = string.Empty,
+            MimeType = "application/zip",
+            Meta = new System.Text.Json.Nodes.JsonObject
+            {
+                ["traceId"] = "abc-123",
+                ["priority"] = 7,
+            },
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
+        uriContent.AdditionalProperties.Should().NotBeNull();
+        uriContent.AdditionalProperties!.Should().HaveCount(2);
+        uriContent.AdditionalProperties["traceId"].Should().BeSameAs(block.Meta!["traceId"]);
+        uriContent.AdditionalProperties["priority"].Should().BeSameAs(block.Meta["priority"]);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ResourceLinkBlock_WithName_ShouldMapNameToFilenameAdditionalProperty()
+    {
+        // Arrange
+        ResourceLinkBlock block = new()
+        {
+            Uri = "https://example.com/resource.bin",
+            Name = "resource.bin",
+            MimeType = "application/zip",
+        };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
+        uriContent.AdditionalProperties.Should().NotBeNull();
+        uriContent.AdditionalProperties!["filename"].Should().Be("resource.bin");
+    }
+
+    [Fact]
     public void ConvertContentBlock_ToolUseContentBlock_ShouldReturnFunctionCallContent()
     {
         // Arrange

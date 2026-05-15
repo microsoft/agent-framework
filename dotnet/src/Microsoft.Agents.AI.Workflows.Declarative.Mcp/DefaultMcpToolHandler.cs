@@ -28,6 +28,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// </remarks>
 public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 {
+    private const string FilenameAdditionalPropertyName = "filename";
+
     /// <summary>
     /// Reserved <c>toolName</c> value that maps an <see cref="IMcpToolHandler.InvokeToolAsync"/> request
     /// to the MCP protocol <c>tools/list</c> discovery operation.
@@ -280,9 +282,39 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         // UriContent here so callers always receive a usable AIContent.
         return block.ToAIContent() ?? block switch
         {
-            ResourceLinkBlock link => new UriContent(link.Uri, link.MimeType ?? "application/octet-stream") { RawRepresentation = link },
-            _ => new TextContent(block.ToString() ?? string.Empty) { RawRepresentation = block },
+            ResourceLinkBlock link => new UriContent(link.Uri, link.MimeType ?? "application/octet-stream")
+            {
+                RawRepresentation = link,
+                AdditionalProperties = CreateAdditionalProperties(link),
+            },
+            _ => new TextContent(block.ToString() ?? string.Empty)
+            {
+                RawRepresentation = block,
+                AdditionalProperties = CreateAdditionalProperties(block),
+            },
         };
+    }
+
+    private static AdditionalPropertiesDictionary? CreateAdditionalProperties(ContentBlock block)
+    {
+        AdditionalPropertiesDictionary? properties = null;
+
+        if (block.Meta is not null)
+        {
+            foreach (var property in block.Meta)
+            {
+                properties ??= new AdditionalPropertiesDictionary();
+                properties.Add(property.Key, property.Value);
+            }
+        }
+
+        if (block is ResourceLinkBlock { Name: { Length: > 0 } name })
+        {
+            properties ??= new AdditionalPropertiesDictionary();
+            properties.TryAdd(FilenameAdditionalPropertyName, name);
+        }
+
+        return properties;
     }
 
     private static string SerializeToolsList(IEnumerable<Tool> tools)
