@@ -292,7 +292,7 @@ public class AgentResponseTests
     public void Constructor_WithNullChatResponse_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new AgentResponse((ChatResponse)null!));
+        Assert.Throws<ArgumentNullException>("response", () => new AgentResponse((ChatResponse)null!));
     }
 
     [Fact]
