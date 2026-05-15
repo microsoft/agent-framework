@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.3.1] - 2026-05-14
+## [1.4.0] - 2026-05-14
 
 ### Added
 - **agent-framework-core**: Forward MCP tool call metadata ([#5815](https://github.com/microsoft/agent-framework/pull/5815))
@@ -1071,8 +1071,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.3.1...HEAD
-[1.3.1]: https://github.com/microsoft/agent-framework/compare/python-1.3.0...python-1.3.1
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.4.0...HEAD
+[1.4.0]: https://github.com/microsoft/agent-framework/compare/python-1.3.0...python-1.4.0
 [1.3.0]: https://github.com/microsoft/agent-framework/compare/python-1.2.2...python-1.3.0
 [1.2.2]: https://github.com/microsoft/agent-framework/compare/python-1.2.1...python-1.2.2
 [1.2.1]: https://github.com/microsoft/agent-framework/compare/python-1.2.0...python-1.2.1
