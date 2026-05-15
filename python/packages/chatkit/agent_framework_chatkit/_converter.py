@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from collections.abc import Awaitable, Callable, Sequence
 
 from agent_framework import (
@@ -29,11 +28,6 @@ from chatkit.types import (
     WidgetItem,
     WorkflowItem,
 )
-
-if sys.version_info >= (3, 11):
-    from typing import assert_never  # type:ignore # pragma: no cover
-else:
-    from typing_extensions import assert_never  # type:ignore # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -528,7 +522,10 @@ class ThreadItemConverter:
                 # TODO(evmattso): Implement generated image handling in a future PR
                 return []
             case _:
-                assert_never(item)
+                # Unknown ThreadItem variant (e.g. types added in newer chatkit versions).
+                # Skip rather than fail so we remain forward-compatible with chatkit upgrades.
+                logger.debug("Skipping unsupported ThreadItem of type %s", type(item).__name__)
+                return []
 
     async def to_agent_input(
         self,
