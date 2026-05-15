@@ -319,9 +319,7 @@ class TestDiscoverResourceFiles:
         refs = skill_dir / "references"
         refs.mkdir(parents=True)
         (refs / "doc.md").write_text("content", encoding="utf-8")
-        resources = FileSkillsSource._discover_resource_files(
-            str(skill_dir), directories=("references", "references")
-        )
+        resources = FileSkillsSource._discover_resource_files(str(skill_dir), directories=("references", "references"))
         assert resources == ["references/doc.md"]
 
     def test_results_are_sorted(self, tmp_path: Path) -> None:
@@ -1675,9 +1673,7 @@ class TestValidateAndNormalizeDirectoryNames:
             FileSkillsSource._validate_and_normalize_directory_names(["   "])
 
     def test_multiple_directories(self) -> None:
-        result = FileSkillsSource._validate_and_normalize_directory_names(
-            [".", "references", "assets", "scripts"]
-        )
+        result = FileSkillsSource._validate_and_normalize_directory_names([".", "references", "assets", "scripts"])
         assert result == [".", "references", "assets", "scripts"]
 
     def test_default_resource_directories(self) -> None:
@@ -2161,6 +2157,145 @@ class TestExtractFrontmatterEdgeCases:
         result = FileSkillsSource._extract_frontmatter(content, "test.md")
         assert result is not None
         assert result.description == desc
+
+
+# ---------------------------------------------------------------------------
+# Tests: _extract_frontmatter block scalar parsing
+# ---------------------------------------------------------------------------
+
+
+class TestExtractFrontmatterBlockScalars:
+    """Tests for YAML block scalar (| and >) parsing in _extract_frontmatter."""
+
+    def test_literal_block_scalar(self) -> None:
+        content = "---\nname: test-skill\ndescription: |\n  Line one\n  Line two\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "Line one\nLine two\n"
+
+    def test_folded_block_scalar(self) -> None:
+        content = "---\nname: test-skill\ndescription: >\n  This is a multi-line\n  description block\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "This is a multi-line description block"
+
+    def test_literal_strip_chomping(self) -> None:
+        content = "---\nname: test-skill\ndescription: |-\n  No trailing newline\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "No trailing newline"
+
+    def test_folded_strip_chomping(self) -> None:
+        content = "---\nname: test-skill\ndescription: >-\n  Folded with\n  strip chomping\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "Folded with strip chomping"
+
+    def test_literal_keep_chomping(self) -> None:
+        content = "---\nname: test-skill\ndescription: |+\n  Keep trailing\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "Keep trailing\n"
+
+    def test_folded_keep_chomping(self) -> None:
+        content = "---\nname: test-skill\ndescription: >+\n  Keep trailing\n  newline\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "Keep trailing newline\n"
+
+    def test_block_scalar_no_continuation_lines(self) -> None:
+        content = "---\nname: test-skill\ndescription: |\nlicense: MIT\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        # description becomes empty string which fails validation (empty/whitespace)
+        assert result is None
+
+    def test_block_scalar_varying_indentation(self) -> None:
+        content = (
+            "---\n"
+            "name: test-skill\n"
+            "description: |\n"
+            "    Line with 4-space indent\n"
+            "    Line with 4-space indent\n"
+            "---\n"
+            "Body."
+        )
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "Line with 4-space indent\nLine with 4-space indent\n"
+
+    def test_folded_block_scalar_real_skill_format(self) -> None:
+        """End-to-end test matching the format used in .github/skills/ SKILL.md files."""
+        content = (
+            "---\n"
+            "name: python-development\n"
+            "description: >\n"
+            "  Coding standards, conventions, and patterns for developing Python code in the\n"
+            "  Agent Framework repository. Use this when writing or modifying Python source\n"
+            "  files in the python/ directory.\n"
+            "---\n"
+            "\n"
+            "# Python Development Standards\n"
+        )
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == (
+            "Coding standards, conventions, and patterns for developing Python code in the "
+            "Agent Framework repository. Use this when writing or modifying Python source "
+            "files in the python/ directory."
+        )
+
+    def test_block_scalar_with_other_fields_after(self) -> None:
+        content = "---\nname: test-skill\ndescription: >\n  A folded\n  description\nlicense: MIT\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "A folded description"
+        assert result.license == "MIT"
+
+    def test_plain_value_unchanged(self) -> None:
+        """Non-block-scalar values must not be affected by the block scalar logic."""
+        content = "---\nname: test-skill\ndescription: A simple description.\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "A simple description."
+
+    def test_block_scalar_content_with_colons(self) -> None:
+        """Lines inside a block scalar that look like YAML key-value pairs must be preserved verbatim."""
+        content = (
+            "---\nname: test-skill\ndescription: |\n  Some text with colon: in it\n  Another: line here\n---\nBody."
+        )
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "Some text with colon: in it\nAnother: line here\n"
+
+    def test_block_scalar_on_license_field(self) -> None:
+        """Block scalars should work on any field, not only description."""
+        content = (
+            "---\n"
+            "name: test-skill\n"
+            "description: A skill.\n"
+            "license: >\n"
+            "  Custom license\n"
+            "  spanning multiple lines\n"
+            "---\n"
+            "Body."
+        )
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.license == "Custom license spanning multiple lines"
+
+    def test_block_scalar_tab_indentation(self) -> None:
+        """Tab characters should count as indentation for block scalar continuation lines."""
+        content = "---\nname: test-skill\ndescription: |\n\tTab-indented line one\n\tTab-indented line two\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "Tab-indented line one\nTab-indented line two\n"
+
+    def test_block_scalar_blank_line_within_block(self) -> None:
+        """Blank lines within a block scalar should be preserved as paragraph separators."""
+        content = "---\nname: test-skill\ndescription: |\n  First paragraph\n\n  Second paragraph\n---\nBody."
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+        assert result is not None
+        assert result.description == "First paragraph\n\nSecond paragraph\n"
 
 
 # ---------------------------------------------------------------------------
@@ -5498,9 +5633,7 @@ class TestArrayStyleScriptArgs:
             return "ok"
 
         assert isinstance(my_runner, SkillScriptRunner)
-        skill = FileSkill(
-            frontmatter=SkillFrontmatter(name="s", description="d"), content="c", path=f"{_ABS}/test"
-        )
+        skill = FileSkill(frontmatter=SkillFrontmatter(name="s", description="d"), content="c", path=f"{_ABS}/test")
         script = FileSkillScript(name="run.py", full_path=f"{_ABS}/test/run.py")
         result = my_runner(skill, script, args=["--flag", "value"])
         assert result == "ok"

@@ -5,12 +5,14 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
-    <RootNamespace>HostedChatClientAgent</RootNamespace>
-    <AssemblyName>HostedChatClientAgent</AssemblyName>
-    <NoWarn>$(NoWarn);</NoWarn>
+    <RootNamespace>HostedMemoryAgent</RootNamespace>
+    <AssemblyName>HostedMemoryAgent</AssemblyName>
+    <NoWarn>$(NoWarn);MEAI001;OPENAI001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.AI.Projects" VersionOverride="2.1.0-beta.1" />
+    <PackageReference Include="Azure.Identity" />
     <PackageReference Include="DotNetEnv" />
   </ItemGroup>
 
@@ -21,12 +23,10 @@
     <ProjectReference Include="..\Hosted_Shared_Contributor_Setup\Hosted_Shared_Contributor_Setup.csproj" />
   </ItemGroup>
 
-  <!-- For end-users: uncomment the PackageReference below and remove the ProjectReference above
+  <!-- For end-users: uncomment the PackageReference below and remove the ProjectReferences above
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.0.0" />
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="1.0.0" />
-    <PackageReference Include="Azure.AI.Projects" />
-    <PackageReference Include="Azure.Identity" />
   </ItemGroup>
   -->
 
