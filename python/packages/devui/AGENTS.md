@@ -34,6 +34,12 @@ devui ./agents
 devui --entities my_agent.py
 ```
 
+## Security Posture
+
+DevUI is a development-only sample app, not a production hosting surface. Authentication is enabled by default.
+Unauthenticated mode is allowed only on `localhost` / `127.0.0.1`; `0.0.0.0`, LAN IPs, and hostnames require
+`DEVUI_AUTH_TOKEN` or `--auth-token`.
+
 ## Import Path
 
 ```python
