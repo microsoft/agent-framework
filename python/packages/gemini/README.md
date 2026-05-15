@@ -10,6 +10,10 @@ pip install agent-framework-gemini --pre
 
 The Gemini integration enables Microsoft Agent Framework applications to call Google Gemini models with familiar chat abstractions, including streaming, tool/function calling, and structured output.
 
+## Structured Output
+
+Gemini structured output can be configured with either a Pydantic model in `response_format`, a JSON schema mapping in `response_format`, or a Gemini-specific `response_schema`. Declarative agents that define `outputSchema` pass that schema through `response_format`.
+
 ## Authentication
 
 The connector supports both `google-genai` authentication modes.
