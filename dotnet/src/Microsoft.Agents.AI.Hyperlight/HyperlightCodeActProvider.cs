@@ -68,8 +68,9 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
     /// Optional configuration options for the provider. When <see langword="null"/> the provider
     /// uses the defaults of <see cref="HyperlightCodeActProviderOptions"/> (the
     /// <see cref="HyperlightSandbox.Api.SandboxBackend.JavaScript"/> backend with no tools, mounts, or allow-list entries).
-    /// Use <see cref="HyperlightCodeActProviderOptions.CreateForWasm(string)"/> to target a Wasm
-    /// guest module instead.
+    /// Use <see cref="HyperlightCodeActProviderOptions.CreateForPython()"/> for the bundled Python
+    /// guest module, or <see cref="HyperlightCodeActProviderOptions.CreateForWasm(string)"/> for a
+    /// custom Wasm guest.
     /// </param>
     public HyperlightCodeActProvider(HyperlightCodeActProviderOptions? options = null)
     {
