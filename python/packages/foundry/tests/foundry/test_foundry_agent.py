@@ -363,6 +363,44 @@ async def test_raw_foundry_agent_chat_client_prepare_options_respects_caller_age
     assert result["extra_body"]["agent_reference"] == caller_reference
 
 
+async def test_raw_foundry_agent_chat_client_prepare_options_rejects_runtime_response_format() -> None:
+    """Issue #5467: per-call ``response_format`` is not supported on FoundryAgent.
+
+    FoundryAgent is bound to a server-side agent whose response schema is
+    fixed at creation time. The Foundry agent endpoint enforces this with
+    ``400 invalid_payload "Not allowed when agent is specified."``. Surface a
+    clear up-front error pointing the caller at the two supported paths
+    (recreate the agent server-side, or use ``FoundryChatClient`` + ``Agent``)
+    instead of silently dropping the option or bubbling the wire-level 400.
+    """
+    from agent_framework.exceptions import ChatClientInvalidRequestException
+    from pydantic import BaseModel
+
+    class OutputStruct(BaseModel):
+        location: str
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    with pytest.raises(ChatClientInvalidRequestException, match="FoundryAgent does not support per-call"):
+        await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"response_format": OutputStruct},
+        )
+
+    # Same guard applies to the dict / json_schema variant.
+    with pytest.raises(ChatClientInvalidRequestException, match="FoundryAgent does not support per-call"):
+        await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"response_format": {"type": "json_schema", "json_schema": {"name": "WeatherDigest"}}},
+        )
+
+
 async def test_raw_foundry_agent_chat_client_prepare_options_maps_agent_session_id_to_extra_body() -> None:
     """Test that service_session_id is forwarded as agent_session_id for hosted sessions."""
 

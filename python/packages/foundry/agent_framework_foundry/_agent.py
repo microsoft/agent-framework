@@ -30,6 +30,7 @@ from agent_framework import (
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._telemetry import get_user_agent
+from agent_framework.exceptions import ChatClientInvalidRequestException
 from agent_framework.observability import AgentTelemetryLayer, ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -326,6 +327,24 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Prepare options for the Responses API and validate client-side tools."""
+        # Foundry agents are persistent and own their response schema at
+        # creation time, so per-call ``response_format`` is not a supported
+        # runtime option. The Foundry agent endpoint enforces this server-side
+        # by rejecting per-call ``text`` configuration with
+        # ``400 invalid_payload "Not allowed when agent is specified."``.
+        # Surface a clear up-front error pointing the caller at the two
+        # supported paths instead of silently dropping the option or letting
+        # the request fail at the wire.
+        if options.get("response_format") is not None:
+            raise ChatClientInvalidRequestException(
+                "FoundryAgent does not support per-call 'response_format'. "
+                "Foundry agents are created with a fixed response schema. "
+                "Either (a) recreate the Foundry agent with the desired "
+                "response_format on the server side, or (b) use "
+                "FoundryChatClient (without binding to a Foundry agent) "
+                "wrapped in Agent for per-call structured output."
+            )
+
         # Validate tools — only FunctionTool allowed
         tools = options.get("tools", [])
         if tools:
