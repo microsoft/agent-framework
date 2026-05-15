@@ -682,8 +682,13 @@ class ObservabilitySettings:
         # `enable_instrumentation` is defaulted to True if not set
         instrumentation_value = data.get("enable_instrumentation")
         self.enable_instrumentation: bool = True if instrumentation_value is None else instrumentation_value
-
         self.enable_sensitive_data: bool = data.get("enable_sensitive_data") or False
+        if self.enable_sensitive_data and not self.enable_instrumentation:
+            logger.warning(
+                "Sensitive data capture is enabled but instrumentation is disabled. "
+                "Sensitive data will not be captured. Please enable instrumentation to capture sensitive data."
+            )
+
         self.enable_console_exporters: bool = data.get("enable_console_exporters") or False
         self.vs_code_extension_port: int | None = data.get("vs_code_extension_port")
         self.env_file_path = env_file_path
