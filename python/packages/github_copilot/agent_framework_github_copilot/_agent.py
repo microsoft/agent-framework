@@ -520,8 +520,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         session_context = await self._run_before_providers(session=session, input_messages=input_messages, options=opts)
 
-        # NOTE: session is created after providers run so that future provider-contributed
-        # tools/config could be folded into runtime_options before session creation.
+        # Merge provider-contributed tools into runtime_options before session creation.
+        if session_context.tools:
+            existing = list(opts.get("tools") or [])
+            opts["tools"] = existing + list(session_context.tools)
+
         copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
 
         # Build the prompt from the full set of messages in the session context,
@@ -605,8 +608,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         session_context = await self._run_before_providers(session=session, input_messages=input_messages, options=opts)
 
-        # NOTE: session is created after providers run so that future provider-contributed
-        # tools/config could be folded into runtime_options before session creation.
+        # Merge provider-contributed tools into runtime_options before session creation.
+        if session_context.tools:
+            existing = list(opts.get("tools") or [])
+            opts["tools"] = existing + list(session_context.tools)
+
         copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
 
         if _ctx_holder is not None:
@@ -891,7 +897,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
         instruction_directories = opts.get("instruction_directories", self._instruction_directories)
-        tools = self._prepare_tools(self._tools) if self._tools else None
+        all_tools = list(self._tools or []) + list(opts.get("tools") or [])
+        tools = self._prepare_tools(all_tools) if all_tools else None
 
         return await self._client.create_session(
             on_permission_request=permission_handler,
@@ -929,7 +936,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         provider = opts.get("provider") or self._provider or None
         instruction_directories = opts.get("instruction_directories", self._instruction_directories)
-        tools = self._prepare_tools(self._tools) if self._tools else None
+        all_tools = list(self._tools or []) + list(opts.get("tools") or [])
+        tools = self._prepare_tools(all_tools) if all_tools else None
 
         return await self._client.resume_session(
             session_id,
