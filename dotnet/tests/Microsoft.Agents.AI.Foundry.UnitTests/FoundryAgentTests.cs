@@ -2,6 +2,7 @@
 
 using System;
 using System.ClientModel.Primitives;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -356,7 +357,7 @@ public class FoundryAgentTests
         bool userAgentFound = false;
         using HttpHandlerAssert httpHandler = new(request =>
         {
-            if (request.Headers.TryGetValues("User-Agent", out System.Collections.Generic.IEnumerable<string>? values))
+            if (request.Headers.TryGetValues("User-Agent", out IEnumerable<string>? values))
             {
                 foreach (string value in values)
                 {
@@ -676,6 +677,71 @@ public class FoundryAgentTests
         Assert.Equal("my-app-id", opts.UserAgentApplicationId);
     }
 
+    [Fact]
+    public void CreateProjectClientOptions_NullCallerOptions_ReturnsNull()
+    {
+        Assert.Null(FoundryAgent.CreateProjectClientOptions(null));
+    }
+
+    [Fact]
+    public void CreateProjectClientOptions_CarriesPipelineSettingsAndUserAgent()
+    {
+        // Arrange
+        var transport = new FakePipelineTransport();
+        var retryPolicy = new FakeRetryPolicy();
+        var messageLoggingPolicy = new FakeMessageLoggingPolicy();
+        var clientLoggingOptions = new ClientLoggingOptions { EnableLogging = false };
+        var networkTimeout = TimeSpan.FromSeconds(42);
+
+        ProjectOpenAIClientOptions callerOptions = new()
+        {
+            UserAgentApplicationId = "my-app-id",
+            Transport = transport,
+            RetryPolicy = retryPolicy,
+            MessageLoggingPolicy = messageLoggingPolicy,
+            ClientLoggingOptions = clientLoggingOptions,
+            NetworkTimeout = networkTimeout,
+        };
+
+        // Act
+        AIProjectClientOptions? projectOptions = FoundryAgent.CreateProjectClientOptions(callerOptions);
+
+        // Assert: every settable pipeline behavior the caller configured is forwarded
+        // onto the project-level options bag, not silently dropped.
+        Assert.NotNull(projectOptions);
+        Assert.Equal("my-app-id", projectOptions!.UserAgentApplicationId);
+        Assert.Same(transport, projectOptions.Transport);
+        Assert.Same(retryPolicy, projectOptions.RetryPolicy);
+        Assert.Same(messageLoggingPolicy, projectOptions.MessageLoggingPolicy);
+        Assert.Same(clientLoggingOptions, projectOptions.ClientLoggingOptions);
+        Assert.Equal(networkTimeout, projectOptions.NetworkTimeout);
+    }
+
+    private sealed class FakeRetryPolicy : PipelinePolicy
+    {
+        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+            => ProcessNext(message, pipeline, currentIndex);
+
+        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+            => ProcessNextAsync(message, pipeline, currentIndex);
+    }
+
+    private sealed class FakeMessageLoggingPolicy : PipelinePolicy
+    {
+        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+            => ProcessNext(message, pipeline, currentIndex);
+
+        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+            => ProcessNextAsync(message, pipeline, currentIndex);
+    }
+
+    private sealed class FakePipelineTransport : PipelineTransport
+    {
+        protected override PipelineMessage CreateMessageCore() => throw new NotSupportedException();
+        protected override void ProcessCore(PipelineMessage message) => throw new NotSupportedException();
+        protected override ValueTask ProcessCoreAsync(PipelineMessage message) => throw new NotSupportedException();
+    }
+
     #endregion
 
     #region ParseAgentEndpoint tests
@@ -758,13 +824,13 @@ public class FoundryAgentTests
         private readonly string _value;
         public HeaderStampPolicy(string name, string value) { this._name = name; this._value = value; }
 
-        public override void Process(PipelineMessage message, System.Collections.Generic.IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
         {
             message.Request.Headers.Set(this._name, this._value);
             ProcessNext(message, pipeline, currentIndex);
         }
 
-        public override ValueTask ProcessAsync(PipelineMessage message, System.Collections.Generic.IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
         {
             message.Request.Headers.Set(this._name, this._value);
             return ProcessNextAsync(message, pipeline, currentIndex);

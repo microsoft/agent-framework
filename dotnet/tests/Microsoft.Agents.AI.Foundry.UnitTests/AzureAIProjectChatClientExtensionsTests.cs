@@ -1459,6 +1459,52 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         Assert.Same(testChatClient, retrievedTestClient);
     }
 
+    /// <summary>
+    /// Verify that AsAIAgent(Uri agentEndpoint) forwards the supplied tools to the inner
+    /// <see cref="ChatClientAgent"/>'s <see cref="ChatOptions.Tools"/>.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithAgentEndpoint_ForwardsToolsToInnerChatOptions()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        var tool1 = AIFunctionFactory.Create(() => "result-1", "tool_1", "First test tool.");
+        var tool2 = AIFunctionFactory.Create(() => "result-2", "tool_2", "Second test tool.");
+        List<AITool> tools = [tool1, tool2];
+
+        // Act
+        var agent = client.AsAIAgent(new Uri(TestAgentEndpointUrl), tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        ChatOptions? chatOptions = GetAgentChatOptions(agent);
+        Assert.NotNull(chatOptions);
+        Assert.NotNull(chatOptions!.Tools);
+        Assert.Equal(2, chatOptions.Tools!.Count);
+        Assert.Same(tool1, chatOptions.Tools[0]);
+        Assert.Same(tool2, chatOptions.Tools[1]);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent(Uri agentEndpoint) accepts a null tools argument without throwing
+    /// and produces an agent whose inner <see cref="ChatOptions.Tools"/> is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithAgentEndpoint_WithNullTools_DoesNotThrow()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+
+        // Act
+        var agent = client.AsAIAgent(new Uri(TestAgentEndpointUrl), tools: null);
+
+        // Assert
+        Assert.NotNull(agent);
+        ChatOptions? chatOptions = GetAgentChatOptions(agent);
+        Assert.NotNull(chatOptions);
+        Assert.Null(chatOptions!.Tools);
+    }
+
     #endregion
 
     #region Helper Methods

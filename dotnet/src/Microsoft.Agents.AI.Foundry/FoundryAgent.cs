@@ -428,18 +428,31 @@ public sealed class FoundryAgent : DelegatingAIAgent
         return new AIProjectClient(endpoint, credential, clientOptions);
     }
 
-    private static AIProjectClientOptions? CreateProjectClientOptions(ProjectOpenAIClientOptions? clientOptions)
+    internal static AIProjectClientOptions? CreateProjectClientOptions(ProjectOpenAIClientOptions? clientOptions)
     {
         if (clientOptions is null)
         {
             return null;
         }
 
-        return new AIProjectClientOptions
+        // Copy pipeline behavior the caller configured on the per-agent options bag onto the
+        // project-level options bag so the agent endpoint client honors it. UserAgentApplicationId
+        // is project-level (not derived from the agent endpoint), so it must be carried through too.
+        var projectOptions = new AIProjectClientOptions
         {
             Transport = clientOptions.Transport,
+            RetryPolicy = clientOptions.RetryPolicy,
+            NetworkTimeout = clientOptions.NetworkTimeout,
+            MessageLoggingPolicy = clientOptions.MessageLoggingPolicy,
             UserAgentApplicationId = clientOptions.UserAgentApplicationId,
         };
+
+        if (clientOptions.ClientLoggingOptions is not null)
+        {
+            projectOptions.ClientLoggingOptions = clientOptions.ClientLoggingOptions;
+        }
+
+        return projectOptions;
     }
 
     #endregion
