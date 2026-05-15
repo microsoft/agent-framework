@@ -733,7 +733,7 @@ def test_chat_message_text():
 def test_chat_message_contents():
     """Test the Message class to ensure it initializes correctly with contents."""
     # Create a Message with a role and multiple contents
-    content1 = Content.from_text("Hello, how are you?")
+    content1 = Content.from_text("Hello, how are you? ")
     content2 = Content.from_text("I'm fine, thank you!")
     message = Message(role="user", contents=[content1, content2])
 
@@ -742,9 +742,38 @@ def test_chat_message_contents():
     assert len(message.contents) == 2
     assert message.contents[0].type == "text"
     assert message.contents[1].type == "text"
-    assert message.contents[0].text == "Hello, how are you?"
+    assert message.contents[0].text == "Hello, how are you? "
     assert message.contents[1].text == "I'm fine, thank you!"
+    # Message.text concatenates without inserting whitespace — any spacing the
+    # model emitted is already inside the chunks.
     assert message.text == "Hello, how are you? I'm fine, thank you!"
+
+
+def test_chat_message_text_concatenates_without_injecting_spaces():
+    """``Message.text`` must concatenate streamed text chunks with no separator.
+
+    When chat responses are streamed the SDK accumulates text deltas as
+    multiple ``TextContent`` blocks. Joining them with a space mid-token
+    corrupts JSON values used for structured output (a path like
+    ``"report_lines/sofp.json"`` becomes ``"re port_ lines/sof p.jso n"``)
+    and breaks any downstream consumer that compares ``message.text`` to a
+    raw model output (logging, telemetry, structured-output parsers).
+    """
+    # Simulate a JSON value split across three streaming deltas — exactly the
+    # shape ``response.value`` and ``response.text`` see when chunks have not
+    # been coalesced.
+    chunks = [
+        Content.from_text(text='{"resp'),
+        Content.from_text(text='onse": "He'),
+        Content.from_text(text='llo"}'),
+    ]
+    message = Message(role="assistant", contents=chunks)
+
+    assert message.text == '{"response": "Hello"}'
+    # And via ``ChatResponse.value``, the structured-output parse round-trips.
+    response = ChatResponse(messages=message, response_format=OutputModel)
+    assert response.value is not None
+    assert response.value.response == "Hello"
 
 
 def test_chat_message_with_chatrole_instance():
@@ -989,7 +1018,10 @@ def test_chat_response_updates_to_chat_response_multiple():
 
     # Check the type and content
     assert len(chat_response.messages) == 1
-    assert chat_response.text == "I'm doing well,  thank you!"
+    # Each chunk contributes its own whitespace; Message.text concatenates without
+    # injecting an extra separator, so the trailing space inside ``message1`` is
+    # the only space between the two segments.
+    assert chat_response.text == "I'm doing well, thank you!"
     assert isinstance(chat_response.messages[0], Message)
     assert len(chat_response.messages[0].contents) == 3
     assert chat_response.messages[0].message_id == "1"
@@ -1027,7 +1059,9 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert chat_response.messages[0].contents[2].type == "text"
     assert chat_response.messages[0].contents[2].text == "More contextFinal part"
 
-    assert chat_response.text == "I'm doing well, thank you! More contextFinal part"
+    # Message.text skips the reasoning content and concatenates the surviving
+    # text contents directly — no extra separator is inserted between them.
+    assert chat_response.text == "I'm doing well, thank you!More contextFinal part"
 
 
 async def test_chat_response_from_async_generator():

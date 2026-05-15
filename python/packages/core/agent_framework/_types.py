@@ -1757,9 +1757,15 @@ class Message(SerializationMixin):
         """Returns the text content of the message.
 
         Remarks:
-            This property concatenates the text of all TextContent objects in Content.
+            Concatenates the text of every ``TextContent`` in :attr:`contents`
+            without inserting whitespace. Multiple ``TextContent`` blocks are
+            usually a streaming-coalescing artefact (one logical token stream
+            split across deltas), so any spacing the model intended is already
+            inside the chunks. Joining with ``" "`` would inject spurious
+            whitespace mid-token, which corrupts structured JSON output and
+            shows up as field-validation failures downstream.
         """
-        return " ".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
+        return "".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
 
 AgentRunInputs = str | Content | Message | Sequence[str | Content | Message]
