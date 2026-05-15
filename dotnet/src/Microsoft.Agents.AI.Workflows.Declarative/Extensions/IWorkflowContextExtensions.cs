@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
@@ -21,7 +22,7 @@ internal static class IWorkflowContextExtensions
         context.AddEventAsync(new DeclarativeActionCompletedEvent(action), cancellationToken);
 
     public static FormulaValue ReadState(this IWorkflowContext context, PropertyPath variablePath) =>
-        context.ReadState(Throw.IfNull(variablePath.VariableName), Throw.IfNull(variablePath.NamespaceAlias));
+        context.ReadState(Throw.IfNull(GetVariableName(variablePath)), GetNamespaceAlias(variablePath));
 
     public static FormulaValue ReadState(this IWorkflowContext context, string key, string? scopeName = null) =>
         DeclarativeContext(context).State.Get(key, scopeName);
@@ -33,10 +34,28 @@ internal static class IWorkflowContextExtensions
         context.SendMessageAsync(new ActionExecutorResult(id, result), targetId: null, cancellationToken);
 
     public static ValueTask QueueStateResetAsync(this IWorkflowContext context, PropertyPath variablePath, CancellationToken cancellationToken = default) =>
-        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.NamespaceAlias), cancellationToken);
+        context.QueueStateUpdateAsync(Throw.IfNull(GetVariableName(variablePath)), UnassignedValue.Instance, GetNamespaceAlias(variablePath), cancellationToken);
 
     public static ValueTask QueueStateUpdateAsync<TValue>(this IWorkflowContext context, PropertyPath variablePath, TValue? value, CancellationToken cancellationToken = default) =>
-        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), value, Throw.IfNull(variablePath.NamespaceAlias), cancellationToken);
+        context.QueueStateUpdateAsync(Throw.IfNull(GetVariableName(variablePath)), value, GetNamespaceAlias(variablePath), cancellationToken);
+
+    // Workaround for ObjectModel 2026.2.4.1 regression: PropertyPath built from a dotted
+    // reference such as "Local.Triage" returns null for both NamespaceAlias and VariableName
+    // even when SegmentCount==2 and IsValid==true. Reconstruct from Segments() in that case.
+    private static string? GetVariableName(PropertyPath variablePath) =>
+        variablePath.VariableName ?? (variablePath.SegmentCount >= 2 ? variablePath.Segments().ElementAtOrDefault(1).PropertyName : variablePath.SegmentCount == 1 ? variablePath.Segments().ElementAtOrDefault(0).PropertyName : null);
+
+    // Workaround for ObjectModel 2026.2.4.1 regression: in addition to the parser bug above,
+    // the framework's user-facing scope alias "Local" is no longer recognized by
+    // VariableScopeNames.IsValidName / GetNamespaceFromName (they only accept the canonical
+    // names "Topic", "Global", "System", "Env"). Translate the "Local" alias back to its
+    // canonical "Topic" form so downstream IsManagedScope checks succeed.
+    private static string? GetNamespaceAlias(PropertyPath variablePath)
+    {
+        string? alias = variablePath.NamespaceAlias
+            ?? (variablePath.SegmentCount >= 2 ? variablePath.Segments().ElementAtOrDefault(0).PropertyName : null);
+        return string.Equals(alias, "Local", StringComparison.Ordinal) ? VariableScopeNames.Topic : alias;
+    }
 
     public static async ValueTask QueueEnvironmentUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value, CancellationToken cancellationToken = default)
     {
