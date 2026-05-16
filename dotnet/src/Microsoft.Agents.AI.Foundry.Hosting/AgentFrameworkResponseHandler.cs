@@ -56,13 +56,24 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var agent = this.ResolveAgent(request);
         var sessionStore = this.ResolveSessionStore(request);
 
-        // 2. Load or create a new session from the interaction
+        // 2. Load or create a new session from the interaction.
+        //
+        // The session can be keyed by either:
+        //   - conversation_id  (used by clients that explicitly thread a conversation), or
+        //   - previous_response_id (used by clients that chain via the Responses API)
+        //
+        // Without this fallback, clients that rely on previous_response_id chaining lose
+        // session state (StateBag — including HITL tool-approval id mappings) between turns.
         var sessionConversationId = request.GetConversationId();
+        var previousResponseId = request.PreviousResponseId;
+        var sessionLoadKey = !string.IsNullOrWhiteSpace(sessionConversationId)
+            ? sessionConversationId
+            : previousResponseId;
 
         var chatClientAgent = agent.GetService<ChatClientAgent>();
 
-        AgentSession? session = !string.IsNullOrWhiteSpace(sessionConversationId)
-            ? await sessionStore.GetSessionAsync(agent, sessionConversationId, cancellationToken).ConfigureAwait(false)
+        AgentSession? session = !string.IsNullOrWhiteSpace(sessionLoadKey)
+            ? await sessionStore.GetSessionAsync(agent, sessionLoadKey, cancellationToken).ConfigureAwait(false)
                 : chatClientAgent is not null
                 ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
                 : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
@@ -81,7 +92,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // (e.g. resuming a workflow paused at an external-input port), the workflow's
         // checkpointed state already contains the prior turns' messages — replaying history
         // would re-drive completed actions and break HITL resume semantics.
-        var isResume = !string.IsNullOrWhiteSpace(sessionConversationId)
+        var isResume = !string.IsNullOrWhiteSpace(sessionLoadKey)
             && session?.StateBag?.Count > 0;
         if (!isResume)
         {
@@ -284,10 +295,19 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         {
             await enumerator.DisposeAsync().ConfigureAwait(false);
 
-            // Persist session after streaming completes (successful or not)
-            if (session is not null && !string.IsNullOrWhiteSpace(sessionConversationId))
+            // Persist session after streaming completes (successful or not).
+            //
+            // Save key precedence mirrors the load logic above:
+            //   - conversation_id is stable across all turns of the same conversation.
+            //   - Otherwise we save under this turn's response_id so the next request —
+            //     which arrives with previous_response_id == this response_id — can find it.
+            var sessionSaveKey = !string.IsNullOrWhiteSpace(sessionConversationId)
+                ? sessionConversationId
+                : context.ResponseId;
+
+            if (session is not null && !string.IsNullOrWhiteSpace(sessionSaveKey))
             {
-                await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, cancellationToken).ConfigureAwait(false);
+                await sessionStore.SaveSessionAsync(agent, sessionSaveKey, session, cancellationToken).ConfigureAwait(false);
             }
         }
     }
