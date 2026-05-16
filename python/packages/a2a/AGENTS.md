@@ -42,7 +42,7 @@ request_handler = DefaultRequestHandler(
 app = Starlette(
     routes=[
         *create_agent_card_routes(my_agent_card),
-        *create_jsonrpc_routes(request_handler),
+        *create_jsonrpc_routes(request_handler, "/"),
     ]
 )
 ```

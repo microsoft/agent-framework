@@ -149,16 +149,14 @@ jobs:
             --apply-labels
 
       - name: Stop after spam gate
-        if: ${{ steps.spam.outputs.decision != 'allow' }}
+        if: ${{ steps.spam.outputs.allow_triage != 'true' }}
         shell: bash
-        env:
-          SPAM_DECISION: ${{ steps.spam.outputs.decision }}
         run: |
-          echo "Stopping: spam gate decided: ${SPAM_DECISION}"
+          echo "Stopping: issue triage preflight did not allow automation."
           exit 1
 
       - name: Reproduce reported issue
-        if: ${{ steps.spam.outputs.decision == 'allow' }}
+        if: ${{ steps.spam.outputs.allow_triage == 'true' }}
         id: repro
         working-directory: ${{ env.DEVFLOW_PATH }}
         env:
