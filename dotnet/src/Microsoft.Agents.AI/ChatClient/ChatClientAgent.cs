@@ -817,7 +817,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
         if (!string.IsNullOrWhiteSpace(responseConversationId))
         {
-            if (this.ConversationIdIndicatesServiceManagedHistory && this._agentOptions?.ChatHistoryProvider is not null)
+            if (!IsAGUIProviderName(this._agentMetadata.ProviderName) && this._agentOptions?.ChatHistoryProvider is not null)
             {
                 // The agent has a ChatHistoryProvider configured, but the service returned a conversation id,
                 // meaning the service manages chat history server-side. Both cannot be used simultaneously.
@@ -931,9 +931,8 @@ public sealed partial class ChatClientAgent : AIAgent
         }
     }
 
-    // AG-UI uses ConversationId as a thread id, not as a signal that the service stores model history.
-    private bool ConversationIdIndicatesServiceManagedHistory =>
-        !string.Equals(this._agentMetadata.ProviderName, AGUIProviderName, StringComparison.Ordinal);
+    private static bool IsAGUIProviderName(string? providerName) =>
+        string.Equals(providerName, AGUIProviderName, StringComparison.Ordinal);
 
     /// <summary>
     /// Ensures that <see cref="AIAgent.CurrentRunContext"/> contains the resolved session.
@@ -983,14 +982,14 @@ public sealed partial class ChatClientAgent : AIAgent
     private ChatHistoryProvider? ResolveChatHistoryProvider(ChatOptions? chatOptions)
     {
         ChatHistoryProvider? provider =
-            chatOptions?.ConversationId is null || !this.ConversationIdIndicatesServiceManagedHistory
+            chatOptions?.ConversationId is null || IsAGUIProviderName(this._agentMetadata.ProviderName)
             ? this.ChatHistoryProvider
             : null;
 
         // If someone provided an override ChatHistoryProvider via AdditionalProperties, we should use that instead.
         if (chatOptions?.AdditionalProperties?.TryGetValue(out ChatHistoryProvider? overrideProvider) is true)
         {
-            if (this.ConversationIdIndicatesServiceManagedHistory &&
+            if (!IsAGUIProviderName(this._agentMetadata.ProviderName) &&
                 this._agentOptions?.ThrowOnChatHistoryProviderConflict is true &&
                 string.IsNullOrWhiteSpace(chatOptions?.ConversationId) is false)
             {
