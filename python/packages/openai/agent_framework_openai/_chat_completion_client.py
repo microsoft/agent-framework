@@ -698,7 +698,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
                 contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
-            messages.append(Message(role="assistant", contents=contents))
+            # Some providers may return a terminal choice with no text/tool payload.
+            # Skip emitting empty assistant messages to avoid empty final outputs.
+            if contents:
+                messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
             created_at=datetime.fromtimestamp(response.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),

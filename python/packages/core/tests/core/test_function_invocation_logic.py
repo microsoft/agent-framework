@@ -87,6 +87,39 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
     assert response.messages[2].text == "done"
 
 
+async def test_base_client_with_function_calling_recovers_from_empty_terminal_response(
+    chat_client_base: SupportsChatGetResponse,
+):
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=[]), finish_reason="stop"),
+        ChatResponse(messages=Message(role="assistant", contents=["final response"])),
+    ]
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [ai_func]}
+    )
+    assert exec_counter == 1
+    assert response.text == "I broke out of the function invocation loop..."
+    assert chat_client_base.call_count == 3
+    assert [m.role for m in response.messages] == ["assistant", "tool", "assistant"]
+    assert [c.type for c in response.messages[-1].contents] == ["text"]
+
+
 async def test_base_client_with_function_calling_string_input(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 

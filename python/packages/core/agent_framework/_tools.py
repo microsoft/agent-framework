@@ -2054,6 +2054,7 @@ class FunctionRequestResult(TypedDict, total=False):
         update_role: The role to update for the next message, if any.
         function_call_results: The list of function call results, if any.
         function_call_count: The number of function calls executed in this processing step.
+        should_terminate: Whether middleware requested early loop termination.
     """
 
     action: Literal["return", "continue", "stop"]
@@ -2062,6 +2063,7 @@ class FunctionRequestResult(TypedDict, total=False):
     update_role: Literal["assistant", "tool"] | None
     function_call_results: list[Content] | None
     function_call_count: int
+    should_terminate: bool
 
 
 def _handle_function_call_results(
@@ -2165,6 +2167,7 @@ async def _process_function_requests(
                 "update_role": None,
                 "function_call_results": None,
                 "function_call_count": executed_count,
+                "should_terminate": should_terminate,
             }
 
     if response is None or fcc_messages is None:
@@ -2208,6 +2211,7 @@ async def _process_function_requests(
     # If middleware requested termination, change action to return
     if should_terminate:
         result["action"] = "return"
+        result["should_terminate"] = True
     return result
 
 
@@ -2436,6 +2440,38 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         execute_function_calls=execute_function_calls,
                     )
                     if result.get("action") == "return":
+                        # If tool calls happened but the terminal assistant payload is empty,
+                        # force one non-tool model turn to obtain a final textual answer.
+                        if fcc_messages and not response.text.strip() and not result.get("should_terminate"):
+                            logger.info(
+                                "Empty terminal assistant response after tools; requesting final non-tool response."
+                            )
+                            mutable_options["tool_choice"] = "none"
+                            fallback_messages = (
+                                list(prepped_messages) + list(response.messages)
+                                if response.conversation_id is None
+                                else []
+                            )
+                            response = cast(
+                                ChatResponse[Any],
+                                await super_get_response(
+                                    messages=fallback_messages,
+                                    stream=False,
+                                    options=mutable_options,
+                                    compaction_strategy=compaction_strategy,
+                                    tokenizer=tokenizer,
+                                    client_kwargs=filtered_kwargs,
+                                ),
+                            )
+                            aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
+                            _update_continuation_state(
+                                filtered_kwargs,
+                                response,
+                                session=invocation_session,
+                                options=mutable_options,
+                            )
+                            for msg in reversed(fcc_messages):
+                                response.messages.insert(0, msg)
                         response.usage_details = aggregated_usage
                         return _clear_internal_conversation_id(response)
                     total_function_calls += result.get("function_call_count", 0)
