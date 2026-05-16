@@ -688,14 +688,21 @@ internal sealed class FunctionCallInfo
     public required string Id { get; init; }
 
     /// <summary>
-    /// Gets or sets the function name.
+    /// Gets or sets the function call name.
     /// </summary>
     [JsonPropertyName("name")]
     public required string Name { get; init; }
 
     /// <summary>
-    /// Gets or sets the function arguments.
+    /// Gets or sets the function call arguments.
     /// </summary>
     [JsonPropertyName("arguments")]
     public required JsonElement Arguments { get; init; }
+
+    /// <summary>
+    /// Gets or sets the MCP server label. Present only for MCP tool calls.
+    /// </summary>
+    [JsonPropertyName("server_label")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ServerLabel { get; init; }
 }

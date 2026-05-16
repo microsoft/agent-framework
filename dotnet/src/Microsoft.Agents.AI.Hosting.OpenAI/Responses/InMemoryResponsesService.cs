@@ -435,7 +435,11 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
                     order: SortOrder.Ascending,
                     cancellationToken: linkedCts.Token).ConfigureAwait(false);
 
-                var history = ItemResourceConversions.ToChatMessages(itemsResult.Data);
+                // Extract approval response IDs from the current request input so that
+                // pending approval requests in stored history are not treated as orphaned.
+                var incomingApprovalResponseIds = GetIncomingApprovalResponseIds(request);
+
+                var history = ItemResourceConversions.ToChatMessages(itemsResult.Data, incomingApprovalResponseIds);
                 if (history.Count > 0)
                 {
                     conversationHistory = history;
@@ -551,6 +555,34 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         }
 
         return itemResources;
+    }
+
+    /// <summary>
+    /// Extracts approval response request IDs from the current request input.
+    /// Used to distinguish pending approval requests (awaiting response in this request)
+    /// from orphaned ones (user refreshed before approving).
+    /// </summary>
+    private static HashSet<string>? GetIncomingApprovalResponseIds(CreateResponse request)
+    {
+        HashSet<string>? ids = null;
+        foreach (var inputMessage in request.Input.GetInputMessages())
+        {
+            if (inputMessage.Content is not { IsContents: true, Contents: { } contents })
+            {
+                continue;
+            }
+
+            foreach (var content in contents)
+            {
+                if (content is ItemContentFunctionApprovalResponse approval)
+                {
+                    ids ??= [];
+                    ids.Add(approval.RequestId);
+                }
+            }
+        }
+
+        return ids;
     }
 
     public void Dispose()
