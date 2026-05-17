@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "AgentWithContentUnderstanding_Step08_DevUI_FileSearchFoundry": {
+      "commandName": "Project",
+      "launchUrl": "devui",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:50524;http://localhost:50525"
+    }
+  }
+}

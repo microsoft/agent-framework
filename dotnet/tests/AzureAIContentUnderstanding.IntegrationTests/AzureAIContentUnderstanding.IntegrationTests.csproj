@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <TargetFrameworks>net10.0</TargetFrameworks>
     <NoWarn>$(NoWarn);CS8793</NoWarn>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
     <InjectSharedIntegrationTestAzureCredentialsCode>True</InjectSharedIntegrationTestAzureCredentialsCode>
@@ -8,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.AzureAI.ContentUnderstanding\Microsoft.Agents.AI.AzureAI.ContentUnderstanding.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
   </ItemGroup>
 
   <ItemGroup>

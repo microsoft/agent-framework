@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "AgentWithContentUnderstanding_Step06_DevUI_MultimodalAgent": {
+      "commandName": "Project",
+      "launchUrl": "devui",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:50520;http://localhost:50521"
+    }
+  }
+}

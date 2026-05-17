@@ -3,11 +3,13 @@
   <PropertyGroup>
     <VersionSuffix>preview</VersionSuffix>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- Scaffolding-only suppression: RT0002 (unused ProjectReference) and RT0003 (unused PackageReference)
-         fire because no source code uses these references yet. Remove these codes from NoWarn in Phase 5
-         once ContentUnderstandingContextProvider consumes Microsoft.Agents.AI, Microsoft.Extensions.AI,
-         Azure.AI.ContentUnderstanding, Azure.AI.Projects, and OpenAI. -->
-    <NoWarn>$(NoWarn);RT0002;RT0003</NoWarn>
+    <!-- IsExternalInit polyfill so 'init' accessors compile against net472 too. -->
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+    <!-- RT0002 false-positive: AIContextProvider / AIContext / InvokingContext / InvokedContext /
+         AgentSession / ProviderSessionState<> are consumed by ContentUnderstandingContextProvider
+         but RT0002's source scan misses them (likely because the using directive resolves through
+         Microsoft.Extensions.AI re-exports). The ProjectReference is required. -->
+    <NoWarn>$(NoWarn);RT0002</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -21,6 +23,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.AzureAI.ContentUnderstanding.UnitTests" />
   </ItemGroup>
 
   <PropertyGroup>

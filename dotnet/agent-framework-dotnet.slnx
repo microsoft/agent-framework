@@ -184,6 +184,17 @@
     <Project Path="samples/02-agents/AgentWithCodeAct/AgentWithCodeAct_Step02_ToolEnabled/AgentWithCodeAct_Step02_ToolEnabled.csproj" />
     <Project Path="samples/02-agents/AgentWithCodeAct/AgentWithCodeAct_Step03_ManualWiring/AgentWithCodeAct_Step03_ManualWiring.csproj" />
   </Folder>
+  <Folder Name="/Samples/02-agents/AgentWithContentUnderstanding/">
+    <File Path="samples/02-agents/AgentWithContentUnderstanding/README.md" />
+    <Project Path="samples/02-agents/AgentWithContentUnderstanding/AgentWithContentUnderstanding_Step01_DocumentQA/AgentWithContentUnderstanding_Step01_DocumentQA.csproj" />
+    <Project Path="samples/02-agents/AgentWithContentUnderstanding/AgentWithContentUnderstanding_Step02_MultiTurnSession/AgentWithContentUnderstanding_Step02_MultiTurnSession.csproj" />
+    <Project Path="samples/02-agents/AgentWithContentUnderstanding/AgentWithContentUnderstanding_Step03_MultimodalChat/AgentWithContentUnderstanding_Step03_MultimodalChat.csproj" />
+    <Project Path="samples/02-agents/AgentWithContentUnderstanding/AgentWithContentUnderstanding_Step04_InvoiceProcessing/AgentWithContentUnderstanding_Step04_InvoiceProcessing.csproj" />
+    <Project Path="samples/02-agents/AgentWithContentUnderstanding/AgentWithContentUnderstanding_Step05_LargeDocFileSearch/AgentWithContentUnderstanding_Step05_LargeDocFileSearch.csproj" />
+    <Project Path="samples/02-agents/AgentWithContentUnderstanding/AgentWithContentUnderstanding_Step06_DevUI_MultimodalAgent/AgentWithContentUnderstanding_Step06_DevUI_MultimodalAgent.csproj" />
+    <Project Path="samples/02-agents/AgentWithContentUnderstanding/AgentWithContentUnderstanding_Step07_DevUI_FileSearchAzureOpenAI/AgentWithContentUnderstanding_Step07_DevUI_FileSearchAzureOpenAI.csproj" />
+    <Project Path="samples/02-agents/AgentWithContentUnderstanding/AgentWithContentUnderstanding_Step08_DevUI_FileSearchFoundry/AgentWithContentUnderstanding_Step08_DevUI_FileSearchFoundry.csproj" />
+  </Folder>
   <Folder Name="/Samples/02-agents/AgentWithMemory/">
     <File Path="samples/02-agents/AgentWithMemory/README.md" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />

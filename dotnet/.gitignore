@@ -410,3 +410,5 @@ FodyWeavers.xsd
 
 # Pre-published output for Docker builds
 out/
+# Any directory named _local_only is for local temp files — never committed
+**/_local_only/
