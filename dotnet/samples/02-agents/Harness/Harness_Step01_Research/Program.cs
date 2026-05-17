@@ -163,12 +163,14 @@ await HarnessConsole.RunAgentAsync(
     userPrompt: "Enter a research topic to get started.",
     new HarnessConsoleOptions
     {
-        Observers = HarnessConsoleOptions.BuildObserversWithPlanning(
-            agent,
-            planModeName: "plan",
-            executionModeName: "execute",
-            maxContextWindowTokens: MaxContextWindowTokens,
-            maxOutputTokens: MaxOutputTokens,
-            toolFormatters: [new DownloadUriToolFormatter(), .. ToolCallFormatter.BuildDefaultToolFormatters()]),
+        Observers = [
+            new OpenAIResponsesWebSearchDisplayObserver(),
+            .. HarnessConsoleOptions.BuildObserversWithPlanning(
+                agent,
+                planModeName: "plan",
+                executionModeName: "execute",
+                maxContextWindowTokens: MaxContextWindowTokens,
+                maxOutputTokens: MaxOutputTokens,
+                toolFormatters: [new DownloadUriToolFormatter(), .. ToolCallFormatter.BuildDefaultToolFormatters()])],
         CommandHandlers = HarnessConsoleOptions.BuildDefaultCommandHandlers(agent),
     });
