@@ -1757,9 +1757,17 @@ class Message(SerializationMixin):
         """Returns the text content of the message.
 
         Remarks:
-            This property concatenates the text of all TextContent objects in Content.
+            Concatenates the text of every ``TextContent`` in :attr:`contents`
+            without inserting any separator. Whatever spacing or punctuation
+            the model produced is already inside the chunks, so the join must
+            not add to it — inserting a space would inject whitespace mid-token
+            (a path like ``"report_lines/sofp.json"`` becomes
+            ``"re port_ lines/sof p.jso n"``) and corrupts structured JSON
+            output downstream. This also matches the separator-free behaviour
+            of ``_coalesce_text_content`` (via ``Content.__add__``), which is
+            applied to streamed responses by ``_finalize_response``.
         """
-        return " ".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
+        return "".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
 
 AgentRunInputs = str | Content | Message | Sequence[str | Content | Message]

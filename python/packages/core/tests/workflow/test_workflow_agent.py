@@ -541,7 +541,10 @@ class TestWorkflowAgent:
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 3
         texts = [message.text for message in result.messages]
-        assert texts == ["first message", "second message", "third fourth"]
+        # Non-streaming path keeps the two TextContent blocks separate; Message.text
+        # concatenates them without inserting a separator (matching the streaming
+        # path above where coalescing produces the same "thirdfourth").
+        assert texts == ["first message", "second message", "thirdfourth"]
 
     async def test_session_conversation_history_included_in_workflow_run(self) -> None:
         """Test that messages provided to agent.run() are passed through to the workflow."""
