@@ -128,6 +128,7 @@ public class HarnessConsoleOptions
             new ExitCommandHandler(),
             new TodoCommandHandler(todoProvider),
             new ModeCommandHandler(modeProvider, modeColors ?? DefaultModeColors),
+            new SessionCommandHandler(agent),
         ];
     }
 }

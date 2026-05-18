@@ -19,14 +19,14 @@ namespace Harness.Shared.Console;
 public sealed class HarnessAgentRunner : IDisposable
 {
     private readonly AIAgent _agent;
-    private readonly AgentSession _session;
     private readonly AgentModeProvider? _modeProvider;
     private readonly MessageInjectingChatClient? _messageInjector;
     private readonly IReadOnlyList<CommandHandler> _commandHandlers;
     private readonly IReadOnlyList<ConsoleObserver> _observers;
     private readonly IUXStateDriver _ux;
-
     private readonly SemaphoreSlim _inputGate = new(1, 1);
+
+    private AgentSession _session;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HarnessAgentRunner"/> class.
@@ -61,6 +61,25 @@ public sealed class HarnessAgentRunner : IDisposable
     /// <c>commandHandlers</c>.
     /// </summary>
     public string HelpText { get; }
+
+    /// <summary>
+    /// Replaces the current session with the specified session. Used by the UX driver
+    /// when importing a serialized session. Acquires the input gate to ensure no
+    /// concurrent agent turn is reading the session.
+    /// </summary>
+    /// <param name="newSession">The new session to use.</param>
+    internal async Task ReplaceSessionAsync(AgentSession newSession)
+    {
+        await this._inputGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            this._session = newSession;
+        }
+        finally
+        {
+            this._inputGate.Release();
+        }
+    }
 
     /// <inheritdoc/>
     public void Dispose() => this._inputGate.Dispose();

@@ -36,9 +36,13 @@ public sealed class SwitchBuilder
         Throw.IfNull(executors);
 
         HashSet<int> indicies = [];
+        int executorIndex = 0;
 
         foreach (ExecutorBinding executor in executors)
         {
+            // Explicit name: null element inside the collection argument.
+            Throw.IfNull(executor, $"{nameof(executors)}[{executorIndex++}]");
+
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
             {
                 index = this._executors.Count;
@@ -64,8 +68,13 @@ public sealed class SwitchBuilder
     {
         Throw.IfNull(executors);
 
+        int executorIndex = 0;
+
         foreach (ExecutorBinding executor in executors)
         {
+            // Explicit name: null element inside the collection argument.
+            Throw.IfNull(executor, $"{nameof(executors)}[{executorIndex++}]");
+
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
             {
                 index = this._executors.Count;

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Harness.ConsoleReactiveComponents;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace Harness.Shared.Console;
@@ -16,6 +17,7 @@ internal sealed class HarnessConsoleUXStateDriver : IUXStateDriver
     private readonly Func<HarnessAppComponentState> _getState;
     private readonly Action<HarnessAppComponentState> _setState;
     private readonly Action _requestShutdown;
+    private readonly Func<AgentSession, Task> _replaceSession;
     private readonly IReadOnlyDictionary<string, ConsoleColor>? _modeColors;
     private readonly List<string> _outputItems = [];
     private readonly object _stateLock = new();
@@ -32,16 +34,19 @@ internal sealed class HarnessConsoleUXStateDriver : IUXStateDriver
     /// <param name="getState">Returns the component's current state.</param>
     /// <param name="setState">Replaces the component's state and triggers a re-render.</param>
     /// <param name="requestShutdown">Callback invoked when a command handler requests application shutdown.</param>
+    /// <param name="replaceSession">Callback invoked to replace the current agent session (e.g., on import).</param>
     /// <param name="modeColors">Optional mapping of mode names to console colors.</param>
     public HarnessConsoleUXStateDriver(
         Func<HarnessAppComponentState> getState,
         Action<HarnessAppComponentState> setState,
         Action requestShutdown,
+        Func<AgentSession, Task> replaceSession,
         IReadOnlyDictionary<string, ConsoleColor>? modeColors = null)
     {
         this._getState = getState;
         this._setState = setState;
         this._requestShutdown = requestShutdown;
+        this._replaceSession = replaceSession;
         this._modeColors = modeColors;
         this._currentMode = getState().ModeText;
     }
@@ -405,4 +410,7 @@ internal sealed class HarnessConsoleUXStateDriver : IUXStateDriver
 
     /// <inheritdoc/>
     public void RequestShutdown() => this._requestShutdown();
+
+    /// <inheritdoc/>
+    public Task ReplaceSessionAsync(AgentSession newSession) => this._replaceSession(newSession);
 }

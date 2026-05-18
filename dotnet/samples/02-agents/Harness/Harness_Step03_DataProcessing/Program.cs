@@ -1,10 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use a HarnessAgent with the FileAccessProvider
+// This sample demonstrates how to use a HarnessAgent with the default FileAccessProvider
 // to give an agent access to a folder of CSV data files. The agent can read, analyze,
 // and extract information from the data, then write results back as new files.
 //
-// The sample includes a pre-populated `data/` folder with sales transaction data.
+// The sample includes a pre-populated `working/` folder with sales transaction data.
+// The HarnessAgent's default FileAccessProvider uses `{cwd}/working` as its working directory,
+// which matches this sample's folder layout.
 // Ask the agent to analyze the data, produce summaries, or create new output files.
 //
 // Special commands:
@@ -14,22 +16,21 @@
 #pragma warning disable MAAI001  // Suppress experimental API warnings for Agents AI experiments.
 
 using System.ClientModel.Primitives;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Harness.Shared.Console;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
-using OpenAI.Responses;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_OPENAI_ENDPOINT is not set.");
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
 
 const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
+const string TracingSourceName = "Harness.DataProcessing";
 
-// Point the file store at the data/ folder that ships with the sample.
-var dataFolder = Path.Combine(AppContext.BaseDirectory, "data");
-var fileStore = new FileSystemAgentFileStore(dataFolder);
+// Set up OpenTelemetry tracing that writes spans to a text file.
+using var tracerProvider = HarnessTracing.CreateFileTracerProvider(TracingSourceName);
 
 var instructions =
     """
@@ -56,25 +57,27 @@ var instructions =
     - Always explain what you learned and what you are going to do next between tool calls, so the user can follow along with your thought process.
     """;
 
-// Create the chat client from the OpenAI provider.
+// Create the agent using AsHarnessAgent. The FileAccessStore is explicitly set to the
+// sample's working/ folder (copied to the output directory) so it works regardless of cwd.
+// Unused features are disabled.
 AIAgent agent =
-    new OpenAIClient(
-        new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
-        new OpenAIClientOptions()
-        {
-            Endpoint = new Uri(endpoint),
-            RetryPolicy = new ClientRetryPolicy(3)
-        })
+    new AIProjectClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
+        new AIProjectClientOptions { RetryPolicy = new ClientRetryPolicy(3) })
+    .GetProjectOpenAIClient()
     .GetResponsesClient()
-    .AsIChatClientWithStoredOutputDisabled(deploymentName)
+    .AsIChatClient(deploymentName)
     .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
     {
         Name = "DataAnalyst",
         Description = "A data analyst assistant that reads, analyzes, and processes data files.",
-        AIContextProviders =
-        [
-            new FileAccessProvider(fileStore),
-        ],
+        OpenTelemetrySourceName = TracingSourceName,
+        FileAccessStore = new FileSystemAgentFileStore(Path.Combine(AppContext.BaseDirectory, "working")),
+        DisableTodoProvider = true,
+        DisableAgentModeProvider = true,
+        DisableFileMemory = true,   // If enabled, this would allow the agent to store memories as files in a directory associated with the current session
+        DisableWebSearch = true,
         ChatOptions = new ChatOptions
         {
             Instructions = instructions,

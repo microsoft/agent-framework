@@ -1,0 +1,38 @@
+name: agent-framework-agent-azure-search-rag-responses
+description: >
+  An Agent Framework agent with Retrieval Augmented Generation (RAG) capabilities
+  backed by Azure AI Search. Uses AzureAISearchContextProvider to ground answers
+  in product documentation indexed in Azure AI Search before each model invocation.
+metadata:
+  tags:
+    - Agent Framework
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - RAG
+    - Azure AI Search
+template:
+  name: agent-framework-agent-azure-search-rag-responses
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 1.0.0
+  environment_variables:
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
+    - name: AZURE_SEARCH_ENDPOINT
+      value: "{{AZURE_SEARCH_ENDPOINT}}"
+    - name: AZURE_SEARCH_INDEX_NAME
+      value: "{{AZURE_SEARCH_INDEX_NAME}}"
+parameters:
+  properties:
+    - name: AZURE_SEARCH_ENDPOINT
+      secret: false
+      description: The endpoint of the Azure AI Search service to use for RAG (e.g., https://my-search-service.search.windows.net)
+    - name: AZURE_SEARCH_INDEX_NAME
+      secret: false
+      description: The name of the Azure AI Search index to use for RAG (e.g., contoso-outdoors)
+resources:
+  - kind: model
+    id: gpt-4.1-mini
+    name: AZURE_AI_MODEL_DEPLOYMENT_NAME

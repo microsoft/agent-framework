@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace Harness.Shared.Console;
@@ -117,4 +118,11 @@ public interface IUXStateDriver
     /// on the owning component.
     /// </summary>
     void RequestShutdown();
+
+    /// <summary>
+    /// Replaces the current agent session with the specified session (e.g., after importing
+    /// a serialized session from a file).
+    /// </summary>
+    /// <param name="newSession">The new session to use.</param>
+    Task ReplaceSessionAsync(AgentSession newSession);
 }

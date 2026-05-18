@@ -63,6 +63,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             getState: () => this.State!,
             setState: s => this.SetState(s),
             requestShutdown: () => this._shutdownTcs.TrySetResult(true),
+            replaceSession: s => this.Runner!.ReplaceSessionAsync(s),
             modeColors: modeColors);
 
         this.Runner = runnerFactory(this._uxDriver);

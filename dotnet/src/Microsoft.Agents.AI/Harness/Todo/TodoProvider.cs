@@ -48,13 +48,13 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
         You have access to a todo list for tracking work items.
         While planning, make sure that you break down complex tasks into manageable todo items and add them to the list.
         Ask questions from the user where clarification is needed to create effective todos.
-        If the user provides feedback on your plan, adjust your todos accordingly by adding new items or removing irrelevant ones.
+        If the user provides feedback on your plan, adjust your todos accordingly by adding new items or removing irrelevant/old ones.
         During execution, use the todo list to keep track of what needs to be done, mark items as complete when finished, and remove any items that are no longer needed.
-        When a user changes the topic or changes their mind, ensure that you update the todo list accordingly by removing irrelevant items or adding new ones as needed.
+        When a user changes the topic or changes their mind, ensure that you update the todo list accordingly by removing irrelevant/old items or adding new ones as needed.
         
         Use these tools to manage your tasks:
         - Use TodoList_Add to break down complex work into trackable items (supports adding one or many at once).
-        - Use TodoList_Complete to mark items as done when finished (supports one or many at once).
+        - Use TodoList_Complete to mark items as done when finished (supports one or many at once). Include a reason describing how the items were completed.
         - Use TodoList_GetRemaining to check what work is still pending.
         - Use TodoList_GetAll to review the full list including completed items.
         - Use TodoList_Remove to remove items that are no longer needed (supports one or many at once).
@@ -235,14 +235,14 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
                 }),
 
             AIFunctionFactory.Create(
-                async (List<int> ids) =>
+                async (List<TodoCompleteInput> items) =>
                 {
                     SemaphoreSlim sessionLock = this.GetSessionLock(session);
                     await sessionLock.WaitAsync().ConfigureAwait(false);
                     try
                     {
                         TodoState state = this._sessionState.GetOrInitializeState(session);
-                        var idSet = new HashSet<int>(ids);
+                        var idSet = new HashSet<int>(items.Select(i => i.Id));
                         int completed = 0;
                         foreach (TodoItem item in state.Items)
                         {
@@ -268,7 +268,7 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
                 new AIFunctionFactoryOptions
                 {
                     Name = "TodoList_Complete",
-                    Description = "Mark one or more todo items as complete by their IDs. Returns the number of items that were found and marked complete.",
+                    Description = "Mark one or more todo items as complete. Each entry has an ID and a reason describing how/why the item was completed. Returns the number of items that were found and marked complete.",
                     SerializerOptions = serializerOptions,
                 }),
 
