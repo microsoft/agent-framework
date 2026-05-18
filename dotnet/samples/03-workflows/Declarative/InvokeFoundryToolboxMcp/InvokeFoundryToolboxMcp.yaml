@@ -1,0 +1,87 @@
+﻿#
+# This workflow demonstrates invoking MCP tools through a Foundry toolbox MCP proxy.
+#
+# The toolbox is provisioned with TWO different tool types:
+#   1. A Foundry built-in web_search tool
+#   2. A Microsoft Learn MCP server (microsoft_docs)
+# Both are surfaced through the same MCP-compatible toolbox endpoint.
+#
+# The workflow:
+# 1. Accepts a documentation/web search query as input
+# 2. Lists the tools exposed by the Foundry toolbox using reserved toolName: tools/list
+# 3. Invokes the microsoft_docs_search MCP tool
+# 4. Invokes the built-in web_search tool against the same toolbox endpoint
+# 5. Uses an agent to summarize and combine both result sets
+#
+# Example input:
+# How do I use Azure OpenAI with my data?
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_invoke_foundry_toolbox_mcp
+  actions:
+
+    # Set the search query from user input.
+    - kind: SetVariable
+      id: set_search_query
+      variable: Local.SearchQuery
+      value: =System.LastMessage.Text
+
+    # List tools exposed by the Foundry toolbox MCP proxy.
+    - kind: InvokeMcpTool
+      id: list_toolbox_tools
+      serverUrl: =Env.FOUNDRY_TOOLBOX_MCP_SERVER_URL
+      serverLabel: foundry_toolbox
+      toolName: tools/list
+      conversationId: =System.ConversationId
+      headers:
+        Foundry-Features: Toolboxes=V1Preview
+      output:
+        autoSend: true
+        result: Local.ToolboxTools
+
+    # Invoke a specific tool exposed through the toolbox and add the result to the conversation.
+    - kind: InvokeMcpTool
+      id: search_docs_with_toolbox
+      serverUrl: =Env.FOUNDRY_TOOLBOX_MCP_SERVER_URL
+      serverLabel: foundry_toolbox
+      toolName: =Env.FOUNDRY_TOOLBOX_DOCS_SERVER_LABEL & "___microsoft_docs_search"
+      conversationId: =System.ConversationId
+      headers:
+        Foundry-Features: Toolboxes=V1Preview
+      arguments:
+        query: =Local.SearchQuery
+      output:
+        autoSend: true
+        result: Local.SearchResult
+
+    # Invoke the web_search built-in tool through the same toolbox proxy. The toolbox surfaces
+    # built-in Foundry tools (like web_search) alongside MCP tools through one MCP-compatible
+    # endpoint. Note that web_search expects argument 'search_query' (not 'query').
+    - kind: InvokeMcpTool
+      id: search_web_with_toolbox
+      serverUrl: =Env.FOUNDRY_TOOLBOX_MCP_SERVER_URL
+      serverLabel: foundry_toolbox
+      toolName: =Env.FOUNDRY_TOOLBOX_WEB_SEARCH_TOOL_NAME
+      conversationId: =System.ConversationId
+      headers:
+        Foundry-Features: Toolboxes=V1Preview
+      arguments:
+        search_query: =Local.SearchQuery
+      output:
+        autoSend: true
+        result: Local.WebSearchResult
+
+    # Use the agent to summarize what happened and answer from the toolbox result.
+    - kind: InvokeAzureAgent
+      id: summarize_toolbox_result
+      agent:
+        name: FoundryToolboxMcpAgent
+      conversationId: =System.ConversationId
+      input:
+        messages: =UserMessage("Combine the Microsoft Learn docs results and the Foundry web search results in the conversation to answer the query " & Local.SearchQuery)
+      output:
+        autoSend: true
+        messages: Local.Summary

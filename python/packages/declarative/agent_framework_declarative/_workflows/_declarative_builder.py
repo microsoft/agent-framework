@@ -41,8 +41,10 @@ from ._executors_control_flow import (
 )
 from ._executors_external_input import EXTERNAL_INPUT_EXECUTORS
 from ._executors_http import HTTP_ACTION_EXECUTORS, HttpRequestActionExecutor
+from ._executors_mcp import MCP_ACTION_EXECUTORS, InvokeMcpToolActionExecutor
 from ._executors_tools import TOOL_ACTION_EXECUTORS, InvokeFunctionToolExecutor
 from ._http_handler import HttpRequestHandler
+from ._mcp_handler import MCPToolHandler
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,7 @@ ALL_ACTION_EXECUTORS = {
     **EXTERNAL_INPUT_EXECUTORS,
     **TOOL_ACTION_EXECUTORS,
     **HTTP_ACTION_EXECUTORS,
+    **MCP_ACTION_EXECUTORS,
 }
 
 # Action kinds that terminate control flow (no fall-through to successor)
@@ -90,6 +93,7 @@ ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
     "EmitEvent": ["event"],
     "InvokeFunctionTool": ["functionName"],
     "HttpRequestAction": ["url"],
+    "InvokeMcpTool": ["serverUrl", "toolName"],
 }
 
 # Alternate field names that satisfy required field requirements
@@ -135,6 +139,7 @@ class DeclarativeWorkflowBuilder:
         validate: bool = True,
         max_iterations: int | None = None,
         http_request_handler: HttpRequestHandler | None = None,
+        mcp_tool_handler: MCPToolHandler | None = None,
     ):
         """Initialize the builder.
 
@@ -150,6 +155,9 @@ class DeclarativeWorkflowBuilder:
             http_request_handler: Handler used to dispatch HttpRequestAction requests.
                 Must be supplied when the workflow contains any HttpRequestAction;
                 otherwise build raises ``DeclarativeWorkflowError``.
+            mcp_tool_handler: Handler used to dispatch InvokeMcpTool calls.
+                Must be supplied when the workflow contains any InvokeMcpTool;
+                otherwise build raises ``DeclarativeWorkflowError``.
         """
         self._yaml_def = yaml_definition
         self._workflow_id = workflow_id or yaml_definition.get("name", "declarative_workflow")
@@ -162,6 +170,7 @@ class DeclarativeWorkflowBuilder:
         self._validate = validate
         self._seen_explicit_ids: set[str] = set()  # Track explicit IDs for duplicate detection
         self._http_request_handler = http_request_handler
+        self._mcp_tool_handler = mcp_tool_handler
         # Resolve max_iterations: explicit arg > YAML maxTurns > core default
         resolved = max_iterations if max_iterations is not None else yaml_definition.get("maxTurns")
         if resolved is not None and (not isinstance(resolved, int) or resolved <= 0):
@@ -480,6 +489,19 @@ class DeclarativeWorkflowBuilder:
                 action_def,
                 id=action_id,
                 http_request_handler=self._http_request_handler,
+            )
+        elif kind == "InvokeMcpTool":
+            if self._mcp_tool_handler is None:
+                raise DeclarativeWorkflowError(
+                    f"Workflow defines InvokeMcpTool '{action_id}' but no "
+                    "mcp_tool_handler was supplied to WorkflowFactory. Pass "
+                    "mcp_tool_handler=DefaultMCPToolHandler() (or a custom "
+                    "implementation) to enable MCP tool invocations."
+                )
+            executor = InvokeMcpToolActionExecutor(
+                action_def,
+                id=action_id,
+                mcp_tool_handler=self._mcp_tool_handler,
             )
         else:
             executor = executor_class(action_def, id=action_id)

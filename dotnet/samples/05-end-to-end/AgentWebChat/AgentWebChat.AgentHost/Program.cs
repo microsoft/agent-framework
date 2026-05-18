@@ -163,10 +163,22 @@ app.MapA2AHttpJson(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves");
 app.MapDevUI();
 
 app.MapOpenAIResponses();
+app.MapOpenAIResponses(pirateAgentBuilder);
+app.MapOpenAIResponses(knightsKnavesAgentBuilder);
+app.MapOpenAIResponses(chemistryAgent);
+app.MapOpenAIResponses(mathsAgent);
+app.MapOpenAIResponses(literatureAgent);
+app.MapOpenAIResponses(scienceSequentialWorkflow);
+app.MapOpenAIResponses(scienceConcurrentWorkflow);
 app.MapOpenAIConversations();
 
 app.MapOpenAIChatCompletions(pirateAgentBuilder);
 app.MapOpenAIChatCompletions(knightsKnavesAgentBuilder);
+app.MapOpenAIChatCompletions(chemistryAgent);
+app.MapOpenAIChatCompletions(mathsAgent);
+app.MapOpenAIChatCompletions(literatureAgent);
+app.MapOpenAIChatCompletions(scienceSequentialWorkflow);
+app.MapOpenAIChatCompletions(scienceConcurrentWorkflow);
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

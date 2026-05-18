@@ -576,17 +576,37 @@ export function WorkflowView({
             openAIEvent.type === "response.workflow_event.complete" // Fallback variant
           ) {
             setOpenAIEvents((prev) => {
-              // Generate unique timestamp for each event
+              // Derive a server-side timestamp from the event, in priority order:
+              //   1. top-level created_at  (custom output-item events)
+              //   2. response.created_at   (response.created / lifecycle events)
+              //   3. data.timestamp        (response.workflow_event.completed ISO string)
+              // Fall back to a synthesized timestamp only when none is present.
+              const anyEvent = openAIEvent as Record<string, unknown>;
+              const eventTimestamp: number | undefined =
+                typeof anyEvent["created_at"] === "number" && anyEvent["created_at"]
+                  ? (anyEvent["created_at"] as number)
+                  : typeof (anyEvent["response"] as Record<string, unknown> | undefined)?.["created_at"] === "number"
+                  ? ((anyEvent["response"] as Record<string, number>)["created_at"] as number)
+                  : (() => {
+                      const ts = (anyEvent["data"] as Record<string, unknown> | undefined)?.["timestamp"];
+                      if (typeof ts !== "string") return undefined;
+                      const ms = new Date(ts).getTime();
+                      // Guard against NaN: Python isoformat() emits microseconds without Z,
+                      // which some JS engines cannot parse. Number.isFinite rejects NaN.
+                      return Number.isFinite(ms) ? ms / 1000 : undefined;
+                    })();
               const baseTimestamp = Math.floor(Date.now() / 1000);
               const lastTimestamp =
                 prev.length > 0
                   ? (prev[prev.length - 1] as { _uiTimestamp?: number })
                       ._uiTimestamp || 0
                   : 0;
-              const uniqueTimestamp = Math.max(
-                baseTimestamp,
-                lastTimestamp + 1
-              );
+              // When we have a real server timestamp clamp to lastTimestamp (no +1s gap).
+              // When synthesizing, keep the +1 s gap so ordering is always monotonic.
+              const uniqueTimestamp =
+                eventTimestamp !== undefined
+                  ? Math.max(eventTimestamp, lastTimestamp)
+                  : Math.max(baseTimestamp, lastTimestamp + 1);
 
               return [
                 ...prev,
@@ -992,14 +1012,37 @@ export function WorkflowView({
           openAIEvent.type === "response.workflow_event.completed"
         ) {
           setOpenAIEvents((prev) => {
-            // Generate unique timestamp for each event
+            // Derive a server-side timestamp from the event, in priority order:
+            //   1. top-level created_at  (custom output-item events)
+            //   2. response.created_at   (response.created / lifecycle events)
+            //   3. data.timestamp        (response.workflow_event.completed ISO string)
+            // Fall back to a synthesized timestamp only when none is present.
+            const anyEvent = openAIEvent as Record<string, unknown>;
+            const eventTimestamp: number | undefined =
+              typeof anyEvent["created_at"] === "number" && anyEvent["created_at"]
+                ? (anyEvent["created_at"] as number)
+                : typeof (anyEvent["response"] as Record<string, unknown> | undefined)?.["created_at"] === "number"
+                ? ((anyEvent["response"] as Record<string, number>)["created_at"] as number)
+                : (() => {
+                    const ts = (anyEvent["data"] as Record<string, unknown> | undefined)?.["timestamp"];
+                    if (typeof ts !== "string") return undefined;
+                    const ms = new Date(ts).getTime();
+                    // Guard against NaN: Python isoformat() emits microseconds without Z,
+                    // which some JS engines cannot parse. Number.isFinite rejects NaN.
+                    return Number.isFinite(ms) ? ms / 1000 : undefined;
+                  })();
             const baseTimestamp = Math.floor(Date.now() / 1000);
             const lastTimestamp =
               prev.length > 0
                 ? (prev[prev.length - 1] as { _uiTimestamp?: number })
                     ._uiTimestamp || 0
                 : 0;
-            const uniqueTimestamp = Math.max(baseTimestamp, lastTimestamp + 1);
+            // When we have a real server timestamp clamp to lastTimestamp (no +1s gap).
+            // When synthesizing, keep the +1 s gap so ordering is always monotonic.
+            const uniqueTimestamp =
+              eventTimestamp !== undefined
+                ? Math.max(eventTimestamp, lastTimestamp)
+                : Math.max(baseTimestamp, lastTimestamp + 1);
 
             return [
               ...prev,

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -288,6 +289,121 @@ public sealed class WorkflowEvaluationTests
         Assert.DoesNotContain("input-conversation", result.Keys);
         Assert.DoesNotContain("end-conversation", result.Keys);
         Assert.DoesNotContain("end", result.Keys);
+    }
+
+    // ---------------------------------------------------------------
+    // BuildOverallItem tests (expected output / ground truth)
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void BuildOverallItem_NoCompletedExecutorWithResponse_ReturnsNull()
+    {
+        // Arrange — no ExecutorCompletedEvent with usable response data and no AgentResponseEvent
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("agent-1", "query"),
+        };
+
+        // Act
+        var item = WorkflowEvaluationExtensions.BuildOverallItem(events, splitter: null, expectedOutput: null);
+
+        // Assert
+        Assert.Null(item);
+    }
+
+    [Fact]
+    public void BuildOverallItem_NoAgentResponseEvent_FallsBackToLastExecutorCompleted()
+    {
+        // Arrange — only ExecutorCompletedEvent (the default when EmitAgentResponseEvents is false)
+        var finalResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Paris"));
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("researcher", "What is the capital of France?"),
+            new ExecutorCompletedEvent("researcher", new AgentResponse(new ChatMessage(ChatRole.Assistant, "draft"))),
+            new ExecutorInvokedEvent("editor", "draft"),
+            new ExecutorCompletedEvent("editor", finalResponse),
+        };
+
+        // Act
+        var item = WorkflowEvaluationExtensions.BuildOverallItem(
+            events, splitter: null, expectedOutput: "Paris");
+
+        // Assert
+        Assert.NotNull(item);
+        Assert.Equal("What is the capital of France?", item.Query);
+        Assert.Equal("Paris", item.Response);
+        Assert.Equal("Paris", item.ExpectedOutput);
+    }
+
+    [Fact]
+    public void BuildOverallItem_WithFinalResponseAndExpectedOutput_StampsExpectedOutput()
+    {
+        // Arrange
+        var finalResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Ofrece 41 planes"));
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("agent-1", "How many plans does Netlife offer?"),
+            new ExecutorCompletedEvent("agent-1", finalResponse),
+            new AgentResponseEvent("agent-1", finalResponse),
+        };
+
+        // Act
+        var item = WorkflowEvaluationExtensions.BuildOverallItem(
+            events, splitter: null, expectedOutput: "Ofrece 41 planes");
+
+        // Assert
+        Assert.NotNull(item);
+        Assert.Equal("How many plans does Netlife offer?", item.Query);
+        Assert.Equal("Ofrece 41 planes", item.Response);
+        Assert.Equal("Ofrece 41 planes", item.ExpectedOutput);
+    }
+
+    [Fact]
+    public void BuildOverallItem_WithFinalResponseAndNoExpectedOutput_LeavesExpectedOutputNull()
+    {
+        // Arrange
+        var finalResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "answer"));
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("agent-1", "query"),
+            new ExecutorCompletedEvent("agent-1", finalResponse),
+            new AgentResponseEvent("agent-1", finalResponse),
+        };
+
+        // Act
+        var item = WorkflowEvaluationExtensions.BuildOverallItem(events, splitter: null, expectedOutput: null);
+
+        // Assert
+        Assert.NotNull(item);
+        Assert.Null(item.ExpectedOutput);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WithIncludeOverallButNoFinalResponse_ThrowsAsync()
+    {
+        // Arrange — build a workflow whose AIAgentHostExecutor is NOT bound with
+        // EmitAgentResponseEvents=true, so no AgentResponseEvent is emitted, and the
+        // ExecutorCompletedEvent for the host carries null Data. That is the scenario
+        // where BuildOverallItem returns null. When the caller asks for an overall
+        // evaluation (includeOverall: true), we should fail fast rather than silently
+        // returning empty results — regardless of whether expectedOutput was supplied.
+        var agent = new TestEchoAgent(name: "echo");
+        var workflow = AgentWorkflowBuilder.BuildSequential(agent);
+        var input = new List<ChatMessage> { new(ChatRole.User, "Hello") };
+
+        var evaluator = new LocalEvaluator(
+            FunctionEvaluator.Create("noop", (EvalItem _) => true));
+
+        await using var run = await InProcessExecution.RunAsync(workflow, input);
+
+        // Act + Assert — throws even without expectedOutput
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            run.EvaluateAsync(
+                evaluator,
+                includeOverall: true,
+                includePerAgent: false));
+
+        Assert.Contains("EmitAgentResponseEvents", ex.Message);
     }
 
     // ---------------------------------------------------------------

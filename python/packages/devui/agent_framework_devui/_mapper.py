@@ -1056,6 +1056,7 @@ class MessageMapper:
                         output_index=context["output_index"],
                         sequence_number=self._next_sequence(context),
                         item=executor_item,
+                        created_at=float(time.time()),
                     )
                 ]
 
@@ -1088,6 +1089,7 @@ class MessageMapper:
                         output_index=context.get("output_index", 0),
                         sequence_number=self._next_sequence(context),
                         item=executor_item,
+                        created_at=float(time.time()),
                     )
                 ]
 
@@ -1121,6 +1123,7 @@ class MessageMapper:
                         output_index=context.get("output_index", 0),
                         sequence_number=self._next_sequence(context),
                         item=executor_item,
+                        created_at=float(time.time()),
                     )
                 ]
 
@@ -1744,7 +1747,7 @@ class MessageMapper:
                 # Fallback to direct access if parse_arguments doesn't exist
                 arguments = getattr(content.function_call, "arguments", {})
 
-        return {
+        result = {
             "type": "response.function_approval.requested",
             "request_id": getattr(content, "id", "unknown"),
             "function_call": {
@@ -1756,6 +1759,17 @@ class MessageMapper:
             "output_index": context["output_index"],
             "sequence_number": self._next_sequence(context),
         }
+
+        # Include policy violation details if present (from security middleware)
+        additional_props = cast(dict[str, Any] | None, getattr(content, "additional_properties", None))
+        if additional_props and isinstance(additional_props, dict) and additional_props.get("policy_violation"):
+            result["policy_violation"] = {
+                "reason": additional_props.get("reason", "Policy violation detected"),
+                "violation_type": additional_props.get("violation_type"),
+                "context_label": additional_props.get("context_label"),
+            }
+
+        return result
 
     async def _map_approval_response_content(self, content: Any, context: dict[str, Any]) -> dict[str, Any]:
         """Map FunctionApprovalResponseContent to custom event."""

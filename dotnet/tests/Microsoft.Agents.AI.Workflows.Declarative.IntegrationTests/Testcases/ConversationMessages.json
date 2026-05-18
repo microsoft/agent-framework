@@ -11,6 +11,7 @@
     "min_action_count": 8,
     "min_message_count": 1,
     "min_response_count": 1,
+    "max_response_count": 4,
     "actions": {
       "start": [
         "conversation_create1",

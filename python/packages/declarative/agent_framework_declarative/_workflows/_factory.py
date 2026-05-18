@@ -29,6 +29,7 @@ from .._loader import AgentFactory
 from ._declarative_builder import DeclarativeWorkflowBuilder
 from ._errors import DeclarativeWorkflowError
 from ._http_handler import HttpRequestHandler
+from ._mcp_handler import MCPToolHandler
 
 logger = logging.getLogger("agent_framework.declarative")
 
@@ -91,6 +92,7 @@ class WorkflowFactory:
         checkpoint_storage: CheckpointStorage | None = None,
         max_iterations: int | None = None,
         http_request_handler: HttpRequestHandler | None = None,
+        mcp_tool_handler: MCPToolHandler | None = None,
     ) -> None:
         """Initialize the workflow factory.
 
@@ -110,6 +112,13 @@ class WorkflowFactory:
                 otherwise. Use :class:`agent_framework.declarative.DefaultHttpRequestHandler`
                 for a no-policy ``httpx``-based default, or supply your own implementation
                 to enforce SSRF guards, allowlisting, or auth resolution.
+            mcp_tool_handler: Optional handler used to dispatch MCP tool calls for
+                ``InvokeMcpTool``. Required if the workflow contains any
+                ``InvokeMcpTool``; build will fail with :class:`DeclarativeWorkflowError`
+                otherwise. Use :class:`agent_framework.declarative.DefaultMCPToolHandler`
+                for a default backed by :class:`agent_framework.MCPStreamableHTTPTool`,
+                or supply your own implementation to enforce SSRF guards, allowlisting,
+                or auth/connection resolution.
 
         Examples:
             .. code-block:: python
@@ -150,6 +159,7 @@ class WorkflowFactory:
         self._checkpoint_storage = checkpoint_storage
         self._max_iterations = max_iterations
         self._http_request_handler = http_request_handler
+        self._mcp_tool_handler = mcp_tool_handler
 
     def create_workflow_from_yaml_path(
         self,
@@ -394,6 +404,7 @@ class WorkflowFactory:
                 checkpoint_storage=self._checkpoint_storage,
                 max_iterations=self._max_iterations,
                 http_request_handler=self._http_request_handler,
+                mcp_tool_handler=self._mcp_tool_handler,
             )
             workflow = graph_builder.build()
         except ValueError as e:

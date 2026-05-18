@@ -356,8 +356,10 @@ export function ExecutionTimeline({
         const runNumber = (runCount.get(executorId) || 0) + 1;
         runCount.set(executorId, runNumber);
 
-        // Create synthetic item ID for fallback format (no real item.id from backend)
-        const syntheticItemId = `fallback_${executorId}_${uiTimestamp}`;
+        // Create synthetic item ID using the run counter for guaranteed uniqueness.
+        // Using uiTimestamp here caused collisions when the same executor ran
+        // twice within the same second (both fallback entries would share an ID).
+        const syntheticItemId = `fallback_${executorId}_run${runNumber}`;
 
         runs.push({
           executorId,

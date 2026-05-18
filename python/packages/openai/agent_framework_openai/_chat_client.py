@@ -204,6 +204,11 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
     """Configuration for reasoning models (gpt-5, o-series).
     See: https://platform.openai.com/docs/guides/reasoning"""
 
+    verbosity: Literal["low", "medium", "high"]
+    """Output verbosity for GPT-5 family models. Lower values yield shorter responses.
+    Translated to ``text.verbosity`` when sent to the Responses API.
+    See: https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools#1-verbosity-parameter"""
+
     safety_identifier: str
     """A stable identifier for detecting policy violations.
     Recommend hashing username/email to avoid sending identifying info."""
@@ -662,7 +667,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     response = await client.responses.retrieve(continuation_token["response_id"])
                 except Exception as ex:
                     self._handle_request_error(ex)
-                return self._parse_response_from_openai(response, options=validated_options)
+                chat_response = self._parse_response_from_openai(response, options=validated_options)
+                # Once the background response completes, drop the continuation_token from
+                # the caller's options dict. FunctionInvocationLayer reuses the same dict
+                # across tool-loop iterations, so leaving it in place makes the next iteration
+                # retrieve the same completed response again instead of POSTing tool results
+                # (issue #5394). Keep `background` so subsequent iterations still create
+                # background responses.
+                if chat_response.continuation_token is None and isinstance(options, dict):
+                    options.pop("continuation_token", None)
+                return chat_response
             client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
@@ -1322,6 +1336,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         response_format, text_config = self._prepare_response_and_text_format(
             response_format=response_format, text_config=text_config
         )
+        # The Responses API nests verbosity under ``text.verbosity``; surface it as a
+        # top-level option for parity with ``reasoning`` and translate here.
+        if (verbosity := run_options.pop("verbosity", None)) is not None:
+            text_config = dict(text_config) if text_config else {}
+            text_config["verbosity"] = verbosity
         if text_config:
             run_options["text"] = text_config
         if response_format:
@@ -1390,29 +1409,31 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         }
         additional_properties = message.additional_properties
         replays_local_storage = "_attribution" in additional_properties
-        uses_service_side_storage = request_uses_service_side_storage and not replays_local_storage
-        # Reasoning items are only valid in input when they directly preceded a function_call
-        # in the same response. Including a reasoning item that preceded a text response
-        # (i.e. no function_call in the same message) causes an API error:
-        # "reasoning was provided without its required following item."
-        #
-        # Local storage is stricter: response-scoped reasoning items (rs_*) cannot be replayed
-        # back to the service unless that message is using service-side storage.
-        # In that mode we omit reasoning items and rely on function call + tool output replay.
-        has_function_call = any(c.type == "function_call" for c in message.contents)
+        # Server-issued response item identities (function_call fc_*, reasoning rs_*, approval IDs,
+        # local-shell-call IDs) must not be re-sent inline when the request carries
+        # previous_response_id / conversation_id / conversation: the server already has them via
+        # the prior response and rejects duplicates with "Duplicate item found with id ...".
+        # function_result keeps its call_id and the server pairs it to the prior function_call via
+        # that key. See microsoft/agent-framework#3295. The strip is gated on the request-level
+        # flag, not a message-level one: HistoryProvider-attributed messages
+        # (replays_local_storage) still need stripping when the request also carries a continuation
+        # marker, since the server-stored items would otherwise duplicate the inline ones. Without
+        # storage, standalone reasoning items are invalid per the API ("reasoning was provided
+        # without its required following item"), so the reasoning branch always drops.
         for content in message.contents:
             match content.type:
                 case "text_reasoning":
-                    if not uses_service_side_storage or not has_function_call:
-                        continue  # reasoning not followed by a function_call is invalid in input
-                    reasoning = self._prepare_content_for_openai(
-                        message.role,
-                        content,
-                        replays_local_storage=replays_local_storage,
-                    )
-                    if reasoning:
-                        all_messages.append(reasoning)
+                    continue
                 case "function_result":
+                    if request_uses_service_side_storage:
+                        props = content.additional_properties or {}
+                        # Local-shell variant serializes as `local_shell_call` carrying a server-issued id;
+                        # plain function_call_output pairs by call_id and is safe under storage.
+                        if (
+                            props.get(OPENAI_SHELL_OUTPUT_TYPE_KEY) == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL
+                            and props.get(OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY)
+                        ):
+                            continue
                     new_args: dict[str, Any] = {}
                     new_args.update(
                         self._prepare_content_for_openai(
@@ -1424,6 +1445,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     if new_args:
                         all_messages.append(new_args)
                 case "function_call":
+                    if request_uses_service_side_storage:
+                        continue
                     function_call = self._prepare_content_for_openai(
                         message.role,
                         content,
@@ -1432,6 +1455,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     if function_call:
                         all_messages.append(function_call)
                 case "function_approval_response" | "function_approval_request":
+                    if request_uses_service_side_storage:
+                        continue
                     prepared = self._prepare_content_for_openai(
                         message.role,
                         content,
@@ -1444,6 +1469,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     # top-level mcp_call input item; the result side emits an
                     # internal marker that `_prepare_messages_for_openai`
                     # coalesces onto the matching call (or drops if unmatched).
+                    # The mcp_call item carries the model-emitted call_id as its
+                    # server-side `id`, so under continuation it would duplicate
+                    # the prior response's items (#3295). Drop the call here; the
+                    # orphan result is dropped by the coalesce step that follows.
+                    if request_uses_service_side_storage:
+                        continue
                     prepared_mcp = self._prepare_content_for_openai(
                         message.role,
                         content,

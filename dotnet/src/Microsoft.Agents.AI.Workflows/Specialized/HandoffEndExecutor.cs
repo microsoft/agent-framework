@@ -36,7 +36,7 @@ internal sealed class HandoffEndExecutor(bool returnToPrevious) : Executor(Execu
                     sharedState.PreviousAgentId = handoff.PreviousAgentId;
                 }
 
-                await context.YieldOutputAsync(sharedState.Conversation.CloneAllMessages(), cancellationToken).ConfigureAwait(false);
+                await context.YieldOutputAsync(sharedState.Conversation.CloneHistory(), cancellationToken).ConfigureAwait(false);
 
                 return sharedState;
             }, context, cancellationToken).ConfigureAwait(false);

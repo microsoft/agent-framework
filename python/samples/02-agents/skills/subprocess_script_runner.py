@@ -17,37 +17,46 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from agent_framework import Skill, SkillScript
+from agent_framework import FileSkill, FileSkillScript
 
 
-def subprocess_script_runner(skill: Skill, script: SkillScript, args: dict[str, Any] | None = None) -> str:
+def subprocess_script_runner(
+    skill: FileSkill, script: FileSkillScript, args: dict[str, Any] | list[str] | None = None
+) -> str:
     """Run a skill script as a local Python subprocess.
-    Resolves the script's absolute path from the skill directory, converts
-    the ``args`` dict to CLI flags, and returns captured output.
+    Uses ``FileSkillScript.full_path`` as the script path, converts the
+    ``args`` to CLI arguments, and returns captured output.
     Args:
-        skill: The skill that owns the script.
-        script: The script to run.
-        args: Optional arguments forwarded as CLI flags.
+        skill: The file-based skill that owns the script.
+        script: The file-based script to run.
+        args: Optional arguments.  A ``list[str]`` is forwarded as
+            positional CLI arguments.  Passing a ``dict`` or any other
+            type raises :class:`TypeError` — file-based scripts expect
+            positional arguments as a JSON array of strings.
     Returns:
         The combined stdout/stderr output, or an error message.
+    Raises:
+        TypeError: If ``args`` is not a ``list[str]`` or ``None``, or if
+            any list element is not a string.
     """
-    if not skill.path:
-        return f"Error: Skill '{skill.name}' has no directory path."
-    if not script.path:
-        return f"Error: Script '{script.name}' has no file path. Only file-based scripts can be executed locally."
-    script_path = Path(skill.path) / script.path
+    script_path = Path(script.full_path)
     if not script_path.is_file():
         return f"Error: Script file not found: {script_path}"
     cmd = [sys.executable, str(script_path)]
-    # Convert args dict to CLI flags
-    if args:
-        for key, value in args.items():
-            if isinstance(value, bool):
-                if value:
-                    cmd.append(f"--{key}")
-            elif value is not None:
-                cmd.append(f"--{key}")
-                cmd.append(str(value))
+    if isinstance(args, list):
+        for item in args:
+            if not isinstance(item, str):
+                raise TypeError(
+                    f"File-based skill scripts only accept string CLI arguments "
+                    f"but received a {type(item).__name__}. "
+                    f"All array elements must be strings."
+                )
+        cmd.extend(args)
+    elif args is not None:
+        raise TypeError(
+            f"Expected a list of CLI arguments but received {type(args).__name__}. "
+            f"File-based skill scripts expect positional arguments as a list of strings."
+        )
     try:
         result = subprocess.run(
             cmd,

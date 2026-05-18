@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+.git/
+.gitignore
+.dockerignore
+README.md
+*.user
+*.suo

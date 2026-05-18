@@ -103,6 +103,9 @@ internal sealed class WireEvalItemPayload
     [JsonPropertyName("context")]
     public string? Context { get; init; }
 
+    [JsonPropertyName("ground_truth")]
+    public string? GroundTruth { get; init; }
+
     [JsonPropertyName("tool_definitions")]
     public List<WireToolDefinition>? ToolDefinitions { get; init; }
 }
