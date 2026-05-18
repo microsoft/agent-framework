@@ -62,8 +62,9 @@ from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
 )
-from agent_framework.observability import ChatTelemetryLayer
+from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER, ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
+from openai.lib._parsing._responses import type_to_text_format_param as _type_to_text_format_param
 from openai.types.responses import FunctionShellTool
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
@@ -359,6 +360,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
 
+    # Azure OpenAI may include this header in responses for the actual model that served the request,
+    # instead of the deployment name sent in the request. Surface it on the ChatResponse when present
+    # for better observability.
+    SERVED_MODEL_HEADER: ClassVar[str] = AZURE_OPENAI_SERVED_MODEL_HEADER
+
     FILE_SEARCH_MAX_RESULTS: int = 50
 
     @overload
@@ -614,17 +620,24 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     client = self.client
                     validated_options = await self._validate_options(options)
                     try:
-                        stream_response = await client.responses.retrieve(
+                        raw_stream_response = await client.responses.with_raw_response.retrieve(
                             continuation_token["response_id"],
                             stream=True,
                         )
+                        served_model = self._extract_served_model(raw_stream_response.headers)
+                        stream_response = raw_stream_response.parse()
                         async for chunk in stream_response:
-                            yield self._parse_chunk_from_openai(
+                            update = self._parse_chunk_from_openai(
                                 chunk,
                                 options=validated_options,
                                 function_call_ids=function_call_ids,
                                 seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
                             )
+                            if served_model is not None:
+                                if update.additional_properties is None:
+                                    update.additional_properties = {}
+                                update.additional_properties[self.SERVED_MODEL_HEADER] = served_model
+                            yield update
                     except Exception as ex:
                         self._handle_request_error(ex)
                 else:
@@ -633,24 +646,35 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         run_options,
                         validated_options,
                     ) = await self._prepare_request(messages, options)
+                    # Translate `text_format` (Pydantic model) into `text.format` JSON-schema
+                    # config so we can always go through `responses.create(stream=True, ...)` —
+                    # the only path that exposes raw HTTP headers via `with_raw_response`.
+                    # The SDK's `responses.stream(...)` helper does the same translation
+                    # internally but does not surface headers, so we replicate it here.
+                    text_format = run_options.pop("text_format", None)
+                    if text_format is not None:
+                        text_cfg = dict(run_options.get("text") or {})
+                        if "format" in text_cfg:
+                            raise ChatClientInvalidRequestException("Cannot mix and match text.format with text_format")
+                        text_cfg["format"] = _type_to_text_format_param(text_format)
+                        run_options["text"] = text_cfg
                     try:
-                        if "text_format" in run_options:
-                            async with client.responses.stream(**run_options) as response:
-                                async for chunk in response:
-                                    yield self._parse_chunk_from_openai(
-                                        chunk,
-                                        options=validated_options,
-                                        function_call_ids=function_call_ids,
-                                        seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
-                                    )
-                        else:
-                            async for chunk in await client.responses.create(stream=True, **run_options):
-                                yield self._parse_chunk_from_openai(
-                                    chunk,
-                                    options=validated_options,
-                                    function_call_ids=function_call_ids,
-                                    seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
-                                )
+                        raw_create_response = await client.responses.with_raw_response.create(
+                            stream=True, **run_options
+                        )
+                        served_model = self._extract_served_model(raw_create_response.headers)
+                        async for chunk in raw_create_response.parse():
+                            update = self._parse_chunk_from_openai(
+                                chunk,
+                                options=validated_options,
+                                function_call_ids=function_call_ids,
+                                seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                            )
+                            if served_model is not None:
+                                if update.additional_properties is None:
+                                    update.additional_properties = {}
+                                update.additional_properties[self.SERVED_MODEL_HEADER] = served_model
+                            yield update
                     except Exception as ex:
                         self._handle_request_error(ex)
 
@@ -664,10 +688,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 client = self.client
                 validated_options = await self._validate_options(options)
                 try:
-                    response = await client.responses.retrieve(continuation_token["response_id"])
+                    raw_response = await client.responses.with_raw_response.retrieve(continuation_token["response_id"])
+                    response = raw_response.parse()
                 except Exception as ex:
                     self._handle_request_error(ex)
                 chat_response = self._parse_response_from_openai(response, options=validated_options)
+                self._attach_served_model_header(chat_response, raw_response.headers)
                 # Once the background response completes, drop the continuation_token from
                 # the caller's options dict. FunctionInvocationLayer reuses the same dict
                 # across tool-loop iterations, so leaving it in place makes the next iteration
@@ -680,14 +706,32 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
-                    response = await client.responses.parse(stream=False, **run_options)
+                    raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)
                 else:
-                    response = await client.responses.create(stream=False, **run_options)
+                    raw_response = await client.responses.with_raw_response.create(stream=False, **run_options)
+                response = raw_response.parse()
             except Exception as ex:
                 self._handle_request_error(ex)
-            return self._parse_response_from_openai(response, options=validated_options)
+            chat_response = self._parse_response_from_openai(response, options=validated_options)
+            self._attach_served_model_header(chat_response, raw_response.headers)
+            return chat_response
 
         return _get_response()
+
+    @classmethod
+    def _attach_served_model_header(cls, chat_response: ChatResponse, headers: Any) -> None:
+        """Surface the ``x-ms-served-model`` response header on the ChatResponse when present."""
+        served_model = cls._extract_served_model(headers)
+        if served_model is None:
+            return
+        chat_response.additional_properties[cls.SERVED_MODEL_HEADER] = served_model
+
+    @classmethod
+    def _extract_served_model(cls, headers: Any) -> str | None:
+        """Return the ``x-ms-served-model`` response header value when present."""
+        if headers is None:
+            return None
+        return headers.get(cls.SERVED_MODEL_HEADER)
 
     def _prepare_response_and_text_format(
         self,
@@ -1429,9 +1473,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         props = content.additional_properties or {}
                         # Local-shell variant serializes as `local_shell_call` carrying a server-issued id;
                         # plain function_call_output pairs by call_id and is safe under storage.
-                        if (
-                            props.get(OPENAI_SHELL_OUTPUT_TYPE_KEY) == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL
-                            and props.get(OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY)
+                        if props.get(
+                            OPENAI_SHELL_OUTPUT_TYPE_KEY
+                        ) == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL and props.get(
+                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
                         ):
                             continue
                     new_args: dict[str, Any] = {}

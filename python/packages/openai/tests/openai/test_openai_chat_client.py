@@ -72,9 +72,10 @@ class OutputStruct(BaseModel):
 
 
 class _FakeAsyncEventStream:
-    def __init__(self, events: list[object]) -> None:
+    def __init__(self, events: list[object], headers: dict[str, str] | None = None) -> None:
         self._events = events
         self._iterator = iter(())
+        self._headers = headers or {}
 
     def __aiter__(self) -> "_FakeAsyncEventStream":
         self._iterator = iter(self._events)
@@ -85,6 +86,32 @@ class _FakeAsyncEventStream:
             return next(self._iterator)
         except StopIteration as exc:
             raise StopAsyncIteration from exc
+
+    # The chat client now consumes the streaming response via ``with_raw_response``,
+    # which returns a wrapper exposing ``.parse()`` (the underlying iterable) and
+    # ``.headers``. Mimic that interface so test mocks remain a single object.
+    def parse(self) -> "_FakeAsyncEventStream":
+        return self
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return self._headers
+
+
+def _as_raw(mock_response: MagicMock) -> MagicMock:
+    """Make ``mock_response`` look like an OpenAI ``with_raw_response`` wrapper.
+
+    The chat client now calls ``responses.with_raw_response.{create,parse,retrieve}``
+    and then ``.parse()`` on the returned wrapper to get the actual response payload,
+    plus ``.headers`` to surface the ``x-ms-served-model`` Azure header. Tests still
+    patch the underlying ``responses.{create,parse,retrieve}`` methods (the SDK's
+    raw-response wrapper internally delegates to these), so the patched return value
+    is what our code unwraps. Setting ``mock_response.parse`` to return the mock
+    itself lets the existing assertions on ``mock_response.id`` etc. continue to work.
+    """
+    mock_response.parse = MagicMock(return_value=mock_response)
+    mock_response.headers = {}
+    return mock_response
 
 
 class _FakeAsyncEventStreamContext(_FakeAsyncEventStream):
@@ -477,7 +504,7 @@ async def test_response_format_parse_path() -> None:
     mock_parsed_response.finish_reason = None
     mock_parsed_response.conversation = None  # No conversation object
 
-    with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
+    with patch.object(client.client.responses, "parse", return_value=_as_raw(mock_parsed_response)):
         response = await client.get_response(
             messages=[Message(role="user", contents=["Test message"])],
             options={"response_format": OutputStruct, "store": True},
@@ -504,7 +531,7 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
     mock_parsed_response.conversation = MagicMock()
     mock_parsed_response.conversation.id = "conversation_456"
 
-    with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
+    with patch.object(client.client.responses, "parse", return_value=_as_raw(mock_parsed_response)):
         response = await client.get_response(
             messages=[Message(role="user", contents=["Test message"])],
             options={"response_format": OutputStruct, "store": True},
@@ -542,7 +569,7 @@ async def test_response_format_dict_parse_path() -> None:
     mock_message_item.content = [mock_message_content]
     mock_response.output = [mock_message_item]
 
-    with patch.object(client.client.responses, "create", return_value=mock_response):
+    with patch.object(client.client.responses, "create", return_value=_as_raw(mock_response)):
         response = await client.get_response(
             messages=[Message(role="user", contents=["Test message"])],
             options={"response_format": response_format},
@@ -552,6 +579,171 @@ async def test_response_format_dict_parse_path() -> None:
     assert response.value is not None
     assert isinstance(response.value, dict)
     assert response.value["answer"] == "Parsed"
+
+
+async def test_served_model_header_captured_on_response() -> None:
+    """The ``x-ms-served-model`` Azure response header should be surfaced on ChatResponse.additional_properties."""
+    from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.id = "response_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.metadata = {}
+    mock_response.output_parsed = None
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+
+    raw = _as_raw(mock_response)
+    raw.headers = {AZURE_OPENAI_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"}
+
+    with patch.object(client.client.responses, "create", return_value=raw):
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["Test message"])],
+        )
+
+    assert response.additional_properties.get(AZURE_OPENAI_SERVED_MODEL_HEADER) == "gpt-4o-2024-08-06"
+
+
+async def test_served_model_header_absent_does_not_set_property() -> None:
+    """When the served-model header is missing the key should not appear on additional_properties."""
+    from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.id = "response_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.metadata = {}
+    mock_response.output_parsed = None
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+
+    # _as_raw sets headers to {} by default — i.e. no x-ms-served-model.
+    with patch.object(client.client.responses, "create", return_value=_as_raw(mock_response)):
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["Test message"])],
+        )
+
+    assert AZURE_OPENAI_SERVED_MODEL_HEADER not in response.additional_properties
+
+
+async def test_served_model_header_captured_on_parse_path() -> None:
+    """The served-model header should also be captured on the structured-output (parse) path."""
+    from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_parsed_response = MagicMock()
+    mock_parsed_response.id = "parsed_response_123"
+    mock_parsed_response.text = "Parsed response"
+    mock_parsed_response.model = "test-model"
+    mock_parsed_response.created_at = 1000000000
+    mock_parsed_response.metadata = {}
+    mock_parsed_response.output_parsed = None
+    mock_parsed_response.usage = None
+    mock_parsed_response.finish_reason = None
+    mock_parsed_response.conversation = None
+
+    raw = _as_raw(mock_parsed_response)
+    raw.headers = {AZURE_OPENAI_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"}
+
+    with patch.object(client.client.responses, "parse", return_value=raw):
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["Test message"])],
+            options={"response_format": OutputStruct, "store": True},
+        )
+
+    assert response.additional_properties.get(AZURE_OPENAI_SERVED_MODEL_HEADER) == "gpt-4o-2024-08-06"
+
+
+async def test_served_model_header_propagated_to_streaming_updates() -> None:
+    """In streaming mode the served-model header should be set on every ChatResponseUpdate."""
+    from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[],
+            delta="Hello",
+        ),
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=2,
+            logprobs=[],
+            delta=" world",
+        ),
+    ]
+
+    fake_stream = _FakeAsyncEventStream(
+        events,
+        headers={AZURE_OPENAI_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"},
+    )
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses, "create", new=AsyncMock(return_value=fake_stream)),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        updates = [update async for update in stream]
+
+    assert updates, "Expected at least one streaming update"
+    for update in updates:
+        assert update.additional_properties is not None
+        assert update.additional_properties.get(AZURE_OPENAI_SERVED_MODEL_HEADER) == "gpt-4o-2024-08-06"
+
+
+async def test_served_model_header_absent_in_streaming_updates() -> None:
+    """When the header is missing in streaming mode it should not be added to update properties."""
+    from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[],
+            delta="Hello",
+        ),
+    ]
+
+    fake_stream = _FakeAsyncEventStream(events)  # default empty headers
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses, "create", new=AsyncMock(return_value=fake_stream)),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        updates = [update async for update in stream]
+
+    assert updates, "Expected at least one streaming update"
+    for update in updates:
+        if update.additional_properties is not None:
+            assert AZURE_OPENAI_SERVED_MODEL_HEADER not in update.additional_properties
 
 
 async def test_bad_request_error_non_content_filter() -> None:
@@ -953,7 +1145,9 @@ async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
     mock_text_item.content = [mock_text_content]
     mock_response2.output = [mock_text_item]
 
-    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+    with patch.object(
+        client.client.responses, "create", side_effect=[_as_raw(mock_response1), _as_raw(mock_response2)]
+    ) as mock_create:
         await client.get_response(
             messages=[Message(role="user", contents=["What Python version is available?"])],
             options={"tools": [local_shell_tool]},
@@ -1026,7 +1220,9 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
     mock_text_item.content = [mock_text_content]
     mock_response2.output = [mock_text_item]
 
-    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+    with patch.object(
+        client.client.responses, "create", side_effect=[_as_raw(mock_response1), _as_raw(mock_response2)]
+    ) as mock_create:
         await client.get_response(
             messages=[Message(role="user", contents=["What Python version is available?"])],
             options={"tools": [local_shell_tool]},
@@ -1097,7 +1293,9 @@ async def test_tool_loop_store_false_omits_reasoning_items_from_second_request()
     mock_text_item.content = [mock_text_content]
     mock_response2.output = [mock_text_item]
 
-    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+    with patch.object(
+        client.client.responses, "create", side_effect=[_as_raw(mock_response1), _as_raw(mock_response2)]
+    ) as mock_create:
         response = await client.get_response(
             messages=[Message(role="user", contents=["What's the weather in Amsterdam?"])],
             options={
@@ -2810,7 +3008,9 @@ async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     mock_response2.output = [mock_text_item]
 
     # Patch the create call to return the two mocked responses in sequence
-    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+    with patch.object(
+        client.client.responses, "create", side_effect=[_as_raw(mock_response1), _as_raw(mock_response2)]
+    ) as mock_create:
         # First call: get the approval request
         response = await client.get_response(messages=[Message(role="user", contents=["Trigger approval"])])
         assert response.messages[0].contents[0].type == "function_approval_request"
@@ -3235,7 +3435,7 @@ async def test_inner_get_response_streaming_with_response_format_tracks_reasonin
             "_prepare_request",
             new=AsyncMock(return_value=(client.client, {"text_format": OutputStruct}, {})),
         ),
-        patch.object(client.client.responses, "stream", return_value=_FakeAsyncEventStreamContext(events)),
+        patch.object(client.client.responses, "create", new=AsyncMock(return_value=_FakeAsyncEventStream(events))),
         patch.object(client, "_get_metadata_from_response", return_value={}),
     ):
         stream = client._inner_get_response(messages=messages, options={}, stream=True)
@@ -4120,9 +4320,7 @@ async def test_prepare_options_with_conversation_id_strips_server_items_for_mixe
     types = [item.get("type") for item in options["input"]]
     assert "reasoning" not in types
     assert "function_call" not in types
-    output_call_ids = {
-        item["call_id"] for item in options["input"] if item.get("type") == "function_call_output"
-    }
+    output_call_ids = {item["call_id"] for item in options["input"] if item.get("type") == "function_call_output"}
     assert output_call_ids == {"call_history", "call_live"}
     assert options["previous_response_id"] == "resp_prev123"
 

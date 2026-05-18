@@ -1739,6 +1739,78 @@ def test_get_response_attributes_capture_response_id_false():
     assert OtelAttr.RESPONSE_ID not in result
 
 
+def test_get_response_attributes_served_model_overrides_response_model():
+    """When the response carries the Azure ``x-ms-served-model`` header, it should override RESPONSE_MODEL."""
+    from unittest.mock import Mock
+
+    from agent_framework.observability import (
+        AZURE_OPENAI_SERVED_MODEL_HEADER,
+        OtelAttr,
+        _get_response_attributes,
+    )
+
+    response = Mock()
+    response.response_id = None
+    response.finish_reason = None
+    response.raw_representation = None
+    response.usage_details = None
+    response.model = "gpt-4"
+    response.additional_properties = {AZURE_OPENAI_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"}
+
+    attrs = {OtelAttr.REQUEST_MODEL: "my-deployment-alias"}
+    result = _get_response_attributes(attrs, response)
+
+    # REQUEST_MODEL is left untouched; RESPONSE_MODEL is overridden by the served-model header.
+    assert result[OtelAttr.REQUEST_MODEL] == "my-deployment-alias"
+    assert result[OtelAttr.RESPONSE_MODEL] == "gpt-4o-2024-08-06"
+
+
+def test_get_response_attributes_no_served_model_keeps_response_model():
+    """Without the served-model header RESPONSE_MODEL should reflect the response's reported model."""
+    from unittest.mock import Mock
+
+    from agent_framework.observability import OtelAttr, _get_response_attributes
+
+    response = Mock()
+    response.response_id = None
+    response.finish_reason = None
+    response.raw_representation = None
+    response.usage_details = None
+    response.model = "gpt-4"
+    response.additional_properties = {}
+
+    attrs = {OtelAttr.REQUEST_MODEL: "my-deployment-alias"}
+    result = _get_response_attributes(attrs, response)
+
+    assert result[OtelAttr.REQUEST_MODEL] == "my-deployment-alias"
+    assert result[OtelAttr.RESPONSE_MODEL] == "gpt-4"
+
+
+def test_get_response_attributes_ignores_non_string_served_model():
+    """A non-string / empty value in the served-model header should not override RESPONSE_MODEL."""
+    from unittest.mock import Mock
+
+    from agent_framework.observability import (
+        AZURE_OPENAI_SERVED_MODEL_HEADER,
+        OtelAttr,
+        _get_response_attributes,
+    )
+
+    response = Mock()
+    response.response_id = None
+    response.finish_reason = None
+    response.raw_representation = None
+    response.usage_details = None
+    response.model = "gpt-4"
+    response.additional_properties = {AZURE_OPENAI_SERVED_MODEL_HEADER: ""}
+
+    attrs = {OtelAttr.REQUEST_MODEL: "my-deployment-alias"}
+    result = _get_response_attributes(attrs, response)
+
+    assert result[OtelAttr.REQUEST_MODEL] == "my-deployment-alias"
+    assert result[OtelAttr.RESPONSE_MODEL] == "gpt-4"
+
+
 # region Test _get_exporters_from_env
 
 
@@ -2479,6 +2551,28 @@ def test_capture_response(span_exporter: InMemorySpanExporter):
     # Verify attributes were set on the span
     assert spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100
     assert spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
+
+
+def test_capture_response_does_not_update_span_name_with_request_model(span_exporter: InMemorySpanExporter):
+    """_capture_response should not rename the span even when REQUEST_MODEL is set."""
+    from agent_framework.observability import OtelAttr, _capture_response, get_tracer
+
+    span_exporter.clear()
+    tracer = get_tracer()
+
+    attrs = {
+        OtelAttr.OPERATION: "chat",
+        OtelAttr.REQUEST_MODEL: "my-deployment-alias",
+        OtelAttr.RESPONSE_MODEL: "gpt-4o-2024-08-06",
+    }
+
+    with tracer.start_as_current_span("chat my-deployment-alias") as span:
+        _capture_response(span=span, attributes=attrs)
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].name == "chat my-deployment-alias"
+    assert spans[0].attributes.get(OtelAttr.RESPONSE_MODEL) == "gpt-4o-2024-08-06"
 
 
 async def test_layer_ordering_span_sequence_with_function_calling(span_exporter: InMemorySpanExporter):

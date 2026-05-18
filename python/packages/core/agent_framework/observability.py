@@ -101,6 +101,12 @@ INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS: Final[contextvars.ContextVar[set[str] 
 INNER_RESPONSE_ID_CAPTURED_FIELD: Final[str] = "response_id"
 INNER_USAGE_CAPTURED_FIELD: Final[str] = "usage"
 
+# Response header set by Azure OpenAI naming the model that actually served the
+# request (which can differ from the deployment alias the caller sent). Chat
+# clients may surface this on ``ChatResponse.additional_properties`` so the
+# telemetry layer can promote it to ``gen_ai.response.model``.
+AZURE_OPENAI_SERVED_MODEL_HEADER: Final[str] = "x-ms-served-model"
+
 # Tracks accumulated token usage from all inner chat completion spans within an agent invoke.
 INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = contextvars.ContextVar(
     "inner_accumulated_usage", default=None
@@ -2125,6 +2131,14 @@ def _get_response_attributes(
         attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason])
     if model := getattr(response, "model", None):
         attributes[OtelAttr.RESPONSE_MODEL] = model
+    # If the underlying provider reports the actually served model via the
+    # ``x-ms-served-model`` response header (Azure OpenAI), prefer it over the
+    # model reported on the response body for the response model attribute.
+    additional_properties = getattr(response, "additional_properties", None)
+    if isinstance(additional_properties, Mapping):
+        candidate = cast("Mapping[str, Any]", additional_properties).get(AZURE_OPENAI_SERVED_MODEL_HEADER)
+        if isinstance(candidate, str) and candidate:
+            attributes[OtelAttr.RESPONSE_MODEL] = candidate
     if capture_usage and (usage := response.usage_details):
         input_tokens = usage.get("input_token_count")
         if input_tokens:
