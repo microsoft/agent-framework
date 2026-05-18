@@ -64,7 +64,6 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER, ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
-from openai.lib._parsing._responses import type_to_text_format_param as _type_to_text_format_param
 from openai.types.responses import FunctionShellTool
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
@@ -256,6 +255,38 @@ OpenAIChatOptionsT = TypeVar(
 
 
 # region Helpers
+
+
+# Guarded import of the OpenAI SDK's helper that converts a Pydantic model into the
+# Responses API ``text.format`` JSON-schema config. The helper lives under a private
+# (underscored) module path, so it may move or change across SDK releases. We import
+# it lazily and fall back to a clear error message so a minor SDK refactor surfaces a
+# helpful exception instead of an ImportError at module load time.
+try:  # pragma: no cover - import guard
+    from openai.lib._parsing._responses import (
+        type_to_text_format_param as _openai_type_to_text_format_param,
+    )
+except ImportError:  # pragma: no cover - exercised only when SDK refactors
+    _openai_type_to_text_format_param = None  # type: ignore[assignment]
+
+
+def _pydantic_model_to_text_format_param(text_format: type[BaseModel]) -> dict[str, Any]:
+    """Build a Responses API ``text.format`` JSON-schema config for a Pydantic model.
+
+    Prefers the OpenAI SDK's helper (which produces a fully strict schema) when
+    available. If the helper has moved/been removed by an SDK refactor, raises a
+    ``ChatClientInvalidRequestException`` with a clear remediation hint rather than
+    failing at import time. Callers can work around by passing a pre-built
+    ``text.format`` config via ``OpenAIChatOptions["text"]`` instead of ``text_format``.
+    """
+    if _openai_type_to_text_format_param is not None:
+        return cast(dict[str, Any], _openai_type_to_text_format_param(text_format))
+    raise ChatClientInvalidRequestException(
+        "Unable to translate `text_format` into the Responses API `text.format` config: the "
+        "OpenAI SDK helper `openai.lib._parsing._responses.type_to_text_format_param` is not "
+        "available (likely due to an SDK version change). Pass a pre-built `text.format` "
+        "JSON-schema config via the `text` option instead, or pin a compatible `openai` version."
+    )
 
 
 def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> list[dict[str, Any]]:
@@ -656,7 +687,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         text_cfg = dict(run_options.get("text") or {})
                         if "format" in text_cfg:
                             raise ChatClientInvalidRequestException("Cannot mix and match text.format with text_format")
-                        text_cfg["format"] = _type_to_text_format_param(text_format)
+                        text_cfg["format"] = _pydantic_model_to_text_format_param(text_format)
                         run_options["text"] = text_cfg
                     try:
                         raw_create_response = await client.responses.with_raw_response.create(
@@ -706,9 +737,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
-                    raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)
+                    raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)  # type: ignore
                 else:
-                    raw_response = await client.responses.with_raw_response.create(stream=False, **run_options)
+                    raw_response = await client.responses.with_raw_response.create(stream=False, **run_options)  # type: ignore
                 response = raw_response.parse()
             except Exception as ex:
                 self._handle_request_error(ex)
@@ -722,7 +753,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     def _attach_served_model_header(cls, chat_response: ChatResponse, headers: Any) -> None:
         """Surface the ``x-ms-served-model`` response header on the ChatResponse when present."""
         served_model = cls._extract_served_model(headers)
-        if served_model is None:
+        if served_model is None or len(served_model) == 0:
             return
         chat_response.additional_properties[cls.SERVED_MODEL_HEADER] = served_model
 
@@ -731,7 +762,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         """Return the ``x-ms-served-model`` response header value when present."""
         if headers is None:
             return None
-        return headers.get(cls.SERVED_MODEL_HEADER)
+        served_model = headers.get(cls.SERVED_MODEL_HEADER)
+        if isinstance(served_model, str):
+            return served_model
+        return None
 
     def _prepare_response_and_text_format(
         self,
