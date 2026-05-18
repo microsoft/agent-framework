@@ -88,6 +88,7 @@ agent-framework-github-copilot = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
+agent-framework-monty = { workspace = true }
 agent-framework-ollama = { workspace = true }
 agent-framework-openai = { workspace = true }
 agent-framework-orchestrations = { workspace = true }

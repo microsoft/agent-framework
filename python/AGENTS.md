@@ -93,3 +93,4 @@ python/
 
 ### Experimental
 - [lab](packages/lab/AGENTS.md) - Experimental features
+- [monty](packages/monty/AGENTS.md) - Monty-backed CodeAct integrations (alpha)

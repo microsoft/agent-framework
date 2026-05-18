@@ -1,0 +1,22 @@
+[project]
+name = "agent-framework-agent-monty-codeact-responses"
+version = "0.1.0"
+description = "Foundry-hosted Agent Framework agent with a Monty-backed CodeAct context provider."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-foundry-hosting",
+    # agent-framework-monty is an alpha package not published to PyPI yet.
+    # The wheel is vendored under ./wheels/ and resolved via [tool.uv.sources].
+    "agent-framework-monty",
+    # Azure Monitor OpenTelemetry exporter; used to send agent telemetry to the
+    # Application Insights instance attached to the Foundry project.
+    "azure-monitor-opentelemetry",
+]
+
+[tool.uv]
+prerelease = "allow"
+
+[tool.uv.sources]
+agent-framework-monty = { path = "wheels/agent_framework_monty-1.0.0a260518-py3-none-any.whl" }
+
