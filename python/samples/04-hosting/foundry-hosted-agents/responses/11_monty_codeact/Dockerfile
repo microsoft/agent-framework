@@ -11,11 +11,8 @@ ENV UV_LINK_MODE=copy \
 
 WORKDIR /app
 
-# Sync dependencies first to maximize Docker layer caching. The agent-framework-monty
-# alpha wheel is vendored under wheels/ and referenced via [tool.uv.sources] in
-# pyproject.toml, so the wheels directory must be present before `uv sync` runs.
+# Sync dependencies first to maximize Docker layer caching.
 COPY pyproject.toml ./
-COPY wheels/ ./wheels/
 RUN uv sync --no-install-project --no-cache
 
 # Now copy the rest of the agent and finalize the environment.

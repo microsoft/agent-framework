@@ -8,11 +8,9 @@ tools (`compute`, `fetch_data`) are only reachable from inside the sandbox via
 typed `await compute(...)` calls or the generic `call_tool(...)` fallback.
 
 > [!NOTE]
-> `agent-framework-monty` is an **alpha** package and is not yet on PyPI. The
-> `pyproject.toml` resolves it from a vendored wheel under `./wheels/` via
-> `[tool.uv.sources]`. Run `./vendor-wheel.sh` once (or before any image
-> rebuild) to build the wheel from the in-repo source tree. The wheel is
-> gitignored.
+> `agent-framework-monty` is an **alpha** package, so the `pyproject.toml`
+> sets `[tool.uv] prerelease = "allow"` to let `uv sync` pick up the
+> `1.0.0a*` release from PyPI.
 
 ## How It Works
 
@@ -59,26 +57,16 @@ Trace linking happens automatically: the Foundry hosting layer's incoming `Respo
 
 ## Running the Agent Host
 
-Because this sample uses a vendored alpha wheel + a `pyproject.toml` (not
-`requirements.txt`), the parent README's `uv pip install -r requirements.txt`
-flow does not apply. Use these sample-specific steps:
+This sample uses `pyproject.toml` + `uv sync` rather than the parent
+README's `requirements.txt` flow. To run locally:
 
-1. From this directory, vendor the alpha wheel:
-
-   ```bash
-   ./vendor-wheel.sh
-   ```
-
-   This builds `agent_framework_monty-*.whl` from the in-repo source tree and
-   writes it to `./wheels/`.
-
-2. Install dependencies into the local virtual env:
+1. Install dependencies into a local virtual environment:
 
    ```bash
    uv sync
    ```
 
-3. Set the environment variables described in the
+2. Set the environment variables described in the
    [parent README](../../README.md#running-the-agent-host-locally) (Foundry
    project endpoint, model deployment, optional Application Insights), then
    start the host:

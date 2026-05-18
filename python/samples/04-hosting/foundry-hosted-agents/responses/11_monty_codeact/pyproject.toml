@@ -6,8 +6,7 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     "agent-framework-foundry",
     "agent-framework-foundry-hosting",
-    # agent-framework-monty is an alpha package not published to PyPI yet.
-    # The wheel is vendored under ./wheels/ and resolved via [tool.uv.sources].
+    # agent-framework-monty is an alpha (1.0.0a*) release on PyPI.
     "agent-framework-monty",
     # Azure Monitor OpenTelemetry exporter; used to send agent telemetry to the
     # Application Insights instance attached to the Foundry project.
@@ -15,8 +14,7 @@ dependencies = [
 ]
 
 [tool.uv]
+# `agent-framework-monty` is an alpha package; allow the prerelease resolver
+# to pick up 1.0.0a* releases from PyPI.
 prerelease = "allow"
-
-[tool.uv.sources]
-agent-framework-monty = { path = "wheels/agent_framework_monty-1.0.0a260518-py3-none-any.whl" }
 
