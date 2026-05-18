@@ -444,7 +444,29 @@ def _build_run_config(
     )
 
 
+def _symlinks_supported(tmp: Path) -> bool:
+    """Return True if the current platform/environment supports symlinks.
+
+    Mirrors python/packages/core/tests/core/test_skills.py so the symlink
+    regression tests are skipped on restricted Windows CI runners instead of
+    failing on ``OSError`` / ``NotImplementedError`` during creation.
+    """
+    test_target = tmp / "_symlink_test_target"
+    test_link = tmp / "_symlink_test_link"
+    try:
+        test_target.write_text("test", encoding="utf-8")
+        test_link.symlink_to(test_target)
+        return True
+    except (OSError, NotImplementedError):
+        return False
+    finally:
+        test_link.unlink(missing_ok=True)
+        test_target.unlink(missing_ok=True)
+
+
 def test_populate_input_dir_skips_symlink_to_file_outside_workspace(tmp_path: Path) -> None:
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     outside = tmp_path / "outside.txt"
@@ -474,6 +496,8 @@ def test_populate_input_dir_skips_symlink_to_file_outside_workspace(tmp_path: Pa
 
 
 def test_populate_input_dir_skips_symlinked_directory_outside_workspace(tmp_path: Path) -> None:
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     outside_dir = tmp_path / "outside_dir"
@@ -499,6 +523,8 @@ def test_populate_input_dir_skips_symlinked_directory_outside_workspace(tmp_path
 
 def test_populate_input_dir_skips_nested_symlinks(tmp_path: Path) -> None:
     """A symlink several levels deep inside a real subdir must also be skipped."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
     (workspace / "real_sub").mkdir(parents=True)
     (workspace / "real_sub" / "ok.txt").write_text("ok", encoding="utf-8")
@@ -520,6 +546,8 @@ def test_populate_input_dir_skips_nested_symlinks(tmp_path: Path) -> None:
 
 def test_path_tree_signature_does_not_follow_symlinks(tmp_path: Path) -> None:
     """The cache-key signature must reflect only real files (mirrors the staged tree)."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     real = workspace / "real.txt"

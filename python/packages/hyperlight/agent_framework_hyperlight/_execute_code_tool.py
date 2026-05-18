@@ -484,13 +484,16 @@ def _display_mount_path(mount_path: str) -> str:
 
 
 def _iter_real_entries(root: Path) -> Iterator[Path]:
-    """Walk ``root`` recursively, skipping all symlinks (file or directory).
+    """Walk ``root`` recursively, yielding directories and regular files only.
 
     ``Path.rglob`` follows directory symlinks by default, which combined with
     ``Path.is_file()`` / ``shutil.copy2`` (all follow symlinks) would expose
     paths outside the configured input tree if the source tree is
     attacker-controlled. This walker mirrors the safe behaviour by checking
     ``is_symlink()`` at every directory level and never descending through one.
+
+    Non-regular files (sockets, FIFOs, devices) are also filtered out so the
+    signature mirrors exactly what ``_copy_path`` actually stages.
     """
     stack: list[Path] = [root]
     while stack:
@@ -505,7 +508,11 @@ def _iter_real_entries(root: Path) -> Iterator[Path]:
                     continue
                 if child.is_dir():
                     stack.append(child)
-                yield child
+                    yield child
+                elif child.is_file():
+                    yield child
+                # Non-regular files (sockets/FIFOs/devices) are skipped to
+                # match ``_copy_path``'s staging behaviour.
             except OSError:
                 continue
 
