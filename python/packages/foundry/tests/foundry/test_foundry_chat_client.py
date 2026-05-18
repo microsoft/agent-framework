@@ -86,12 +86,28 @@ def _with_foundry_debug() -> Any:
     return decorator
 
 
+def _as_raw(mock_response: MagicMock) -> MagicMock:
+    """Wrap ``mock_response`` so it looks like an OpenAI ``with_raw_response`` wrapper.
+
+    The chat client now calls ``responses.with_raw_response.{create,parse}`` and then
+    ``.parse()`` on the returned wrapper to get the actual response payload, plus
+    ``.headers`` to surface the ``x-ms-served-model`` Azure header.
+    """
+    mock_response.parse = MagicMock(return_value=mock_response)
+    mock_response.headers = {}
+    return mock_response
+
+
 def _make_mock_openai_client() -> MagicMock:
     client = MagicMock()
     client.default_headers = {}
     client.responses = MagicMock()
     client.responses.create = AsyncMock()
     client.responses.parse = AsyncMock()
+    client.responses.with_raw_response = MagicMock()
+    client.responses.with_raw_response.create = AsyncMock()
+    client.responses.with_raw_response.parse = AsyncMock()
+    client.responses.with_raw_response.retrieve = AsyncMock()
     client.files = MagicMock()
     client.files.create = AsyncMock()
     client.files.delete = AsyncMock()
@@ -470,7 +486,7 @@ async def test_content_filter_exception() -> None:
         body={"error": {"code": "content_filter", "message": "Content filter error"}},
     )
     mock_error.code = "content_filter"
-    client.client.responses.create.side_effect = mock_error
+    client.client.responses.with_raw_response.create.side_effect = mock_error
 
     with pytest.raises(OpenAIContentFilterException) as exc_info:
         await client.get_response(messages=[Message(role="user", contents=["Test message"])])
@@ -494,7 +510,7 @@ async def test_response_format_parse_path() -> None:
     mock_parsed_response.usage = None
     mock_parsed_response.finish_reason = None
     mock_parsed_response.conversation = None
-    client.client.responses.parse = AsyncMock(return_value=mock_parsed_response)
+    client.client.responses.with_raw_response.parse = AsyncMock(return_value=_as_raw(mock_parsed_response))
 
     response = await client.get_response(
         messages=[Message(role="user", contents=["Test message"])],
@@ -522,7 +538,7 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
     mock_parsed_response.finish_reason = None
     mock_parsed_response.conversation = MagicMock()
     mock_parsed_response.conversation.id = "conversation_456"
-    client.client.responses.parse = AsyncMock(return_value=mock_parsed_response)
+    client.client.responses.with_raw_response.parse = AsyncMock(return_value=_as_raw(mock_parsed_response))
 
     response = await client.get_response(
         messages=[Message(role="user", contents=["Test message"])],
@@ -562,7 +578,7 @@ async def test_response_format_dict_parse_path() -> None:
     mock_message_item.type = "message"
     mock_message_item.content = [mock_message_content]
     mock_response.output = [mock_message_item]
-    client.client.responses.create = AsyncMock(return_value=mock_response)
+    client.client.responses.with_raw_response.create = AsyncMock(return_value=_as_raw(mock_response))
 
     response = await client.get_response(
         messages=[Message(role="user", contents=["Test message"])],
@@ -587,7 +603,7 @@ async def test_bad_request_error_non_content_filter() -> None:
         body={"error": {"code": "invalid_request", "message": "Invalid request"}},
     )
     mock_error.code = "invalid_request"
-    client.client.responses.parse = AsyncMock(side_effect=mock_error)
+    client.client.responses.with_raw_response.parse = AsyncMock(side_effect=mock_error)
 
     with pytest.raises(ChatClientException) as exc_info:
         await client.get_response(
