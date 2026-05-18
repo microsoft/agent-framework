@@ -59,9 +59,36 @@ Trace linking happens automatically: the Foundry hosting layer's incoming `Respo
 
 ## Running the Agent Host
 
-Follow the instructions in the
-[Running the Agent Host Locally](../../README.md#running-the-agent-host-locally)
-section of the README in the parent directory to run the agent host.
+Because this sample uses a vendored alpha wheel + a `pyproject.toml` (not
+`requirements.txt`), the parent README's `uv pip install -r requirements.txt`
+flow does not apply. Use these sample-specific steps:
+
+1. From this directory, vendor the alpha wheel:
+
+   ```bash
+   ./vendor-wheel.sh
+   ```
+
+   This builds `agent_framework_monty-*.whl` from the in-repo source tree and
+   writes it to `./wheels/`.
+
+2. Install dependencies into the local virtual env:
+
+   ```bash
+   uv sync
+   ```
+
+3. Set the environment variables described in the
+   [parent README](../../README.md#running-the-agent-host-locally) (Foundry
+   project endpoint, model deployment, optional Application Insights), then
+   start the host:
+
+   ```bash
+   uv run python main.py
+   ```
+
+Refer to the parent README for the shared `azd` / Docker / invocation /
+deployment guidance.
 
 ## Interacting with the agent
 

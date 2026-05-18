@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import types
 import typing
 from collections.abc import Callable, Sequence
 from typing import Annotated, Any, cast, get_type_hints
@@ -60,14 +61,23 @@ def _build_code(code: str) -> str:
 
 def _python_type_repr(annotation: Any) -> str:
     """Convert a Python type annotation to its string representation for stubs."""
-    if annotation is inspect.Parameter.empty or annotation is type(None):
+    if annotation is inspect.Parameter.empty:
         return "Any"
+    if annotation is type(None):
+        # ``None`` in annotations represents ``NoneType``; emit it literally so
+        # ``ty`` can validate ``Optional[X]`` / ``Union[..., None]`` / ``-> None``
+        # signatures correctly.
+        return "None"
     origin = typing.get_origin(annotation)
     if origin is Annotated:
         args = typing.get_args(annotation)
         return _python_type_repr(args[0]) if args else "Any"
     if origin is not None:
         args = typing.get_args(annotation)
+        # Normalize ``typing.Union[...]`` and PEP-604 ``X | Y`` to PEP-604 syntax so
+        # ``None`` is preserved across both forms.
+        if origin is typing.Union or origin is types.UnionType:
+            return " | ".join(_python_type_repr(a) for a in args) if args else "Any"
         origin_name = getattr(origin, "__name__", None)
         if origin_name is None:
             origin_name = str(origin)
@@ -134,28 +144,31 @@ class _PrintCollector:
     def __init__(self) -> None:
         self.chunks: list[str] = []
         self.truncated: bool = False
+        self._size: int = 0  # running character count to avoid O(n) per append
 
     def __call__(self, stream: str, text: str) -> None:
         if self.truncated:
             return
-        current_size = sum(len(c) for c in self.chunks)
-        remaining = MAX_PRINT_OUTPUT_CHARS - current_size
+        remaining = MAX_PRINT_OUTPUT_CHARS - self._size
         if remaining <= 0:
             self.truncated = True
             return
         text_value = str(text)
         if len(text_value) > remaining:
-            self.chunks.append(text_value[:remaining])
+            clipped = text_value[:remaining]
+            self.chunks.append(clipped)
+            self._size += len(clipped)
             self.truncated = True
         else:
             self.chunks.append(text_value)
+            self._size += len(text_value)
 
     @property
     def output(self) -> str:
         return "".join(self.chunks)
 
 
-def _load_monty() -> Any:
+def load_monty() -> Any:
     """Import ``pydantic_monty`` lazily so unit tests can run without it.
 
     Returns the module so callers can read ``Monty``, ``MontyComplete``,
@@ -197,7 +210,7 @@ class InlineCodeBridge:
         if not isinstance(code, str) or not code.strip():
             raise ValueError("Code must be a non-empty string.")
 
-        monty_module = _load_monty()
+        monty_module = load_monty()
         Monty = monty_module.Monty
         MontyComplete = monty_module.MontyComplete
         FunctionSnapshot = monty_module.FunctionSnapshot

@@ -78,9 +78,9 @@ Your code is type-checked against the tool signatures below before execution.
 For fan-out, use `asyncio.gather`:
 `results = await asyncio.gather(tool_a(...), tool_b(...))`.
 
-To surface results, end the code with `print(...)`. The sandbox does not return
-the value of the last expression to the caller; `print(...)` output is captured
-and returned as text.
+Surface results to the caller via `print(...)` (captured and returned as text)
+or by ending the code with an expression whose value is JSON-encodable - the
+value of the final expression is returned alongside captured stdout.
 
 Filesystem capabilities:
 {filesystem_text}
@@ -120,5 +120,6 @@ Filesystem capabilities:
 Registered tools:
 {tool_summaries}
 
-Use `print(...)` to surface results.
+Surface results via `print(...)` (captured and returned as text) or by ending
+with an expression whose value is JSON-encodable.
 """

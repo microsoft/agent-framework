@@ -554,3 +554,31 @@ def test_generate_type_stubs_emits_dsl_and_tool_signatures() -> None:
     assert "async def call_tool(name: str, **kwargs: Any) -> Any:" in stubs
     assert "async def custom(x: int, y: str = ...) -> bool:" in stubs
     assert "when_any" not in stubs
+
+
+def test_generate_type_stubs_preserves_none_and_optional() -> None:
+
+    def nullable_return(x: int) -> None:
+        """Returns nothing."""
+        return
+
+    def optional_param(x: int | None = None) -> bool:  # noqa: UP045 - intentional
+        """Optional via typing.Optional."""
+        return x is None
+
+    def union_param(x: int | str | None) -> str:  # noqa: UP007 - intentional
+        """Union with None."""
+        return str(x)
+
+    stubs = bridge_module.generate_type_stubs({
+        "nullable_return": nullable_return,
+        "optional_param": optional_param,
+        "union_param": union_param,
+    })
+
+    # ``None`` return must round-trip as None, not Any.
+    assert "async def nullable_return(x: int) -> None:" in stubs
+    # ``Optional[X]`` is ``Union[X, None]`` at runtime; preserve None.
+    assert "async def optional_param(x: int | None = ...) -> bool:" in stubs
+    # Multi-arm union with None.
+    assert "async def union_param(x: int | str | None) -> str:" in stubs

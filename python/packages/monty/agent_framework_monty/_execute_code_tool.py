@@ -3,7 +3,11 @@
 """``MontyExecuteCodeTool`` - a ``FunctionTool`` that runs Python in Monty.
 
 Mirrors the public API of ``HyperlightExecuteCodeTool`` for the subset that
-applies to a pure-Python interpreter (no filesystem, no network, no backends).
+applies to a pure-Python interpreter (no backends to choose from). By default
+the Monty sandbox rejects OS / filesystem / network calls with
+``PermissionError``; pass ``workspace_root`` or ``file_mounts`` to expose
+scoped host directories, and the tool will capture any files written under
+``read-write`` mounts as ``Content`` items in the response.
 """
 
 from __future__ import annotations
@@ -133,10 +137,16 @@ def _normalize_file_mount(file_mount: FileMountInput) -> FileMount:
 
 
 def _to_monty_mount(file_mount: FileMount) -> Any:
-    """Convert a public :class:`FileMount` to Monty's ``MountDir``."""
-    from pydantic_monty import MountDir  # type: ignore[import-not-found]
+    """Convert a public :class:`FileMount` to Monty's ``MountDir``.
 
-    return MountDir(
+    Imports lazily through the bridge's loader so missing-dependency errors
+    surface as the same actionable ``RuntimeError`` the rest of the package
+    raises, rather than a bare ``ImportError`` from a top-level import.
+    """
+    from ._monty_bridge import load_monty  # avoid top-level pydantic_monty import
+
+    monty_module = load_monty()
+    return monty_module.MountDir(
         virtual_path=file_mount.mount_path,
         host_path=str(file_mount.host_path),
         mode=file_mount.mode,

@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
-# Bring in the `uv` binary from the official Astral image.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+# Bring in the `uv` binary from a pinned Astral image. Update this tag intentionally;
+# `latest` would make rebuilds non-deterministic.
+COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /uvx /usr/local/bin/
 
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
