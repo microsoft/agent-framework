@@ -13,9 +13,9 @@ using Moq.Protected;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="SubAgentsProvider"/> class.
+/// Unit tests for the <see cref="BackgroundAgentsProvider"/> class.
 /// </summary>
-public class SubAgentsProviderTests
+public class BackgroundAgentsProviderTests
 {
     #region Constructor Tests
 
@@ -26,7 +26,7 @@ public class SubAgentsProviderTests
     public void Constructor_NullAgents_Throws()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new SubAgentsProvider(null!));
+        Assert.Throws<ArgumentNullException>(() => new BackgroundAgentsProvider(null!));
     }
 
     /// <summary>
@@ -36,7 +36,7 @@ public class SubAgentsProviderTests
     public void Constructor_EmptyAgents_Throws()
     {
         // Act & Assert
-        Assert.Throws<ArgumentException>(() => new SubAgentsProvider(Array.Empty<AIAgent>()));
+        Assert.Throws<ArgumentException>(() => new BackgroundAgentsProvider(Array.Empty<AIAgent>()));
     }
 
     /// <summary>
@@ -49,7 +49,7 @@ public class SubAgentsProviderTests
         var agent = CreateMockAgent(null!, "desc");
 
         // Act & Assert
-        Assert.Throws<ArgumentException>(() => new SubAgentsProvider(new[] { agent }));
+        Assert.Throws<ArgumentException>(() => new BackgroundAgentsProvider(new[] { agent }));
     }
 
     /// <summary>
@@ -62,7 +62,7 @@ public class SubAgentsProviderTests
         var agent = CreateMockAgent("", "desc");
 
         // Act & Assert
-        Assert.Throws<ArgumentException>(() => new SubAgentsProvider(new[] { agent }));
+        Assert.Throws<ArgumentException>(() => new BackgroundAgentsProvider(new[] { agent }));
     }
 
     /// <summary>
@@ -76,7 +76,7 @@ public class SubAgentsProviderTests
         var agent2 = CreateMockAgent("research", "Agent 2");
 
         // Act & Assert
-        Assert.Throws<ArgumentException>(() => new SubAgentsProvider(new[] { agent1, agent2 }));
+        Assert.Throws<ArgumentException>(() => new BackgroundAgentsProvider(new[] { agent1, agent2 }));
     }
 
     /// <summary>
@@ -90,7 +90,7 @@ public class SubAgentsProviderTests
         var agent2 = CreateMockAgent("Writer", "Writer agent");
 
         // Act
-        var provider = new SubAgentsProvider(new[] { agent1, agent2 });
+        var provider = new BackgroundAgentsProvider(new[] { agent1, agent2 });
 
         // Assert
         Assert.NotNull(provider);
@@ -108,7 +108,7 @@ public class SubAgentsProviderTests
     {
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
-        var provider = new SubAgentsProvider(new[] { agent });
+        var provider = new BackgroundAgentsProvider(new[] { agent });
         var context = CreateInvokingContext();
 
         // Act
@@ -129,7 +129,7 @@ public class SubAgentsProviderTests
         // Arrange
         var agent1 = CreateMockAgent("Research", "Performs research");
         var agent2 = CreateMockAgent("Writer", "Writes content");
-        var provider = new SubAgentsProvider(new[] { agent1, agent2 });
+        var provider = new BackgroundAgentsProvider(new[] { agent1, agent2 });
         var context = CreateInvokingContext();
 
         // Act
@@ -144,22 +144,22 @@ public class SubAgentsProviderTests
 
     #endregion
 
-    #region StartSubTask Tests
+    #region StartBackgroundTask Tests
 
     /// <summary>
-    /// Verify that StartSubTask returns a task ID.
+    /// Verify that StartBackgroundTask returns a task ID.
     /// </summary>
     [Fact]
-    public async Task StartSubTask_ReturnsTaskIdAsync()
+    public async Task StartBackgroundTask_ReturnsTaskIdAsync()
     {
         // Arrange
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
 
         // Act
-        object? result = await startSubTask.InvokeAsync(new AIFunctionArguments
+        object? result = await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Find information about AI",
@@ -175,18 +175,18 @@ public class SubAgentsProviderTests
     }
 
     /// <summary>
-    /// Verify that StartSubTask with invalid agent name returns an error.
+    /// Verify that StartBackgroundTask with invalid agent name returns an error.
     /// </summary>
     [Fact]
-    public async Task StartSubTask_InvalidAgentName_ReturnsErrorAsync()
+    public async Task StartBackgroundTask_InvalidAgentName_ReturnsErrorAsync()
     {
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
 
         // Act
-        object? result = await startSubTask.InvokeAsync(new AIFunctionArguments
+        object? result = await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "NonExistent",
             ["input"] = "Some input",
@@ -200,10 +200,10 @@ public class SubAgentsProviderTests
     }
 
     /// <summary>
-    /// Verify that StartSubTask assigns sequential IDs.
+    /// Verify that StartBackgroundTask assigns sequential IDs.
     /// </summary>
     [Fact]
-    public async Task StartSubTask_AssignsSequentialIdsAsync()
+    public async Task StartBackgroundTask_AssignsSequentialIdsAsync()
     {
         // Arrange
         var tcs1 = new TaskCompletionSource<AgentResponse>();
@@ -215,16 +215,16 @@ public class SubAgentsProviderTests
             return callCount == 1 ? tcs1.Task : tcs2.Task;
         });
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
 
         // Act
-        object? result1 = await startSubTask.InvokeAsync(new AIFunctionArguments
+        object? result1 = await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Task 1",
             ["description"] = "First task",
         });
-        object? result2 = await startSubTask.InvokeAsync(new AIFunctionArguments
+        object? result2 = await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Task 2",
@@ -253,11 +253,11 @@ public class SubAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "SubAgents_WaitForFirstCompletion");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
 
         // Start one task
-        await startSubTask.InvokeAsync(new AIFunctionArguments
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Task 1",
@@ -288,7 +288,7 @@ public class SubAgentsProviderTests
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction waitForFirst = GetTool(tools, "SubAgents_WaitForFirstCompletion");
+        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
 
         // Act
         object? result = await waitForFirst.InvokeAsync(new AIFunctionArguments
@@ -302,24 +302,24 @@ public class SubAgentsProviderTests
 
     #endregion
 
-    #region GetSubTaskResults Tests
+    #region GetBackgroundTaskResults Tests
 
     /// <summary>
-    /// Verify that GetSubTaskResults returns the result text of a completed task.
+    /// Verify that GetBackgroundTaskResults returns the result text of a completed task.
     /// </summary>
     [Fact]
-    public async Task GetSubTaskResults_CompletedTask_ReturnsResultTextAsync()
+    public async Task GetBackgroundTaskResults_CompletedTask_ReturnsResultTextAsync()
     {
         // Arrange
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "SubAgents_WaitForFirstCompletion");
-        AIFunction getResults = GetTool(tools, "SubAgents_GetTaskResults");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
+        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
 
         // Start a task
-        await startSubTask.InvokeAsync(new AIFunctionArguments
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Research AI",
@@ -346,20 +346,20 @@ public class SubAgentsProviderTests
     }
 
     /// <summary>
-    /// Verify that GetSubTaskResults for a still-running task returns status info.
+    /// Verify that GetBackgroundTaskResults for a still-running task returns status info.
     /// </summary>
     [Fact]
-    public async Task GetSubTaskResults_RunningTask_ReturnsStatusAsync()
+    public async Task GetBackgroundTaskResults_RunningTask_ReturnsStatusAsync()
     {
         // Arrange
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
-        AIFunction getResults = GetTool(tools, "SubAgents_GetTaskResults");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
 
         // Start a task (don't complete it)
-        await startSubTask.InvokeAsync(new AIFunctionArguments
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Research AI",
@@ -379,15 +379,15 @@ public class SubAgentsProviderTests
     }
 
     /// <summary>
-    /// Verify that GetSubTaskResults for a nonexistent task returns an error.
+    /// Verify that GetBackgroundTaskResults for a nonexistent task returns an error.
     /// </summary>
     [Fact]
-    public async Task GetSubTaskResults_NonexistentTask_ReturnsErrorAsync()
+    public async Task GetBackgroundTaskResults_NonexistentTask_ReturnsErrorAsync()
     {
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction getResults = GetTool(tools, "SubAgents_GetTaskResults");
+        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
 
         // Act
         object? result = await getResults.InvokeAsync(new AIFunctionArguments
@@ -400,21 +400,21 @@ public class SubAgentsProviderTests
     }
 
     /// <summary>
-    /// Verify that GetSubTaskResults for a failed task returns the error.
+    /// Verify that GetBackgroundTaskResults for a failed task returns the error.
     /// </summary>
     [Fact]
-    public async Task GetSubTaskResults_FailedTask_ReturnsErrorTextAsync()
+    public async Task GetBackgroundTaskResults_FailedTask_ReturnsErrorTextAsync()
     {
         // Arrange
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "SubAgents_WaitForFirstCompletion");
-        AIFunction getResults = GetTool(tools, "SubAgents_GetTaskResults");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
+        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
 
         // Start a task
-        await startSubTask.InvokeAsync(new AIFunctionArguments
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Research AI",
@@ -456,11 +456,11 @@ public class SubAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
-        AIFunction getAllTasks = GetTool(tools, "SubAgents_GetAllTasks");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction getAllTasks = GetTool(tools, "BackgroundAgents_GetAllTasks");
 
         // Start a task
-        await startSubTask.InvokeAsync(new AIFunctionArguments
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Research AI",
@@ -490,12 +490,12 @@ public class SubAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "SubAgents_WaitForFirstCompletion");
-        AIFunction getAllTasks = GetTool(tools, "SubAgents_GetAllTasks");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
+        AIFunction getAllTasks = GetTool(tools, "BackgroundAgents_GetAllTasks");
 
         // Start and complete a task
-        await startSubTask.InvokeAsync(new AIFunctionArguments
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Research AI",
@@ -525,7 +525,7 @@ public class SubAgentsProviderTests
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction getAllTasks = GetTool(tools, "SubAgents_GetAllTasks");
+        AIFunction getAllTasks = GetTool(tools, "BackgroundAgents_GetAllTasks");
 
         // Act
         object? result = await getAllTasks.InvokeAsync(new AIFunctionArguments());
@@ -554,13 +554,13 @@ public class SubAgentsProviderTests
             return callCount == 1 ? tcs1.Task : tcs2.Task;
         });
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "SubAgents_WaitForFirstCompletion");
-        AIFunction continueTask = GetTool(tools, "SubAgents_ContinueTask");
-        AIFunction getResults = GetTool(tools, "SubAgents_GetTaskResults");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
+        AIFunction continueTask = GetTool(tools, "BackgroundAgents_ContinueTask");
+        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
 
         // Start and complete a task
-        await startSubTask.InvokeAsync(new AIFunctionArguments
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Research AI",
@@ -606,11 +606,11 @@ public class SubAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
-        AIFunction continueTask = GetTool(tools, "SubAgents_ContinueTask");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction continueTask = GetTool(tools, "BackgroundAgents_ContinueTask");
 
         // Start a task (don't complete it)
-        await startSubTask.InvokeAsync(new AIFunctionArguments
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Research AI",
@@ -639,7 +639,7 @@ public class SubAgentsProviderTests
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction continueTask = GetTool(tools, "SubAgents_ContinueTask");
+        AIFunction continueTask = GetTool(tools, "BackgroundAgents_ContinueTask");
 
         // Act
         object? result = await continueTask.InvokeAsync(new AIFunctionArguments
@@ -666,13 +666,13 @@ public class SubAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
-        AIFunction waitForFirst = GetTool(tools, "SubAgents_WaitForFirstCompletion");
-        AIFunction clearTask = GetTool(tools, "SubAgents_ClearCompletedTask");
-        AIFunction getResults = GetTool(tools, "SubAgents_GetTaskResults");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction waitForFirst = GetTool(tools, "BackgroundAgents_WaitForFirstCompletion");
+        AIFunction clearTask = GetTool(tools, "BackgroundAgents_ClearCompletedTask");
+        AIFunction getResults = GetTool(tools, "BackgroundAgents_GetTaskResults");
 
         // Start and complete a task
-        await startSubTask.InvokeAsync(new AIFunctionArguments
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Research AI",
@@ -711,11 +711,11 @@ public class SubAgentsProviderTests
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction startSubTask = GetTool(tools, "SubAgents_StartTask");
-        AIFunction clearTask = GetTool(tools, "SubAgents_ClearCompletedTask");
+        AIFunction startBackgroundTask = GetTool(tools, "BackgroundAgents_StartTask");
+        AIFunction clearTask = GetTool(tools, "BackgroundAgents_ClearCompletedTask");
 
         // Start a task (don't complete it)
-        await startSubTask.InvokeAsync(new AIFunctionArguments
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
         {
             ["agentName"] = "Research",
             ["input"] = "Research AI",
@@ -743,7 +743,7 @@ public class SubAgentsProviderTests
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        AIFunction clearTask = GetTool(tools, "SubAgents_ClearCompletedTask");
+        AIFunction clearTask = GetTool(tools, "BackgroundAgents_ClearCompletedTask");
 
         // Act
         object? result = await clearTask.InvokeAsync(new AIFunctionArguments
@@ -767,7 +767,7 @@ public class SubAgentsProviderTests
     {
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
-        var provider = new SubAgentsProvider(new[] { agent });
+        var provider = new BackgroundAgentsProvider(new[] { agent });
 
         // Act
         var keys = provider.StateKeys;
@@ -782,23 +782,23 @@ public class SubAgentsProviderTests
     #region CurrentRunContext Isolation Tests
 
     /// <summary>
-    /// Verify that StartSubTask does not corrupt CurrentRunContext of the calling agent.
+    /// Verify that StartBackgroundTask does not corrupt CurrentRunContext of the calling agent.
     /// Because RunAsync is a non-async method that synchronously sets the static AsyncLocal
-    /// CurrentRunContext, the provider must isolate the sub-agent call to prevent overwriting
+    /// CurrentRunContext, the provider must isolate the background agent call to prevent overwriting
     /// the outer agent's context.
     /// </summary>
     [Fact]
-    public async Task StartSubTask_DoesNotCorruptCurrentRunContextAsync()
+    public async Task StartBackgroundTask_DoesNotCorruptCurrentRunContextAsync()
     {
         // Arrange
         var tcs = new TaskCompletionSource<AgentResponse>();
         var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
         var (tools, _) = await CreateToolsWithProviderAsync(agent);
-        var startTool = GetTool(tools, "SubAgents_StartTask");
+        var startTool = GetTool(tools, "BackgroundAgents_StartTask");
 
         AgentRunContext? contextBefore = AIAgent.CurrentRunContext;
 
-        // Act — invoke StartSubTask; this calls agent.RunAsync internally.
+        // Act — invoke StartBackgroundTask; this calls agent.RunAsync internally.
         var args = new AIFunctionArguments(new Dictionary<string, object?>
         {
             ["agentName"] = "Research",
@@ -826,16 +826,16 @@ public class SubAgentsProviderTests
     {
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
-        const string CustomInstructions = "These are custom sub-agent instructions.\n{sub_agents}";
-        var options = new SubAgentsProviderOptions { Instructions = CustomInstructions };
-        var provider = new SubAgentsProvider(new[] { agent }, options);
+        const string CustomInstructions = "These are custom background agent instructions.\n{background_agents}";
+        var options = new BackgroundAgentsProviderOptions { Instructions = CustomInstructions };
+        var provider = new BackgroundAgentsProvider(new[] { agent }, options);
         var context = CreateInvokingContext();
 
         // Act
         AIContext result = await provider.InvokingAsync(context);
 
         // Assert — custom instructions replace default, agent list is injected via {sub_agents} placeholder
-        Assert.Contains("These are custom sub-agent instructions.", result.Instructions);
+        Assert.Contains("These are custom background agent instructions.", result.Instructions);
         Assert.Contains("Research", result.Instructions);
     }
 
@@ -847,15 +847,15 @@ public class SubAgentsProviderTests
     {
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
-        var provider = new SubAgentsProvider(new[] { agent });
+        var provider = new BackgroundAgentsProvider(new[] { agent });
         var context = CreateInvokingContext();
 
         // Act
         AIContext result = await provider.InvokingAsync(context);
 
         // Assert — instructions contain tool usage guidance and agent list
-        Assert.Contains("SubAgents_*", result.Instructions);
-        Assert.Contains("SubAgents_ClearCompletedTask", result.Instructions);
+        Assert.Contains("BackgroundAgents_*", result.Instructions);
+        Assert.Contains("BackgroundAgents_ClearCompletedTask", result.Instructions);
         Assert.Contains("Research", result.Instructions);
         Assert.Contains("Research agent", result.Instructions);
     }
@@ -868,11 +868,11 @@ public class SubAgentsProviderTests
     {
         // Arrange
         var agent = CreateMockAgent("Research", "Research agent");
-        var options = new SubAgentsProviderOptions
+        var options = new BackgroundAgentsProviderOptions
         {
             AgentListBuilder = agents => $"Custom list: {string.Join(", ", agents.Keys)}",
         };
-        var provider = new SubAgentsProvider(new[] { agent }, options);
+        var provider = new BackgroundAgentsProvider(new[] { agent }, options);
         var context = CreateInvokingContext();
 
         // Act
@@ -880,7 +880,7 @@ public class SubAgentsProviderTests
 
         // Assert — custom agent list builder output is in instructions
         Assert.Contains("Custom list: Research", result.Instructions);
-        Assert.DoesNotContain("Available sub-agents:", result.Instructions);
+        Assert.DoesNotContain("Available background agents:", result.Instructions);
     }
 
     #endregion
@@ -935,9 +935,9 @@ public class SubAgentsProviderTests
         return mock.Object;
     }
 
-    private static async Task<(IEnumerable<AITool> Tools, SubAgentsProvider Provider)> CreateToolsWithProviderAsync(AIAgent agent)
+    private static async Task<(IEnumerable<AITool> Tools, BackgroundAgentsProvider Provider)> CreateToolsWithProviderAsync(AIAgent agent)
     {
-        var provider = new SubAgentsProvider(new[] { agent });
+        var provider = new BackgroundAgentsProvider(new[] { agent });
         var context = CreateInvokingContext();
 
         AIContext result = await provider.InvokingAsync(context);

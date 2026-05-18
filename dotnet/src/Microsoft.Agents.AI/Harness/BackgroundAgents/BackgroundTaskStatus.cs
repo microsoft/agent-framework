@@ -6,28 +6,28 @@ using Microsoft.Shared.DiagnosticIds;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Represents the status of a sub-task managed by the <see cref="SubAgentsProvider"/>.
+/// Represents the status of a background task managed by the <see cref="BackgroundAgentsProvider"/>.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public enum SubTaskStatus
+public enum BackgroundTaskStatus
 {
     /// <summary>
-    /// The sub-task is currently running.
+    /// The background task is currently running.
     /// </summary>
     Running,
 
     /// <summary>
-    /// The sub-task completed successfully.
+    /// The background task completed successfully.
     /// </summary>
     Completed,
 
     /// <summary>
-    /// The sub-task failed with an error.
+    /// The background task failed with an error.
     /// </summary>
     Failed,
 
     /// <summary>
-    /// The sub-task's in-flight reference was lost (e.g., after a restart),
+    /// The background task's in-flight reference was lost (e.g., after a restart),
     /// and its final state cannot be determined.
     /// </summary>
     Lost,

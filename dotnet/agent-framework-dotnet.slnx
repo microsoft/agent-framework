@@ -122,7 +122,7 @@
     <File Path="samples/02-agents/Harness/README.md" />
     <Project Path="samples/02-agents/Harness/Harness_Shared_Console/Harness_Shared_Console.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Step01_Research/Harness_Step01_Research.csproj" />
-    <Project Path="samples/02-agents/Harness/Harness_Step02_Research_WithSubAgents/Harness_Step02_Research_WithSubAgents.csproj" />
+    <Project Path="samples/02-agents/Harness/Harness_Step02_Research_WithBackgroundAgents/Harness_Step02_Research_WithBackgroundAgents.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Step03_DataProcessing/Harness_Step03_DataProcessing.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveFramework/ConsoleReactiveFramework.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveComponents/ConsoleReactiveComponents.csproj" />

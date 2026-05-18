@@ -1,9 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use the SubAgentsProvider to delegate work to sub-agents.
+// This sample demonstrates how to use the BackgroundAgentsProvider to delegate work to background agents.
 // A parent agent is given a list of stock tickers and instructed to find the closing price
-// for each ticker on December 31, 2025. It delegates the web searches to a sub-agent
-// equipped with Foundry's hosted web search tool.
+// for each ticker on December 31, 2025. It delegates the web searches to a background agent.
+// The HarnessAgent provides built-in WebSearch (HostedWebSearchTool) so no manual web search
+// tool configuration is needed on the background agent.
 //
 // Special commands:
 //   /exit    — End the session.
@@ -25,8 +26,9 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYME
 const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
 
-// --- Sub-agent: Web Search Agent ---
-// This agent can search the web and is used by the parent agent to look up stock prices.
+// --- Background agent: Web Search Agent ---
+// This agent uses the HarnessAgent's built-in HostedWebSearchTool to search the web.
+// Features not needed by this sub-agent are disabled.
 AIAgent webSearchAgent =
     new OpenAIClient(
         new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
@@ -41,40 +43,44 @@ AIAgent webSearchAgent =
     {
         Name = "WebSearchAgent",
         Description = "An agent that can search the web to find information.",
+        DisableTodoProvider = true,
+        DisableAgentModeProvider = true,
+        DisableFileMemory = true,   // If enabled, this would allow the agent to store memories as files in a directory associated with the current session
+        DisableFileAccess = true,   // If enabled, this would allow the agent to read/write files in a working directory
+        DisableToolApproval = true, // If enabled, this allows don't-ask-again approval functionality.
         ChatOptions = new ChatOptions
         {
             Instructions = "You are a web search assistant. When asked to find information, use the web search tool to look it up and return a concise, factual answer.",
-            Tools =
-            [
-                ResponseTool.CreateWebSearchTool().AsAITool(),
-            ],
         },
     });
 
 // --- Parent agent: Stock Price Researcher ---
-// This agent orchestrates the sub-agent to look up stock prices in parallel.
+// This agent orchestrates the background agent to look up stock prices in parallel.
 var parentInstructions =
     """
-    You are a stock price research assistant. You have access to a web search sub-agent that can look up information on the web.
+    You are a stock price research assistant. You have access to a web search background agent that can look up information on the web.
 
     When given a list of stock tickers, your job is to find the closing price for each ticker on December 31, 2025.
 
     ## Workflow
 
-    1. For each ticker, start a sub-task on the WebSearchAgent asking it to find the closing price on December 31, 2025.
-       - Start all sub-tasks before waiting for any of them to complete, so they run concurrently.
-    2. Wait for all sub-tasks to complete.
-    3. Retrieve the results from each sub-task.
+    1. For each ticker, start a background task on the WebSearchAgent asking it to find the closing price on December 31, 2025.
+       - Start all background tasks before waiting for any of them to complete, so they run concurrently.
+    2. Wait for all background tasks to complete.
+    3. Retrieve the results from each background task.
     4. Present a summary table with the ticker symbol and closing price for each stock.
     5. Clear all completed tasks to free memory.
 
     ## Important
 
-    - Always delegate web searches to the WebSearchAgent sub-agent. Do not try to answer from memory.
-    - If a sub-task fails or returns unclear results, continue the task with a more specific query.
+    - Always delegate web searches to the WebSearchAgent background agent. Do not try to answer from memory.
+    - If a background task fails or returns unclear results, continue the task with a more specific query.
     - Present results in a clean markdown table format.
     """;
 
+// --- Parent agent: Stock Price Researcher ---
+// This agent orchestrates the sub-agent to look up stock prices in parallel.
+// Most features are disabled since the parent only needs SubAgentsProvider.
 AIAgent parentAgent =
     new OpenAIClient(
         new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
@@ -88,10 +94,16 @@ AIAgent parentAgent =
     .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
     {
         Name = "StockPriceResearcher",
-        Description = "An agent that researches stock prices using sub-agents.",
+        Description = "An agent that researches stock prices using background agents.",
+        DisableTodoProvider = true,
+        DisableAgentModeProvider = true,
+        DisableFileMemory = true,   // If enabled, this would allow the agent to store memories as files in a directory associated with the current session
+        DisableFileAccess = true,   // If enabled, this would allow the agent to read/write files in a working directory
+        DisableToolApproval = true, // If enabled, this allows don't-ask-again approval functionality.
+        DisableWebSearch = true,
         AIContextProviders =
         [
-            new SubAgentsProvider([webSearchAgent]),
+            new BackgroundAgentsProvider([webSearchAgent]),
         ],
         ChatOptions = new ChatOptions
         {
