@@ -358,6 +358,26 @@ print('done', total)
 # ---------------------------------------------------------------------------
 
 
+def _symlinks_supported(tmp: Any) -> bool:
+    """Return True if the current platform/environment supports symlinks.
+
+    Mirrors python/packages/core/tests/core/test_skills.py so the symlink
+    regression tests are skipped on restricted Windows CI runners instead of
+    failing on ``OSError`` / ``NotImplementedError`` during creation.
+    """
+    test_target = tmp / "_symlink_test_target"
+    test_link = tmp / "_symlink_test_link"
+    try:
+        test_target.write_text("test", encoding="utf-8")
+        test_link.symlink_to(test_target)
+        return True
+    except (OSError, NotImplementedError):
+        return False
+    finally:
+        test_link.unlink(missing_ok=True)
+        test_target.unlink(missing_ok=True)
+
+
 async def test_symlinks_inside_workspace_are_not_followed_by_runtime(tmp_path: Any) -> None:
     """A pre-existing symlink in workspace_root must NOT let sandbox code read its target.
 
@@ -365,6 +385,8 @@ async def test_symlinks_inside_workspace_are_not_followed_by_runtime(tmp_path: A
     pin the behavior here so any future change to the OS dispatch path is
     detected.
     """
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -395,6 +417,8 @@ async def test_post_capture_skips_symlinks_pointing_outside_workspace(tmp_path: 
     file-capture path: an attacker-placed ``workspace/leak.txt -> /outside/secret``
     must not be returned as Content.
     """
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     outside = tmp_path / "outside_secret.txt"
@@ -435,6 +459,8 @@ async def test_post_capture_skips_symlinks_pointing_outside_workspace(tmp_path: 
 
 async def test_post_capture_still_returns_real_writes_when_symlinks_present(tmp_path: Any) -> None:
     """The symlink-skipping logic must not regress capture of legitimate sandbox writes."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     outside = tmp_path / "outside_secret.txt"
