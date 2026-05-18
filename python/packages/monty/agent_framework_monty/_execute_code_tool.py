@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from copy import copy
 from functools import partial
 from pathlib import Path, PurePosixPath
@@ -449,13 +449,43 @@ def _build_execution_contents(*, result: dict[str, Any]) -> list[Content]:
     return outputs
 
 
+def _iter_real_files(root: Path) -> Iterator[Path]:
+    """Walk ``root`` recursively, yielding only real (non-symlink) files.
+
+    ``Path.rglob`` follows directory symlinks by default, which combined with
+    ``Path.is_file()`` / ``Path.read_bytes()`` (both follow symlinks) would let
+    an attacker who controls the workspace pre-place a symlink to a host file
+    or directory and have our post-execution capture surface it. Skipping every
+    symlink at both the directory and file level closes that escape.
+    """
+    stack: list[Path] = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir():
+                    stack.append(entry)
+                elif entry.is_file():
+                    yield entry
+            except OSError:
+                continue
+
+
 def _snapshot_writable_mounts(mounts: Sequence[FileMount]) -> dict[str, dict[str, tuple[int, int]]]:
-    """Capture (size, mtime_ns) for every host file under read-write mounts before execution.
+    """Capture (size, mtime_ns) for every real (non-symlink) host file under read-write mounts.
 
     Returns ``{mount_path: {relative_posix_path: (size, mtime_ns)}}``. Used by
     :func:`_capture_written_files` to detect new or modified files after the run.
     Read-only and overlay mounts are skipped because their writes do not
-    propagate to the host.
+    propagate to the host. Symlinks (file or directory) are deliberately skipped
+    so an attacker cannot escape the mount by pre-placing a symlink to a host
+    path outside the workspace.
     """
     snapshot: dict[str, dict[str, tuple[int, int]]] = {}
     for mount in mounts:
@@ -463,11 +493,9 @@ def _snapshot_writable_mounts(mounts: Sequence[FileMount]) -> dict[str, dict[str
             continue
         host_root = Path(mount.host_path)
         per_mount: dict[str, tuple[int, int]] = {}
-        for entry in host_root.rglob("*"):
-            if not entry.is_file():
-                continue
+        for entry in _iter_real_files(host_root):
             try:
-                stat = entry.stat()
+                stat = entry.lstat()  # lstat: never follow symlinks (defensive)
             except OSError:
                 continue
             relative = entry.relative_to(host_root).as_posix()
@@ -482,9 +510,12 @@ def _capture_written_files(
 ) -> list[Content]:
     """Return :class:`Content` items for files the sandbox wrote during the run.
 
-    Mirrors Hyperlight's ``/output`` capture flow: any new or modified file
-    under a read-write mount is read back as binary and surfaced as
-    ``Content.from_data`` with a ``path`` annotation in ``additional_properties``.
+    Mirrors Hyperlight's ``/output`` capture flow: any new or modified real
+    (non-symlink) file under a read-write mount is read back as binary and
+    surfaced as ``Content.from_data`` with a ``path`` annotation in
+    ``additional_properties``. Symlinks are skipped at both directory and file
+    level so a malicious workspace cannot trick us into capturing host files
+    outside the configured mount root.
     """
     captured: list[Content] = []
     for mount in mounts:
@@ -492,11 +523,9 @@ def _capture_written_files(
             continue
         host_root = Path(mount.host_path)
         before = pre_state.get(mount.mount_path, {})
-        for entry in sorted(host_root.rglob("*")):
-            if not entry.is_file():
-                continue
+        for entry in sorted(_iter_real_files(host_root)):
             try:
-                stat = entry.stat()
+                stat = entry.lstat()
             except OSError:
                 continue
             relative = entry.relative_to(host_root).as_posix()
@@ -513,6 +542,8 @@ def _capture_written_files(
                 )
                 continue
             try:
+                # _iter_real_files already excluded symlinks at every level of
+                # the walk; reading the file here is safe.
                 data = entry.read_bytes()
             except OSError:
                 continue

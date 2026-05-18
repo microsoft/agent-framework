@@ -354,6 +354,112 @@ print('done', total)
 
 
 # ---------------------------------------------------------------------------
+# Symlink escape regression (MSRC-style)
+# ---------------------------------------------------------------------------
+
+
+async def test_symlinks_inside_workspace_are_not_followed_by_runtime(tmp_path: Any) -> None:
+    """A pre-existing symlink in workspace_root must NOT let sandbox code read its target.
+
+    Monty's mount layer enforces this (PermissionError at the OS bridge), but we
+    pin the behavior here so any future change to the OS dispatch path is
+    detected.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside_secret.txt"
+    outside.write_text("SECRET_OUTSIDE_WORKSPACE", encoding="utf-8")
+    (workspace / "leak.txt").symlink_to(outside)
+
+    monty_tool = MontyExecuteCodeTool(workspace_root=workspace)
+    code = """
+import pathlib
+try:
+    print('read:', pathlib.Path('/input/leak.txt').read_text())
+except PermissionError as exc:
+    print('blocked:', exc)
+except Exception as exc:
+    print('other:', type(exc).__name__, exc)
+"""
+    result = await monty_tool._run_code(code=code)
+    texts = _text_outputs(result)
+    assert not any("SECRET_OUTSIDE_WORKSPACE" in t for t in texts), texts
+    assert any("blocked" in t or "PermissionError" in t or "other" in t for t in texts), texts
+
+
+async def test_post_capture_skips_symlinks_pointing_outside_workspace(tmp_path: Any) -> None:
+    """File capture must NOT read through a symlink that points outside the mount.
+
+    Reproduces the MSRC-reported Hyperlight pattern in Monty's post-execution
+    file-capture path: an attacker-placed ``workspace/leak.txt -> /outside/secret``
+    must not be returned as Content.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside_secret.txt"
+    outside.write_text("SECRET_OUTSIDE_WORKSPACE", encoding="utf-8")
+    (workspace / "leak.txt").symlink_to(outside)
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("DEEP_SECRET", encoding="utf-8")
+    (workspace / "leak_dir").symlink_to(outside_dir)
+
+    monty_tool = MontyExecuteCodeTool(workspace_root=workspace)
+    # Run trivial code so the post-execution scan fires.
+    result = await monty_tool._run_code(code="print('ran')")
+
+    # Inspect the URIs of any returned data Content items.
+    import base64
+
+    leaked_paths: list[str] = []
+    leaked_bodies: list[bytes] = []
+    for content in result:
+        if content.type != "data" or not content.uri:
+            continue
+        payload = content.uri.split(",", 1)[1] if "," in content.uri else ""
+        try:
+            body = base64.b64decode(payload)
+        except Exception:  # noqa: BLE001
+            body = b""
+        leaked_bodies.append(body)
+        leaked_paths.append((content.additional_properties or {}).get("path", ""))
+
+    assert not any(b"SECRET_OUTSIDE_WORKSPACE" in body for body in leaked_bodies), (
+        "Symlink file outside workspace was captured: " + repr(leaked_paths)
+    )
+    assert not any(b"DEEP_SECRET" in body for body in leaked_bodies), (
+        "Symlinked directory escape was captured: " + repr(leaked_paths)
+    )
+
+
+async def test_post_capture_still_returns_real_writes_when_symlinks_present(tmp_path: Any) -> None:
+    """The symlink-skipping logic must not regress capture of legitimate sandbox writes."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside_secret.txt"
+    outside.write_text("SHOULD_NEVER_LEAK", encoding="utf-8")
+    (workspace / "leak.txt").symlink_to(outside)
+
+    monty_tool = MontyExecuteCodeTool(workspace_root=workspace)
+    code = """
+import pathlib
+pathlib.Path('/input/report.txt').write_text('legit-output')
+print('wrote')
+"""
+    result = await monty_tool._run_code(code=code)
+    import base64
+
+    data_items = [c for c in result if c.type == "data" and c.uri]
+    # Exactly one new file should be captured: report.txt.
+    assert len(data_items) == 1, [(c.additional_properties or {}).get("path") for c in data_items]
+    item = data_items[0]
+    assert (item.additional_properties or {}).get("path") == "/input/report.txt"
+    payload = item.uri.split(",", 1)[1] if item.uri and "," in item.uri else ""
+    assert base64.b64decode(payload) == b"legit-output"
+
+
+# ---------------------------------------------------------------------------
 # Provider + approval gating
 # ---------------------------------------------------------------------------
 
