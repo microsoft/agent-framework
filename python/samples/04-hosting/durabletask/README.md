@@ -2,6 +2,38 @@
 
 This directory contains samples for durable agent hosting using the Durable Task Scheduler. These samples demonstrate the worker-client architecture pattern, enabling distributed agent execution with persistent conversation state.
 
+## Quick Prerequisites Checklist
+
+Install and verify these tools before [Running the Samples](#running-the-samples):
+
+- **[Docker](https://docs.docker.com/get-docker/)** – run the Durable Task Scheduler emulator locally
+- **[uv](https://docs.astral.sh/uv/)** – manage Python dependencies (optional but recommended)
+- **[Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)** – authenticate with `az login` for `AzureCliCredential`
+
+**Windows (PowerShell):**
+
+```powershell
+winget install Docker.DockerDesktop
+irm https://astral.sh/uv/install.ps1 | iex
+winget install Microsoft.AzureCLI
+```
+
+**macOS / Linux:**
+
+```bash
+# Docker: https://docs.docker.com/get-docker/
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Azure CLI: https://learn.microsoft.com/cli/azure/install-azure-cli
+```
+
+**Verify:**
+
+```bash
+docker --version
+uv --version
+az account show
+```
+
 ## Sample Catalog
 
 ### Basic Patterns
