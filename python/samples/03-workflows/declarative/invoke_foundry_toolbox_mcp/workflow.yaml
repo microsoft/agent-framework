@@ -1,0 +1,123 @@
+#
+# This workflow demonstrates the InvokeMcpTool action against a Foundry
+# toolbox MCP proxy that exposes BOTH a built-in Foundry tool
+# (``web_search``) and an external MCP server (Microsoft Learn Docs)
+# behind a single MCP-compatible endpoint.
+#
+# The workflow:
+#   1. Accepts a documentation / web search query as input.
+#   2. Lists the tools exposed by the toolbox using the reserved
+#      toolName: ``tools/list``. The Python ``DefaultMCPToolHandler``
+#      does not intercept this name on its own; the sample's host code
+#      wraps it with a small handler that translates ``tools/list`` to
+#      an MCP ``session.list_tools()`` call.
+#   3. Invokes the Microsoft Learn ``microsoft_docs_search`` MCP tool
+#      surfaced by the toolbox. Tool names from MCP-server-backed
+#      toolbox tools are namespaced as ``<server_label>___<tool_name>``.
+#   4. Invokes the built-in ``web_search`` tool through the same
+#      toolbox proxy. Note: ``web_search`` expects ``search_query``
+#      (not ``query``).
+#   5. Asks a Foundry agent to combine the two result sets in the
+#      conversation and answer the user's question.
+#
+# Workflow inputs (set by the host via ``workflow.run({...})``):
+#   text: The user's question (required).
+#
+# Example inputs:
+#   How do I configure logging in the Agent Framework?
+#   What is Azure AI Foundry?
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_invoke_foundry_toolbox_mcp
+  actions:
+
+    # Set the search query from the workflow input so each MCP tool
+    # call can pass it as an argument.
+    - kind: SetVariable
+      id: set_search_query
+      variable: Local.SearchQuery
+      value: =Workflow.Inputs.text
+
+    # List the tools exposed by the toolbox MCP proxy. The sample's
+    # custom MCPToolHandler intercepts the reserved ``tools/list`` name
+    # and returns the toolbox tool list as JSON.
+    #
+    # We intentionally OMIT ``conversationId`` here: the tool list is
+    # metadata for the demo, not useful context for the downstream
+    # summarising agent. Forwarding it into the conversation only
+    # inflates token usage and per-call latency. We also keep
+    # ``autoSend: false`` because the Python host's streaming loop
+    # prints every string ``output`` event — emitting the raw tool
+    # list JSON would visually bury the agent's final answer. The
+    # .NET sibling sample uses ``autoSend: true`` because the .NET
+    # ``WorkflowRunner`` console helper only renders agent updates
+    # (not ``WorkflowOutputEvent``s), so the same YAML value behaves
+    # differently across hosts.
+    - kind: InvokeMcpTool
+      id: list_toolbox_tools
+      serverUrl: =Env.FOUNDRY_TOOLBOX_MCP_SERVER_URL
+      serverLabel: foundry_toolbox
+      toolName: tools/list
+      headers:
+        Foundry-Features: Toolboxes=V1Preview
+      output:
+        autoSend: false
+        result: Local.ToolboxTools
+
+    # Invoke ``microsoft_docs_search`` from the Microsoft Learn MCP
+    # server. The toolbox prefixes MCP-server tools with the server
+    # label declared at toolbox-creation time.
+    #
+    # ``autoSend: false`` suppresses dumping the raw JSON result to the
+    # workflow output stream — the result is still parsed into
+    # ``Local.SearchResult`` AND appended to the conversation (via
+    # ``conversationId``) so the downstream agent can summarise it.
+    - kind: InvokeMcpTool
+      id: search_docs_with_toolbox
+      serverUrl: =Env.FOUNDRY_TOOLBOX_MCP_SERVER_URL
+      serverLabel: foundry_toolbox
+      toolName: =Env.FOUNDRY_TOOLBOX_DOCS_SERVER_LABEL & "___microsoft_docs_search"
+      conversationId: =System.ConversationId
+      headers:
+        Foundry-Features: Toolboxes=V1Preview
+      arguments:
+        query: =Local.SearchQuery
+      output:
+        autoSend: false
+        result: Local.SearchResult
+
+    # Invoke the built-in ``web_search`` tool through the same toolbox
+    # proxy. ``web_search`` is a Foundry built-in (not an MCP server),
+    # so it is NOT namespaced and expects the argument
+    # ``search_query`` (not ``query``). See the docs_search action
+    # above for why ``autoSend: false`` is used here.
+    - kind: InvokeMcpTool
+      id: search_web_with_toolbox
+      serverUrl: =Env.FOUNDRY_TOOLBOX_MCP_SERVER_URL
+      serverLabel: foundry_toolbox
+      toolName: =Env.FOUNDRY_TOOLBOX_WEB_SEARCH_TOOL_NAME
+      conversationId: =System.ConversationId
+      headers:
+        Foundry-Features: Toolboxes=V1Preview
+      arguments:
+        search_query: =Local.SearchQuery
+      output:
+        autoSend: false
+        result: Local.WebSearchResult
+
+    # Ask the agent to summarise the two toolbox results. The agent
+    # reads the prior conversation (which now contains both result
+    # sets via ``conversationId``) and produces a single answer.
+    - kind: InvokeAzureAgent
+      id: summarize_toolbox_result
+      agent:
+        name: FoundryToolboxMcpAgent
+      conversationId: =System.ConversationId
+      input:
+        messages: =Concat("Combine the Microsoft Learn docs results and the Foundry web search results in the conversation to answer the query ", Local.SearchQuery)
+      output:
+        autoSend: true
+        messages: Local.Summary

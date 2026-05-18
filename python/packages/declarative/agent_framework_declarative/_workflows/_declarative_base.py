@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import locale
 import logging
+import os
 import sys
 import uuid
 from collections.abc import Mapping
@@ -709,6 +710,8 @@ class DeclarativeWorkflowState:
             "Agent": agent_data,
             "Conversation": conversation_data,
             "System": system_data,
+            # Match .NET declarative workflows that use =Env.VAR_NAME.
+            "Env": dict(os.environ),
             # Also expose inputs at top level for backward compatibility with =inputs.X syntax
             "inputs": inputs_data,
             # Custom namespaces
