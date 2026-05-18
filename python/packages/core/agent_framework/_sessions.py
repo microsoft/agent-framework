@@ -214,7 +214,13 @@ class SessionContext:
         """The agent's response. Set by the framework after invocation, read-only for providers."""
         return self._response
 
-    def extend_messages(self, source: str | object, messages: Sequence[Message]) -> None:
+    def extend_messages(
+        self,
+        source: str | object,
+        messages: Sequence[Message],
+        *,
+        origin_session_id: str | None = None,
+    ) -> None:
         """Add context messages from a specific source.
 
         Messages are copied before attribution is added, so the caller's
@@ -229,6 +235,16 @@ class SessionContext:
                 object is passed, its class name is recorded as
                 ``source_type`` in the attribution.
             messages: The messages to add.
+            origin_session_id: Optional session_id that originally produced
+                these messages, when different from the current session. Set
+                by providers that inject content stored under a different
+                session than the requesting one (cross-session memory). The
+                value is exposed under ``additional_properties["_attribution"]
+                ["origin_session_id"]`` so downstream context observers can
+                detect cross-session content for governance, audit, or
+                behavioral-analysis purposes. Omit (default) when content
+                originates in the current session — absence of the field is
+                semantically equivalent to "no origin information."
         """
         if isinstance(source, str):
             source_id = source
@@ -236,6 +252,8 @@ class SessionContext:
         else:
             source_id = source.source_id  # type: ignore[attr-defined]
             attribution = {"source_id": source_id, "source_type": type(source).__name__}
+        if origin_session_id is not None:
+            attribution["origin_session_id"] = origin_session_id
 
         copied: list[Message] = []
         for message in messages:

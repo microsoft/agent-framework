@@ -1306,6 +1306,26 @@ class MemoryContextProvider(HistoryProvider):
         )
         if recent_history_messages:
             context.extend_messages(self.source_id, recent_history_messages)
+
+        # Surface cross-session origin so downstream context observers can
+        # distinguish injected memory from content native to the current
+        # session. Loaded topic files may carry contributions from earlier
+        # sessions (tracked in ``MemoryTopicRecord.session_ids``); when any
+        # contributor differs from the current session, mark the injected
+        # block accordingly. See the ``CrossSessionObserver`` sample under
+        # ``samples/governance/cross_session_observer`` for an example
+        # subscriber, and the attribution mechanism on
+        # ``SessionContext.extend_messages``.
+        current_session_id = context.session_id
+        cross_session_origin: str | None = None
+        for record in selected_topics:
+            for contributor in record.session_ids:
+                if contributor and contributor != current_session_id:
+                    cross_session_origin = contributor
+                    break
+            if cross_session_origin is not None:
+                break
+
         context.extend_messages(
             self.source_id,
             [
@@ -1322,6 +1342,7 @@ class MemoryContextProvider(HistoryProvider):
                     ],
                 )
             ],
+            origin_session_id=cross_session_origin,
         )
 
     async def after_run(
