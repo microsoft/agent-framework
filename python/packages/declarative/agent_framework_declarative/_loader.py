@@ -782,6 +782,21 @@ class AgentFactory:
                     result["description"] = tool_resource.description
                 return result
             case McpTool():
+                # Check bindings first - allow MCP tools to be resolved by reference
+                bound_tool: Any = None
+                if self.bindings:
+                    # Check explicit bindings list first
+                    if tool_resource.bindings:
+                        for binding in tool_resource.bindings:
+                            if binding.name and (bound_tool := self.bindings.get(binding.name)):
+                                break
+                    # Fall back to matching by tool name
+                    if bound_tool is None and tool_resource.name:
+                        bound_tool = self.bindings.get(tool_resource.name)
+
+                if bound_tool is not None:
+                    return cast("AFFunctionTool | dict[str, Any]", bound_tool)
+
                 result = {
                     "type": "mcp",
                     "server_label": tool_resource.name.replace(" ", "_") if tool_resource.name else "",
