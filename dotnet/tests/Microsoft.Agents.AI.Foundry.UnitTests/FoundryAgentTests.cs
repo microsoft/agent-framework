@@ -2,6 +2,7 @@
 
 using System;
 using System.ClientModel.Primitives;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -356,7 +357,7 @@ public class FoundryAgentTests
         bool userAgentFound = false;
         using HttpHandlerAssert httpHandler = new(request =>
         {
-            if (request.Headers.TryGetValues("User-Agent", out System.Collections.Generic.IEnumerable<string>? values))
+            if (request.Headers.TryGetValues("User-Agent", out IEnumerable<string>? values))
             {
                 foreach (string value in values)
                 {
@@ -431,23 +432,23 @@ public class FoundryAgentTests
     }
 
     [Fact]
-    public void AgentEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNonNull()
+    public void AgentEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNull()
     {
         FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider());
 
-        Assert.NotNull(agent.GetService<ProjectOpenAIClient>());
+        Assert.Null(agent.GetService<ProjectOpenAIClient>());
     }
 
     [Fact]
-    public void AgentEndpointConstructor_GetServiceAIProjectClient_ReturnsNull()
+    public void AgentEndpointConstructor_GetServiceAIProjectClient_ReturnsNonNull()
     {
         FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider());
 
-        Assert.Null(agent.GetService<AIProjectClient>());
+        Assert.NotNull(agent.GetService<AIProjectClient>());
     }
 
     [Fact]
-    public void ProjectEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNonNull()
+    public void ProjectEndpointConstructor_GetServiceProjectOpenAIClient_ReturnsNull()
     {
         FoundryAgent agent = new(
             s_testEndpoint,
@@ -455,7 +456,7 @@ public class FoundryAgentTests
             model: "gpt-4o-mini",
             instructions: "Test");
 
-        Assert.NotNull(agent.GetService<ProjectOpenAIClient>());
+        Assert.Null(agent.GetService<ProjectOpenAIClient>());
     }
 
     [Fact]
@@ -665,19 +666,80 @@ public class FoundryAgentTests
     }
 
     [Fact]
-    public void AgentEndpointConstructor_PropagatesUserAgentApplicationId_ToProjectLevelClient()
+    public void AgentEndpointConstructor_PreservesUserAgentApplicationId()
     {
-        // The MEAI policy adds its own User-Agent header so we cannot reliably observe the OpenAI SDK's
-        // application-id stamp in the outbound request. Verify the value is propagated onto the
-        // project-level client's options via the public ProjectOpenAIClient surface.
         ProjectOpenAIClientOptions opts = new() { UserAgentApplicationId = "my-app-id" };
 
         FoundryAgent agent = new(s_testAgentEndpoint, new FakeAuthenticationTokenProvider(), clientOptions: opts);
 
-        ProjectOpenAIClient? projectClient = agent.GetService<ProjectOpenAIClient>();
-        Assert.NotNull(projectClient);
         // Caller's UserAgentApplicationId is preserved on the per-agent options bag verbatim.
+        Assert.NotNull(agent);
         Assert.Equal("my-app-id", opts.UserAgentApplicationId);
+    }
+
+    [Fact]
+    public void CreateProjectClientOptions_NullCallerOptions_ReturnsNull()
+    {
+        Assert.Null(FoundryAgent.CreateProjectClientOptions(null));
+    }
+
+    [Fact]
+    public void CreateProjectClientOptions_CarriesPipelineSettingsAndUserAgent()
+    {
+        // Arrange
+        var transport = new FakePipelineTransport();
+        var retryPolicy = new FakeRetryPolicy();
+        var messageLoggingPolicy = new FakeMessageLoggingPolicy();
+        var clientLoggingOptions = new ClientLoggingOptions { EnableLogging = false };
+        var networkTimeout = TimeSpan.FromSeconds(42);
+
+        ProjectOpenAIClientOptions callerOptions = new()
+        {
+            UserAgentApplicationId = "my-app-id",
+            Transport = transport,
+            RetryPolicy = retryPolicy,
+            MessageLoggingPolicy = messageLoggingPolicy,
+            ClientLoggingOptions = clientLoggingOptions,
+            NetworkTimeout = networkTimeout,
+        };
+
+        // Act
+        AIProjectClientOptions? projectOptions = FoundryAgent.CreateProjectClientOptions(callerOptions);
+
+        // Assert: every settable pipeline behavior the caller configured is forwarded
+        // onto the project-level options bag, not silently dropped.
+        Assert.NotNull(projectOptions);
+        Assert.Equal("my-app-id", projectOptions!.UserAgentApplicationId);
+        Assert.Same(transport, projectOptions.Transport);
+        Assert.Same(retryPolicy, projectOptions.RetryPolicy);
+        Assert.Same(messageLoggingPolicy, projectOptions.MessageLoggingPolicy);
+        Assert.Same(clientLoggingOptions, projectOptions.ClientLoggingOptions);
+        Assert.Equal(networkTimeout, projectOptions.NetworkTimeout);
+    }
+
+    private sealed class FakeRetryPolicy : PipelinePolicy
+    {
+        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+            => ProcessNext(message, pipeline, currentIndex);
+
+        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+            => ProcessNextAsync(message, pipeline, currentIndex);
+    }
+
+    private sealed class FakeMessageLoggingPolicy : PipelinePolicy
+    {
+        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+            => ProcessNext(message, pipeline, currentIndex);
+
+        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+            => ProcessNextAsync(message, pipeline, currentIndex);
+    }
+
+    private sealed class FakePipelineTransport : PipelineTransport
+    {
+        protected override PipelineMessage CreateMessageCore() => throw new NotSupportedException();
+        protected override void ProcessCore(PipelineMessage message) => throw new NotSupportedException();
+        protected override ValueTask ProcessCoreAsync(PipelineMessage message) => throw new NotSupportedException();
     }
 
     #endregion
@@ -762,13 +824,13 @@ public class FoundryAgentTests
         private readonly string _value;
         public HeaderStampPolicy(string name, string value) { this._name = name; this._value = value; }
 
-        public override void Process(PipelineMessage message, System.Collections.Generic.IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
         {
             message.Request.Headers.Set(this._name, this._value);
             ProcessNext(message, pipeline, currentIndex);
         }
 
-        public override ValueTask ProcessAsync(PipelineMessage message, System.Collections.Generic.IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
+        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
         {
             message.Request.Headers.Set(this._name, this._value);
             return ProcessNextAsync(message, pipeline, currentIndex);

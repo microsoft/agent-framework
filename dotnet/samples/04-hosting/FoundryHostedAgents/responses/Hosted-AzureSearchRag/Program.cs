@@ -14,6 +14,7 @@ using Azure.Identity;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Models;
 using DotNetEnv;
+using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
@@ -66,14 +67,15 @@ AIAgent agent = new AIProjectClient(new Uri(projectEndpoint), credential)
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
+builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapFoundryResponses("openai/v1");
-}
+// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
+// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
+// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
+app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();
 
