@@ -268,6 +268,7 @@ def test_build_serializable_state_matches_effective_config() -> None:
 
 def test_file_mounts_normalized_and_round_tripped(tmp_path: Path) -> None:
     from agent_framework_monty import FileMount
+    from agent_framework_monty._execute_code_tool import _normalize_mount_path
 
     host_a = tmp_path / "a"
     host_a.mkdir()
@@ -285,10 +286,13 @@ def test_file_mounts_normalized_and_round_tripped(tmp_path: Path) -> None:
     mounts = monty_tool.get_file_mounts()
     by_mount = {m.mount_path: m for m in mounts}
 
-    assert set(by_mount) == {str(host_a), "/work", "/data"}
+    # The shorthand string is normalized through _normalize_mount_path (POSIX-style),
+    # so on Windows `C:\\...` becomes `/C:/...`. Compare against the same normalizer.
+    shorthand_key = _normalize_mount_path(str(host_a))
+    assert set(by_mount) == {shorthand_key, "/work", "/data"}
     assert by_mount["/work"].host_path == host_b.resolve()
     assert by_mount["/data"].mode == "read-only"
-    assert by_mount[str(host_a)].mode == "overlay"  # default
+    assert by_mount[shorthand_key].mode == "overlay"  # default
 
 
 def test_workspace_root_auto_mounts_at_input(tmp_path: Path) -> None:
