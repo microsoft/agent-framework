@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Override the default tests TFM list because the package itself only targets modern TFMs. -->
+    <TargetFrameworks>net10.0</TargetFrameworks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Tools.Shell\Microsoft.Agents.AI.Tools.Shell.csproj" />
+  </ItemGroup>
+
+</Project>

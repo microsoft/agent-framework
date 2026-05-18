@@ -7,7 +7,7 @@ namespace Harness.Shared.Console.Commands;
 /// <summary>
 /// Handles the <c>/mode</c> command to display or switch the current agent mode.
 /// </summary>
-internal sealed class ModeCommandHandler : ICommandHandler
+public sealed class ModeCommandHandler : CommandHandler
 {
     private readonly AgentModeProvider? _modeProvider;
     private readonly IReadOnlyDictionary<string, ConsoleColor>? _modeColors;
@@ -24,10 +24,10 @@ internal sealed class ModeCommandHandler : ICommandHandler
     }
 
     /// <inheritdoc/>
-    public string? GetHelpText() => this._modeProvider is not null ? "/mode [plan|execute] (show or switch mode)" : null;
+    public override string? GetHelpText() => this._modeProvider is not null ? "/mode [plan|execute] (show or switch mode)" : null;
 
     /// <inheritdoc/>
-    public bool TryHandle(string input, AgentSession session)
+    public override async ValueTask<bool> TryHandleAsync(string input, AgentSession session, IUXStateDriver ux)
     {
         if (!input.StartsWith("/mode ", StringComparison.OrdinalIgnoreCase) && !input.Equals("/mode", StringComparison.OrdinalIgnoreCase))
         {
@@ -36,7 +36,7 @@ internal sealed class ModeCommandHandler : ICommandHandler
 
         if (this._modeProvider is null)
         {
-            System.Console.WriteLine("AgentModeProvider is not available.");
+            await ux.WriteInfoLineAsync("AgentModeProvider is not available.").ConfigureAwait(false);
             return true;
         }
 
@@ -44,7 +44,7 @@ internal sealed class ModeCommandHandler : ICommandHandler
         if (parts.Length < 2)
         {
             string current = this._modeProvider.GetMode(session);
-            System.Console.WriteLine($"\n  Current mode: {current}\n");
+            await ux.WriteInfoLineAsync($"Current mode: {current}").ConfigureAwait(false);
             return true;
         }
 
@@ -53,15 +53,12 @@ internal sealed class ModeCommandHandler : ICommandHandler
         try
         {
             this._modeProvider.SetMode(session, newMode);
-            System.Console.ForegroundColor = ConsoleWriter.GetModeColor(newMode, this._modeColors);
-            System.Console.WriteLine($"\n  Switched to {newMode} mode.\n");
-            System.Console.ResetColor();
+            ux.CurrentMode = newMode;
+            await ux.WriteInfoLineAsync($"Switched to {newMode} mode.", ModeColors.Get(newMode, this._modeColors)).ConfigureAwait(false);
         }
         catch (ArgumentException ex)
         {
-            System.Console.ForegroundColor = ConsoleColor.Red;
-            System.Console.WriteLine($"\n  {ex}\n");
-            System.Console.ResetColor();
+            await ux.WriteInfoLineAsync(ex.Message, ConsoleColor.Red).ConfigureAwait(false);
         }
 
         return true;

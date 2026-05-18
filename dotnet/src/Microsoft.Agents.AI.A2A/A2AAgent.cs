@@ -93,26 +93,26 @@ public sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         A2AAgentSession typedSession = await this.GetA2ASessionAsync(session, options, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
-        if (GetContinuationToken(messages, options) is { } token)
+        if (GetContinuationToken(inputMessages, options) is { } token)
         {
             AgentTask agentTask = await this._a2aClient.GetTaskAsync(new GetTaskRequest { Id = token.TaskId }, cancellationToken).ConfigureAwait(false);
 
             this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
 
-            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id);
+            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id, agentTask.Status.State);
 
             return this.ConvertToAgentResponse(agentTask);
         }
 
         SendMessageRequest sendParams = new()
         {
-            Message = CreateA2AMessage(typedSession, messages),
+            Message = CreateA2AMessage(typedSession, inputMessages),
             Metadata = options?.AdditionalProperties?.ToA2AMetadata(),
             Configuration = new SendMessageConfiguration { ReturnImmediately = options?.AllowBackgroundResponses is true }
         };
@@ -134,7 +134,7 @@ public sealed class A2AAgent : AIAgent
         {
             var agentTask = a2aResponse.Task!;
 
-            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id);
+            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id, agentTask.Status.State);
 
             return this.ConvertToAgentResponse(agentTask);
         }
@@ -145,7 +145,7 @@ public sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(messages);
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         A2AAgentSession typedSession = await this.GetA2ASessionAsync(session, options, cancellationToken).ConfigureAwait(false);
 
@@ -153,7 +153,7 @@ public sealed class A2AAgent : AIAgent
 
         ConfiguredCancelableAsyncEnumerable<StreamResponse> streamEvents;
 
-        if (GetContinuationToken(messages, options) is { } token)
+        if (GetContinuationToken(inputMessages, options) is { } token)
         {
             streamEvents = this.SubscribeToTaskWithFallbackAsync(token.TaskId, cancellationToken).ConfigureAwait(false);
         }
@@ -161,7 +161,7 @@ public sealed class A2AAgent : AIAgent
         {
             SendMessageRequest sendParams = new()
             {
-                Message = CreateA2AMessage(typedSession, messages),
+                Message = CreateA2AMessage(typedSession, inputMessages),
                 Metadata = options?.AdditionalProperties?.ToA2AMetadata()
             };
 
@@ -172,6 +172,7 @@ public sealed class A2AAgent : AIAgent
 
         string? contextId = null;
         string? taskId = null;
+        TaskState? taskState = null;
 
         await foreach (var streamResponse in streamEvents)
         {
@@ -187,6 +188,7 @@ public sealed class A2AAgent : AIAgent
                     var task = streamResponse.Task!;
                     contextId = task.ContextId;
                     taskId = task.Id;
+                    taskState = task.Status.State;
                     yield return this.ConvertToAgentResponseUpdate(task);
                     break;
 
@@ -194,6 +196,7 @@ public sealed class A2AAgent : AIAgent
                     var statusUpdate = streamResponse.StatusUpdate!;
                     contextId = statusUpdate.ContextId;
                     taskId = statusUpdate.TaskId;
+                    taskState = statusUpdate.Status.State;
                     yield return this.ConvertToAgentResponseUpdate(statusUpdate);
                     break;
 
@@ -209,7 +212,7 @@ public sealed class A2AAgent : AIAgent
             }
         }
 
-        UpdateSession(typedSession, contextId, taskId);
+        UpdateSession(typedSession, contextId, taskId, taskState);
     }
 
     /// <inheritdoc/>
@@ -317,7 +320,7 @@ public sealed class A2AAgent : AIAgent
         }
     }
 
-    private static void UpdateSession(A2AAgentSession? session, string? contextId, string? taskId = null)
+    private static void UpdateSession(A2AAgentSession? session, string? contextId, string? taskId = null, TaskState? taskState = null)
     {
         if (session is null)
         {
@@ -335,9 +338,10 @@ public sealed class A2AAgent : AIAgent
         // Assign a server-generated context Id to the session if it's not already set.
         session.ContextId ??= contextId;
         session.TaskId = taskId;
+        session.TaskState = taskState;
     }
 
-    private static Message CreateA2AMessage(A2AAgentSession typedSession, IEnumerable<ChatMessage> messages)
+    private static Message CreateA2AMessage(A2AAgentSession typedSession, IReadOnlyCollection<ChatMessage> messages)
     {
         var a2aMessage = messages.ToA2AMessage();
 
@@ -345,9 +349,19 @@ public sealed class A2AAgent : AIAgent
         // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#group-related-interactions
         a2aMessage.ContextId = typedSession.ContextId;
 
-        // Link the message as a follow-up to an existing task, if any.
-        // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#task-refinements
-        a2aMessage.ReferenceTaskIds = typedSession.TaskId is null ? null : [typedSession.TaskId];
+        if (typedSession.TaskState == TaskState.InputRequired)
+        {
+            // If the session indicates the task is waiting for user input,
+            // link the response to the existing task so it is treated as input
+            // for that task.
+            a2aMessage.TaskId = typedSession.TaskId;
+        }
+        else
+        {
+            // Link the message as a follow-up to an existing task, if any.
+            // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#task-refinements
+            a2aMessage.ReferenceTaskIds = typedSession.TaskId is not null ? [typedSession.TaskId] : null;
+        }
 
         return a2aMessage;
     }
@@ -444,6 +458,7 @@ public sealed class A2AAgent : AIAgent
             Role = ChatRole.Assistant,
             FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
             AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
+            Contents = statusUpdateEvent.Status.GetUserInputRequests(),
         };
     }
 

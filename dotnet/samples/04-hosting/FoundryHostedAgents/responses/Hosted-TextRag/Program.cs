@@ -8,6 +8,7 @@ using Azure.AI.Projects;
 using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
+using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
@@ -47,6 +48,7 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
+builder.Services.AddDevTemporaryLocalContributorSetup(); // Local Docker debugging only - must not be used in production.
 
 var app = builder.Build();
 app.MapFoundryResponses();
@@ -96,35 +98,4 @@ static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(st
     }
 
     return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
-}
-
-/// <summary>
-/// A <see cref="TokenCredential"/> for local Docker debugging only.
-/// Reads a pre-fetched bearer token from the <c>AZURE_BEARER_TOKEN</c> environment variable.
-/// This should NOT be used in production — tokens expire (~1 hour) and cannot be refreshed.
-///
-/// Generate a token on your host and pass it to the container:
-///   export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-///   docker run -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN ...
-/// </summary>
-internal sealed class DevTemporaryTokenCredential : TokenCredential
-{
-    private const string EnvironmentVariable = "AZURE_BEARER_TOKEN";
-
-    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => GetAccessToken();
-
-    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => new(GetAccessToken());
-
-    private static AccessToken GetAccessToken()
-    {
-        var token = Environment.GetEnvironmentVariable(EnvironmentVariable);
-        if (string.IsNullOrEmpty(token) || token == "DefaultAzureCredential")
-        {
-            throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
-        }
-
-        return new AccessToken(token, DateTimeOffset.UtcNow.AddHours(1));
-    }
 }

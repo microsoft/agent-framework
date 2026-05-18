@@ -1,7 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsReleased>true</IsReleased>
+    <!-- Preview while we depend on Azure.AI.Projects 2.1.0-beta.1 for hosted-agent routing
+         (ProjectOpenAIClientOptions.AgentName, the (AuthenticationPolicy, options) ctor, and
+         related per-agent endpoint surface). Flip back to IsReleased=true once Azure.AI.Projects
+         ships a stable 2.1.0. -->
     <InjectSharedThrow>true</InjectSharedThrow>
     <NoWarn>$(NoWarn);OPENAI001</NoWarn>
   </PropertyGroup>

@@ -179,6 +179,35 @@ public sealed class FoundryEvalConverterTests
         Assert.Null(payload.Context);
     }
 
+    [Fact]
+    public void ConvertEvalItem_WithExpectedOutput_PopulatesGroundTruth()
+    {
+        // Arrange
+        var item = new EvalItem(query: "q", response: "r")
+        {
+            ExpectedOutput = "the golden answer",
+        };
+
+        // Act
+        var payload = FoundryEvalConverter.ConvertEvalItem(item);
+
+        // Assert
+        Assert.Equal("the golden answer", payload.GroundTruth);
+    }
+
+    [Fact]
+    public void ConvertEvalItem_WithoutExpectedOutput_OmitsGroundTruth()
+    {
+        // Arrange
+        var item = new EvalItem(query: "q", response: "r");
+
+        // Act
+        var payload = FoundryEvalConverter.ConvertEvalItem(item);
+
+        // Assert
+        Assert.Null(payload.GroundTruth);
+    }
+
     // ---------------------------------------------------------------
     // FoundryEvalConverter.BuildTestingCriteria tests
     // ---------------------------------------------------------------
@@ -240,6 +269,33 @@ public sealed class FoundryEvalConverterTests
     }
 
     [Fact]
+    public void BuildTestingCriteria_SimilarityEvaluator_IncludesGroundTruth()
+    {
+        // Act
+        var criteria = FoundryEvalConverter.BuildTestingCriteria(
+            ["similarity"], "gpt-4o-mini", includeDataMapping: true);
+
+        // Assert
+        Assert.Single(criteria);
+        Assert.Equal("builtin.similarity", criteria[0].EvaluatorName);
+        var mapping = criteria[0].DataMapping;
+        Assert.NotNull(mapping);
+        Assert.True(mapping.ContainsKey("ground_truth"));
+        Assert.Equal("{{item.ground_truth}}", mapping["ground_truth"]);
+    }
+
+    [Fact]
+    public void BuildTestingCriteria_NonGroundTruthEvaluator_OmitsGroundTruth()
+    {
+        var criteria = FoundryEvalConverter.BuildTestingCriteria(
+            ["relevance"], "gpt-4o-mini", includeDataMapping: true);
+
+        var mapping = criteria[0].DataMapping;
+        Assert.NotNull(mapping);
+        Assert.False(mapping.ContainsKey("ground_truth"));
+    }
+
+    [Fact]
     public void BuildTestingCriteria_WithoutDataMapping_OmitsMappingField()
     {
         var criteria = FoundryEvalConverter.BuildTestingCriteria(
@@ -280,6 +336,59 @@ public sealed class FoundryEvalConverterTests
         var schema = FoundryEvalConverter.BuildItemSchema(hasTools: true);
 
         Assert.True(schema.Properties.ContainsKey("tool_definitions"));
+    }
+
+    [Fact]
+    public void BuildItemSchema_WithGroundTruth_IncludesGroundTruthProperty()
+    {
+        // Act
+        var schema = FoundryEvalConverter.BuildItemSchema(hasGroundTruth: true);
+
+        // Assert
+        Assert.True(schema.Properties.ContainsKey("ground_truth"));
+        Assert.Equal("string", schema.Properties["ground_truth"].Type);
+    }
+
+    [Fact]
+    public void BuildItemSchema_WithoutGroundTruth_OmitsGroundTruthProperty()
+    {
+        var schema = FoundryEvalConverter.BuildItemSchema();
+
+        Assert.False(schema.Properties.ContainsKey("ground_truth"));
+    }
+
+    // ---------------------------------------------------------------
+    // FoundryEvalConverter.FindMissingGroundTruthEvaluators tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void FindMissingGroundTruthEvaluators_NoGroundTruth_ReturnsSimilarity()
+    {
+        // Act
+        var missing = FoundryEvalConverter.FindMissingGroundTruthEvaluators(
+            ["similarity", "relevance"], hasGroundTruth: false);
+
+        // Assert
+        Assert.Single(missing);
+        Assert.Equal("similarity", missing[0]);
+    }
+
+    [Fact]
+    public void FindMissingGroundTruthEvaluators_HasGroundTruth_ReturnsEmpty()
+    {
+        var missing = FoundryEvalConverter.FindMissingGroundTruthEvaluators(
+            ["similarity"], hasGroundTruth: true);
+
+        Assert.Empty(missing);
+    }
+
+    [Fact]
+    public void FindMissingGroundTruthEvaluators_NoGroundTruthEvaluators_ReturnsEmpty()
+    {
+        var missing = FoundryEvalConverter.FindMissingGroundTruthEvaluators(
+            ["relevance", "coherence"], hasGroundTruth: false);
+
+        Assert.Empty(missing);
     }
 
     // ---------------------------------------------------------------

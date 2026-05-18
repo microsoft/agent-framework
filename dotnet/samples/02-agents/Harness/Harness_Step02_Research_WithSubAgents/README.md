@@ -1,6 +1,6 @@
 # Harness Step 02 — SubAgents (Stock Price Research)
 
-This sample demonstrates how to use the **SubAgentsProvider** to delegate work from a parent agent to sub-agents.
+This sample demonstrates how to use the **SubAgentsProvider** to delegate work from a parent agent to sub-agents. Both agents use `HarnessAgent` for pre-configured function invocation, per-service-call persistence, and context-window compaction.
 
 ## What It Does
 

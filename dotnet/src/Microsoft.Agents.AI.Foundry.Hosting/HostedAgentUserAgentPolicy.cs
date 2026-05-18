@@ -4,6 +4,7 @@ using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -18,10 +19,9 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// is already present in the <c>User-Agent</c> header, the policy does not append it again.
 /// </para>
 /// <para>
-/// This policy is added at request time (per-call <see cref="PipelinePosition"/>)
-/// by <see cref="UserAgentResponsesClient"/> when invoking the wrapped
-/// <see cref="OpenAI.Responses.ResponsesClient"/>. It is only registered when an agent is
-/// resolved by the Foundry hosting layer.
+/// This policy is added at hosted-agent resolution time via the MEAI 10.5.1
+/// <see cref="OpenAIRequestPolicies"/> hook on the agent's underlying chat client. It is only
+/// registered when an agent is resolved by the Foundry hosting layer.
 /// </para>
 /// </remarks>
 internal sealed class HostedAgentUserAgentPolicy : PipelinePolicy

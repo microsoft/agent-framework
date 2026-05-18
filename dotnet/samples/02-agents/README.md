@@ -11,6 +11,7 @@ The getting started samples demonstrate the fundamental concepts and functionali
 | [Agent Providers](./AgentProviders/README.md) | Getting started with creating agents using various providers |
 | [Agents With Retrieval Augmented Generation (RAG)](./AgentWithRAG/README.md) | Adding Retrieval Augmented Generation (RAG) capabilities to your agents |
 | [Agents With Memory](./AgentWithMemory/README.md) | Adding memory capabilities to your agents |
+| [Agents With CodeAct (Hyperlight)](./AgentWithCodeAct/README.md) | Enabling sandboxed code execution (CodeAct) for your agents via Hyperlight |
 | [Agent Open Telemetry](./AgentOpenTelemetry/README.md) | Getting started with OpenTelemetry for agents |
 | [Agent With OpenAI exchange types](./AgentWithOpenAI/README.md) | Using OpenAI exchange types with agents |
 | [Agent With Anthropic](./AgentWithAnthropic/README.md) | Getting started with agents using Anthropic Claude |

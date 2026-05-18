@@ -114,4 +114,38 @@ public static class ChatClientBuilderExtensions
     {
         return builder.Use(innerClient => new PerServiceCallChatHistoryPersistingChatClient(innerClient));
     }
+
+    /// <summary>
+    /// Adds a <see cref="MessageInjectingChatClient"/> to the chat client pipeline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This decorator enables external code (such as tool delegates) to inject messages into the function
+    /// execution loop. It should be positioned between the <see cref="FunctionInvokingChatClient"/> and
+    /// the <see cref="PerServiceCallChatHistoryPersistingChatClient"/> (or the leaf <see cref="IChatClient"/>)
+    /// in the pipeline.
+    /// </para>
+    /// <para>
+    /// The <see cref="MessageInjectingChatClient"/> can be retrieved from the chat client via
+    /// <c>GetService&lt;MessageInjectingChatClient&gt;</c> to enqueue messages from tool delegates or other code.
+    /// </para>
+    /// <para>
+    /// This extension method is intended for use with custom chat client stacks when
+    /// <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="false"/> (the default),
+    /// the <see cref="ChatClientAgent"/> automatically includes this decorator in the pipeline when
+    /// <see cref="ChatClientAgentOptions.RequirePerServiceCallChatHistoryPersistence"/> is <see langword="true"/>.
+    /// </para>
+    /// <para>
+    /// This decorator only works within the context of a running <see cref="ChatClientAgent"/> and will throw an
+    /// exception if used in any other stack.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The <see cref="ChatClientBuilder"/> to add the decorator to.</param>
+    /// <returns>The <paramref name="builder"/> for chaining.</returns>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public static ChatClientBuilder UseMessageInjection(this ChatClientBuilder builder)
+    {
+        return builder.Use(innerClient => new MessageInjectingChatClient(innerClient));
+    }
 }

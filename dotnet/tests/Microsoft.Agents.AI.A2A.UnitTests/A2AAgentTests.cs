@@ -494,6 +494,35 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_WithInputRequiredTaskState_SetsTaskIdOnMessageAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new SendMessageResponse
+        {
+            Message = new Message
+            {
+                MessageId = "response-456",
+                Role = Role.Agent,
+                Parts = [new Part { Text = "Booking confirmed" }]
+            }
+        };
+
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
+        session.TaskId = "task-123";
+        session.TaskState = TaskState.InputRequired;
+
+        var inputMessage = new ChatMessage(ChatRole.User, [new TextContent("New York to London")]);
+
+        // Act
+        await this._agent.RunAsync(inputMessage, session);
+
+        // Assert
+        var message = this._handler.CapturedSendMessageRequest?.Message;
+        Assert.Equal("task-123", message?.TaskId);
+        Assert.Null(message?.ReferenceTaskIds);
+    }
+
+    [Fact]
     public async Task RunAsync_WithAgentTask_UpdatesSessionTaskIdAsync()
     {
         // Arrange
@@ -573,6 +602,7 @@ public sealed class A2AAgentTests : IDisposable
     [InlineData(TaskState.Completed)]
     [InlineData(TaskState.Failed)]
     [InlineData(TaskState.Canceled)]
+    [InlineData(TaskState.InputRequired)]
     public async Task RunAsync_WithVariousTaskStates_ReturnsCorrectTokenAsync(TaskState taskState)
     {
         // Arrange
@@ -843,6 +873,38 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
+    public async Task RunStreamingAsync_WithInputRequiredTaskState_SetsTaskIdOnMessageAsync()
+    {
+        // Arrange
+        this._handler.StreamingResponseToReturn = new StreamResponse
+        {
+            Message = new Message
+            {
+                MessageId = "response-456",
+                Role = Role.Agent,
+                Parts = [new Part { Text = "Booking confirmed" }]
+            }
+        };
+
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
+        session.TaskId = "task-123";
+        session.TaskState = TaskState.InputRequired;
+
+        var inputMessage = new ChatMessage(ChatRole.User, [new TextContent("New York to London")]);
+
+        // Act
+        await foreach (var _ in this._agent.RunStreamingAsync([inputMessage], session))
+        {
+            // Just iterate through to trigger the logic
+        }
+
+        // Assert
+        var message = this._handler.CapturedSendMessageRequest?.Message;
+        Assert.Equal("task-123", message?.TaskId);
+        Assert.Null(message?.ReferenceTaskIds);
+    }
+
+    [Fact]
     public async Task RunStreamingAsync_WithAgentTask_UpdatesSessionTaskIdAsync()
     {
         // Arrange
@@ -1002,6 +1064,50 @@ public sealed class A2AAgentTests : IDisposable
         var a2aSession = (A2AAgentSession)session;
         Assert.Equal(ContextId, a2aSession.ContextId);
         Assert.Equal(TaskId, a2aSession.TaskId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithInputRequiredStatusUpdate_YieldsStatusContentsAsync()
+    {
+        // Arrange
+        const string TaskId = "task-input-123";
+        const string ContextId = "ctx-input-456";
+
+        this._handler.StreamingResponseToReturn = new StreamResponse
+        {
+            StatusUpdate = new TaskStatusUpdateEvent
+            {
+                TaskId = TaskId,
+                ContextId = ContextId,
+                Status = new()
+                {
+                    State = TaskState.InputRequired,
+                    Message = new Message
+                    {
+                        Parts = [Part.FromText("Where would you like to fly?")]
+                    }
+                }
+            }
+        };
+
+        var session = await this._agent.CreateSessionAsync();
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("I'd like to book a flight.", session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Null(update0.FinishReason);
+
+        var textContent = Assert.Single(update0.Contents.OfType<TextContent>());
+        Assert.Equal("Where would you like to fly?", textContent.Text);
     }
 
     [Fact]

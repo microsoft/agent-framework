@@ -59,7 +59,7 @@ async def main() -> None:
     # Discovers skills from the 'skills' directory and configures the
     # subprocess_script_runner to run file-based scripts.
     skills_dir = Path(__file__).parent / "skills"
-    skills_provider = SkillsProvider(
+    skills_provider = SkillsProvider.from_paths(
         skill_paths=str(skills_dir),
         script_runner=subprocess_script_runner,
     )

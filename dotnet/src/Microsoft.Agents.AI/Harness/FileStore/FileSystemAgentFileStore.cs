@@ -122,6 +122,7 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
         }
 
         var files = Directory.GetFiles(fullDir)
+            .Where(f => (File.GetAttributes(f) & FileAttributes.ReparsePoint) == 0)
             .Select(Path.GetFileName)
             .Where(name => name is not null)
             .ToList();
@@ -157,6 +158,12 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
 
         foreach (string filePath in Directory.GetFiles(fullDir))
         {
+            // Skip files that are symlinks/reparse points to prevent reading outside the root.
+            if ((File.GetAttributes(filePath) & FileAttributes.ReparsePoint) != 0)
+            {
+                continue;
+            }
+
             string? fileName = Path.GetFileName(filePath);
             if (fileName is null)
             {
@@ -231,7 +238,7 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
 
     /// <summary>
     /// Resolves a relative file path to a safe absolute path under the root directory.
-    /// Rejects paths that would escape the root via traversal or rooted paths.
+    /// Rejects paths that would escape the root via traversal, rooted paths, or symbolic links.
     /// </summary>
     private string ResolveSafePath(string relativePath)
     {
@@ -250,7 +257,53 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
                 nameof(relativePath));
         }
 
+        // Reject symlinks/reparse points in any path segment to prevent escaping the root.
+        ThrowIfContainsSymlink(fullPath, this._rootPath);
+
         return fullPath;
+    }
+
+    /// <summary>
+    /// Checks each path segment between the trusted root and the resolved path for symbolic links
+    /// or reparse points. Throws <see cref="ArgumentException"/> if any segment is a symlink.
+    /// Stops checking at the first segment that does not exist on disk (for write scenarios).
+    /// Uses <see cref="File.GetAttributes(string)"/> directly so that dangling symlinks (whose targets
+    /// do not exist) are still detected via their <see cref="FileAttributes.ReparsePoint"/> flag.
+    /// </summary>
+    private static void ThrowIfContainsSymlink(string fullPath, string rootPath)
+    {
+        string rootTrimmed = rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string relative = fullPath.Substring(rootTrimmed.Length);
+        string[] segments = relative.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+
+        string current = rootTrimmed;
+        foreach (string segment in segments)
+        {
+            current = Path.Combine(current, segment);
+
+            FileAttributes attributes;
+            try
+            {
+                attributes = File.GetAttributes(current);
+            }
+            catch (FileNotFoundException)
+            {
+                // Segment does not exist on disk (write scenario); stop checking.
+                break;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                break;
+            }
+
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new ArgumentException(
+                    "Invalid path: the resolved path contains a symbolic link or reparse point.");
+            }
+        }
     }
 
     /// <summary>

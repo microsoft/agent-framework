@@ -2121,7 +2121,7 @@ def _get_response_attributes(
         finish_reason = (
             getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None
         )
-    if finish_reason:
+    if isinstance(finish_reason, str) and finish_reason:
         attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason])
     if model := getattr(response, "model", None):
         attributes[OtelAttr.RESPONSE_MODEL] = model

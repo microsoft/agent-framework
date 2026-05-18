@@ -1,14 +1,16 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use a ChatClientAgent with the FileAccessProvider
+// This sample demonstrates how to use a HarnessAgent with the default FileAccessProvider
 // to give an agent access to a folder of CSV data files. The agent can read, analyze,
 // and extract information from the data, then write results back as new files.
 //
-// The sample includes a pre-populated `data/` folder with sales transaction data.
+// The sample includes a pre-populated `working/` folder with sales transaction data.
+// The HarnessAgent's default FileAccessProvider uses `{cwd}/working` as its working directory,
+// which matches this sample's folder layout.
 // Ask the agent to analyze the data, produce summaries, or create new output files.
 //
 // Special commands:
-//   exit — End the session.
+//   /exit — End the session.
 
 #pragma warning disable OPENAI001 // Suppress experimental API warnings for Responses API usage.
 #pragma warning disable MAAI001  // Suppress experimental API warnings for Agents AI experiments.
@@ -17,7 +19,6 @@ using System.ClientModel.Primitives;
 using Azure.Identity;
 using Harness.Shared.Console;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Responses;
@@ -27,10 +28,6 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYME
 
 const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
-
-// Point the file store at the data/ folder that ships with the sample.
-var dataFolder = Path.Combine(AppContext.BaseDirectory, "data");
-var fileStore = new FileSystemAgentFileStore(dataFolder);
 
 var instructions =
     """
@@ -57,11 +54,9 @@ var instructions =
     - Always explain what you learned and what you are going to do next between tool calls, so the user can follow along with your thought process.
     """;
 
-// Create a compaction strategy based on the model's context window.
-var compactionStrategy = new ContextWindowCompactionStrategy(
-    maxContextWindowTokens: MaxContextWindowTokens,
-    maxOutputTokens: MaxOutputTokens);
-
+// Create the agent using AsHarnessAgent. The FileAccessStore is explicitly set to the
+// sample's working/ folder (copied to the output directory) so it works regardless of cwd.
+// Unused features are disabled.
 AIAgent agent =
     new OpenAIClient(
         new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
@@ -72,39 +67,23 @@ AIAgent agent =
         })
     .GetResponsesClient()
     .AsIChatClientWithStoredOutputDisabled(deploymentName)
-
-    .AsBuilder()
-    .UseFunctionInvocation()
-    .UsePerServiceCallChatHistoryPersistence()
-    .UseAIContextProviders(new CompactionProvider(compactionStrategy))
-
-    .BuildAIAgent(
-        new ChatClientAgentOptions
+    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    {
+        Name = "DataAnalyst",
+        Description = "A data analyst assistant that reads, analyzes, and processes data files.",
+        FileAccessStore = new FileSystemAgentFileStore(Path.Combine(AppContext.BaseDirectory, "working")),
+        DisableTodoProvider = true,
+        DisableAgentModeProvider = true,
+        DisableFileMemory = true,   // If enabled, this would allow the agent to store memories as files in a directory associated with the current session
+        DisableWebSearch = true,
+        ChatOptions = new ChatOptions
         {
-            Name = "DataAnalyst",
-            Description = "A data analyst assistant that reads, analyzes, and processes data files.",
-            UseProvidedChatClientAsIs = true,
-            RequirePerServiceCallChatHistoryPersistence = true,
-            ChatHistoryProvider = new InMemoryChatHistoryProvider(
-                new InMemoryChatHistoryProviderOptions
-                {
-                    ChatReducer = compactionStrategy.AsChatReducer(),
-                }),
-            AIContextProviders =
-            [
-                new FileAccessProvider(fileStore),
-            ],
-            ChatOptions = new ChatOptions
-            {
-                Instructions = instructions,
-                MaxOutputTokens = MaxOutputTokens,
-            },
-        })
-    .AsBuilder()
-    .Build();
+            Instructions = instructions,
+            MaxOutputTokens = MaxOutputTokens,
+        },
+    });
 
 // Run the interactive console session.
 await HarnessConsole.RunAgentAsync(
     agent,
-    title: "Data Processing Assistant",
     userPrompt: "Ask me to analyze the data files, produce summaries, or create output files.");
