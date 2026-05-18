@@ -93,6 +93,7 @@ import asyncio
 import contextlib
 import json
 import os
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -445,7 +446,23 @@ async def main() -> None:
         follow_redirects=True,
     )
 
-    async def _client_provider(_inv: MCPToolInvocation) -> httpx.AsyncClient | None:
+    async def _client_provider(invocation: MCPToolInvocation) -> httpx.AsyncClient | None:
+        # Pin the bearer-authenticated client to the resolved toolbox URL.
+        # The Foundry AAD bearer token is scoped to ``https://ai.azure.com``
+        # but we still refuse to attach it to any URL we did not provision —
+        # if the YAML resolves a different ``serverUrl`` (e.g. via a tampered
+        # ``Env.*`` value or a config injection), returning ``None`` causes
+        # ``DefaultMCPToolHandler`` to fall back to an unauthenticated client,
+        # which will fail to authenticate to the proxy instead of forwarding
+        # the token outbound. Mirrors the .NET sample's
+        # ``httpClientProvider`` URL guard.
+        if invocation.server_url.casefold() != toolbox_endpoint.casefold():
+            print(
+                f"[security] Refusing to attach Foundry bearer token to unexpected MCP URL: "
+                f"{invocation.server_url}",
+                file=sys.stderr,
+            )
+            return None
         return http_client
 
     async with (
@@ -456,6 +473,14 @@ async def main() -> None:
         factory = WorkflowFactory(
             agents={AGENT_NAME: summary_agent},
             mcp_tool_handler=mcp_handler,
+            # The workflow YAML references ``=Env.FOUNDRY_TOOLBOX_*`` to keep
+            # the sample's toolbox URL / tool names configurable without
+            # editing the YAML. ``WorkflowFactory`` defaults to ``safe_mode=True``
+            # which would block those expressions; this sample opts in to the
+            # less-safe mode because we control both the YAML and the env
+            # vars. Do NOT copy this flag into a workflow that loads YAML
+            # from untrusted sources.
+            safe_mode=False,
         )
 
         workflow_path = Path(__file__).parent / "workflow.yaml"

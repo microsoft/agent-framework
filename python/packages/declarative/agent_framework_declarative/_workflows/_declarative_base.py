@@ -43,6 +43,8 @@ from agent_framework import (
 )
 from agent_framework._workflows._state import State
 
+from .._models import _safe_mode_context
+
 try:
     from powerfx import Engine
 except (ImportError, RuntimeError):
@@ -710,13 +712,18 @@ class DeclarativeWorkflowState:
             "Agent": agent_data,
             "Conversation": conversation_data,
             "System": system_data,
-            # Match .NET declarative workflows that use =Env.VAR_NAME.
-            "Env": dict(os.environ),
             # Also expose inputs at top level for backward compatibility with =inputs.X syntax
             "inputs": inputs_data,
             # Custom namespaces
             **state_data.get("Custom", {}),
         }
+        # Expose ``Env`` ONLY when the active workflow factory has explicitly
+        # opted out of safe mode. Matches the policy enforced by
+        # ``_try_powerfx_eval`` in ``_models.py`` and the AgentFactory
+        # ``safe_mode`` flag. Treat the default as safe even when no factory
+        # is in scope (e.g. in unit tests) so opt-in is required.
+        if not _safe_mode_context.get():
+            symbols["Env"] = dict(os.environ)
         # Debug log the Local symbols to help diagnose type issues
         if local_data:
             for key, value in local_data.items():
