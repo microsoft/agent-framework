@@ -1,6 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Telnyx Chat Completion Example
+import asyncio
+import os
+
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+"""
+Telnyx Chat Completion Example
 
 This sample demonstrates using Telnyx as an OpenAI-compatible inference
 provider through the OpenAIChatClient by configuring the base_url to
@@ -15,16 +26,6 @@ Environment Variables:
                        Available models include: Kimi-K2.5, GLM-5.1-FP8,
                        MiniMax-M2.7, Qwen3-235B-A22B
 """
-
-import asyncio
-import os
-
-from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def non_streaming_example() -> None:
