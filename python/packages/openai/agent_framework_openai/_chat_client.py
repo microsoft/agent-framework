@@ -763,7 +763,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if headers is None:
             return None
         served_model = headers.get(cls.SERVED_MODEL_HEADER)
-        if isinstance(served_model, str):
+        if isinstance(served_model, str) and len(served_model) > 0:
             return served_model
         return None
 
