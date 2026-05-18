@@ -3,171 +3,90 @@
 using Harness.ConsoleReactiveComponents;
 using Harness.ConsoleReactiveFramework;
 using Harness.Shared.Console.Components;
+using Microsoft.Extensions.AI;
 
 namespace Harness.Shared.Console;
 
 /// <summary>
-/// Determines which component is shown in the bottom panel.
-/// </summary>
-public enum BottomPanelMode
-{
-    /// <summary>Show the text input component for user input.</summary>
-    TextInput,
-
-    /// <summary>Show the list selection component for interactive prompts.</summary>
-    ListSelection,
-
-    /// <summary>Show a disabled input indicator during agent streaming.</summary>
-    Streaming,
-}
-
-/// <summary>
-/// Event arguments for the <see cref="HarnessAppComponent.InputSubmitted"/> event.
-/// </summary>
-public sealed class InputSubmittedEventArgs : EventArgs
-{
-    /// <summary>
-    /// Initializes a new instance of the <see cref="InputSubmittedEventArgs"/> class.
-    /// </summary>
-    /// <param name="text">The submitted text.</param>
-    /// <param name="mode">The bottom panel mode in which the input was submitted.</param>
-    public InputSubmittedEventArgs(string text, BottomPanelMode mode)
-    {
-        this.Text = text;
-        this.Mode = mode;
-    }
-
-    /// <summary>Gets the submitted text.</summary>
-    public string Text { get; }
-
-    /// <summary>Gets the bottom panel mode in which the input was submitted.</summary>
-    public BottomPanelMode Mode { get; }
-}
-
-/// <summary>
-/// Props for <see cref="HarnessAppComponent"/>.
-/// </summary>
-public record HarnessAppComponentProps : ConsoleReactiveProps
-{
-    /// <summary>Gets or sets the list selection choices (for ListSelection mode).</summary>
-    public IReadOnlyList<string> Items { get; set; } = Array.Empty<string>();
-
-    /// <summary>Gets or sets the scroll items (output entries) to render in the scroll panel.</summary>
-    public IReadOnlyList<object> ScrollItems { get; set; } = [];
-
-    /// <summary>Gets or sets the bottom panel mode.</summary>
-    public BottomPanelMode Mode { get; set; } = BottomPanelMode.TextInput;
-
-    /// <summary>Gets or sets the prompt string for text input mode.</summary>
-    public string Prompt { get; set; } = "You: ";
-
-    /// <summary>Gets or sets the placeholder text shown when the input is empty.</summary>
-    public string Placeholder { get; set; } = "";
-
-    /// <summary>Gets or sets the highlight color for the active list item.</summary>
-    public ConsoleColor ListHighlightColor { get; set; } = ConsoleColor.Cyan;
-
-    /// <summary>Gets or sets the placeholder text for the custom text input option in the list.</summary>
-    public string? ListCustomTextPlaceholder { get; set; }
-
-    /// <summary>Gets or sets the foreground color for the rule borders and mode label.</summary>
-    public ConsoleColor? ModeColor { get; set; }
-
-    /// <summary>Gets or sets the current mode name displayed below the bottom rule (e.g. "plan").</summary>
-    public string? ModeText { get; set; }
-
-    /// <summary>Gets or sets the help text displayed below the bottom rule (available commands).</summary>
-    public string? HelpText { get; set; }
-
-    /// <summary>Gets or sets the title text displayed above the list selection (for interactive prompts).</summary>
-    public string? ListTitle { get; set; }
-
-    /// <summary>Gets or sets a value indicating whether input is enabled during streaming.</summary>
-    public bool InputEnabled { get; set; }
-
-    /// <summary>Gets or sets the prompt to show during streaming when input is disabled.</summary>
-    public string StreamingPrompt { get; set; } = "(agent is running...)";
-
-    /// <summary>Gets or sets a value indicating whether the agent status spinner is visible.</summary>
-    public bool ShowSpinner { get; set; }
-
-    /// <summary>Gets or sets the formatted token usage text to display in the status bar.</summary>
-    public string? UsageText { get; set; }
-
-    /// <summary>Gets or sets the queued input items to display above the rule.</summary>
-    public IReadOnlyList<object> QueuedItems { get; set; } = [];
-}
-
-/// <summary>
-/// Internal state for <see cref="HarnessAppComponent"/>.
-/// </summary>
-public record HarnessAppComponentState : ConsoleReactiveState
-{
-    /// <summary>Gets the selected index in list selection mode.</summary>
-    public int SelectedIndex { get; init; }
-
-    /// <summary>Gets the current input text being typed.</summary>
-    public string InputText { get; init; } = "";
-
-    /// <summary>Gets the current text being typed into the list's custom text option.</summary>
-    public string ListInputText { get; init; } = "";
-
-    /// <summary>Gets the current console width in columns.</summary>
-    public int ConsoleWidth { get; init; }
-
-    /// <summary>Gets the current console height in rows.</summary>
-    public int ConsoleHeight { get; init; }
-}
-
-/// <summary>
 /// The main application component for the Harness console. Manages the scroll region
-/// and bottom panel (text input, list selection, or streaming indicator), and emits
-/// an <see cref="InputSubmitted"/> event when the user submits text in any mode.
+/// and bottom panel (text input, list selection, or streaming indicator). Owns the
+/// <see cref="HarnessConsoleUXStateDriver"/> and routes user input events to the
+/// registered <see cref="HarnessAgentRunner"/>.
 /// </summary>
-public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentProps, HarnessAppComponentState>, IDisposable
+public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps, HarnessAppComponentState>, IDisposable
 {
     private readonly TopBottomRule _rule = new();
     private readonly ListSelection _listSelection = new();
     private readonly TextInput _textInput = new();
-    private readonly TextScrollPanel _textScrollPanel;
-    private readonly TextPanel _textPanel;
-    private readonly TextPanel _queuedPanel;
+    private readonly TextScrollPanel _textScrollPanel = new();
+    private readonly TextPanel _textPanel = new();
+    private readonly TextPanel _queuedPanel = new();
     private readonly AgentStatus _agentStatus = new();
     private readonly AgentModeAndHelp _modeAndHelp = new();
-    private readonly Func<object, string> _renderItem;
-    private bool _resizedSinceLastRender;
+    private readonly HarnessConsoleUXStateDriver _uxDriver;
+    private readonly TaskCompletionSource<bool> _shutdownTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly SemaphoreSlim _followUpGate = new(1, 1);
+    private int _scrollRegionBottom;
+    private bool _resizedSinceLastRender = true;
     private bool _deactivated;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HarnessAppComponent"/> class.
     /// </summary>
-    /// <param name="renderScrollItem">A delegate that renders a single output entry and returns the text to display.</param>
-    public HarnessAppComponent(Func<object, string> renderScrollItem)
+    /// <param name="placeholder">Placeholder text shown when the input is empty.</param>
+    /// <param name="initialMode">The current agent mode, used to colour the rule and prompt.</param>
+    /// <param name="inputEnabled">Whether the bottom-panel input accepts keystrokes during streaming.</param>
+    /// <param name="runnerFactory">Factory invoked with the component's <see cref="IUXStateDriver"/>
+    /// to construct the <see cref="HarnessAgentRunner"/> that owns the agent loop.</param>
+    /// <param name="modeColors">Optional mapping of mode names to console colors.</param>
+    public HarnessAppComponent(
+        string placeholder,
+        string? initialMode,
+        bool inputEnabled,
+        Func<IUXStateDriver, HarnessAgentRunner> runnerFactory,
+        IReadOnlyDictionary<string, ConsoleColor>? modeColors = null)
     {
-        this._renderItem = renderScrollItem;
-        this._textScrollPanel = new TextScrollPanel(renderScrollItem);
-        this._textPanel = new TextPanel(renderScrollItem);
-        this._queuedPanel = new TextPanel(renderScrollItem);
+        this.Props = new ConsoleReactiveProps();
         this.State = new HarnessAppComponentState
         {
+            Mode = BottomPanelMode.TextInput,
+            Prompt = "> ",
+            Placeholder = placeholder,
+            ModeColor = ModeColors.Get(initialMode, modeColors),
+            ModeText = initialMode,
+            InputEnabled = inputEnabled,
             ConsoleWidth = System.Console.WindowWidth,
             ConsoleHeight = System.Console.WindowHeight,
         };
+
+        this._uxDriver = new HarnessConsoleUXStateDriver(
+            getState: () => this.State!,
+            setState: s => this.SetState(s),
+            requestShutdown: () => this._shutdownTcs.TrySetResult(true),
+            replaceSession: s => this.Runner!.ReplaceSessionAsync(s),
+            modeColors: modeColors);
+
+        this.Runner = runnerFactory(this._uxDriver);
+
+        // Seed help text now that the runner (which knows the registered command handlers)
+        // is available. Direct assignment — no Render is triggered until the caller invokes Render().
+        this.State = this.State with { HelpText = this.Runner.HelpText };
+
         KeyEventListener.Instance.KeyPressed += this.OnKeyPressed;
         ConsoleResizeListener.Instance.ConsoleResized += this.OnConsoleResized;
     }
 
     /// <summary>
-    /// Gets the 1-based row number of the last row in the output scroll region.
+    /// Gets the agent runner that owns the agent loop. Constructed by the factory
+    /// passed to the component's constructor.
     /// </summary>
-    public int ScrollRegionBottom { get; private set; }
+    public HarnessAgentRunner Runner { get; }
 
     /// <summary>
-    /// Occurs when the user submits input via Enter, in any mode (text input, list selection,
-    /// or streaming injection). Consumers inspect <see cref="InputSubmittedEventArgs.Mode"/>
-    /// to decide how to handle the submission.
+    /// Completes when a command handler requests application shutdown (e.g. the user types <c>/exit</c>).
+    /// Awaited by <see cref="HarnessConsole.RunAgentAsync"/>.
     /// </summary>
-    public event EventHandler<InputSubmittedEventArgs>? InputSubmitted;
+    public Task ShutdownTask => this._shutdownTcs.Task;
 
     /// <summary>
     /// Deactivates the component, resetting the scroll region and unsubscribing from events.
@@ -184,9 +103,6 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
         this._agentStatus.Dispose();
         KeyEventListener.Instance.KeyPressed -= this.OnKeyPressed;
         ConsoleResizeListener.Instance.ConsoleResized -= this.OnConsoleResized;
-        System.Console.Write(AnsiEscapes.ResetScrollRegion);
-        System.Console.Write(AnsiEscapes.MoveCursor(System.Console.WindowHeight, 1));
-        System.Console.WriteLine();
     }
 
     /// <inheritdoc/>
@@ -205,20 +121,23 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
         if (disposing)
         {
             this.Deactivate();
+            this._followUpGate.Dispose();
+            this.Runner.Dispose();
         }
     }
 
     private void OnKeyPressed(object? sender, KeyPressEventArgs e)
     {
-        if (this.Props!.Mode == BottomPanelMode.TextInput)
+        BottomPanelMode mode = this.State!.Mode;
+        if (mode == BottomPanelMode.TextInput)
         {
             this.HandleTextInputKey(e);
         }
-        else if (this.Props.Mode == BottomPanelMode.ListSelection)
+        else if (mode == BottomPanelMode.ListSelection)
         {
             this.HandleListSelectionKey(e);
         }
-        else if (this.Props.Mode == BottomPanelMode.Streaming && this.Props.InputEnabled)
+        else if (mode == BottomPanelMode.Streaming && this.State.InputEnabled)
         {
             this.HandleStreamingInputKey(e);
         }
@@ -235,7 +154,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
             }
 
             this.SetState(this.State with { InputText = "" });
-            this.InputSubmitted?.Invoke(this, new InputSubmittedEventArgs(text, BottomPanelMode.TextInput));
+            this.DispatchTextInputSubmission(text);
         }
         else if (e.KeyInfo.Key == ConsoleKey.Backspace)
         {
@@ -252,51 +171,50 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
 
     private void HandleListSelectionKey(KeyPressEventArgs e)
     {
-        int maxIndex = this.Props!.Items.Count - 1;
-        if (this.Props.ListCustomTextPlaceholder != null)
+        int maxIndex = this.State!.ListSelectionOptions.Count - 1;
+        if (this.State.ListSelectionCustomTextPlaceholder != null)
         {
-            maxIndex = this.Props.Items.Count;
+            maxIndex = this.State.ListSelectionOptions.Count;
         }
 
-        bool isOnCustomTextOption = this.Props.ListCustomTextPlaceholder != null
-            && this.State!.SelectedIndex == this.Props.Items.Count;
+        bool isOnCustomTextOption = this.State.ListSelectionCustomTextPlaceholder != null
+            && this.State.ListSelectionIndex == this.State.ListSelectionOptions.Count;
 
         if (e.KeyInfo.Key == ConsoleKey.UpArrow)
         {
-            this.SetState(this.State! with { SelectedIndex = Math.Max(0, this.State.SelectedIndex - 1) });
+            this.SetState(this.State with { ListSelectionIndex = Math.Max(0, this.State.ListSelectionIndex - 1) });
         }
         else if (e.KeyInfo.Key == ConsoleKey.DownArrow)
         {
-            this.SetState(this.State! with { SelectedIndex = Math.Min(maxIndex, this.State.SelectedIndex + 1) });
+            this.SetState(this.State with { ListSelectionIndex = Math.Min(maxIndex, this.State.ListSelectionIndex + 1) });
         }
         else if (e.KeyInfo.Key == ConsoleKey.Enter)
         {
             string result = isOnCustomTextOption
-                ? this.State!.ListInputText
-                : this.Props.Items[this.State!.SelectedIndex];
+                ? this.State.ListSelectionCustomInputText
+                : this.State.ListSelectionOptions[this.State.ListSelectionIndex];
 
-            this.SetState(this.State with { ListInputText = "", SelectedIndex = 0 });
-            this.InputSubmitted?.Invoke(this, new InputSubmittedEventArgs(result, BottomPanelMode.ListSelection));
+            this.SetState(this.State with { ListSelectionCustomInputText = "", ListSelectionIndex = 0 });
+            this.DispatchListSelectionSubmission(result);
         }
         else if (isOnCustomTextOption)
         {
             if (e.KeyInfo.Key == ConsoleKey.Backspace)
             {
-                if (this.State!.ListInputText.Length > 0)
+                if (this.State.ListSelectionCustomInputText.Length > 0)
                 {
-                    this.SetState(this.State with { ListInputText = this.State.ListInputText[..^1] });
+                    this.SetState(this.State with { ListSelectionCustomInputText = this.State.ListSelectionCustomInputText[..^1] });
                 }
             }
             else if (e.KeyInfo.KeyChar != '\0' && !char.IsControl(e.KeyInfo.KeyChar))
             {
-                this.SetState(this.State! with { ListInputText = this.State.ListInputText + e.KeyInfo.KeyChar });
+                this.SetState(this.State with { ListSelectionCustomInputText = this.State.ListSelectionCustomInputText + e.KeyInfo.KeyChar });
             }
         }
     }
 
     private void HandleStreamingInputKey(KeyPressEventArgs e)
     {
-        // During streaming with input enabled, capture text for message injection
         if (e.KeyInfo.Key == ConsoleKey.Enter)
         {
             string text = this.State!.InputText;
@@ -306,7 +224,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
             }
 
             this.SetState(this.State with { InputText = "" });
-            this.InputSubmitted?.Invoke(this, new InputSubmittedEventArgs(text, BottomPanelMode.Streaming));
+            _ = this.Runner.OnStreamingInputAsync(text);
         }
         else if (e.KeyInfo.Key == ConsoleKey.Backspace)
         {
@@ -321,6 +239,90 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
         }
     }
 
+    private void DispatchTextInputSubmission(string text)
+    {
+        if (this.State!.PendingQuestions.Count > 0)
+        {
+            _ = this.HandleFollowUpAnswerAsync(text);
+        }
+        else
+        {
+            _ = this.Runner.OnUserInputAsync(text);
+        }
+    }
+
+    private void DispatchListSelectionSubmission(string text)
+    {
+        // List selection is only used to answer FollowUpQuestions.
+        _ = this.HandleFollowUpAnswerAsync(text);
+    }
+
+    /// <summary>
+    /// Handles a user answer to the head of the pending follow-up question queue:
+    /// awaits the question's continuation (which is responsible for echoing both the
+    /// question and answer to the scroll area as it sees fit), appends any returned
+    /// chat message to the response accumulator, advances the queue, and — when the
+    /// queue empties — drains the accumulator and resumes the runner.
+    /// </summary>
+    private async Task HandleFollowUpAnswerAsync(string text)
+    {
+        IReadOnlyList<ChatMessage>? messagesToSend = null;
+
+        await this._followUpGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            HarnessConsoleUXStateDriver ux = this._uxDriver;
+            IReadOnlyList<FollowUpQuestion> queue = this.State!.PendingQuestions;
+            if (queue.Count == 0)
+            {
+                return;
+            }
+
+            FollowUpQuestion head = queue[0];
+
+            ChatMessage? response;
+            try
+            {
+                response = await head.Continuation(text, ux).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await ux.WriteInfoLineAsync($"❌ Follow-up handler error: {ex.GetType().Name}: {ex.Message}", ConsoleColor.Red).ConfigureAwait(false);
+                response = null;
+            }
+
+            if (response is not null)
+            {
+                ux.AddFollowUpResponse(response);
+            }
+
+            ux.AdvanceFollowUpQuestion();
+
+            if (this.State!.PendingQuestions.Count == 0)
+            {
+                messagesToSend = ux.TakeFollowUpResponses();
+            }
+        }
+        finally
+        {
+            this._followUpGate.Release();
+        }
+
+        // Resume the agent outside the gate — StartAgentTurnAsync runs the full agent
+        // loop which may queue new follow-up questions (re-entering this method).
+        if (messagesToSend is not null)
+        {
+            try
+            {
+                await this.Runner.StartAgentTurnAsync([.. messagesToSend]).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await this._uxDriver.WriteInfoLineAsync($"❌ Agent error: {ex.GetType().Name}: {ex.Message}", ConsoleColor.Red).ConfigureAwait(false);
+            }
+        }
+    }
+
     private void OnConsoleResized(object? sender, ConsoleResizeEventArgs e)
     {
         this._resizedSinceLastRender = true;
@@ -332,35 +334,40 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
     }
 
     /// <inheritdoc />
-    public override void RenderCore(HarnessAppComponentProps props, HarnessAppComponentState state)
+    public override void RenderCore(ConsoleReactiveProps props, HarnessAppComponentState state)
     {
+        if (this._deactivated)
+        {
+            return;
+        }
+
         // Determine the text panel height for the last scroll item
-        IReadOnlyList<object> lastItems = props.ScrollItems.Count > 0
-            ? [props.ScrollItems[^1]]
+        IReadOnlyList<string> lastItems = state.ScrollAreaContentItems.Count > 0
+            ? [state.ScrollAreaContentItems[^1]]
             : [];
-        int textPanelHeight = TextPanel.CalculateHeight(lastItems, this._renderItem);
+        int textPanelHeight = TextPanel.CalculateHeight(lastItems);
         if (textPanelHeight > 0)
         {
             textPanelHeight++; // Extra line for spacing between text panel and rule
         }
 
         // Calculate queued items panel height
-        int queuedPanelHeight = TextPanel.CalculateHeight(props.QueuedItems, this._renderItem);
+        int queuedPanelHeight = TextPanel.CalculateHeight(state.QueuedItems);
 
         // Build the bottom panel child based on mode
         ConsoleReactiveComponent bottomChild;
         int bottomChildHeight;
 
-        if (props.Mode == BottomPanelMode.ListSelection)
+        if (state.Mode == BottomPanelMode.ListSelection)
         {
             var listProps = new ListSelectionProps
             {
-                Title = props.ListTitle,
-                Items = props.Items,
-                SelectedIndex = state.SelectedIndex,
-                HighlightColor = props.ListHighlightColor,
-                CustomTextPlaceholder = props.ListCustomTextPlaceholder,
-                CustomText = state.ListInputText,
+                Title = state.ListSelectionTitle,
+                Items = state.ListSelectionOptions,
+                SelectedIndex = state.ListSelectionIndex,
+                HighlightColor = state.ListHighlightColor,
+                CustomTextPlaceholder = state.ListSelectionCustomTextPlaceholder,
+                CustomText = state.ListSelectionCustomInputText,
             };
 
             bottomChildHeight = ListSelection.CalculateHeight(listProps);
@@ -368,25 +375,25 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
             this._listSelection.Props = listProps;
             bottomChild = this._listSelection;
         }
-        else if (props.Mode == BottomPanelMode.Streaming)
+        else if (state.Mode == BottomPanelMode.Streaming)
         {
             TextInputProps textInputProps;
-            if (props.InputEnabled)
+            if (state.InputEnabled)
             {
                 textInputProps = new TextInputProps
                 {
-                    Prompt = props.Prompt,
+                    Prompt = state.Prompt,
                     Text = state.InputText,
-                    Placeholder = props.Placeholder,
+                    Placeholder = state.Placeholder,
                 };
             }
             else
             {
                 textInputProps = new TextInputProps
                 {
-                    Prompt = props.Prompt,
+                    Prompt = state.Prompt,
                     Text = "",
-                    Placeholder = props.StreamingPrompt,
+                    Placeholder = state.StreamingPrompt,
                 };
             }
 
@@ -400,9 +407,9 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
         {
             var textInputProps = new TextInputProps
             {
-                Prompt = props.Prompt,
+                Prompt = state.Prompt,
                 Text = state.InputText,
-                Placeholder = props.Placeholder,
+                Placeholder = state.Placeholder,
             };
 
             bottomChildHeight = TextInput.CalculateHeight(textInputProps, state.ConsoleWidth);
@@ -415,46 +422,52 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
         var ruleProps = new TopBottomRuleProps
         {
             Width = state.ConsoleWidth,
-            Color = props.ModeColor,
+            Color = state.ModeColor,
             Children = [bottomChild],
         };
 
-        // Calculate the agent status height
         var agentStatusProps = new AgentStatusProps
         {
-            ShowSpinner = props.ShowSpinner,
-            UsageText = props.UsageText,
+            ShowSpinner = state.ShowSpinner,
+            UsageText = state.UsageText,
         };
-        int agentStatusHeight = AgentStatus.CalculateHeight(agentStatusProps);
 
-        // Calculate the mode-and-help height
         var modeAndHelpProps = new AgentModeAndHelpProps
         {
-            Mode = props.ModeText,
-            ModeColor = props.ModeColor,
-            HelpText = props.HelpText,
+            Mode = state.ModeText,
+            ModeColor = state.ModeColor,
+            HelpText = state.HelpText,
         };
-        int modeAndHelpHeight = AgentModeAndHelp.CalculateHeight(modeAndHelpProps);
+
+        // Hide agent status and mode/help during follow-up questions (ListSelection mode)
+        // as they clutter the UI and aren't relevant.
+        bool showStatusAndHelp = state.Mode != BottomPanelMode.ListSelection;
+        int agentStatusHeight = showStatusAndHelp ? AgentStatus.CalculateHeight(agentStatusProps) : 0;
+        int modeAndHelpHeight = showStatusAndHelp ? AgentModeAndHelp.CalculateHeight(modeAndHelpProps) : 0;
 
         int ruleHeight = TopBottomRule.CalculateHeight(ruleProps);
-        int scrollBottom = Math.Max(1, state.ConsoleHeight - ruleHeight - textPanelHeight - agentStatusHeight - queuedPanelHeight - modeAndHelpHeight);
+        int nonScrollHeight = ruleHeight + textPanelHeight + agentStatusHeight + queuedPanelHeight + modeAndHelpHeight + 1; // +1 for bottom padding
+        int scrollBottom = Math.Max(1, state.ConsoleHeight - nonScrollHeight);
 
         // If scroll region changed or a clear is needed, reset everything
-        if (this._resizedSinceLastRender || (this.ScrollRegionBottom != 0 && scrollBottom != this.ScrollRegionBottom))
+        if (this._resizedSinceLastRender || (this._scrollRegionBottom != 0 && scrollBottom != this._scrollRegionBottom))
         {
+            // Reset scroll region to full screen before erasing so the erase covers all rows —
+            // some terminals only erase within the active DECSTBM region.
+            System.Console.Write(AnsiEscapes.ResetScrollRegion);
             System.Console.Write(AnsiEscapes.EraseEntireScreen);
             System.Console.Write(AnsiEscapes.EraseScrollbackBuffer);
             this._textScrollPanel.Reset();
             this._resizedSinceLastRender = false;
         }
 
-        this.ScrollRegionBottom = scrollBottom;
+        this._scrollRegionBottom = scrollBottom;
 
         System.Console.Write(AnsiEscapes.SetScrollRegion(scrollBottom));
 
         // Render text scroll panel in the scroll area (all items except the last)
-        IReadOnlyList<object> scrollItems = props.ScrollItems.Count > 1
-            ? props.ScrollItems.Take(props.ScrollItems.Count - 1).ToList()
+        IReadOnlyList<string> scrollItems = state.ScrollAreaContentItems.Count > 1
+            ? state.ScrollAreaContentItems.Take(state.ScrollAreaContentItems.Count - 1).ToList()
             : [];
 
         this._textScrollPanel.X = 1;
@@ -486,18 +499,21 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
         this._queuedPanel.Height = queuedPanelHeight;
         this._queuedPanel.Props = new TextPanelProps
         {
-            Items = props.QueuedItems,
+            Items = state.QueuedItems,
         };
         this._queuedPanel.Render();
 
         // Render the agent status line between queued items and rule
         int agentStatusY = queuedPanelY + queuedPanelHeight;
-        this._agentStatus.X = 1;
-        this._agentStatus.Y = agentStatusY;
-        this._agentStatus.Width = state.ConsoleWidth;
-        this._agentStatus.Height = agentStatusHeight;
-        this._agentStatus.Props = agentStatusProps;
-        this._agentStatus.Render();
+        if (showStatusAndHelp)
+        {
+            this._agentStatus.X = 1;
+            this._agentStatus.Y = agentStatusY;
+            this._agentStatus.Width = state.ConsoleWidth;
+            this._agentStatus.Height = agentStatusHeight;
+            this._agentStatus.Props = agentStatusProps;
+            this._agentStatus.Render();
+        }
 
         // Render the bottom rule + child below the agent status
         this._rule.X = 1;
@@ -506,24 +522,27 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
         this._rule.Render();
 
         // Render the mode-and-help line below the bottom rule
-        int modeAndHelpY = this._rule.Y + ruleHeight;
-        this._modeAndHelp.X = 1;
-        this._modeAndHelp.Y = modeAndHelpY;
-        this._modeAndHelp.Width = state.ConsoleWidth;
-        this._modeAndHelp.Height = modeAndHelpHeight;
-        this._modeAndHelp.Props = modeAndHelpProps;
-        this._modeAndHelp.Render();
+        if (showStatusAndHelp)
+        {
+            int modeAndHelpY = this._rule.Y + ruleHeight;
+            this._modeAndHelp.X = 1;
+            this._modeAndHelp.Y = modeAndHelpY;
+            this._modeAndHelp.Width = state.ConsoleWidth;
+            this._modeAndHelp.Height = modeAndHelpHeight;
+            this._modeAndHelp.Props = modeAndHelpProps;
+            this._modeAndHelp.Render();
+        }
 
         // Position cursor for natural typing appearance
-        this.PositionCursor(props, state);
+        this.PositionCursor(state);
     }
 
-    private void PositionCursor(HarnessAppComponentProps props, HarnessAppComponentState state)
+    private void PositionCursor(HarnessAppComponentState state)
     {
-        if (props.Mode == BottomPanelMode.TextInput
-            || (props.Mode == BottomPanelMode.Streaming && props.InputEnabled))
+        if (state.Mode == BottomPanelMode.TextInput
+            || (state.Mode == BottomPanelMode.Streaming && state.InputEnabled))
         {
-            int promptLength = props.Prompt.Length;
+            int promptLength = state.Prompt.Length;
             int textWidth = state.ConsoleWidth - promptLength;
             int textLength = state.InputText.Length;
 
@@ -540,13 +559,13 @@ public class HarnessAppComponent : ConsoleReactiveComponent<HarnessAppComponentP
                 System.Console.Write(AnsiEscapes.MoveCursor(textInputY + cursorRow, promptLength + cursorCol + 1));
             }
         }
-        else if (props.Mode == BottomPanelMode.ListSelection
-            && props.ListCustomTextPlaceholder != null
-            && state.SelectedIndex == props.Items.Count)
+        else if (state.Mode == BottomPanelMode.ListSelection
+            && state.ListSelectionCustomTextPlaceholder != null
+            && state.ListSelectionIndex == state.ListSelectionOptions.Count)
         {
-            int titleLines = props.ListTitle?.Split('\n').Length ?? 0;
-            int customOptionY = this._rule.Y + 1 + titleLines + props.Items.Count;
-            int cursorCol = 2 + state.ListInputText.Length + 1;
+            int titleLines = state.ListSelectionTitle?.Split('\n').Length ?? 0;
+            int customOptionY = this._rule.Y + 1 + titleLines + state.ListSelectionOptions.Count;
+            int cursorCol = 2 + state.ListSelectionCustomInputText.Length + 1;
             System.Console.Write(AnsiEscapes.MoveCursor(customOptionY, cursorCol));
         }
     }

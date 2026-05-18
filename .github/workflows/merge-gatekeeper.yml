@@ -2,7 +2,7 @@ name: Merge Gatekeeper
 
 on:
   pull_request:
-    branches: [ "main", "feature*" ]
+    branches: ["main", "feature*"]
   merge_group:
     branches: ["main"]
 
@@ -13,23 +13,105 @@ concurrency:
 jobs:
   merge-gatekeeper:
     runs-on: ubuntu-latest
-    # Restrict permissions of the GITHUB_TOKEN.
-    # Docs: https://docs.github.com/en/actions/using-jobs/assigning-permissions-to-jobs
     permissions:
       checks: read
       statuses: read
     steps:
-      - name: Run Merge Gatekeeper
-        # NOTE: v1 is updated to reflect the latest v1.x.y. Please use any tag/branch that suits your needs:
-        #       https://github.com/upsidr/merge-gatekeeper/tags
-        #       https://github.com/upsidr/merge-gatekeeper/branches
-        uses: upsidr/merge-gatekeeper@v1
+      - name: Wait for required checks
         if: github.event_name == 'pull_request'
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          timeout: 3600
-          interval: 30
+        uses: actions/github-script@v8
+        env:
+          TIMEOUT_SECONDS: "3600"
+          INTERVAL_SECONDS: "30"
+          SELF_JOB_NAME: ${{ github.job }}
           # "Cleanup artifacts", "Agent", "Prepare", and "Upload results" are check runs
           # created by an org-level GitHub App (MSDO), not by any workflow in this repo.
           # They are outside our control and their transient failures should not block merges.
-          ignored: CodeQL,CodeQL analysis (csharp),Cleanup artifacts,Agent,Prepare,Upload results
+          IGNORED_NAMES: "CodeQL,CodeQL analysis (csharp),Cleanup artifacts,Agent,Prepare,Upload results"
+        with:
+          script: |
+            const timeoutSeconds = Number(process.env.TIMEOUT_SECONDS);
+            const intervalSeconds = Number(process.env.INTERVAL_SECONDS);
+            const selfName = process.env.SELF_JOB_NAME;
+            const ignored = new Set(
+              process.env.IGNORED_NAMES.split(',').map((s) => s.trim()).filter(Boolean),
+            );
+
+            const sha = context.payload.pull_request.head.sha;
+            const { owner, repo } = context.repo;
+
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+            // Mirrors upsidr/merge-gatekeeper: merge combined-statuses and check-runs
+            // for the PR head SHA, with combined-statuses winning on name collision.
+            async function collectChecks() {
+              const merged = new Map();
+
+              const combined = await github.rest.repos.getCombinedStatusForRef({
+                owner, repo, ref: sha, per_page: 100,
+              });
+              for (const s of combined.data.statuses ?? []) {
+                if (!merged.has(s.context)) {
+                  // Combined-status states: success | pending | error | failure
+                  merged.set(s.context, { name: s.context, state: s.state });
+                }
+              }
+
+              const runs = await github.paginate(github.rest.checks.listForRef, {
+                owner, repo, ref: sha, per_page: 100,
+              });
+              for (const r of runs) {
+                if (merged.has(r.name)) continue;
+                let state;
+                if (r.status !== 'completed') {
+                  state = 'pending';
+                } else if (r.conclusion === 'skipped') {
+                  continue; // Skipped runs are dropped, matching the original action.
+                } else if (r.conclusion === 'success' || r.conclusion === 'neutral') {
+                  state = 'success';
+                } else {
+                  // cancelled | timed_out | action_required | stale | failure
+                  state = 'error';
+                }
+                merged.set(r.name, { name: r.name, state });
+              }
+
+              return [...merged.values()];
+            }
+
+            function evaluate(entries) {
+              const failed = [];
+              const pending = [];
+              const succeeded = [];
+              for (const e of entries) {
+                if (e.name === selfName || ignored.has(e.name)) continue;
+                if (e.state === 'success') succeeded.push(e.name);
+                else if (e.state === 'error' || e.state === 'failure') failed.push(e.name);
+                else pending.push(e.name);
+              }
+              return { failed, pending, succeeded };
+            }
+
+            const deadline = Date.now() + timeoutSeconds * 1000;
+            for (;;) {
+              const entries = await collectChecks();
+              const { failed, pending, succeeded } = evaluate(entries);
+
+              core.info(
+                `succeeded=${succeeded.length} pending=${pending.length} failed=${failed.length}`,
+              );
+              if (failed.length) {
+                core.setFailed(`Failing checks: ${failed.join(', ')}`);
+                return;
+              }
+              if (pending.length === 0) {
+                core.info(`All required checks passed: ${succeeded.join(', ') || '(none)'}`);
+                return;
+              }
+              if (Date.now() > deadline) {
+                core.setFailed(`Timed out waiting for: ${pending.join(', ')}`);
+                return;
+              }
+              core.info(`Waiting on (${pending.length}): ${pending.slice(0, 10).join(', ')}${pending.length > 10 ? ', …' : ''}`);
+              await sleep(intervalSeconds * 1000);
+            }

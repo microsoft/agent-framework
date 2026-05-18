@@ -68,6 +68,19 @@ def _tool_result_with_state(call_id: str, text: str, state: dict[str, Any]) -> A
     )
 
 
+def _tool_result_with_display(call_id: str, text: str, tool_result: Any, **kwargs: Any) -> AgentResponseUpdate:
+    """Build a function_result update carrying an optional UI display marker."""
+    return AgentResponseUpdate(
+        contents=[
+            Content.from_function_result(
+                call_id=call_id,
+                result=[state_update(text=text, tool_result=tool_result, **kwargs)],
+            )
+        ],
+        role="assistant",
+    )
+
+
 # ── Golden stream tests ──
 
 
@@ -265,3 +278,87 @@ async def test_deterministic_state_coexists_with_predict_state_config() -> None:
     # The final observed state must contain both the deterministic and predictive contributions.
     final = stream.snapshot()
     assert final["weather"] == {"city": "SF", "temp": 14}, f"Deterministic state missing from final snapshot: {final}"
+
+
+async def test_tool_result_display_payload_reaches_ui_event_only() -> None:
+    """Rich display payload overrides TOOL_CALL_RESULT without leaking marker keys."""
+    updates = [
+        _tool_call("call-1", "get_weather", '{"city": "SF"}'),
+        _tool_result_with_display(
+            "call-1",
+            text="Weather in SF: 14°C foggy",
+            tool_result={"city": "SF", "temp": 14, "conditions": "foggy"},
+        ),
+    ]
+    agent = _build_agent(updates)
+    stream = await _run(agent, PAYLOAD)
+
+    stream.assert_bookends()
+    stream.assert_no_run_error()
+    stream.assert_tool_calls_balanced()
+
+    result = stream.first("TOOL_CALL_RESULT")
+    assert result.content == '{"city": "SF", "temp": 14, "conditions": "foggy"}'
+    assert "__ag_ui_tool_result_display__" not in result.content
+    assert "__ag_ui_tool_result_state__" not in result.content
+
+
+async def test_tool_result_display_falls_back_to_text_when_unset() -> None:
+    """Without a display marker, the UI event keeps the existing text content."""
+    updates = [
+        _tool_call("call-1", "get_weather", '{"city": "SF"}'),
+        _tool_result_with_state(
+            "call-1",
+            text="Weather in SF: 14°C foggy",
+            state={"weather": {"city": "SF", "temp": 14}},
+        ),
+    ]
+    agent = _build_agent(updates)
+    stream = await _run(agent, PAYLOAD)
+
+    stream.assert_bookends()
+    stream.assert_no_run_error()
+    stream.assert_tool_calls_balanced()
+
+    result = stream.first("TOOL_CALL_RESULT")
+    assert result.content == "Weather in SF: 14°C foggy"
+    assert "__ag_ui_tool_result_display__" not in result.content
+    assert "__ag_ui_tool_result_state__" not in result.content
+
+
+async def test_tool_result_display_coexists_with_state_snapshot() -> None:
+    """Display and durable state markers produce one deterministic state snapshot."""
+    updates = [
+        _tool_call("call-1", "get_weather", '{"city": "SF"}'),
+        _tool_result_with_display(
+            "call-1",
+            text="Weather in SF: 14°C foggy",
+            tool_result={"city": "SF", "temp": 14, "conditions": "foggy"},
+            state={"weather": {"city": "SF", "temp": 14, "conditions": "foggy"}},
+        ),
+    ]
+    agent = _build_agent(updates)
+    stream = await _run(agent, PAYLOAD)
+
+    stream.assert_bookends()
+    stream.assert_no_run_error()
+    stream.assert_tool_calls_balanced()
+    stream.assert_ordered_types(["TOOL_CALL_RESULT", "STATE_SNAPSHOT", "RUN_FINISHED"])
+
+    result = stream.first("TOOL_CALL_RESULT")
+    assert result.content == '{"city": "SF", "temp": 14, "conditions": "foggy"}'
+
+    result_idx = stream.events.index(result)
+    deterministic_snapshots = [
+        event
+        for event in stream.events[result_idx + 1 :]
+        if getattr(getattr(event, "type", None), "value", getattr(event, "type", None)) == "STATE_SNAPSHOT"
+    ]
+    assert len(deterministic_snapshots) == 1
+    assert deterministic_snapshots[0].snapshot["weather"] == {
+        "city": "SF",
+        "temp": 14,
+        "conditions": "foggy",
+    }
+    assert "__ag_ui_tool_result_display__" not in str(deterministic_snapshots[0].snapshot)
+    assert "__ag_ui_tool_result_state__" not in str(deterministic_snapshots[0].snapshot)

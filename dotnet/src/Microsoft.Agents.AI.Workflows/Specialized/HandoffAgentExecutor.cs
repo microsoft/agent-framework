@@ -235,11 +235,10 @@ internal sealed class HandoffAgentExecutor :
         // This will not filter out tool responses and approval responses that are part of this agent's turn, which is
         // the expected behavior since those are part of the agent's reasoning process.
         HandoffMessagesFilter handoffMessagesFilter = new(this._options.ToolCallFilteringBehavior);
-        IEnumerable<ChatMessage> messagesForAgent = state.IncomingState.RequestedHandoffTargetAgentId is not null
+        List<ChatMessage> messagesForAgent = (state.IncomingState.RequestedHandoffTargetAgentId is not null
                                                   ? handoffMessagesFilter.FilterMessages(incomingMessages)
-                                                  : incomingMessages;
-
-        List<ChatMessage>? roleChanges = messagesForAgent.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
+                                                  : incomingMessages)
+                                             .CopyWithAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
 
         bool emitUpdateEvents = state.IncomingState!.ShouldEmitStreamingEvents(this._options.EmitAgentResponseUpdateEvents);
         AgentInvocationResult result = await this.InvokeAgentAsync(messagesForAgent, context, emitUpdateEvents, cancellationToken)
@@ -249,8 +248,6 @@ internal sealed class HandoffAgentExecutor :
         {
             throw new InvalidOperationException("Cannot request a handoff while holding pending requests.");
         }
-
-        roleChanges.ResetUserToAssistantForChangedRoles();
 
         int newConversationBookmark = state.ConversationBookmark;
         await this._sharedStateRef.InvokeWithStateAsync(

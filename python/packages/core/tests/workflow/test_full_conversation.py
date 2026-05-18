@@ -429,7 +429,12 @@ class _FullHistoryReplayCoordinator(Executor):
 
 
 @pytest.mark.xfail(
-    reason="reset_service_session support not yet implemented — see #4047",
+    reason=(
+        "Tracks the executor-layer half of #3295: AgentExecutor should clear service_session_id "
+        "when handed a full prior conversation. The wire-level 'Duplicate item' API error is "
+        "already closed by the chat-client strip in #3295; this xfail covers the defense-in-depth "
+        "follow-up that makes the executor wiring reflect intent."
+    ),
     strict=True,
 )
 async def test_run_request_with_full_history_clears_service_session_id() -> None:

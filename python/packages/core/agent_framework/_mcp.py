@@ -10,7 +10,7 @@ import logging
 import re
 import sys
 from abc import abstractmethod
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Coroutine, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
@@ -261,9 +261,11 @@ class MCPTool:
         self.request_timeout = request_timeout
         self.client = client
         self._functions: list[FunctionTool] = []
+        self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
+        self._pending_reload_tasks: set[asyncio.Task[None]] = set()
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -905,11 +907,46 @@ class MCPTool:
         if isinstance(message, types.ServerNotification):
             match message.root.method:
                 case "notifications/tools/list_changed":
-                    await self.load_tools()
+                    self._schedule_reload(self.load_tools())
                 case "notifications/prompts/list_changed":
-                    await self.load_prompts()
+                    self._schedule_reload(self.load_prompts())
                 case _:
                     logger.debug("Unhandled notification: %s", message.root.method)
+
+    def _schedule_reload(self, coro: Coroutine[Any, Any, None]) -> None:
+        """Schedule a reload coroutine as a background task.
+
+        Reloads (load_tools / load_prompts) triggered by MCP server
+        notifications must NOT be awaited inside the message handler because
+        the handler runs on the MCP SDK's single-threaded receive loop.
+        Awaiting a session request (e.g. ``list_tools``) from within that loop
+        deadlocks: the receive loop cannot read the response while it is
+        blocked waiting for the handler to return.
+
+        Instead we fire the reload as an independent ``asyncio.Task`` and keep
+        a strong reference in ``_pending_reload_tasks`` so it is not garbage-
+        collected before completion.  Only one reload per kind (tools / prompts)
+        is kept in flight; a new notification cancels the previous pending task
+        for the same coroutine name to avoid unbounded growth.
+        """
+        # Cancel-and-replace: only one reload per kind should be in flight.
+        reload_name = f"mcp-reload:{self.name}:{coro.__qualname__}"
+        for existing in list(self._pending_reload_tasks):
+            if existing.get_name() == reload_name and not existing.done():
+                logger.debug("Cancelling in-flight reload %s; superseded by new notification", reload_name)
+                existing.cancel()
+
+        async def _safe_reload() -> None:
+            try:
+                await coro
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Background MCP reload failed", exc_info=True)
+
+        task = asyncio.create_task(_safe_reload(), name=reload_name)
+        self._pending_reload_tasks.add(task)
+        task.add_done_callback(self._pending_reload_tasks.discard)
 
     def _determine_approval_mode(
         self,
@@ -990,6 +1027,7 @@ class MCPTool:
 
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
+        self._tool_call_meta_by_name.clear()
 
         params: types.PaginatedRequestParams | None = None
         while True:
@@ -999,6 +1037,9 @@ class MCPTool:
             tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
 
             for tool in tool_list.tools:
+                if tool.meta is not None:
+                    self._tool_call_meta_by_name[tool.name] = dict(tool.meta)
+
                 normalized_name = _normalize_mcp_name(tool.name)
                 local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
 
@@ -1047,6 +1088,14 @@ class MCPTool:
             params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
     async def _close_on_owner(self) -> None:
+        # Cancel any pending reload tasks before tearing down the session.
+        tasks = list(self._pending_reload_tasks)
+        for task in tasks:
+            task.cancel()
+        self._pending_reload_tasks.clear()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
         self.session = None
@@ -1141,14 +1190,15 @@ class MCPTool:
             }
         }
 
-        # Inject OpenTelemetry trace context into MCP _meta for distributed tracing.
-        otel_meta = _inject_otel_into_mcp_meta()
+        # Some MCP proxies require their tools/list metadata to be echoed on tools/call.
+        tool_meta = self._tool_call_meta_by_name.get(tool_name)
+        meta = _inject_otel_into_mcp_meta(dict(tool_meta) if tool_meta is not None else None)
 
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
                 if result.isError:
                     parsed = parser(result)
                     text = (
