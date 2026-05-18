@@ -1,16 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
-import os
-
-from agent_framework.openai import OpenAIEmbeddingClient
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
-
-"""
-Telnyx Embeddings Example
+"""Telnyx Embeddings Example
 
 This sample demonstrates using Telnyx for text embeddings through the
 OpenAIEmbeddingClient by configuring the base_url to point to the
@@ -23,6 +13,15 @@ Environment Variables:
     TELNYX_API_KEY   — Your Telnyx API key (from https://portal.telnyx.com/)
     TELNYX_EMBEDDING_MODEL — Embedding model name (default: "thenlper/gte-large")
 """
+
+import asyncio
+import os
+
+from agent_framework.openai import OpenAIEmbeddingClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

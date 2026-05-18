@@ -19,8 +19,8 @@ This follows the same pattern as the [Ollama with OpenAI Chat Client](../ollama/
 
 | File | Description |
 |------|-------------|
-| [`telnyx_chat_completion.py`](telnyx_chat_completion.py) | Basic chat completion using `OpenAIChatClient` with Telnyx endpoint. Shows both streaming and non-streaming responses. |
-| [`telnyx_embeddings.py`](telnyx_embeddings.py) | Text embeddings using `OpenAIEmbeddingClient` with Telnyx endpoint. |
+| `telnyx_chat_completion.py` | Basic chat completion using `OpenAIChatClient` with Telnyx endpoint. Shows both streaming and non-streaming responses. |
+| `telnyx_embeddings.py` | Text embeddings using `OpenAIEmbeddingClient` with Telnyx endpoint. |
 
 ## Configuration
 
@@ -39,8 +39,8 @@ Set the following environment variables:
 ## Quick Start
 
 ```bash
-# Install the Agent Framework OpenAI package
-pip install agent-framework-openai
+# Install the Agent Framework OpenAI package and python-dotenv
+pip install agent-framework-openai python-dotenv
 
 # Set your Telnyx API key
 export TELNYX_API_KEY="your-api-key-here"
