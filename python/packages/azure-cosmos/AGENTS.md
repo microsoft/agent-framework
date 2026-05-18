@@ -43,9 +43,9 @@ checkpoint_storage = CosmosCheckpointStorage(
 
 Container name is configured on each provider. `CosmosHistoryProvider` uses `session_id` as the partition key for reads/writes.
 
-`CosmosContextProvider` uses the container's `/session_id` partition key path. By default, it scopes retrieval and writeback to the current session's `session_id`, keeping each conversation's knowledge isolated. To share context across conversations, set `partition_key` on the constructor — all conversations using the same `partition_key` will read from and write to the same partition.
+`CosmosContextProvider` can optionally scope retrieval with `partition_key`.
 
-`CosmosContextProvider` joins the filtered `user` and `assistant` messages from the current run into one retrieval query string, and writes request/response messages back into the same Cosmos knowledge container after each run. All configuration — including search mode, weights, top_k, scan_limit, and partition key — is set on the constructor.
+`CosmosContextProvider` joins the filtered `user` and `assistant` messages from the current run into one retrieval query string, and writes request/response messages back into the same Cosmos knowledge container after each run. All configuration (search mode, weights, top_k, scan_limit, and partition key) is set on the constructor.
 
 The default search mode is `VECTOR`. Full-text and hybrid modes are also supported via the `search_mode` constructor parameter. Optional hybrid RRF weights can be provided through `weights=[...]` on the constructor.
 

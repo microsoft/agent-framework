@@ -20,10 +20,6 @@ This sample demonstrates RAG with Azure Cosmos DB using full-text search mode.
 Full-text search uses BM25 ranking to find documents by keyword relevance rather
 than vector similarity. No embedding function is needed for this mode.
 
-The provider automatically handles queries with more than 5 search terms by
-chunking them into batches and merging results via Cosmos RRF (Reciprocal Rank
-Fusion), which is transparent to the caller.
-
 After each agent run, the conversation exchange is written back to the container
 automatically. Follow-up questions can then retrieve prior exchanges by keyword.
 

@@ -9,9 +9,8 @@ This folder contains examples demonstrating how to use the `CosmosContextProvide
 | File | Description |
 |------|-------------|
 | [`cosmos_context_basics.py`](cosmos_context_basics.py) | **Vector search + writeback**: Ask questions using vector search (default mode) and see how conversation exchanges are written back into the container for future retrieval. |
-| [`cosmos_context_fulltext.py`](cosmos_context_fulltext.py) | **Full-text search**: Retrieve documents by keyword relevance using BM25 ranking. No embedding function needed. Queries with more than 5 terms are handled automatically via RRF chunking. |
+| [`cosmos_context_fulltext.py`](cosmos_context_fulltext.py) | **Full-text search**: Retrieve documents by keyword relevance using BM25 ranking. No embedding function needed. |
 | [`cosmos_context_hybrid.py`](cosmos_context_hybrid.py) | **Hybrid search**: Combine vector and full-text search via Reciprocal Rank Fusion (RRF). Also demonstrates optional weighted RRF to tune the balance between semantic and keyword results. |
-| [`cosmos_context_shared.py`](cosmos_context_shared.py) | **Shared knowledge**: Use `partition_key` to share context across multiple agent sessions. Demonstrates seeding a common knowledge partition and having separate conversations query and contribute to it. |
 
 ## Prerequisites
 
@@ -137,40 +136,16 @@ provider = CosmosContextProvider(
 
 The provider always scopes queries to a single partition for performance and cost efficiency. By default, it uses the current session's `session_id` as the partition key value, keeping each conversation's context isolated.
 
-### Per-conversation context (default)
-
-When no `partition_key` is set, each conversation reads and writes only its own documents. This is the simplest setup and works well when each session should have independent context.
+When no `partition_key` is set, each conversation reads and writes only its own documents. You can override this by setting `partition_key` on the constructor to scope reads and writes to a specific partition value.
 
 ```python
-# Each session has its own isolated context
-provider = CosmosContextProvider(...)
-```
-
-### Shared context across conversations
-
-To share context across multiple conversations, set `partition_key` on the constructor. All provider instances using the same `partition_key` value read from and write to the same partition, regardless of their session_id. See [`cosmos_context_shared.py`](cosmos_context_shared.py) for a working example.
-
-```python
-# All agents using this partition_key share the same context
 provider = CosmosContextProvider(
-    partition_key="team-knowledge",
+    partition_key="my-partition",
     ...
 )
 ```
 
-### How session_id and partition_key interact
-
-The provider always writes `session_id` into every document so you can trace which conversation produced each piece of context. How `session_id` relates to the container's partition key depends on your container configuration:
-
-- **Container partition key path is `/session_id`** (recommended for per-conversation isolation): The `session_id` field doubles as the partition key. If you set a custom `partition_key` on the provider, that value is written into the `session_id` field of writeback documents, which means the document's `session_id` will be the partition key value rather than the real conversation ID. For shared knowledge scenarios, consider using a container with a different partition key path (see below).
-
-- **Container partition key path is something else** (e.g., `/partition_key`): The provider writes both the `session_id` (real conversation ID) and the partition key field independently. This is the recommended setup for shared knowledge scenarios where you want to preserve the real conversation ID on every document.
-
-### Important notes
-
-- The provider reads the container's partition key path at startup and caches it. Only single, top-level partition key paths are supported (e.g., `/session_id`, `/partition_key`). Hierarchical and nested paths are not supported.
-- All Cosmos DB configuration (partition key path, indexing policies, vector/full-text policies) is the application owner's responsibility. The provider does not create or modify Cosmos resources.
-- Cosmos DB errors from partition key mismatches are surfaced directly to the caller.
+The provider reads the container's partition key path at startup and writes the correct field into documents on writeback. All Cosmos DB configuration (partition key path, indexing policies, vector/full-text policies) is the application owner's responsibility. The provider does not create or modify Cosmos resources.
 
 ## Using Real Embeddings
 
@@ -209,9 +184,6 @@ uv run samples/02-agents/context_providers/azure_cosmos/cosmos_context_fulltext.
 
 # Hybrid search
 uv run samples/02-agents/context_providers/azure_cosmos/cosmos_context_hybrid.py
-
-# Shared knowledge across conversations
-uv run samples/02-agents/context_providers/azure_cosmos/cosmos_context_shared.py
 ```
 
 ## How the Samples Work
@@ -239,13 +211,6 @@ uv run samples/02-agents/context_providers/azure_cosmos/cosmos_context_shared.py
 3. Demonstrate weighted hybrid search with custom RRF weights to tune the balance
 4. Clean up all documents
 
-### Shared Knowledge (`cosmos_context_shared.py`)
-
-1. Seed knowledge documents into a shared partition (simulating pre-existing context from other sessions)
-2. Run two separate agent sessions that both use the same `partition_key`
-3. Both sessions can retrieve the shared knowledge and each other's written-back exchanges
-4. Clean up all documents in the shared partition
-
 ## Troubleshooting
 
 1. **403 Forbidden on data operations**
@@ -265,14 +230,11 @@ uv run samples/02-agents/context_providers/azure_cosmos/cosmos_context_shared.py
    - Verify the container has a full-text index on the `content` field
 
 5. **No results returned**
-   - By default, the provider scopes queries to the current `session_id`. If you seeded documents under a different partition, set `partition_key` on the provider to match
    - Verify documents have embeddings in the `embedding` field (for vector/hybrid modes)
    - Try increasing `top_k` or `scan_limit`
 
 6. **Partition key configuration errors**
    - Make sure your container's partition key path and indexing policies are configured correctly before using the provider. The provider reads the partition key path from the container at startup to write the correct field into documents.
-   - If you set a custom `partition_key` but the container's partition key path is `/session_id`, writeback documents will use your custom value as the `session_id` field. This means the real conversation ID is overwritten in that field. To keep them independent, use a container with a partition key path other than `/session_id`.
-   - If queries return no results with a custom `partition_key`, verify that existing documents in the container actually have the matching partition key value. The provider always scopes queries to a single partition.
    - Cosmos DB errors from partition key mismatches are surfaced directly to the caller.
 
 ## Additional Resources

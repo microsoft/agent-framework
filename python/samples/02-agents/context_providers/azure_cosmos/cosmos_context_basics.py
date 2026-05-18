@@ -22,8 +22,7 @@ exchange is automatically written back into the Cosmos container, so the knowled
 base grows over time and follow-up questions can retrieve prior exchanges.
 
 By default, context is scoped to the current session_id, keeping each conversation's
-knowledge isolated. To share context across conversations, see the shared knowledge
-sample (cosmos_context_shared.py).
+knowledge isolated.
 
 Key components:
 - CosmosContextProvider configured for vector search retrieval
