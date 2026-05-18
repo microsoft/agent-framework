@@ -642,6 +642,11 @@ class MCPTool:
                 )
             else:
                 raise
+        except Exception as e:
+            if type(e).__name__ == "ExceptionGroup":
+                logger.warning("Could not cleanly close MCP exit stack due to cleanup error group. Error: %s", e)
+            else:
+                raise
         except asyncio.CancelledError:
             logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
 
