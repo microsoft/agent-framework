@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import tempfile
+import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator
+from contextlib import suppress
+from pathlib import Path
 from typing import cast
 
 from agent_framework import (
@@ -37,6 +42,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
 from typing_extensions import Any
 
 from ._shared import (
+    ApprovalStorage,
     _arguments_to_str,  # pyright: ignore[reportPrivateUsage]
     _convert_message_content,  # pyright: ignore[reportPrivateUsage]
     _convert_output_message_content,  # pyright: ignore[reportPrivateUsage]
@@ -50,6 +56,7 @@ from ._shared import (
 # tests (which import them from this module) keep working — the canonical
 # definitions now live in :mod:`._shared`.
 __all__ = (
+    "ApprovalStorage",
     "_arguments_to_str",
     "_convert_message_content",
     "_convert_output_message_content",
@@ -70,18 +77,6 @@ FunctionShellCallOutputExitOutcome = models.FunctionShellCallOutputExitOutcome
 LocalEnvironmentResource = models.LocalEnvironmentResource
 
 logger = logging.getLogger(__name__)
-
-
-class ApprovalStorage(Protocol):
-    """Storage for saving function approval requests."""
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        """Save a function approval request under the given ID."""
-        ...
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        """Load a function approval request by its ID."""
-        ...
 
 
 class InMemoryFunctionApprovalStorage:
@@ -370,7 +365,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         by the hosting infrastructure or files will be preserved upon deactivation.
         """
         input_items = await context.get_input_items()
-        input_messages = await _items_to_messages(input_items)
+        input_messages = await _items_to_messages(input_items, approval_storage=self._approval_storage)
         is_streaming_request = request.stream is not None and request.stream is True
 
         _, are_options_set = _to_chat_options(request)
@@ -388,9 +383,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if not isinstance(self._agent, WorkflowAgent):
             raise RuntimeError("Agent is not a workflow agent.")
 
-        # Restore from the latest checkpoint if available, otherwise start with an empty history
+        # Restore from the latest checkpoint if available, otherwise start with an empty history.
+        # ``context_id`` is caller-controlled (``previous_response_id`` / ``conversation_id``);
+        # routing it through ``_checkpoint_storage_for_context`` rejects path-traversal
+        # patterns before any directory is created (CWE-22, mirrors upstream #5851).
         if context_id is not None:
-            checkpoint_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
+            checkpoint_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, context_id)
             latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
             if latest_checkpoint is not None:
                 if not is_streaming_request:
@@ -416,8 +414,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         #   create a new checkpoint storage for this response
         # - If a previous response ID is provided, create a new checkpoint storage for this response
         # - If a conversation ID is provided, reuse the existing checkpoint storage for the conversation
+        # ``context_id`` is caller-controlled or server-generated; validation in
+        # ``_checkpoint_storage_for_context`` keeps either source from escaping the root.
         context_id = context.conversation_id or context.response_id
-        checkpoint_storage = FileCheckpointStorage(os.path.join(self._checkpoint_storage_path, context_id))
+        checkpoint_storage = _checkpoint_storage_for_context(self._checkpoint_storage_path, context_id)
 
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
@@ -428,7 +428,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             for message in response.messages:
                 for content in message.contents:
-                    async for item in _to_outputs(response_event_stream, content):
+                    async for item in _to_outputs(
+                        response_event_stream,
+                        content,
+                        approval_storage=self._approval_storage,
+                    ):
                         yield item
 
             await self._delete_not_latest_checkpoints(checkpoint_storage, self._agent.workflow.name)
@@ -445,7 +449,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 for event in tracker.handle(content):
                     yield event
                 if tracker.needs_async:
-                    async for item in _to_outputs(response_event_stream, content):
+                    async for item in _to_outputs(
+                        response_event_stream,
+                        content,
+                        approval_storage=self._approval_storage,
+                    ):
                         yield item
                     tracker.needs_async = False
 
@@ -654,7 +662,12 @@ def _to_chat_options(request: CreateResponse) -> tuple[ChatOptions, bool]:
 # endregion
 
 
-async def _to_outputs(stream: ResponseEventStream, content: Content) -> AsyncIterator[ResponseStreamEvent]:
+async def _to_outputs(
+    stream: ResponseEventStream,
+    content: Content,
+    *,
+    approval_storage: ApprovalStorage | None = None,
+) -> AsyncIterator[ResponseStreamEvent]:
     """Converts a Content object to an async sequence of ResponseStreamEvent objects.
 
     Args:
