@@ -56,7 +56,7 @@ import base64
 import json
 import logging
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from agent_framework import Content, Message
 from azure.ai.agentserver.responses import models
@@ -109,6 +109,7 @@ __all__ = (
     "AF_EXTRAS_KEY",
     "EXTRAS_KEY",
     "RAW_KEY",
+    "ApprovalStorage",
     "_arguments_to_str",
     "_attach_content_extras",
     "_attach_extras",
@@ -127,6 +128,18 @@ __all__ = (
     "_output_item_to_message",
     "_output_items_to_messages",
 )
+
+
+class ApprovalStorage(Protocol):
+    """Storage for saving function approval requests."""
+
+    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
+        """Save a function approval request under the given ID."""
+        ...
+
+    async def load_approval_request(self, approval_request_id: str) -> Content:
+        """Load a function approval request by its ID."""
+        ...
 
 
 # region Extras helpers
@@ -470,7 +483,11 @@ def _attach_content_extras(content: Content, model: Mapping[str, Any]) -> Conten
 # region Item → Message (input side)
 
 
-def _items_to_messages(input_items: Sequence[models.Item]) -> list[Message]:
+async def _items_to_messages(
+    input_items: Sequence[models.Item],
+    *,
+    approval_storage: ApprovalStorage | None = None,
+) -> list[Message]:
     """Convert a sequence of input ``Item`` SDK objects to framework ``Message`` objects.
 
     One :class:`agent_framework.Message` per input item — fan-out is the
@@ -479,23 +496,36 @@ def _items_to_messages(input_items: Sequence[models.Item]) -> list[Message]:
     Args:
         input_items: The input items to convert.
 
+    Keyword Args:
+        approval_storage: Optional approval storage. Required when the input
+            stream contains ``mcp_approval_request`` / ``mcp_approval_response``
+            items so the original function-call payload can be looked up.
+
     Returns:
         A list of messages in the same order as the input.
     """
-    return [_item_to_message(item) for item in input_items]
+    return [await _item_to_message(item, approval_storage=approval_storage) for item in input_items]
 
 
-def _item_to_message(item: models.Item) -> Message:
+async def _item_to_message(
+    item: models.Item,
+    *,
+    approval_storage: ApprovalStorage | None = None,
+) -> Message:
     """Convert a single input ``Item`` SDK object to a framework ``Message``.
 
     Wraps :func:`_item_to_message_inner` and stamps a :data:`RAW_KEY`
     snapshot of the SDK item so the write path can rebuild the original
     shape losslessly. See :func:`_capture_raw`.
     """
-    return _capture_raw(_item_to_message_inner(item), item)
+    return _capture_raw(await _item_to_message_inner(item, approval_storage=approval_storage), item)
 
 
-def _item_to_message_inner(item: models.Item) -> Message:
+async def _item_to_message_inner(
+    item: models.Item,
+    *,
+    approval_storage: ApprovalStorage | None = None,
+) -> Message:
     """Convert a single input ``Item`` SDK object to a framework ``Message``.
 
     The conversion table is intentionally explicit (no auto-discovery) so it
@@ -510,6 +540,11 @@ def _item_to_message_inner(item: models.Item) -> Message:
 
     Args:
         item: The SDK item to convert.
+
+    Keyword Args:
+        approval_storage: Optional approval storage. Required when the item is
+            an ``mcp_approval_request`` / ``mcp_approval_response``; ignored
+            otherwise.
 
     Returns:
         The converted message, with any unknown extras round-tripped under
@@ -582,31 +617,23 @@ def _item_to_message_inner(item: models.Item) -> Message:
 
     if item.type == "mcp_approval_request":
         mcp_req = cast(models.ItemMcpApprovalRequest, item)
-        mcp_call_content = Content.from_mcp_server_tool_call(
-            mcp_req.id,
-            mcp_req.name,
-            server_name=mcp_req.server_label,
-            arguments=mcp_req.arguments,
-        )
+        if approval_storage is None:
+            raise ValueError("ApprovalStorage is required to load approval request.")
+        mcp_call_content = await approval_storage.load_approval_request(mcp_req.id)
         return _attach_extras(
-            Message(
-                role="assistant",
-                contents=[Content.from_function_approval_request(mcp_req.id, mcp_call_content)],
-            ),
+            Message(role="assistant", contents=[mcp_call_content]),
             item,
         )
 
     if item.type == "mcp_approval_response":
         mcp_resp = cast(models.MCPApprovalResponse, item)
-        placeholder_content = Content.from_function_call(mcp_resp.approval_request_id, "mcp_approval")
+        if approval_storage is None:
+            raise ValueError("ApprovalStorage is required to load approval request.")
+        function_approval_request_content = await approval_storage.load_approval_request(mcp_resp.approval_request_id)
         return _attach_extras(
             Message(
                 role="user",
-                contents=[
-                    Content.from_function_approval_response(
-                        mcp_resp.approve, mcp_resp.approval_request_id, placeholder_content
-                    )
-                ],
+                contents=[function_approval_request_content.to_function_approval_response(mcp_resp.approve)],
             ),
             item,
         )
@@ -808,7 +835,11 @@ def _item_to_message_inner(item: models.Item) -> Message:
 # region OutputItem → Message (output / history side)
 
 
-def _output_items_to_messages(history: Sequence[models.OutputItem]) -> list[Message]:
+async def _output_items_to_messages(
+    history: Sequence[models.OutputItem],
+    *,
+    approval_storage: ApprovalStorage | None = None,
+) -> list[Message]:
     """Convert a sequence of ``OutputItem`` SDK objects to framework ``Message`` objects.
 
     This is the function the :class:`._history_provider.FoundryHostedAgentHistoryProvider`
@@ -818,13 +849,23 @@ def _output_items_to_messages(history: Sequence[models.OutputItem]) -> list[Mess
     Args:
         history: The output items to convert, oldest-first.
 
+    Keyword Args:
+        approval_storage: Optional approval storage. Required when the
+            history contains ``mcp_approval_request`` /
+            ``mcp_approval_response`` items so the original function-call
+            payload can be looked up.
+
     Returns:
         A list of messages, one per supported item, in the same order.
     """
-    return [_output_item_to_message(item) for item in history]
+    return [await _output_item_to_message(item, approval_storage=approval_storage) for item in history]
 
 
-def _output_item_to_message(item: models.OutputItem) -> Message:
+async def _output_item_to_message(
+    item: models.OutputItem,
+    *,
+    approval_storage: ApprovalStorage | None = None,
+) -> Message:
     """Convert a single ``OutputItem`` SDK object to a framework ``Message``.
 
     Wraps :func:`_output_item_to_message_inner` and stamps a
@@ -832,10 +873,14 @@ def _output_item_to_message(item: models.OutputItem) -> Message:
     ``Message.additional_properties[EXTRAS_KEY]`` so the write path can
     re-emit byte-for-byte. See :func:`_capture_raw` for the rationale.
     """
-    return _capture_raw(_output_item_to_message_inner(item), item)
+    return _capture_raw(await _output_item_to_message_inner(item, approval_storage=approval_storage), item)
 
 
-def _output_item_to_message_inner(item: models.OutputItem) -> Message:
+async def _output_item_to_message_inner(
+    item: models.OutputItem,
+    *,
+    approval_storage: ApprovalStorage | None = None,
+) -> Message:
     """Convert a single ``OutputItem`` SDK object to a framework ``Message``.
 
     Variant table — keep in sync with :func:`_item_to_message` when both
@@ -858,6 +903,11 @@ def _output_item_to_message_inner(item: models.OutputItem) -> Message:
 
     Args:
         item: The SDK item to convert.
+
+    Keyword Args:
+        approval_storage: Optional approval storage. Required when the item is
+            an ``mcp_approval_request`` / ``mcp_approval_response``; ignored
+            otherwise.
 
     Returns:
         The converted message, with any unknown extras round-tripped under
@@ -928,28 +978,23 @@ def _output_item_to_message_inner(item: models.OutputItem) -> Message:
 
     if item.type == "mcp_approval_request":
         mcp_req = cast(models.OutputItemMcpApprovalRequest, item)
-        mcp_call_content = Content.from_mcp_server_tool_call(
-            mcp_req.id,
-            mcp_req.name,
-            server_name=mcp_req.server_label,
-            arguments=mcp_req.arguments,
-        )
+        if approval_storage is None:
+            raise ValueError("ApprovalStorage is required to load approval request.")
+        function_approval_request_content = await approval_storage.load_approval_request(mcp_req.id)
         return _attach_extras(
-            Message(
-                role="assistant",
-                contents=[Content.from_function_approval_request(mcp_req.id, mcp_call_content)],
-            ),
+            Message(role="assistant", contents=[function_approval_request_content]),
             item,
         )
 
     if item.type == "mcp_approval_response":
         mcp_resp = cast(models.OutputItemMcpApprovalResponseResource, item)
-        # Build a placeholder function_call Content since the original call details are not available here.
-        placeholder_content = Content.from_function_call(mcp_resp.approval_request_id, "mcp_approval")
+        if approval_storage is None:
+            raise ValueError("ApprovalStorage is required to load approval request.")
+        function_approval_request_content = await approval_storage.load_approval_request(mcp_resp.approval_request_id)
         return _attach_extras(
             Message(
                 role="user",
-                contents=[Content.from_function_approval_response(mcp_resp.approve, mcp_resp.id, placeholder_content)],
+                contents=[function_approval_request_content.to_function_approval_response(mcp_resp.approve)],
             ),
             item,
         )

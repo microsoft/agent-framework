@@ -660,7 +660,7 @@ class FoundryHostedAgentHistoryProvider(HistoryProvider):
         items = await backend.get_items(item_ids, isolation=isolation)
         # ``get_items`` may return ``None`` placeholders for missing IDs.
         resolved = [item for item in items if item is not None]
-        return _output_items_to_messages(resolved)
+        return await _output_items_to_messages(resolved)
 
     async def save_messages(
         self,

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import tempfile
 import threading
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from pathlib import Path
-from typing import Protocol, cast
+from typing import cast
 
 from agent_framework import (
     ChatOptions,
@@ -44,6 +45,7 @@ from mcp import McpError
 from typing_extensions import Any
 
 from ._shared import (
+    ApprovalStorage,
     _arguments_to_str,  # pyright: ignore[reportPrivateUsage]
     _convert_message_content,  # pyright: ignore[reportPrivateUsage]
     _convert_output_message_content,  # pyright: ignore[reportPrivateUsage]
@@ -57,6 +59,7 @@ from ._shared import (
 # tests (which import them from this module) keep working — the canonical
 # definitions now live in :mod:`._shared`.
 __all__ = (
+    "ApprovalStorage",
     "_arguments_to_str",
     "_convert_message_content",
     "_convert_output_message_content",
@@ -75,21 +78,9 @@ FunctionShellAction = models.FunctionShellAction
 FunctionShellCallOutputContent = models.FunctionShellCallOutputContent
 FunctionShellCallOutputExitOutcome = models.FunctionShellCallOutputExitOutcome
 LocalEnvironmentResource = models.LocalEnvironmentResource
+OAuthConsentRequestOutputItem = models.OAuthConsentRequestOutputItem
 
 logger = logging.getLogger(__name__)
-
-
-# region Approval Storage
-class ApprovalStorage(Protocol):
-    """Storage for saving function approval requests."""
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        """Save a function approval request under the given ID."""
-        ...
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        """Load a function approval request by its ID."""
-        ...
 
 
 class InMemoryFunctionApprovalStorage:
@@ -477,7 +468,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         by the hosting infrastructure or files will be preserved upon deactivation.
         """
         input_items = await context.get_input_items()
-        input_messages = await _items_to_messages(input_items)
+        input_messages = await _items_to_messages(input_items, approval_storage=self._approval_storage)
         is_streaming_request = request.stream is not None and request.stream is True
 
         _, are_options_set = _to_chat_options(request)
@@ -574,7 +565,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             for message in response.messages:
                 for content in message.contents:
-                    async for item in _to_outputs(response_event_stream, content):
+                    async for item in _to_outputs(
+                        response_event_stream,
+                        content,
+                        approval_storage=self._approval_storage,
+                    ):
                         yield item
 
             await self._delete_not_latest_checkpoints(checkpoint_storage, self._agent.workflow.name)
@@ -591,7 +586,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 for event in tracker.handle(content):
                     yield event
                 if tracker.needs_async:
-                    async for item in _to_outputs(response_event_stream, content):
+                    async for item in _to_outputs(
+                        response_event_stream,
+                        content,
+                        approval_storage=self._approval_storage,
+                    ):
                         yield item
                     tracker.needs_async = False
 
@@ -802,7 +801,12 @@ def _to_chat_options(request: CreateResponse) -> tuple[ChatOptions, bool]:
 # endregion
 
 
-async def _to_outputs(stream: ResponseEventStream, content: Content) -> AsyncIterator[ResponseStreamEvent]:
+async def _to_outputs(
+    stream: ResponseEventStream,
+    content: Content,
+    *,
+    approval_storage: ApprovalStorage | None = None,
+) -> AsyncIterator[ResponseStreamEvent]:
     """Converts a Content object to an async sequence of ResponseStreamEvent objects.
 
     Args:
