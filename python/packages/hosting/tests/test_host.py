@@ -505,6 +505,111 @@ class TestHostWorkflowCheckpointing:
         assert list(tmp_path.iterdir()) == []
 
 
+class TestCheckpointPathForIsolationKey:
+    """Path-traversal hardening for isolation keys joined into checkpoint paths."""
+
+    @pytest.mark.parametrize(
+        "isolation_key",
+        [
+            "alice",
+            "telegram:42",
+            "entra:abc-def_0123",
+            "responses:user.name",
+            "x" * 200,
+        ],
+    )
+    def test_accepts_legitimate_keys(self, tmp_path: Any, isolation_key: str) -> None:
+        from agent_framework_hosting._host import _checkpoint_path_for_isolation_key
+
+        target = _checkpoint_path_for_isolation_key(tmp_path, isolation_key)
+        assert target == (tmp_path / isolation_key).resolve()
+        assert target.is_relative_to(tmp_path.resolve())
+
+    @pytest.mark.parametrize(
+        "isolation_key",
+        [
+            "",
+            ".",
+            "..",
+            "...",
+            "../etc",
+            "../../etc/passwd",
+            "a/b",
+            "a\\b",
+            "with\x00nul",
+            "/abs/path",
+            "C:/foo",
+            "C:foo",
+        ],
+    )
+    def test_rejects_traversal_patterns(self, tmp_path: Any, isolation_key: str) -> None:
+        from agent_framework_hosting._host import _checkpoint_path_for_isolation_key
+
+        with pytest.raises(ValueError, match="isolation_key"):
+            _checkpoint_path_for_isolation_key(tmp_path, isolation_key)
+
+    def test_rejects_non_string(self, tmp_path: Any) -> None:
+        from agent_framework_hosting._host import _checkpoint_path_for_isolation_key
+
+        with pytest.raises(ValueError, match="non-empty string"):
+            _checkpoint_path_for_isolation_key(tmp_path, None)  # type: ignore[arg-type]
+
+
+class TestHostWorkflowCheckpointingPathTraversal:
+    """End-to-end: malicious isolation keys must not escape ``checkpoint_location``."""
+
+    @pytest.mark.asyncio
+    async def test_traversal_key_skips_checkpointing_with_warning(self, tmp_path: Any, caplog: Any) -> None:
+        import logging as _logging
+
+        from tests._workflow_fixtures import build_upper_workflow
+
+        workflow = build_upper_workflow()
+        ch = _RecordingChannel()
+        host = AgentFrameworkHost(target=workflow, channels=[ch], checkpoint_location=tmp_path)
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(
+            channel="fake",
+            operation="message.create",
+            input="hi",
+            session=ChannelSession(isolation_key="../escape"),
+        )
+        with caplog.at_level(_logging.WARNING, logger="agent_framework.hosting"):
+            result = await ch.context.run(req)
+
+        assert result.text == "HI"
+        # Nothing should have been written under tmp_path.
+        assert list(tmp_path.iterdir()) == []
+        assert any(
+            "Skipping checkpoint storage" in rec.message and "isolation_key" in rec.message for rec in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_separator_in_key_skips_checkpointing(self, tmp_path: Any) -> None:
+        from tests._workflow_fixtures import build_upper_workflow
+
+        workflow = build_upper_workflow()
+        ch = _RecordingChannel()
+        host = AgentFrameworkHost(target=workflow, channels=[ch], checkpoint_location=tmp_path)
+        _ = host.app
+        assert ch.context is not None
+
+        # A literal separator in the key is a configuration smell at best
+        # and an attack at worst; either way it must not create a sub-path.
+        req = ChannelRequest(
+            channel="fake",
+            operation="message.create",
+            input="hi",
+            session=ChannelSession(isolation_key="evil/sub"),
+        )
+        result = await ch.context.run(req)
+
+        assert result.text == "HI"
+        assert list(tmp_path.iterdir()) == []
+
+
 # --------------------------------------------------------------------------- #
 # Delivery routing                                                             #
 # --------------------------------------------------------------------------- #

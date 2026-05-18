@@ -73,6 +73,62 @@ if TYPE_CHECKING:
 logger = logging.getLogger("agent_framework.hosting")
 
 
+def _checkpoint_path_for_isolation_key(root: Path, isolation_key: str) -> Path:
+    r"""Return ``root / isolation_key`` after rejecting path-traversal patterns.
+
+    Isolation keys are intentionally caller-controlled: they originate from
+    inbound HTTP headers (``x-agent-{user,chat}-isolation-key`` injected by
+    the Foundry runtime), from channel-supplied derivations such as
+    ``telegram:<chat_id>`` / ``entra:<oid>``, or from a channel ``run_hook``
+    that may read body fields. Joining such a value into a filesystem path
+    without validation is CWE-22: a value such as ``../../../etc/foo`` or
+    ``\\foo`` (Windows UNC) would let the resulting checkpoint directory
+    escape the configured root.
+
+    The check intentionally uses a denylist so legitimate namespaced keys
+    (``telegram:42``, ``entra:abc-def``) are preserved as-is. Rejected:
+
+    * any key containing ``/``, ``\\``, or NUL;
+    * keys that reduce to empty after stripping dots (``.``, ``..``, ``...``,
+      ...);
+    * absolute paths (``os.path.isabs``);
+    * keys carrying a drive letter prefix (``os.path.splitdrive`` — catches
+      Windows ``C:/...`` and single-letter ``X:foo`` constructs that
+      ``Path("/root") / "X:foo"`` would otherwise interpret as drive-rooted).
+
+    After joining, both ``root`` and the resolved target are normalised and
+    the target is verified to stay under the resolved root as defence in
+    depth — if the denylist ever misses a pattern, this final check still
+    refuses the join.
+
+    Raises:
+        ValueError: If ``isolation_key`` is not a non-empty string or fails
+            any of the validation steps above.
+    """
+    if not isinstance(isolation_key, str) or not isolation_key:
+        raise ValueError("isolation_key must be a non-empty string")
+    if (
+        "/" in isolation_key
+        or "\\" in isolation_key
+        or "\x00" in isolation_key
+        or isolation_key.strip(".") == ""
+        or os.path.isabs(isolation_key)
+        or os.path.splitdrive(isolation_key)[0]
+        # ``splitdrive`` only recognises drive letters on Windows; reject
+        # the ``X:rest`` pattern explicitly so a payload crafted on a
+        # POSIX host still fails closed if the resulting directory ever
+        # round-trips to Windows storage.
+        or (len(isolation_key) >= 2 and isolation_key[0].isalpha() and isolation_key[1] == ":")
+    ):
+        raise ValueError(f"Invalid isolation_key for checkpoint path: {isolation_key!r}")
+
+    root_resolved = root.resolve()
+    target = (root_resolved / isolation_key).resolve()
+    if not target.is_relative_to(root_resolved):
+        raise ValueError(f"Invalid isolation_key for checkpoint path: {isolation_key!r}")
+    return target
+
+
 def _workflow_output_to_text(value: Any) -> str:
     """Render a single workflow ``output`` payload as plain text.
 
@@ -759,13 +815,29 @@ class AgentFrameworkHost:
         when the request lacks a stable session key — without a key we
         cannot scope checkpoints per conversation, and we'd rather skip
         checkpointing than pollute a single shared store.
+
+        When ``checkpoint_location`` is a path, the per-conversation
+        directory is built via :func:`_checkpoint_path_for_isolation_key`
+        which rejects path-traversal patterns in ``isolation_key`` and
+        verifies the resolved directory stays under the configured root
+        (CWE-22 defence). Invalid keys cause the request to skip
+        checkpointing with a WARNING rather than escape the root or
+        crash the request.
         """
         if self._checkpoint_location is None:
             return None
         if request.session is None or not request.session.isolation_key:
             return None
         if isinstance(self._checkpoint_location, Path):
-            return FileCheckpointStorage(str(self._checkpoint_location / request.session.isolation_key))
+            try:
+                target = _checkpoint_path_for_isolation_key(self._checkpoint_location, request.session.isolation_key)
+            except ValueError as exc:
+                logger.warning(
+                    "Skipping checkpoint storage for request: %s",
+                    exc,
+                )
+                return None
+            return FileCheckpointStorage(str(target))
         # Caller-supplied storage — used as-is; caller owns scoping.
         return self._checkpoint_location
 
