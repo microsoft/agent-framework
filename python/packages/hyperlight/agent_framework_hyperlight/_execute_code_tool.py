@@ -7,7 +7,7 @@ import mimetypes
 import shutil
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from copy import copy
@@ -483,15 +483,50 @@ def _display_mount_path(mount_path: str) -> str:
     return f"/input/{mount_path}"
 
 
+def _iter_real_entries(root: Path) -> Iterator[Path]:
+    """Walk ``root`` recursively, skipping all symlinks (file or directory).
+
+    ``Path.rglob`` follows directory symlinks by default, which combined with
+    ``Path.is_file()`` / ``shutil.copy2`` (all follow symlinks) would expose
+    paths outside the configured input tree if the source tree is
+    attacker-controlled. This walker mirrors the safe behaviour by checking
+    ``is_symlink()`` at every directory level and never descending through one.
+    """
+    stack: list[Path] = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            children = list(current.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            try:
+                if child.is_symlink():
+                    continue
+                if child.is_dir():
+                    stack.append(child)
+                yield child
+            except OSError:
+                continue
+
+
 def _path_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
+    """Return a stable signature of the real (non-symlink) file tree under ``path``.
+
+    Uses ``lstat()`` and skips symlinks so the signature reflects only entries
+    that physically live inside the tree. This keeps the cache key consistent
+    with what ``_copy_path`` actually stages.
+    """
+    if path.is_symlink():
+        return ()
     if path.is_file():
-        stat = path.stat()
+        stat = path.lstat()
         return ((path.name, int(stat.st_size), int(stat.st_mtime_ns)),)
 
     entries: list[tuple[str, int, int]] = []
-    for candidate in sorted(path.rglob("*"), key=lambda value: value.as_posix()):
+    for candidate in sorted(_iter_real_entries(path), key=lambda value: value.as_posix()):
         try:
-            stat = candidate.stat()
+            stat = candidate.lstat()
         except FileNotFoundError:
             continue
         relative_path = candidate.relative_to(path).as_posix()
@@ -501,14 +536,31 @@ def _path_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
 
 
 def _copy_path(source: Path, destination: Path) -> None:
+    """Stage ``source`` into ``destination`` without following symlinks.
+
+    Symlinks (file or directory) are skipped entirely so a sandbox input tree
+    can only contain real entries that physically live under the configured
+    ``workspace_root`` or a ``file_mounts`` host path. ``Path.is_dir()``,
+    ``Path.is_file()`` and ``shutil.copy2`` all follow symlinks by default,
+    which is unsafe when the source tree may be attacker-controlled.
+    """
+    # Detect symlinks before doing anything else - ``is_symlink()`` does not
+    # follow the link, unlike ``is_dir()`` / ``is_file()``.
+    if source.is_symlink():
+        return
+
     if source.is_dir():
         destination.mkdir(parents=True, exist_ok=True)
         for child in sorted(source.iterdir(), key=lambda value: value.name):
             _copy_path(child, destination / child.name)
         return
 
+    if not source.is_file():
+        # Non-regular files (sockets, FIFOs, devices) are intentionally skipped.
+        return
+
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
+    shutil.copy2(source, destination, follow_symlinks=False)
 
 
 def _populate_input_dir(*, config: _RunConfig, input_root: Path) -> None:
