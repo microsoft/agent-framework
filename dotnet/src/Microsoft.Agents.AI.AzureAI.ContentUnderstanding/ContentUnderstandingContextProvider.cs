@@ -569,6 +569,8 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
             {
                 Status = DocumentStatus.Failed,
                 Error = "Vector-store upload skipped: foreground budget already exhausted by analysis.",
+                Result = null,
+                MarkdownResult = null,
             };
             return FileSearchOutcome.Fail(
                 timeoutEntry,
@@ -603,6 +605,8 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                 Status = DocumentStatus.Failed,
                 Error = "Vector-store upload timed out.",
                 UploadDuration = sw.Elapsed,
+                Result = null,
+                MarkdownResult = null,
             };
             return FileSearchOutcome.Fail(
                 timeoutEntry,
@@ -616,6 +620,8 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
                 Status = DocumentStatus.Failed,
                 Error = ex.Message,
                 UploadDuration = sw.Elapsed,
+                Result = null,
+                MarkdownResult = null,
             };
             return FileSearchOutcome.Fail(
                 failed,
@@ -757,39 +763,4 @@ public sealed class ContentUnderstandingContextProvider : AIContextProvider, IAs
         configure?.Invoke(options);
         return options;
     }
-}
-
-/// <summary>
-/// Result of one analysis attempt. <see cref="Completed"/> distinguishes "finished within
-/// MaxWait" (Result is set) from "timed out" (OperationId may be set for Phase 6 resumption)
-/// from "failed" (Error is set).
-/// </summary>
-internal sealed record AnalysisOutcome(
-    bool Completed,
-    AnalysisResult? Result,
-    string? OperationId,
-    Exception? Error,
-    TimeSpan Duration);
-
-/// <summary>
-/// One foreground analysis attempt plus, when the attempt timed out before the LRO reached a
-/// terminal state, a <paramref name="Continuation"/> the background runner can resume to drive
-/// the same operation to completion. Continuation is <see langword="null"/> when there is no
-/// further polling work (success / failure / caller-cancelled).
-/// </summary>
-internal sealed record AnalysisAttempt(
-    AnalysisOutcome Outcome,
-    Func<CancellationToken, Task<AnalysisOutcome>>? Continuation);
-
-/// <summary>
-/// Phase 9 — outcome of an attempted vector-store upload for one document. Carries the updated
-/// <see cref="DocumentEntry"/> (status/error/file-id/upload-duration stamps) and an optional
-/// short note to splice into <c>AIContext.Messages</c>. <see cref="UpdatedEntry"/> may be
-/// reference-equal to the input when no mutation is needed (skip path).
-/// </summary>
-internal readonly record struct FileSearchOutcome(DocumentEntry? UpdatedEntry, string? NoteText)
-{
-    public static FileSearchOutcome Success(DocumentEntry entry, string note) => new(entry, note);
-    public static FileSearchOutcome Fail(DocumentEntry entry, string note) => new(entry, note);
-    public static FileSearchOutcome Skip(DocumentEntry entry, string? note) => new(entry, note);
 }

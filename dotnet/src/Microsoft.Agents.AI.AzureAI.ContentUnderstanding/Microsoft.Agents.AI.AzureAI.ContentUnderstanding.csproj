@@ -5,11 +5,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- IsExternalInit polyfill so 'init' accessors compile against net472 too. -->
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
-    <!-- RT0002 false-positive: AIContextProvider / AIContext / InvokingContext / InvokedContext /
-         AgentSession / ProviderSessionState<> are consumed by ContentUnderstandingContextProvider
-         but RT0002's source scan misses them (likely because the using directive resolves through
-         Microsoft.Extensions.AI re-exports). The ProjectReference is required. -->
-    <NoWarn>$(NoWarn);RT0002</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -22,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>
