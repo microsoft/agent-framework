@@ -2,8 +2,9 @@
 
 // This sample demonstrates how to use the SubAgentsProvider to delegate work to sub-agents.
 // A parent agent is given a list of stock tickers and instructed to find the closing price
-// for each ticker on December 31, 2025. It delegates the web searches to a sub-agent
-// equipped with Foundry's hosted web search tool.
+// for each ticker on December 31, 2025. It delegates the web searches to a sub-agent.
+// The HarnessAgent provides built-in WebSearch (HostedWebSearchTool) so no manual web search
+// tool configuration is needed on the sub-agent.
 //
 // Special commands:
 //   /exit    — End the session.
@@ -26,7 +27,8 @@ const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
 
 // --- Sub-agent: Web Search Agent ---
-// This agent can search the web and is used by the parent agent to look up stock prices.
+// This agent uses the HarnessAgent's built-in HostedWebSearchTool to search the web.
+// Features not needed by this sub-agent are disabled.
 AIAgent webSearchAgent =
     new OpenAIClient(
         new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
@@ -41,13 +43,14 @@ AIAgent webSearchAgent =
     {
         Name = "WebSearchAgent",
         Description = "An agent that can search the web to find information.",
+        DisableTodoProvider = true,
+        DisableAgentModeProvider = true,
+        DisableFileMemory = true,   // If enabled, this would allow the agent to store memories as files in a directory associated with the current session
+        DisableFileAccess = true,   // If enabled, this would allow the agent to read/write files in a working directory
+        DisableToolApproval = true, // If enabled, this allows don't-ask-again approval functionality.
         ChatOptions = new ChatOptions
         {
             Instructions = "You are a web search assistant. When asked to find information, use the web search tool to look it up and return a concise, factual answer.",
-            Tools =
-            [
-                ResponseTool.CreateWebSearchTool().AsAITool(),
-            ],
         },
     });
 
@@ -75,6 +78,9 @@ var parentInstructions =
     - Present results in a clean markdown table format.
     """;
 
+// --- Parent agent: Stock Price Researcher ---
+// This agent orchestrates the sub-agent to look up stock prices in parallel.
+// Most features are disabled since the parent only needs SubAgentsProvider.
 AIAgent parentAgent =
     new OpenAIClient(
         new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
@@ -89,6 +95,12 @@ AIAgent parentAgent =
     {
         Name = "StockPriceResearcher",
         Description = "An agent that researches stock prices using sub-agents.",
+        DisableTodoProvider = true,
+        DisableAgentModeProvider = true,
+        DisableFileMemory = true,   // If enabled, this would allow the agent to store memories as files in a directory associated with the current session
+        DisableFileAccess = true,   // If enabled, this would allow the agent to read/write files in a working directory
+        DisableToolApproval = true, // If enabled, this allows don't-ask-again approval functionality.
+        DisableWebSearch = true,
         AIContextProviders =
         [
             new SubAgentsProvider([webSearchAgent]),
