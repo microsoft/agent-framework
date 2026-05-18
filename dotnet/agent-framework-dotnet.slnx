@@ -122,7 +122,7 @@
     <File Path="samples/02-agents/Harness/README.md" />
     <Project Path="samples/02-agents/Harness/Harness_Shared_Console/Harness_Shared_Console.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Step01_Research/Harness_Step01_Research.csproj" />
-    <Project Path="samples/02-agents/Harness/Harness_Step02_Research_WithSubAgents/Harness_Step02_Research_WithSubAgents.csproj" />
+    <Project Path="samples/02-agents/Harness/Harness_Step02_Research_WithBackgroundAgents/Harness_Step02_Research_WithBackgroundAgents.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Step03_DataProcessing/Harness_Step03_DataProcessing.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveFramework/ConsoleReactiveFramework.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveComponents/ConsoleReactiveComponents.csproj" />
@@ -327,8 +327,14 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-McpTools/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-McpTools/HostedMcpTools.csproj" />
   </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-MemoryAgent/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-MemoryAgent/HostedMemoryAgent.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Observability/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Observability/HostedObservability.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted_Shared_Contributor_Setup/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted_Shared_Contributor_Setup/Hosted_Shared_Contributor_Setup.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox/HostedToolbox.csproj" />

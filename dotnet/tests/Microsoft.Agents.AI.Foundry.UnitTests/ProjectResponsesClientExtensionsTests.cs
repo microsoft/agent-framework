@@ -130,6 +130,75 @@ public sealed class ProjectResponsesClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled preserves an existing RawRepresentationFactory
+    /// set on ChatOptions, augmenting it with StoredOutputEnabled and ReasoningEncryptedContent
+    /// rather than replacing it.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_PreservesExistingRawRepresentationFactory()
+    {
+        // Arrange
+        var responseClient = CreateTestClient();
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled();
+
+        // Simulate a caller setting their own RawRepresentationFactory on ChatOptions
+        // (e.g., to add WebSearchCallActionSources).
+        var options = new ChatOptions
+        {
+            RawRepresentationFactory = _ => new CreateResponseOptions
+            {
+                IncludedProperties = { IncludedResponseProperty.WebSearchCallActionSources },
+            },
+        };
+
+        // Act
+        var createResponseOptions = GetCreateResponseOptionsFromPipeline(chatClient, options);
+
+        // Assert
+        Assert.NotNull(createResponseOptions);
+        Assert.False(createResponseOptions.StoredOutputEnabled);
+        Assert.Contains(IncludedResponseProperty.ReasoningEncryptedContent, createResponseOptions.IncludedProperties);
+        Assert.Contains(IncludedResponseProperty.WebSearchCallActionSources, createResponseOptions.IncludedProperties);
+    }
+
+    /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled does not duplicate ReasoningEncryptedContent
+    /// when the existing factory already includes it.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_DoesNotDuplicateReasoningEncryptedContent()
+    {
+        // Arrange
+        var responseClient = CreateTestClient();
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled();
+
+        // Simulate a caller that already includes ReasoningEncryptedContent
+        var options = new ChatOptions
+        {
+            RawRepresentationFactory = _ => new CreateResponseOptions
+            {
+                IncludedProperties = { IncludedResponseProperty.ReasoningEncryptedContent },
+            },
+        };
+
+        // Act
+        var createResponseOptions = GetCreateResponseOptionsFromPipeline(chatClient, options);
+
+        // Assert - ReasoningEncryptedContent should appear exactly once
+        Assert.NotNull(createResponseOptions);
+        int count = 0;
+        foreach (var prop in createResponseOptions.IncludedProperties)
+        {
+            if (prop == IncludedResponseProperty.ReasoningEncryptedContent)
+            {
+                count++;
+            }
+        }
+
+        Assert.Equal(1, count);
+    }
+
+    /// <summary>
     /// Verify that AsIChatClientWithStoredOutputDisabled works with an optional deployment name.
     /// </summary>
     [Fact]
@@ -154,13 +223,21 @@ public sealed class ProjectResponsesClientExtensionsTests
     /// </summary>
     private static CreateResponseOptions? GetCreateResponseOptionsFromPipeline(IChatClient chatClient)
     {
+        return GetCreateResponseOptionsFromPipeline(chatClient, new ChatOptions());
+    }
+
+    /// <summary>
+    /// Overload that runs the configure action on caller-supplied <see cref="ChatOptions"/>,
+    /// useful for testing that existing factories are preserved.
+    /// </summary>
+    private static CreateResponseOptions? GetCreateResponseOptionsFromPipeline(IChatClient chatClient, ChatOptions options)
+    {
         var configureField = chatClient.GetType().GetField("_configureOptions", BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.NotNull(configureField);
 
         var configureAction = configureField.GetValue(chatClient) as Action<ChatOptions>;
         Assert.NotNull(configureAction);
 
-        var options = new ChatOptions();
         configureAction(options);
 
         Assert.NotNull(options.RawRepresentationFactory);

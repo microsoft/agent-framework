@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-14
+
+### Added
+- **agent-framework-core**: Forward MCP tool call metadata ([#5815](https://github.com/microsoft/agent-framework/pull/5815))
+- **agent-framework-core**: Support `list[str]` arguments for file-based skill scripts ([#5850](https://github.com/microsoft/agent-framework/pull/5850))
+- **agent-framework-core**: Strip server-issued response item IDs under storage ([#5690](https://github.com/microsoft/agent-framework/pull/5690))
+- **agent-framework-ag-ui**: Add tool result display channel ([#5762](https://github.com/microsoft/agent-framework/pull/5762))
+- **agent-framework-ag-ui**: Promote to release candidate stage ([#5844](https://github.com/microsoft/agent-framework/pull/5844))
+- **agent-framework-devui**: Improvements for DevUI ([#5840](https://github.com/microsoft/agent-framework/pull/5840))
+
+### Changed
+- **agent-framework-core**: [BREAKING — experimental skills API] Align file skill folder discovery with agentskills.io spec ([#5807](https://github.com/microsoft/agent-framework/pull/5807))
+- **agent-framework-core**: [BREAKING — experimental skills API] Extract skill spec metadata into `SkillFrontmatter` ([#5775](https://github.com/microsoft/agent-framework/pull/5775))
+- **agent-framework-devui**: [BREAKING] Tighten default access controls and CORS posture ([#5740](https://github.com/microsoft/agent-framework/pull/5740))
+- **agent-framework-a2a**: [BREAKING] Migrate to a2a-sdk v1.0 ([#5752](https://github.com/microsoft/agent-framework/pull/5752))
+
+### Fixed
+- **agent-framework-a2a**: Fix A2A v1.0 non-streaming response and sample runtime issues ([#5849](https://github.com/microsoft/agent-framework/pull/5849))
+- **agent-framework-foundry-hosting**: Reject path-traversal context IDs in checkpoint storage ([#5851](https://github.com/microsoft/agent-framework/pull/5851))
+- **agent-framework-core**: Prevent MCP message_handler deadlock on notification reload ([#4866](https://github.com/microsoft/agent-framework/pull/4866))
+
 ## [1.3.0] - 2026-05-07
 
 ### Added
@@ -1050,7 +1071,9 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.2.2...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.4.0...HEAD
+[1.4.0]: https://github.com/microsoft/agent-framework/compare/python-1.3.0...python-1.4.0
+[1.3.0]: https://github.com/microsoft/agent-framework/compare/python-1.2.2...python-1.3.0
 [1.2.2]: https://github.com/microsoft/agent-framework/compare/python-1.2.1...python-1.2.2
 [1.2.1]: https://github.com/microsoft/agent-framework/compare/python-1.2.0...python-1.2.1
 [1.2.0]: https://github.com/microsoft/agent-framework/compare/python-1.1.1...python-1.2.0

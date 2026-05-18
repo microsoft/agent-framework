@@ -10,18 +10,12 @@ published back through the a2a-sdk event queue.
 from __future__ import annotations
 
 import asyncio
-import uuid
 from typing import TYPE_CHECKING
 
+from a2a.helpers import new_task_from_user_message
 from a2a.server.agent_execution.agent_executor import AgentExecutor
-from a2a.types import (
-    Message,
-    Part,
-    Role,
-    TaskState,
-    TaskStatus,
-    TaskStatusUpdateEvent,
-)
+from a2a.server.tasks import TaskUpdater
+from a2a.types import Part, TaskState
 
 if TYPE_CHECKING:
     from a2a.server.agent_execution.context import RequestContext
@@ -47,17 +41,17 @@ class AgentFrameworkExecutor(AgentExecutor):
         if not user_text:
             user_text = "Hello"
 
-        task_id = context.task_id or str(uuid.uuid4())
-        context_id = context.context_id or str(uuid.uuid4())
+        # v1.0 requires a Task object in the queue before any TaskStatusUpdateEvent
+        task = context.current_task
+        if not task and context.message:
+            task = new_task_from_user_message(context.message)
+            await event_queue.enqueue_event(task)
+
+        task_id = task.id if task else context.task_id
+        updater = TaskUpdater(event_queue, task_id, context.context_id)
 
         # Signal that the agent is working
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
-            )
-        )
+        await updater.start_work()
 
         try:
             response = await self.agent.run(user_text)
@@ -71,48 +65,19 @@ class AgentFrameworkExecutor(AgentExecutor):
             if not response_parts:
                 response_parts.append(Part(text=str(response)))
 
-            # Publish the agent's response as a completed message
-            await event_queue.enqueue_event(
-                TaskStatusUpdateEvent(
-                    task_id=task_id,
-                    context_id=context_id,
-                    status=TaskStatus(
-                        state=TaskState.TASK_STATE_COMPLETED,
-                        message=Message(
-                            message_id=str(uuid.uuid4()),
-                            role=Role.ROLE_AGENT,
-                            parts=response_parts,
-                        ),
-                    ),
-                )
+            # Publish the agent's response and mark as completed
+            await updater.complete(
+                message=updater.new_agent_message(response_parts),
             )
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            await event_queue.enqueue_event(
-                TaskStatusUpdateEvent(
-                    task_id=task_id,
-                    context_id=context_id,
-                    status=TaskStatus(
-                        state=TaskState.TASK_STATE_FAILED,
-                        message=Message(
-                            message_id=str(uuid.uuid4()),
-                            role=Role.ROLE_AGENT,
-                            parts=[Part(text=f"Agent error: {e}")],
-                        ),
-                    ),
-                )
+            await updater.update_status(
+                state=TaskState.TASK_STATE_FAILED,
+                message=updater.new_agent_message([Part(text=f"Agent error: {e}")]),
             )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Handle cancellation by publishing a canceled status."""
-        task_id = context.task_id or str(uuid.uuid4())
-        context_id = context.context_id or str(uuid.uuid4())
-
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.TASK_STATE_CANCELED),
-            )
-        )
+        updater = TaskUpdater(event_queue, context.task_id, context.context_id)
+        await updater.update_status(state=TaskState.TASK_STATE_CANCELED)

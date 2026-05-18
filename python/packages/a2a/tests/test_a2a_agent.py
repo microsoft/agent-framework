@@ -1570,4 +1570,102 @@ async def test_none_metadata_leaves_additional_properties_empty(
     assert not response.additional_properties
 
 
+async def test_non_streaming_terminal_status_update_surfaces_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Non-streaming run() should surface content from terminal status_update events."""
+    completed_msg = A2AMessage(
+        message_id="msg-complete",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Done! Here is your answer.")],
+    )
+    status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=completed_msg)
+    event = TaskStatusUpdateEvent(task_id="task-ts", context_id="ctx-ts", status=status)
+    mock_a2a_client.responses.append(StreamResponse(status_update=event))
+
+    response = await a2a_agent.run("Hello")
+
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Done! Here is your answer."
+
+
+async def test_non_streaming_accumulates_working_content_for_empty_terminal(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Non-streaming run() accumulates WORKING content and flushes on empty terminal event."""
+    # Intermediate WORKING event with content
+    working_msg = A2AMessage(
+        message_id="msg-working",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Here is your answer from working state.")],
+    )
+    working_status = TaskStatus(state=TaskState.TASK_STATE_WORKING, message=working_msg)
+    working_event = TaskStatusUpdateEvent(task_id="task-acc", context_id="ctx-acc", status=working_status)
+    mock_a2a_client.responses.append(StreamResponse(status_update=working_event))
+
+    # Terminal COMPLETED event with NO content
+    completed_status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED)
+    completed_event = TaskStatusUpdateEvent(task_id="task-acc", context_id="ctx-acc", status=completed_status)
+    mock_a2a_client.responses.append(StreamResponse(status_update=completed_event))
+
+    response = await a2a_agent.run("Hello")
+
+    # The accumulated WORKING content is flushed when terminal arrives empty
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Here is your answer from working state."
+
+
+async def test_non_streaming_intermediate_discarded_when_terminal_has_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Non-streaming: if terminal event has content, intermediate content is discarded."""
+    # Intermediate WORKING event
+    working_msg = A2AMessage(
+        message_id="msg-working",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Still thinking...")],
+    )
+    working_status = TaskStatus(state=TaskState.TASK_STATE_WORKING, message=working_msg)
+    working_event = TaskStatusUpdateEvent(task_id="task-wi", context_id="ctx-wi", status=working_status)
+    mock_a2a_client.responses.append(StreamResponse(status_update=working_event))
+
+    # Terminal COMPLETED event WITH content
+    completed_msg = A2AMessage(
+        message_id="msg-final",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Final answer")],
+    )
+    completed_status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=completed_msg)
+    completed_event = TaskStatusUpdateEvent(task_id="task-wi", context_id="ctx-wi", status=completed_status)
+    mock_a2a_client.responses.append(StreamResponse(status_update=completed_event))
+
+    response = await a2a_agent.run("Hello")
+
+    # Terminal content supersedes accumulated intermediates
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Final answer"
+
+
+async def test_non_streaming_artifact_update_surfaces_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Non-streaming run() should surface content from artifact_update events."""
+    artifact = Artifact(
+        artifact_id="art-ns",
+        parts=[Part(text="Artifact content")],
+    )
+    event = TaskArtifactUpdateEvent(task_id="task-anu", context_id="ctx-anu", artifact=artifact, append=False)
+    mock_a2a_client.responses.append(StreamResponse(artifact_update=event))
+
+    # Terminal task with the same artifact ID — should be deduped
+    mock_a2a_client.add_task_response("task-anu", [{"id": "art-ns", "content": "Artifact content"}])
+
+    response = await a2a_agent.run("Hello")
+
+    # Artifact update + terminal task with same artifact ID = content emitted once from
+    # the artifact_update, then the duplicate from the task is filtered by streamed_artifact_ids
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Artifact content"
+
+
 # endregion
