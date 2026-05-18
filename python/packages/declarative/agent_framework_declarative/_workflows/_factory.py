@@ -26,7 +26,7 @@ from agent_framework import (
 )
 
 from .._loader import AgentFactory
-from .._models import _safe_mode_context
+from .._models import _safe_mode_context  # type: ignore[reportPrivateUsage]
 from ._declarative_builder import DeclarativeWorkflowBuilder
 from ._errors import DeclarativeWorkflowError
 from ._http_handler import HttpRequestHandler

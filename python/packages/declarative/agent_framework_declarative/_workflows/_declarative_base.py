@@ -43,7 +43,7 @@ from agent_framework import (
 )
 from agent_framework._workflows._state import State
 
-from .._models import _safe_mode_context
+from .._models import _safe_mode_context  # type: ignore[reportPrivateUsage]
 
 try:
     from powerfx import Engine
