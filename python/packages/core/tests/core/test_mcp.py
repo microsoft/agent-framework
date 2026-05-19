@@ -20,6 +20,7 @@ from agent_framework import (
     Content,
     FunctionInvocationContext,
     FunctionMiddleware,
+    FunctionTool,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
@@ -4617,5 +4618,169 @@ async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context(
         call_args = server.session.call_tool.call_args
         assert call_args.kwargs.get("arguments", {}).get("name") == "Alice"
 
+
+# region Progressive Tools
+
+def test_as_progressive_tools_returns_two_tools():
+    tool = MCPTool(name="my-server")
+    prog_tools = tool.as_progressive_tools()
+    assert len(prog_tools) == 2
+    assert prog_tools[0].name == "list_mcp_tools"
+    assert prog_tools[1].name == "call_mcp"
+
+
+def test_as_progressive_tools_custom_names():
+    tool = MCPTool(name="my-server")
+    prog_tools = tool.as_progressive_tools(
+        list_tool_name="list_custom",
+        call_tool_name="call_custom",
+    )
+    assert len(prog_tools) == 2
+    assert prog_tools[0].name == "list_custom"
+    assert prog_tools[1].name == "call_custom"
+
+
+@pytest.mark.asyncio
+async def test_progressive_list_mcp_tools_returns_all_tools():
+    tool = MCPTool(name="my-server")
+    # Mock some functions on the tool
+    func1 = FunctionTool(name="tool_a", description="First tool", func=lambda: None)
+    func2 = FunctionTool(name="tool_b", description="Second tool", func=lambda: None)
+    tool._functions = [func1, func2]
+
+    prog_tools = tool.as_progressive_tools()
+    list_tool = prog_tools[0]
+    
+    # list_mcp_tools returns JSON
+    res = await list_tool.invoke(arguments={})
+    assert isinstance(res, list)
+    parsed = json.loads(res[0].text)
+    assert len(parsed) == 2
+    assert parsed[0]["name"] == "tool_a"
+    assert parsed[0]["description"] == "First tool"
+    assert parsed[1]["name"] == "tool_b"
+    assert parsed[1]["description"] == "Second tool"
+
+
+@pytest.mark.asyncio
+async def test_progressive_list_mcp_tools_filter_by_server():
+    tool = MCPTool(name="my-server")
+    func1 = FunctionTool(name="tool_a", description="First tool", func=lambda: None)
+    tool._functions = [func1]
+
+    prog_tools = tool.as_progressive_tools()
+    list_tool = prog_tools[0]
+    
+    # Specifying the correct server returns the tools
+    res = await list_tool.invoke(arguments={"server": "my-server"})
+    assert isinstance(res, list)
+    parsed = json.loads(res[0].text)
+    assert len(parsed) == 1
+    assert parsed[0]["name"] == "tool_a"
+
+
+@pytest.mark.asyncio
+async def test_progressive_list_mcp_tools_wrong_server_returns_empty():
+    tool = MCPTool(name="my-server")
+    func1 = FunctionTool(name="tool_a", description="First tool", func=lambda: None)
+    tool._functions = [func1]
+
+    prog_tools = tool.as_progressive_tools()
+    list_tool = prog_tools[0]
+    
+    # Specifying a different server returns an empty list
+    res = await list_tool.invoke(arguments={"server": "other-server"})
+    assert isinstance(res, list)
+    parsed = json.loads(res[0].text)
+    assert len(parsed) == 0
+
+
+@pytest.mark.asyncio
+async def test_progressive_call_mcp_dispatches_allowed_tool():
+    tool = MCPTool(name="my-server")
+    
+    called_with = {}
+    async def mock_func(x: int):
+        called_with["x"] = x
+        return "Success!"
+        
+    func1 = FunctionTool(name="tool_a", description="First tool", func=mock_func)
+    tool._functions = [func1]
+
+    prog_tools = tool.as_progressive_tools()
+    call_tool = prog_tools[1]
+    
+    res = await call_tool.invoke(arguments={"server": "my-server", "tool": "tool_a", "arguments": {"x": 1}})
+    assert isinstance(res, list)
+    assert res[0].text == "Success!"
+    assert called_with == {"x": 1}
+
+
+@pytest.mark.asyncio
+async def test_progressive_call_mcp_with_no_arguments():
+    tool = MCPTool(name="my-server")
+    
+    called_with = {}
+    async def mock_func():
+        called_with["called"] = True
+        return "Success!"
+        
+    func1 = FunctionTool(name="tool_a", description="First tool", func=mock_func)
+    tool._functions = [func1]
+
+    prog_tools = tool.as_progressive_tools()
+    call_tool = prog_tools[1]
+    
+    # Should default arguments to {}
+    res = await call_tool.invoke(arguments={"server": "my-server", "tool": "tool_a"})
+    assert isinstance(res, list)
+    assert res[0].text == "Success!"
+    assert called_with == {"called": True}
+
+
+@pytest.mark.asyncio
+async def test_progressive_call_mcp_rejects_disallowed_tool():
+    tool = MCPTool(name="my-server")
+    tool._functions = []  # No allowed tools
+    
+    prog_tools = tool.as_progressive_tools()
+    call_tool = prog_tools[1]
+    
+    with pytest.raises(ToolExecutionException) as exc_info:
+        await call_tool.invoke(arguments={"server": "my-server", "tool": "tool_a"})
+        
+    assert "not found or not allowed" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_progressive_call_mcp_rejects_wrong_server():
+    tool = MCPTool(name="my-server")
+    prog_tools = tool.as_progressive_tools()
+    call_tool = prog_tools[1]
+    
+    with pytest.raises(ToolExecutionException) as exc_info:
+        await call_tool.invoke(arguments={"server": "wrong-server", "tool": "tool_a"})
+        
+    assert "Unknown server" in str(exc_info.value)
+    assert "This dispatcher is for server 'my-server'" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_progressive_call_mcp_preserves_error_handling():
+    tool = MCPTool(name="my-server")
+    
+    async def _failing_func():
+        raise ToolExecutionException("Inner error")
+        
+    func1 = FunctionTool(name="tool_a", description="Failing tool", func=_failing_func)
+    tool._functions = [func1]
+
+    prog_tools = tool.as_progressive_tools()
+    call_tool = prog_tools[1]
+    
+    with pytest.raises(ToolExecutionException) as exc_info:
+        await call_tool.invoke(arguments={"server": "my-server", "tool": "tool_a"})
+        
+    assert "Inner error" in str(exc_info.value)
 
 # endregion

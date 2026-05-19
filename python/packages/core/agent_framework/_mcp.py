@@ -1292,6 +1292,95 @@ class MCPTool:
                 raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
 
+    def as_progressive_tools(
+        self,
+        list_tool_name: str = "list_mcp_tools",
+        call_tool_name: str = "call_mcp",
+    ) -> list[FunctionTool]:
+        """Expose this MCP server in a progressive discovery mode.
+
+        Instead of exposing every remote tool schema upfront, the model receives a small
+        stable surface:
+          - A discovery tool to list available tools and their schemas.
+          - A dispatch tool to call a specific tool by name.
+
+        This is useful for large MCP servers where exposing all tool schemas upfront
+        would add significant token overhead. The SDK still owns connection lifecycle,
+        allowed_tools filtering, result parsing, exceptions, and OTel propagation.
+
+        Args:
+            list_tool_name: Name for the discovery tool. Defaults to "list_mcp_tools".
+            call_tool_name: Name for the dispatch tool. Defaults to "call_mcp".
+
+        Returns:
+            A list of exactly two FunctionTools to pass to an Agent.
+        """
+
+        async def _list_tools(server: str | None = None) -> str:
+            """List available tools on this MCP server.
+
+            Args:
+                server: The name of the server to list tools for. Must match this server's name if provided.
+            """
+            if server and server != self.name:
+                return json.dumps([])
+
+            tool_list = []
+            for func in self.functions:
+                tool_list.append(
+                    {
+                        "name": func.name,
+                        "description": func.description,
+                        "parameters": func.parameters(),
+                    }
+                )
+            return json.dumps(tool_list, indent=2)
+
+        async def _call_tool(server: str, tool: str, arguments: dict[str, Any] | None = None) -> str | list[Content]:
+            """Call a specific tool on this MCP server.
+
+            Args:
+                server: The name of the server. Must match this server's name.
+                tool: The name of the tool to call.
+                arguments: The arguments to pass to the tool.
+            """
+            if server != self.name:
+                raise ToolExecutionException(f"Unknown server '{server}'. This dispatcher is for server '{self.name}'.")
+
+            target_func: FunctionTool | None = None
+            for func in self.functions:
+                props = func.additional_properties or {}
+                if (
+                    func.name == tool
+                    or props.get(_MCP_NORMALIZED_NAME_KEY) == tool
+                    or props.get(_MCP_REMOTE_NAME_KEY) == tool
+                ):
+                    target_func = func
+                    break
+
+            if not target_func:
+                raise ToolExecutionException(f"Tool '{tool}' not found or not allowed on server '{self.name}'.")
+
+            # Route through the existing SDK internals via the matched FunctionTool's invoke method
+            # Any approval or middleware logic is deliberately skipped here to maintain
+            # compatibility and rely on the agent's outer evaluation context if needed.
+            return await target_func.invoke(arguments=arguments or {})
+
+        list_tool = FunctionTool(
+            name=list_tool_name,
+            description=f"List available tools on the {self.name} MCP server.",
+            func=_list_tools,
+            approval_mode="never_require",
+        )
+
+        call_tool = FunctionTool(
+            name=call_tool_name,
+            description=f"Call a specific tool on the {self.name} MCP server.",
+            func=_call_tool,
+        )
+
+        return [list_tool, call_tool]
+
     async def __aenter__(self) -> Self:
         """Enter the async context manager.
 
