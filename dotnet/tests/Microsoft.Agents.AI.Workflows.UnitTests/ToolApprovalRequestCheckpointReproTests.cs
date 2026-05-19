@@ -485,4 +485,309 @@ public class ToolApprovalRequestCheckpointReproTests
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
         public void Dispose() { }
     }
+
+    /// <summary>
+    /// Track A2 — same as the maximal repro (test #7) but with the agent inside a
+    /// <c>GroupChatBuilder</c> (round-robin manager with a single participant), to rule out
+    /// a group-chat-specific re-wrap or replay path that drops the
+    /// <see cref="ToolApprovalRequestContent.ToolCall"/> type during the checkpoint round-trip.
+    ///
+    /// <para><b>Finding:</b> the <see cref="FunctionCallContent"/> type IS preserved after
+    /// resume (consistent with tests #1 – #7 — the OP's hypothesis still does not reproduce
+    /// in this configuration). However, sending an approval response back into the resumed
+    /// group-chat workflow surfaces a <i>different</i>, real bug:
+    /// <c>FunctionInvokingChatClient.ExtractAndRemoveApprovalRequestsAndResponses</c> throws
+    /// <see cref="ArgumentException"/> with message
+    /// <c>"An item with the same key has already been added. Key: ficc_call-1"</c>.
+    /// This test pins that observed behavior so future investigation can latch onto it.</para>
+    /// </summary>
+    [Fact]
+    public async Task Repro_5350_A2_GroupChatBuilder_WithApprovalRequiredTool_JsonCheckpointResume_PreservesFunctionCallContentAsync()
+    {
+        ReproHarness harness = new();
+        Workflow workflow = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 4 })
+            .AddParticipants(harness.Agent)
+            .Build();
+
+        await RunReproAsync(
+            workflow,
+            harness,
+            CheckpointManager.CreateJson(new InMemoryJsonStore()),
+            scenarioName: "A2 (group chat)",
+            expectCleanPostApprovalCompletion: false,
+            postApprovalCompletionAssertion: events =>
+            {
+                // A2 currently surfaces a duplicate-key crash inside FICC when the group-chat
+                // workflow resumes with a pending approval request and the response arrives.
+                // This assertion pins the observed misbehavior. If the upstream
+                // GroupChat + AIAgentHostExecutor + FICC interaction is fixed, this test will
+                // start failing here — that's intentional. The fix should then either remove
+                // this assertion or convert it to a clean-completion assertion mirroring
+                // test #7. TODO(#5350-followup): file a separate issue for the duplicate-key
+                // crash if one does not already exist, and link it here.
+                ArgumentException? duplicateKey = events
+                    .OfType<WorkflowErrorEvent>()
+                    .Select(e => e.Data as Exception)
+                    .Select(e => e?.InnerException as ArgumentException ?? e as ArgumentException)
+                    .FirstOrDefault(e => e?.Message.Contains("ficc_call-1", StringComparison.Ordinal) == true);
+                duplicateKey.Should().NotBeNull(
+                    "[A2 (group chat)] approving the resumed approval request currently surfaces a duplicate-key " +
+                    "ArgumentException out of FunctionInvokingChatClient.ExtractAndRemoveApprovalRequestsAndResponses — " +
+                    "this is a real bug, but it is NOT the bug claimed in issue #5350. The TARC.ToolCall was already " +
+                    "asserted to be a FunctionCallContent above; the OP's hypothesis remains unreproduced.");
+            });
+    }
+
+    /// <summary>
+    /// Track A3 — same as the maximal repro (test #7) but the checkpoint <see cref="JsonElement"/>
+    /// is round-tripped through <see cref="JsonElement.GetRawText"/> + <see cref="JsonDocument.Parse(string,JsonDocumentOptions)"/>
+    /// between commit and retrieve, to emulate the SQL <c>nvarchar</c> / Dapper hop in the
+    /// OP's setup. This catches cases where the storage layer would only fail if it perturbed
+    /// the JSON in some way (e.g. dropped metadata, re-encoded numbers), and confirms a
+    /// byte-preserving string round-trip on its own is harmless.
+    /// </summary>
+    [Fact]
+    public async Task Repro_5350_A3_StringRoundTripStore_PreservesFunctionCallContentAsync()
+    {
+        ReproHarness harness = new();
+        Workflow workflow = new WorkflowBuilder(harness.Agent).Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateJson(
+            new StringRoundTripJsonStore(new InMemoryJsonStore()));
+
+        await RunReproAsync(
+            workflow,
+            harness,
+            checkpointManager,
+            scenarioName: "A3 (string round-trip store)");
+    }
+
+    /// <summary>
+    /// Track A4 — same as the maximal repro (test #7) but with a non-default
+    /// <see cref="JsonSerializerOptions"/> passed as <c>customOptions</c> to
+    /// <see cref="CheckpointManager.CreateJson"/>. The custom options intentionally do NOT
+    /// include the polymorphism resolver chain (<c>AgentAbstractionsJsonUtilities</c> →
+    /// <c>AIJsonUtilities</c>) — confirming that <c>JsonMarshaller</c>'s internal
+    /// <c>WorkflowsJsonUtilities.DefaultOptions</c> chain always wins for known
+    /// <see cref="AIContent"/> types and the external options cannot silently displace it.
+    /// </summary>
+    [Fact]
+    public async Task Repro_5350_A4_CustomJsonSerializerOptions_PreservesFunctionCallContentAsync()
+    {
+        ReproHarness harness = new();
+        Workflow workflow = new WorkflowBuilder(harness.Agent).Build();
+
+        // Custom options that DO NOT know about AIContent / FunctionCallContent.
+        JsonSerializerOptions customOptions = new(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true,
+        };
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateJson(
+            new InMemoryJsonStore(),
+            customOptions);
+
+        await RunReproAsync(
+            workflow,
+            harness,
+            checkpointManager,
+            scenarioName: "A4 (custom JsonSerializerOptions)");
+    }
+
+    /// <summary>
+    /// Shared end-to-end repro driver used by tests #7, A2, A3, A4.
+    /// Drives the workflow until an approval request appears, captures the latest checkpoint,
+    /// disposes the run, resumes from the checkpoint, and asserts that the resumed
+    /// <see cref="RequestInfoEvent"/>'s <see cref="ToolApprovalRequestContent.ToolCall"/> is
+    /// still a <see cref="FunctionCallContent"/>. Then sends an approval response and asserts
+    /// the wrapped <see cref="AIFunction"/> is invoked exactly once.
+    /// </summary>
+    private static async Task RunReproAsync(
+        Workflow workflow,
+        ReproHarness harness,
+        CheckpointManager checkpointManager,
+        string scenarioName,
+        bool expectCleanPostApprovalCompletion = true,
+        Action<IReadOnlyList<WorkflowEvent>>? postApprovalCompletionAssertion = null)
+    {
+        InProcessExecutionEnvironment env = InProcessExecution.OffThread;
+        List<ChatMessage> inputMessages = [new(ChatRole.User, "What's the weather in Amsterdam?")];
+
+        // Act 1 — run until approval request appears and capture latest checkpoint.
+        ExternalRequest? firstRunRequest = null;
+        CheckpointInfo? checkpoint = null;
+
+        await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
+                                                      .RunStreamingAsync(workflow, inputMessages))
+        {
+            (await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)))
+                .Should().BeTrue($"[{scenarioName}] the workflow should accept a TurnToken");
+
+            using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
+            await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
+            {
+                if (evt is RequestInfoEvent requestInfo)
+                {
+                    firstRunRequest ??= requestInfo.Request;
+                }
+
+                if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
+                {
+                    checkpoint = cp;
+                }
+            }
+        }
+
+        firstRunRequest.Should().NotBeNull(
+            $"[{scenarioName}] the ChatClientAgent + FICC pipeline should surface the approval request as a workflow RequestInfoEvent");
+        checkpoint.Should().NotBeNull(
+            $"[{scenarioName}] a checkpoint should have been produced while the approval request was pending");
+        harness.ChatCallCount.Should().Be(1, $"[{scenarioName}] the mock chat client should have been called exactly once before approval was requested");
+        harness.InvocationCount.Should().Be(0, $"[{scenarioName}] the underlying tool must NOT have been invoked before approval was granted");
+
+        ToolApprovalRequestContent? preCheckpoint = firstRunRequest!.Data.As<ToolApprovalRequestContent>();
+        preCheckpoint.Should().NotBeNull($"[{scenarioName}] the pending external request should carry a ToolApprovalRequestContent payload");
+        preCheckpoint!.ToolCall.Should().BeOfType<FunctionCallContent>(
+            $"[{scenarioName}] the pre-checkpoint pending request payload must already be a FunctionCallContent");
+
+        // Act 2 — resume from checkpoint on a fresh handle.
+        ExternalRequest? resumedRequest = null;
+        List<WorkflowEvent> postResumeEvents = [];
+
+        await using (StreamingRun resumed = await env.WithCheckpointing(checkpointManager)
+                                                     .ResumeStreamingAsync(workflow, checkpoint!))
+        {
+            using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
+            await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
+            {
+                if (evt is RequestInfoEvent requestInfo)
+                {
+                    resumedRequest ??= requestInfo.Request;
+                }
+            }
+
+            resumedRequest.Should().NotBeNull(
+                $"[{scenarioName}] the resumed workflow should re-emit the pending approval RequestInfoEvent");
+
+            ToolApprovalRequestContent? postResume = resumedRequest!.Data.As<ToolApprovalRequestContent>();
+            postResume.Should().NotBeNull(
+                $"[{scenarioName}] ExternalRequest.Data.As<ToolApprovalRequestContent>() should materialize the payload after JSON-checkpoint resume");
+            postResume!.ToolCall.Should().NotBeNull($"[{scenarioName}] the resumed TARC must carry its ToolCall");
+            postResume.ToolCall.Should().BeOfType<FunctionCallContent>(
+                $"[{scenarioName}] after CheckpointManager.CreateJson round-trip via ResumeStreamingAsync, " +
+                "ToolApprovalRequestContent.ToolCall must still be a FunctionCallContent so that " +
+                "FunctionInvokingChatClient's pattern match (`tarc.ToolCall is FunctionCallContent`) continues to fire (issue #5350).");
+
+            // Act 3 — approve and finish the workflow.
+            ToolApprovalResponseContent approvalResponse = postResume.CreateResponse(approved: true);
+            await resumed.SendResponseAsync(resumedRequest.CreateResponse(approvalResponse));
+
+            using CancellationTokenSource cts2 = new(TimeSpan.FromSeconds(30));
+            await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(blockOnPendingRequest: false, cts2.Token))
+            {
+                postResumeEvents.Add(evt);
+            }
+        }
+
+        if (expectCleanPostApprovalCompletion)
+        {
+            harness.InvocationCount.Should().Be(1,
+                $"[{scenarioName}] approving the request should cause FunctionInvokingChatClient to invoke the wrapped AIFunction exactly once");
+            postResumeEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty(
+                $"[{scenarioName}] no workflow errors should be raised when responding to the resumed approval request");
+            postResumeEvents.OfType<ExecutorFailedEvent>().Should().BeEmpty(
+                $"[{scenarioName}] no executor failures should be raised when responding to the resumed approval request");
+        }
+
+        postApprovalCompletionAssertion?.Invoke(postResumeEvents);
+    }
+
+    /// <summary>
+    /// Bundles a <see cref="ChatClientAgent"/> + counting <see cref="ApprovalRequiredAIFunction"/>
+    /// + <see cref="MockChatClient"/> in a single reusable harness so the four end-to-end repro
+    /// variants (#7, A2, A3, A4) can share identical setup.
+    /// </summary>
+    private sealed class ReproHarness
+    {
+        public const string ToolName = "GetWeather";
+        public const string ToolResultText = "Sunny, 22°C";
+        public const string ToolCallId = "call-1";
+        public const string FinalAssistantText = "The weather in Amsterdam is sunny and 22°C.";
+
+        private int _invocationCount;
+        private int _chatCallIndex;
+
+        public int InvocationCount => Volatile.Read(ref this._invocationCount);
+        public int ChatCallCount => Volatile.Read(ref this._chatCallIndex);
+
+        public ChatClientAgent Agent { get; }
+
+        public ReproHarness()
+        {
+            AIFunction underlyingTool = AIFunctionFactory.Create(
+                ([Description("City to look up")] string city) =>
+                {
+                    Interlocked.Increment(ref this._invocationCount);
+                    return ToolResultText;
+                },
+                name: ToolName,
+                description: "Gets the weather for the given city");
+
+            ApprovalRequiredAIFunction approvalTool = new(underlyingTool);
+
+            MockChatClient mockChatClient = new((messages, options) =>
+            {
+                int index = Interlocked.Increment(ref this._chatCallIndex) - 1;
+                return index switch
+                {
+                    0 => new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                        [new FunctionCallContent(
+                            callId: ToolCallId,
+                            name: ToolName,
+                            arguments: new Dictionary<string, object?> { ["city"] = "Amsterdam" })])),
+                    _ => new ChatResponse(new ChatMessage(ChatRole.Assistant, FinalAssistantText)),
+                };
+            });
+
+            this.Agent = new ChatClientAgent(
+                mockChatClient,
+                instructions: "You are a weather agent.",
+                name: "WeatherAgent",
+                tools: [approvalTool]);
+        }
+    }
+
+    /// <summary>
+    /// Wraps a <see cref="JsonCheckpointStore"/> and forces every <see cref="JsonElement"/> to
+    /// round-trip through <c>GetRawText()</c> + <see cref="JsonDocument.Parse(string,JsonDocumentOptions)"/>
+    /// during commit and again during retrieve. This emulates a Dapper-backed SQL store where
+    /// the <see cref="JsonElement"/> is materialized to a string for the <c>nvarchar(max)</c>
+    /// column on the way in and re-parsed on the way back out. Used by the A3 test only;
+    /// the double parse-and-clone is intentionally extra work and not suitable for production use.
+    /// </summary>
+    private sealed class StringRoundTripJsonStore(JsonCheckpointStore inner) : JsonCheckpointStore
+    {
+        public override async ValueTask<CheckpointInfo> CreateCheckpointAsync(string sessionId, JsonElement value, CheckpointInfo? parent = null)
+        {
+            JsonElement roundTripped = RoundTrip(value);
+            return await inner.CreateCheckpointAsync(sessionId, roundTripped, parent).ConfigureAwait(false);
+        }
+
+        public override async ValueTask<JsonElement> RetrieveCheckpointAsync(string sessionId, CheckpointInfo key)
+        {
+            JsonElement raw = await inner.RetrieveCheckpointAsync(sessionId, key).ConfigureAwait(false);
+            return RoundTrip(raw);
+        }
+
+        public override ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null)
+            => inner.RetrieveIndexAsync(sessionId, withParent);
+
+        private static JsonElement RoundTrip(JsonElement element)
+        {
+            string raw = element.GetRawText();
+            using JsonDocument doc = JsonDocument.Parse(raw);
+            return doc.RootElement.Clone();
+        }
+    }
 }
