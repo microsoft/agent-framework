@@ -54,7 +54,6 @@ async def main() -> None:
             credential=credential,
         )
 
-        # <portable_agent>
         agent = Agent(
             client=client,
             name="TravelAgent",
@@ -76,7 +75,6 @@ async def main() -> None:
         definition = to_prompt_agent(agent)
         print("PromptAgentDefinition (would be sent to AIProjectClient.agents.create_version):")
         print(definition.as_dict())
-        # </portable_agent>
 
         # Uncomment to actually publish the prompt agent to your Foundry project:
         # from azure.ai.projects.aio import AIProjectClient
