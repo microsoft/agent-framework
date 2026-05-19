@@ -1,9 +1,4 @@
 # agent-framework
 # agent-framework-foundry-hosting
 
-git+https://github.com/microsoft/agent-framework.git@feature/add-more-foundry-toolbox-mcp-auth-methods-in-sample#egg=agent-framework-core&subdirectory=python/packages/core
-git+https://github.com/microsoft/agent-framework.git@feature/add-more-foundry-toolbox-mcp-auth-methods-in-sample#egg=agent-framework-openai&subdirectory=python/packages/openai
-git+https://github.com/microsoft/agent-framework.git@feature/add-more-foundry-toolbox-mcp-auth-methods-in-sample#egg=agent-framework-foundry&subdirectory=python/packages/foundry
-git+https://github.com/microsoft/agent-framework.git@feature/add-more-foundry-toolbox-mcp-auth-methods-in-sample#egg=agent-framework-foundry-hosting&subdirectory=python/packages/foundry_hosting
-
 mcp>=1.24.0,<2

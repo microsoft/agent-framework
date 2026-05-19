@@ -38,7 +38,7 @@ from agent_framework_foundry_hosting._responses import (
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
-    is_consent_error,
+    consent_url_from_error,
 )
 
 
@@ -2896,30 +2896,39 @@ class TestCheckpointContextPathValidation:
 
 
 def _make_consent_error(url: str = "https://consent.example.com/auth") -> Exception:
-    """Build an exception wrapping a Foundry MCP gateway consent error."""
+    """Build an exception wrapping a Foundry MCP gateway consent error.
+
+    Mirrors the real-world wrapping produced by ``MCPStreamableHTTPTool.__aenter__``,
+    which catches connection-time ``McpError``s and re-raises them as a
+    ``ToolExecutionException`` (an ``AgentFrameworkException`` subclass) with the
+    original error attached via ``inner_exception``. ``consent_url_from_error``
+    then finds the wrapped ``McpError`` in ``exc.args``.
+    """
+    from agent_framework.exceptions import ToolExecutionException
+
     inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=url))
-    return Exception("MCP consent required", inner)
+    return ToolExecutionException("MCP consent required", inner_exception=inner)
 
 
-class TestIsConsentError:
+class TestConsentUrlFromError:
     def test_returns_consent_url_when_inner_arg_is_consent_mcp_error(self) -> None:
         exc = _make_consent_error("https://example.com/consent")
-        assert is_consent_error(exc) == "https://example.com/consent"
+        assert consent_url_from_error(exc) == "https://example.com/consent"
 
     def test_returns_none_when_no_mcp_error_in_args(self) -> None:
-        assert is_consent_error(Exception("boom")) is None
+        assert consent_url_from_error(Exception("boom")) is None
 
     def test_returns_none_when_mcp_error_has_different_code(self) -> None:
         inner = McpError(ErrorData(code=-32000, message="some other error"))
         exc = Exception("wrapped", inner)
-        assert is_consent_error(exc) is None
+        assert consent_url_from_error(exc) is None
 
     def test_returns_none_for_bare_mcp_error_without_wrapping(self) -> None:
         # `args` of a bare McpError holds the message string, not an McpError
         # instance, so it does not match the wrapping pattern produced by the
         # MCP client when it bubbles consent errors up.
         bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
-        assert is_consent_error(bare) is None
+        assert consent_url_from_error(bare) is None
 
 
 class TestAgentLifecycle:

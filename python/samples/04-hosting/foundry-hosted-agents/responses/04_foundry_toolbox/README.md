@@ -45,20 +45,20 @@ An extra environment variable must be set to point to the toolbox MCP endpoint. 
 **Option A – Set `FOUNDRY_TOOLBOX_ENDPOINT` directly** (recommended for local development):
 
 ```bash
-export FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=v1"
+export FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<name>/mcp?api-version=v1"
 ```
 
 Or in PowerShell:
 
 ```powershell
-$env:FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolsets/<name>/mcp?api-version=v1"
+$env:FOUNDRY_TOOLBOX_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<name>/mcp?api-version=v1"
 ```
 
 **Option B – Set `TOOLBOX_NAME`** (used automatically by the Foundry hosting scaffolding after `azd provision`):
 
 The agent derives the endpoint at runtime as:
 ```
-{FOUNDRY_PROJECT_ENDPOINT}/toolsets/{TOOLBOX_NAME}/mcp?api-version=v1
+{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{TOOLBOX_NAME}/mcp?api-version=v1
 ```
 
 When deployed via `azd provision`, the scaffolding injects `TOOLBOX_NAME=agent-tools` and `FOUNDRY_PROJECT_ENDPOINT` automatically from the provisioned resources declared in [`agent.manifest.yaml`](agent.manifest.yaml).

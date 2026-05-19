@@ -26,9 +26,12 @@ template:
 #   secret: false
 #   description: URL of the public MCP server (e.g. https://gitmcp.io/Azure/azure-rest-api-specs) that does not require authentication
 # - name: github_pat
-#   # `azd ai agent init -m` will prompt for this value when initializing the agent manifest
+#   # `azd ai agent init -m` will prompt for this value when initializing the agent manifest.
+#   # Only needed when the GitHub MCP connection is configured to use the `github-mcp-pat-conn`
+#   # PAT-based connection below; if you use the `github-mcp-oauth-conn` OAuth2 connection
+#   # instead, you can leave this empty.
 #   secret: true
-#   description: GitHub Personal Access Token used to authenticate with the GitHub MCP server (press Enter if OAuth2 is used instead)
+#   description: GitHub Personal Access Token used to authenticate with the GitHub MCP server (only needed when using the PAT connection; press Enter if using OAuth2 instead)
 # - name: language_mcp_entra_audience
 #   secret: false
 #   description: Entra ID audience for the Azure Language MCP server (e.g. https://cognitiveservices.azure.com/)

@@ -26,6 +26,7 @@ from agent_framework import (
     SupportsAgentRun,
     WorkflowAgent,
 )
+from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseEventStream,
@@ -258,14 +259,21 @@ def _checkpoint_storage_for_context(root: str, context_id: str) -> FileCheckpoin
 CONSENT_ERROR_CODE = -32007
 
 
-def is_consent_error(exc: BaseException) -> str | None:
-    """Check if the exception is a consent error from the Foundry MCP gateway.
+def consent_url_from_error(exc: BaseException) -> str | None:
+    """Return the consent URL when ``exc`` wraps a Foundry MCP gateway consent error.
+
+    The Agent Framework MCP layer surfaces gateway consent failures by wrapping the underlying
+    ``McpError`` inside an :class:`AgentFrameworkException` (typically a ``ToolExecutionException``
+    raised from ``MCPStreamableHTTPTool.__aenter__``). This helper inspects ``exc.args`` for a
+    wrapped ``McpError`` whose ``error.code`` is :data:`CONSENT_ERROR_CODE`; when found, the
+    consent link the gateway returned in ``error.message`` is returned. Returns ``None`` for
+    anything else, so callers can do ``if (url := consent_url_from_error(ex)) is None: raise``.
 
     Args:
-        exc: The exception to check.
+        exc: The exception to inspect.
 
     Returns:
-        The consent error message that is the URL if the exception is a consent error, otherwise None.
+        The consent URL if ``exc`` wraps a consent ``McpError``, otherwise ``None``.
     """
     inner_exception = next((arg for arg in exc.args if isinstance(arg, McpError)), None)
     if inner_exception is not None and inner_exception.error.code == CONSENT_ERROR_CODE:
@@ -424,26 +432,28 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         else:
             run_kwargs["options"] = chat_options
 
-        # Lazy-enter the agent (and any MCP tools it owns). If this fails with an
-        # auth/consent error, surface the consent link to the client through the
-        # already-opened response stream instead of crashing the request.
+        # Lazy-enter the agent (and any MCP tools it owns). The MCP client wraps gateway
+        # consent failures (and other connection-time errors) in AgentFrameworkException; if
+        # one of those is a consent error we surface the consent link to the client through
+        # the already-opened response stream instead of crashing the request. Other exception
+        # types propagate normally so the host can handle / log them.
         try:
             await self._ensure_agent_ready()
-        except Exception as ex:
-            if consent_url := is_consent_error(ex):
-                logger.warning("OAuth consent required for Foundry MCP gateway.")
-                oauth_item = OAuthConsentRequestOutputItem(
-                    id=IdGenerator.new_id("oacr"),
-                    consent_link=consent_url,
-                    server_label="Foundry Toolbox",
-                )
-                builder = response_event_stream.add_output_item(oauth_item.id)
-                yield builder.emit_added(oauth_item)
-                yield builder.emit_done(oauth_item)
-                yield response_event_stream.emit_completed()
-                return
-            else:
+        except AgentFrameworkException as ex:
+            consent_url = consent_url_from_error(ex)
+            if consent_url is None:
                 raise
+            logger.warning("OAuth consent required for Foundry MCP gateway.")
+            oauth_item = OAuthConsentRequestOutputItem(
+                id=IdGenerator.new_id("oacr"),
+                consent_link=consent_url,
+                server_label="Foundry Toolbox",
+            )
+            builder = response_event_stream.add_output_item(oauth_item.id)
+            yield builder.emit_added(oauth_item)
+            yield builder.emit_done(oauth_item)
+            yield response_event_stream.emit_completed()
+            return
 
         # Track the current active output item builder for streaming;
         # lazily created on matching content, closed when a different type arrives.
