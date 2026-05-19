@@ -39,3 +39,78 @@ async with Agent(
     result = await agent.run("What tools are available?")
     print(result.text)
 ```
+
+## Publishing an agent as a Foundry prompt agent
+
+> **Experimental — `ExperimentalFeature.TO_PROMPT_AGENT`.** `to_prompt_agent`
+> is a preview API and may change before reaching GA. It emits an
+> `ExperimentalWarning` on first use.
+
+`to_prompt_agent(agent)` converts an `Agent` whose chat client is a
+`FoundryChatClient` into a Foundry `PromptAgentDefinition`. The model is lifted
+from the bound `FoundryChatClient`, so the same agent definition you run
+locally can be published as a hosted prompt agent without restating the model
+deployment name.
+
+```python
+import asyncio
+
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient, to_prompt_agent
+from azure.ai.projects.aio import AIProjectClient
+from azure.identity.aio import AzureCliCredential
+
+
+async def main() -> None:
+    async with AzureCliCredential() as credential:
+        client = FoundryChatClient(
+            project_endpoint="https://<your-project>.services.ai.azure.com",
+            model="gpt-4o",
+            credential=credential,
+        )
+
+        agent = Agent(
+            client=client,
+            name="TravelAgent",
+            instructions="You are a helpful travel assistant.",
+            tools=[
+                FoundryChatClient.get_web_search_tool(),
+                FoundryChatClient.get_code_interpreter_tool(),
+            ],
+        )
+
+        # Either run locally...
+        await agent.run("Book a hotel in Seattle for 3 nights.")
+
+        # ...or publish the same definition as a prompt agent.
+        async with AIProjectClient(
+            endpoint="https://<your-project>.services.ai.azure.com",
+            credential=credential,
+        ) as project_client:
+            await project_client.agents.create_version(
+                name="travel-agent",
+                definition=to_prompt_agent(agent),
+            )
+
+
+asyncio.run(main())
+```
+
+Behaviour:
+
+- `agent.client` must be a `FoundryChatClient` (or subclass) — otherwise the
+  converter raises `TypeError`.
+- The bound client must have a `model` set — otherwise the converter raises
+  `ValueError`.
+- Foundry SDK tool instances returned by `FoundryChatClient.get_*_tool()` are
+  passed through unchanged.
+- AF `FunctionTool` instances (and `@tool`-decorated callables) are emitted as
+  Foundry `FunctionTool` **declarations**. Prompt agents are server-side, so
+  the deployed agent receives the schema but cannot execute the local Python.
+  Wire server-side execution separately if needed.
+- Local Agent Framework MCP tools cannot be published as prompt-agent tools —
+  the converter raises `ValueError` and points at
+  `FoundryChatClient.get_mcp_tool(...)` for hosted MCP servers.
+
+See [`samples/02-agents/providers/foundry/foundry_portable_agent.py`](../../samples/02-agents/providers/foundry/foundry_portable_agent.py)
+for an end-to-end runnable example.
