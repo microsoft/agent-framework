@@ -255,6 +255,7 @@ class MCPTool:
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
+        self._function_load_lock = asyncio.Lock()
         self._lifecycle_queue: asyncio.Queue[tuple[str, bool, asyncio.Future[None]]] | None = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
@@ -975,44 +976,45 @@ class MCPTool:
         """
         from mcp import types
 
-        # Track existing function names to prevent duplicates
-        existing_names = {func.name for func in self._functions}
+        async with self._function_load_lock:
+            # Track existing function names to prevent duplicates
+            existing_names = {func.name for func in self._functions}
 
-        params: types.PaginatedRequestParams | None = None
-        while True:
-            # Ensure connection is still valid before each page request
-            await self._ensure_connected()
+            params: types.PaginatedRequestParams | None = None
+            while True:
+                # Ensure connection is still valid before each page request
+                await self._ensure_connected()
 
-            prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+                prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
 
-            for prompt in prompt_list.prompts:
-                normalized_name = _normalize_mcp_name(prompt.name)
-                local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
+                for prompt in prompt_list.prompts:
+                    normalized_name = _normalize_mcp_name(prompt.name)
+                    local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
 
-                # Skip if already loaded
-                if local_name in existing_names:
-                    continue
+                    # Skip if already loaded
+                    if local_name in existing_names:
+                        continue
 
-                input_model = _get_input_model_from_mcp_prompt(prompt)
-                approval_mode = self._determine_approval_mode(local_name, normalized_name, prompt.name)
-                func: FunctionTool = FunctionTool(
-                    func=partial(self.get_prompt, prompt.name),
-                    name=local_name,
-                    description=prompt.description or "",
-                    approval_mode=approval_mode,
-                    input_model=input_model,
-                    additional_properties={
-                        _MCP_REMOTE_NAME_KEY: prompt.name,
-                        _MCP_NORMALIZED_NAME_KEY: normalized_name,
-                    },
-                )
-                self._functions.append(func)
-                existing_names.add(local_name)
+                    input_model = _get_input_model_from_mcp_prompt(prompt)
+                    approval_mode = self._determine_approval_mode(local_name, normalized_name, prompt.name)
+                    func: FunctionTool = FunctionTool(
+                        func=partial(self.get_prompt, prompt.name),
+                        name=local_name,
+                        description=prompt.description or "",
+                        approval_mode=approval_mode,
+                        input_model=input_model,
+                        additional_properties={
+                            _MCP_REMOTE_NAME_KEY: prompt.name,
+                            _MCP_NORMALIZED_NAME_KEY: normalized_name,
+                        },
+                    )
+                    self._functions.append(func)
+                    existing_names.add(local_name)
 
-            # Check if there are more pages
-            if not prompt_list or not prompt_list.nextCursor:
-                break
-            params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
+                # Check if there are more pages
+                if not prompt_list or not prompt_list.nextCursor:
+                    break
+                params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
@@ -1025,67 +1027,70 @@ class MCPTool:
         """
         from mcp import types
 
-        # Track existing function names to prevent duplicates
-        existing_names = {func.name for func in self._functions}
-        self._tool_call_meta_by_name.clear()
+        async with self._function_load_lock:
+            tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
+            # Track existing function names to prevent duplicates
+            existing_names = {func.name for func in self._functions}
 
-        params: types.PaginatedRequestParams | None = None
-        while True:
-            # Ensure connection is still valid before each page request
-            await self._ensure_connected()
+            params: types.PaginatedRequestParams | None = None
+            while True:
+                # Ensure connection is still valid before each page request
+                await self._ensure_connected()
 
-            tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+                tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
 
-            for tool in tool_list.tools:
-                if tool.meta is not None:
-                    self._tool_call_meta_by_name[tool.name] = dict(tool.meta)
+                for tool in tool_list.tools:
+                    if tool.meta is not None:
+                        tool_call_meta_by_name[tool.name] = dict(tool.meta)
 
-                normalized_name = _normalize_mcp_name(tool.name)
-                local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
+                    normalized_name = _normalize_mcp_name(tool.name)
+                    local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
 
-                # Skip if already loaded
-                if local_name in existing_names:
-                    continue
+                    # Skip if already loaded
+                    if local_name in existing_names:
+                        continue
 
-                approval_mode = self._determine_approval_mode(local_name, normalized_name, tool.name)
-                # Normalize inputSchema: ensure "properties" exists for object schemas.
-                # Some MCP servers (e.g. zero-argument tools) omit "properties",
-                # which causes OpenAI API to reject the schema with a 400 error.
-                # Guard against non-conforming MCP servers that send inputSchema=None
-                # despite the MCP spec typing it as dict[str, Any].
-                input_schema = dict(tool.inputSchema or {})
-                if input_schema.get("type") == "object" and "properties" not in input_schema:
-                    input_schema["properties"] = {}
+                    approval_mode = self._determine_approval_mode(local_name, normalized_name, tool.name)
+                    # Normalize inputSchema: ensure "properties" exists for object schemas.
+                    # Some MCP servers (e.g. zero-argument tools) omit "properties",
+                    # which causes OpenAI API to reject the schema with a 400 error.
+                    # Guard against non-conforming MCP servers that send inputSchema=None
+                    # despite the MCP spec typing it as dict[str, Any].
+                    input_schema = dict(tool.inputSchema or {})
+                    if input_schema.get("type") == "object" and "properties" not in input_schema:
+                        input_schema["properties"] = {}
 
-                async def _call_tool_with_runtime_kwargs(
-                    ctx: FunctionInvocationContext,
-                    *,
-                    _remote_tool_name: str = tool.name,
-                    **kwargs: Any,
-                ) -> str | list[Content]:
-                    call_kwargs = dict(ctx.kwargs)
-                    call_kwargs.update(kwargs)
-                    return await self.call_tool(_remote_tool_name, **call_kwargs)
+                    async def _call_tool_with_runtime_kwargs(
+                        ctx: FunctionInvocationContext,
+                        *,
+                        _remote_tool_name: str = tool.name,
+                        **kwargs: Any,
+                    ) -> str | list[Content]:
+                        call_kwargs = dict(ctx.kwargs)
+                        call_kwargs.update(kwargs)
+                        return await self.call_tool(_remote_tool_name, **call_kwargs)
 
-                # Create FunctionTools out of each tool
-                func: FunctionTool = FunctionTool(
-                    func=_call_tool_with_runtime_kwargs,
-                    name=local_name,
-                    description=tool.description or "",
-                    approval_mode=approval_mode,
-                    input_model=input_schema,
-                    additional_properties={
-                        _MCP_REMOTE_NAME_KEY: tool.name,
-                        _MCP_NORMALIZED_NAME_KEY: normalized_name,
-                    },
-                )
-                self._functions.append(func)
-                existing_names.add(local_name)
+                    # Create FunctionTools out of each tool
+                    func: FunctionTool = FunctionTool(
+                        func=_call_tool_with_runtime_kwargs,
+                        name=local_name,
+                        description=tool.description or "",
+                        approval_mode=approval_mode,
+                        input_model=input_schema,
+                        additional_properties={
+                            _MCP_REMOTE_NAME_KEY: tool.name,
+                            _MCP_NORMALIZED_NAME_KEY: normalized_name,
+                        },
+                    )
+                    self._functions.append(func)
+                    existing_names.add(local_name)
 
-            # Check if there are more pages
-            if not tool_list or not tool_list.nextCursor:
-                break
-            params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
+                # Check if there are more pages
+                if not tool_list or not tool_list.nextCursor:
+                    break
+                params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
+
+            self._tool_call_meta_by_name = tool_call_meta_by_name
 
     async def _close_on_owner(self) -> None:
         # Cancel any pending reload tasks before tearing down the session.
