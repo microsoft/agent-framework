@@ -89,7 +89,9 @@ class _FakeAsyncEventStream:
 
     # The chat client now consumes the streaming response via ``with_raw_response``,
     # which returns a wrapper exposing ``.parse()`` (the underlying iterable) and
-    # ``.headers``. Mimic that interface so test mocks remain a single object.
+    # ``.headers``. The chat client then ``async with``-s the parsed stream so the
+    # underlying socket is closed deterministically. Mimic both interfaces here so
+    # test mocks remain a single object.
     def parse(self) -> "_FakeAsyncEventStream":
         return self
 
@@ -97,8 +99,19 @@ class _FakeAsyncEventStream:
     def headers(self) -> dict[str, str]:
         return self._headers
 
+    async def __aenter__(self) -> "_FakeAsyncEventStream":
+        return self
 
-def _as_raw(mock_response: MagicMock) -> MagicMock:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> None:
+        return None
+
+
+def _as_raw(mock_response: MagicMock, *, headers: dict[str, str] | None = None) -> MagicMock:
     """Make ``mock_response`` look like an OpenAI ``with_raw_response`` wrapper.
 
     The chat client now calls ``responses.with_raw_response.{create,parse,retrieve}``
@@ -110,7 +123,7 @@ def _as_raw(mock_response: MagicMock) -> MagicMock:
     itself lets the existing assertions on ``mock_response.id`` etc. continue to work.
     """
     mock_response.parse = MagicMock(return_value=mock_response)
-    mock_response.headers = {}
+    mock_response.headers = headers or {}
     return mock_response
 
 
@@ -581,15 +594,16 @@ async def test_response_format_dict_parse_path() -> None:
     assert response.value["answer"] == "Parsed"
 
 
-async def test_served_model_header_captured_on_response() -> None:
-    """The ``x-ms-served-model`` Azure response header should be surfaced on ChatResponse.additional_properties."""
-    from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER
+_SERVED_MODEL_HEADER = "x-ms-served-model"
 
+
+async def test_served_model_header_overrides_response_model() -> None:
+    """The ``x-ms-served-model`` Azure response header should overwrite ChatResponse.model."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     mock_response = MagicMock()
     mock_response.id = "response_123"
-    mock_response.model = "test-model"
+    mock_response.model = "test-model"  # deployment alias returned in the body
     mock_response.created_at = 1000000000
     mock_response.metadata = {}
     mock_response.output_parsed = None
@@ -599,21 +613,18 @@ async def test_served_model_header_captured_on_response() -> None:
     mock_response.conversation = None
     mock_response.status = "completed"
 
-    raw = _as_raw(mock_response)
-    raw.headers = {AZURE_OPENAI_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"}
+    raw = _as_raw(mock_response, headers={_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"})
 
     with patch.object(client.client.responses, "create", return_value=raw):
         response = await client.get_response(
             messages=[Message(role="user", contents=["Test message"])],
         )
 
-    assert response.additional_properties.get(AZURE_OPENAI_SERVED_MODEL_HEADER) == "gpt-4o-2024-08-06"
+    assert response.model == "gpt-4o-2024-08-06"
 
 
-async def test_served_model_header_absent_does_not_set_property() -> None:
-    """When the served-model header is missing the key should not appear on additional_properties."""
-    from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER
-
+async def test_served_model_header_absent_keeps_response_model() -> None:
+    """When the served-model header is missing ChatResponse.model should come from the response body."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     mock_response = MagicMock()
@@ -634,13 +645,37 @@ async def test_served_model_header_absent_does_not_set_property() -> None:
             messages=[Message(role="user", contents=["Test message"])],
         )
 
-    assert AZURE_OPENAI_SERVED_MODEL_HEADER not in response.additional_properties
+    assert response.model == "test-model"
+
+
+async def test_served_model_header_empty_string_does_not_override() -> None:
+    """Empty/whitespace header values should not overwrite the response body's model name."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.id = "response_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.metadata = {}
+    mock_response.output_parsed = None
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+
+    raw = _as_raw(mock_response, headers={_SERVED_MODEL_HEADER: "   "})
+
+    with patch.object(client.client.responses, "create", return_value=raw):
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["Test message"])],
+        )
+
+    assert response.model == "test-model"
 
 
 async def test_served_model_header_captured_on_parse_path() -> None:
     """The served-model header should also be captured on the structured-output (parse) path."""
-    from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER
-
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     mock_parsed_response = MagicMock()
@@ -654,8 +689,7 @@ async def test_served_model_header_captured_on_parse_path() -> None:
     mock_parsed_response.finish_reason = None
     mock_parsed_response.conversation = None
 
-    raw = _as_raw(mock_parsed_response)
-    raw.headers = {AZURE_OPENAI_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"}
+    raw = _as_raw(mock_parsed_response, headers={_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"})
 
     with patch.object(client.client.responses, "parse", return_value=raw):
         response = await client.get_response(
@@ -663,13 +697,11 @@ async def test_served_model_header_captured_on_parse_path() -> None:
             options={"response_format": OutputStruct, "store": True},
         )
 
-    assert response.additional_properties.get(AZURE_OPENAI_SERVED_MODEL_HEADER) == "gpt-4o-2024-08-06"
+    assert response.model == "gpt-4o-2024-08-06"
 
 
 async def test_served_model_header_propagated_to_streaming_updates() -> None:
-    """In streaming mode the served-model header should be set on every ChatResponseUpdate."""
-    from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER
-
+    """In streaming mode the served-model header should overwrite update.model on every chunk."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     events = [
@@ -693,10 +725,7 @@ async def test_served_model_header_propagated_to_streaming_updates() -> None:
         ),
     ]
 
-    fake_stream = _FakeAsyncEventStream(
-        events,
-        headers={AZURE_OPENAI_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"},
-    )
+    fake_stream = _FakeAsyncEventStream(events, headers={_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"})
 
     with (
         patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
@@ -708,14 +737,41 @@ async def test_served_model_header_propagated_to_streaming_updates() -> None:
 
     assert updates, "Expected at least one streaming update"
     for update in updates:
-        assert update.additional_properties is not None
-        assert update.additional_properties.get(AZURE_OPENAI_SERVED_MODEL_HEADER) == "gpt-4o-2024-08-06"
+        assert update.model == "gpt-4o-2024-08-06"
+
+
+async def test_served_model_header_aggregates_into_final_streaming_response() -> None:
+    """Aggregating updates via to_chat_response() should preserve the served-model value."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[],
+            delta="Hello",
+        ),
+    ]
+
+    fake_stream = _FakeAsyncEventStream(events, headers={_SERVED_MODEL_HEADER: "gpt-4o-2024-08-06"})
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses, "create", new=AsyncMock(return_value=fake_stream)),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        updates = [update async for update in stream]
+
+    final = ChatResponse.from_updates(updates)
+    assert final.model == "gpt-4o-2024-08-06"
 
 
 async def test_served_model_header_absent_in_streaming_updates() -> None:
-    """When the header is missing in streaming mode it should not be added to update properties."""
-    from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER
-
+    """When the header is missing in streaming mode update.model should fall back to the deployment alias."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     events = [
@@ -742,8 +798,47 @@ async def test_served_model_header_absent_in_streaming_updates() -> None:
 
     assert updates, "Expected at least one streaming update"
     for update in updates:
-        if update.additional_properties is not None:
-            assert AZURE_OPENAI_SERVED_MODEL_HEADER not in update.additional_properties
+        # Without the header, _parse_chunk_from_openai's default is the client's model name.
+        assert update.model == "test-model"
+
+
+async def test_served_model_header_not_captured_for_streaming_text_format() -> None:
+    """The streaming structured-output path uses ``responses.stream(...)`` and therefore cannot
+    surface the served-model header. Pin this behavior so any future change is intentional."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[],
+            delta="Hello",
+        ),
+    ]
+
+    # `responses.stream(...)` returns an async context manager. The headers attribute
+    # is irrelevant because this code path never asks for it.
+    fake_stream_ctx = _FakeAsyncEventStreamContext(events)
+
+    with (
+        patch.object(
+            client,
+            "_prepare_request",
+            new=AsyncMock(return_value=(client.client, {"text_format": OutputStruct}, {})),
+        ),
+        patch.object(client.client.responses, "stream", return_value=fake_stream_ctx),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        updates = [update async for update in stream]
+
+    assert updates, "Expected at least one streaming update"
+    for update in updates:
+        # No header override; model stays the deployment alias.
+        assert update.model == "test-model"
 
 
 async def test_bad_request_error_non_content_filter() -> None:
@@ -3435,7 +3530,7 @@ async def test_inner_get_response_streaming_with_response_format_tracks_reasonin
             "_prepare_request",
             new=AsyncMock(return_value=(client.client, {"text_format": OutputStruct}, {})),
         ),
-        patch.object(client.client.responses, "create", new=AsyncMock(return_value=_FakeAsyncEventStream(events))),
+        patch.object(client.client.responses, "stream", return_value=_FakeAsyncEventStreamContext(events)),
         patch.object(client, "_get_metadata_from_response", return_value={}),
     ):
         stream = client._inner_get_response(messages=messages, options={}, stream=True)

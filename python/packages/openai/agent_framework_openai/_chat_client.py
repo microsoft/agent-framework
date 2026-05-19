@@ -62,7 +62,7 @@ from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
 )
-from agent_framework.observability import AZURE_OPENAI_SERVED_MODEL_HEADER, ChatTelemetryLayer
+from agent_framework.observability import ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.types.responses import FunctionShellTool
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -257,38 +257,6 @@ OpenAIChatOptionsT = TypeVar(
 # region Helpers
 
 
-# Guarded import of the OpenAI SDK's helper that converts a Pydantic model into the
-# Responses API ``text.format`` JSON-schema config. The helper lives under a private
-# (underscored) module path, so it may move or change across SDK releases. We import
-# it lazily and fall back to a clear error message so a minor SDK refactor surfaces a
-# helpful exception instead of an ImportError at module load time.
-try:  # pragma: no cover - import guard
-    from openai.lib._parsing._responses import (
-        type_to_text_format_param as _openai_type_to_text_format_param,
-    )
-except ImportError:  # pragma: no cover - exercised only when SDK refactors
-    _openai_type_to_text_format_param = None  # type: ignore[assignment]
-
-
-def _pydantic_model_to_text_format_param(text_format: type[BaseModel]) -> dict[str, Any]:
-    """Build a Responses API ``text.format`` JSON-schema config for a Pydantic model.
-
-    Prefers the OpenAI SDK's helper (which produces a fully strict schema) when
-    available. If the helper has moved/been removed by an SDK refactor, raises a
-    ``ChatClientInvalidRequestException`` with a clear remediation hint rather than
-    failing at import time. Callers can work around by passing a pre-built
-    ``text.format`` config via ``OpenAIChatOptions["text"]`` instead of ``text_format``.
-    """
-    if _openai_type_to_text_format_param is not None:
-        return cast(dict[str, Any], _openai_type_to_text_format_param(text_format))
-    raise ChatClientInvalidRequestException(
-        "Unable to translate `text_format` into the Responses API `text.format` config: the "
-        "OpenAI SDK helper `openai.lib._parsing._responses.type_to_text_format_param` is not "
-        "available (likely due to an SDK version change). Pass a pre-built `text.format` "
-        "JSON-schema config via the `text` option instead, or pin a compatible `openai` version."
-    )
-
-
 def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> list[dict[str, Any]]:
     """Convert framework `Annotation` objects to Responses API `output_text` annotation dicts.
 
@@ -391,10 +359,13 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
 
-    # Azure OpenAI may include this header in responses for the actual model that served the request,
-    # instead of the deployment name sent in the request. Surface it on the ChatResponse when present
-    # for better observability.
-    SERVED_MODEL_HEADER: ClassVar[str] = AZURE_OPENAI_SERVED_MODEL_HEADER
+    # Azure OpenAI Responses API may include this header in responses naming the actual model that
+    # served the request (e.g. ``gpt-5-nano-2025-08-07``), which can differ from the deployment alias
+    # that the request was addressed to and that ``response.model`` reports. When present, we use it
+    # as the value of ``ChatResponse.model`` / ``ChatResponseUpdate.model`` so telemetry and callers
+    # see the actually served model. (Chat Completions API already returns the snapshot in
+    # ``response.model``, so this header only matters for the Responses API.)
+    SERVED_MODEL_HEADER: ClassVar[str] = "x-ms-served-model"
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 
@@ -656,19 +627,17 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             stream=True,
                         )
                         served_model = self._extract_served_model(raw_stream_response.headers)
-                        stream_response = raw_stream_response.parse()
-                        async for chunk in stream_response:
-                            update = self._parse_chunk_from_openai(
-                                chunk,
-                                options=validated_options,
-                                function_call_ids=function_call_ids,
-                                seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
-                            )
-                            if served_model is not None:
-                                if update.additional_properties is None:
-                                    update.additional_properties = {}
-                                update.additional_properties[self.SERVED_MODEL_HEADER] = served_model
-                            yield update
+                        async with raw_stream_response.parse() as stream_response:
+                            async for chunk in stream_response:
+                                update = self._parse_chunk_from_openai(
+                                    chunk,
+                                    options=validated_options,
+                                    function_call_ids=function_call_ids,
+                                    seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                )
+                                if served_model is not None:
+                                    update.model = served_model
+                                yield update
                     except Exception as ex:
                         self._handle_request_error(ex)
                 else:
@@ -677,35 +646,38 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         run_options,
                         validated_options,
                     ) = await self._prepare_request(messages, options)
-                    # Translate `text_format` (Pydantic model) into `text.format` JSON-schema
-                    # config so we can always go through `responses.create(stream=True, ...)` —
-                    # the only path that exposes raw HTTP headers via `with_raw_response`.
-                    # The SDK's `responses.stream(...)` helper does the same translation
-                    # internally but does not surface headers, so we replicate it here.
-                    text_format = run_options.pop("text_format", None)
-                    if text_format is not None:
-                        text_cfg = dict(run_options.get("text") or {})
-                        if "format" in text_cfg:
-                            raise ChatClientInvalidRequestException("Cannot mix and match text.format with text_format")
-                        text_cfg["format"] = _pydantic_model_to_text_format_param(text_format)
-                        run_options["text"] = text_cfg
                     try:
-                        raw_create_response = await client.responses.with_raw_response.create(
-                            stream=True, **run_options
-                        )
-                        served_model = self._extract_served_model(raw_create_response.headers)
-                        async for chunk in raw_create_response.parse():
-                            update = self._parse_chunk_from_openai(
-                                chunk,
-                                options=validated_options,
-                                function_call_ids=function_call_ids,
-                                seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                        if "text_format" in run_options:
+                            # The SDK's ``responses.stream(text_format=...)`` helper preserves
+                            # client-side ``output_parsed`` partial parsing for structured outputs,
+                            # but it does not expose the raw HTTP response (no ``x-ms-served-model``
+                            # access). We accept that trade-off: this single streaming path keeps
+                            # the deployment alias as the reported model name. All other paths
+                            # surface the served-model header.
+                            async with client.responses.stream(**run_options) as response:
+                                async for chunk in response:
+                                    yield self._parse_chunk_from_openai(
+                                        chunk,
+                                        options=validated_options,
+                                        function_call_ids=function_call_ids,
+                                        seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                    )
+                        else:
+                            raw_create_response = await client.responses.with_raw_response.create(
+                                stream=True, **run_options
                             )
-                            if served_model is not None:
-                                if update.additional_properties is None:
-                                    update.additional_properties = {}
-                                update.additional_properties[self.SERVED_MODEL_HEADER] = served_model
-                            yield update
+                            served_model = self._extract_served_model(raw_create_response.headers)
+                            async with raw_create_response.parse() as stream_response:
+                                async for chunk in stream_response:
+                                    update = self._parse_chunk_from_openai(
+                                        chunk,
+                                        options=validated_options,
+                                        function_call_ids=function_call_ids,
+                                        seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                    )
+                                    if served_model is not None:
+                                        update.model = served_model
+                                    yield update
                     except Exception as ex:
                         self._handle_request_error(ex)
 
@@ -724,7 +696,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 except Exception as ex:
                     self._handle_request_error(ex)
                 chat_response = self._parse_response_from_openai(response, options=validated_options)
-                self._attach_served_model_header(chat_response, raw_response.headers)
+                self._apply_served_model_header(chat_response, raw_response.headers)
                 # Once the background response completes, drop the continuation_token from
                 # the caller's options dict. FunctionInvocationLayer reuses the same dict
                 # across tool-loop iterations, so leaving it in place makes the next iteration
@@ -744,27 +716,33 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             except Exception as ex:
                 self._handle_request_error(ex)
             chat_response = self._parse_response_from_openai(response, options=validated_options)
-            self._attach_served_model_header(chat_response, raw_response.headers)
+            self._apply_served_model_header(chat_response, raw_response.headers)
             return chat_response
 
         return _get_response()
 
     @classmethod
-    def _attach_served_model_header(cls, chat_response: ChatResponse, headers: Any) -> None:
-        """Surface the ``x-ms-served-model`` response header on the ChatResponse when present."""
+    def _apply_served_model_header(cls, chat_response: ChatResponse, headers: Any) -> None:
+        """Override ``ChatResponse.model`` with the Azure OpenAI served-model header when present.
+
+        Azure OpenAI Responses API returns the deployment alias in ``response.model`` but the actual
+        snapshot served via the ``x-ms-served-model`` response header. When present, the served
+        snapshot is the source of truth for observability and downstream callers.
+        """
         served_model = cls._extract_served_model(headers)
-        if served_model is None or len(served_model) == 0:
-            return
-        chat_response.additional_properties[cls.SERVED_MODEL_HEADER] = served_model
+        if served_model is not None:
+            chat_response.model = served_model
 
     @classmethod
     def _extract_served_model(cls, headers: Any) -> str | None:
-        """Return the ``x-ms-served-model`` response header value when present."""
+        """Return the ``x-ms-served-model`` response header value when present and non-empty."""
         if headers is None:
             return None
         served_model = headers.get(cls.SERVED_MODEL_HEADER)
-        if isinstance(served_model, str) and len(served_model) > 0:
-            return served_model
+        if isinstance(served_model, str):
+            stripped = served_model.strip()
+            if stripped:
+                return stripped
         return None
 
     def _prepare_response_and_text_format(
