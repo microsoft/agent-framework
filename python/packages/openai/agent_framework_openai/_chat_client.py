@@ -614,19 +614,18 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             function_call_ids: dict[int, tuple[str, str]] = {}
             seen_reasoning_delta_item_ids: set[str] = set()
             validated_options: dict[str, Any] | None = None
+            response_format: Any | None = None
 
             def _finalize_streamed_response(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
-                return self._finalize_response_updates(
-                    updates,
-                    response_format=validated_options.get("response_format") if validated_options else None,
-                )
+                return self._finalize_response_updates(updates, response_format=response_format)
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                nonlocal validated_options
+                nonlocal response_format, validated_options
                 if continuation_token is not None:
                     # Resume a background streaming response by retrieving with stream=True
                     client = self.client
                     validated_options = await self._validate_options(options)
+                    response_format = validated_options.get("response_format")
                     try:
                         raw_stream_response = await client.responses.with_raw_response.retrieve(
                             continuation_token["response_id"],
@@ -652,6 +651,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         run_options,
                         validated_options,
                     ) = await self._prepare_request(messages, options)
+                    response_format = validated_options.get("response_format")
                     try:
                         if "text_format" in run_options:
                             # The SDK's ``responses.stream(text_format=...)`` helper preserves
