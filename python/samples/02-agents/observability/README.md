@@ -163,10 +163,15 @@ Whenever there is an active OpenTelemetry span context, Agent Framework automati
 
 ### Dependencies
 
-Agent Framework depends on the following OpenTelemetry packages:
-- `opentelemetry-api`
-- `opentelemetry-sdk`
-- `opentelemetry-semantic-conventions-ai`
+Agent Framework's core depends on **`opentelemetry-api`** only — the API package is enough for the instrumentation hooks (spans, meters, log records) to emit telemetry, and it has no runtime side effects when no provider is configured.
+
+If you want the framework to set up providers / exporters for you via `configure_otel_providers()` (or to use the `create_resource()` / `create_metric_views()` helpers), you also need the OpenTelemetry SDK:
+
+```bash
+pip install opentelemetry-sdk
+```
+
+If `opentelemetry-sdk` is missing, those helper functions raise a clear `ImportError` telling you to install it. Day-to-day instrumentation still works without the SDK as long as some other component (e.g. `azure-monitor-opentelemetry`, your application bootstrap, an APM agent) has configured the global OpenTelemetry providers.
 
 Exporters are **not** installed by default — install only what you need:
 - **Application Insights**: `azure-monitor-opentelemetry`
