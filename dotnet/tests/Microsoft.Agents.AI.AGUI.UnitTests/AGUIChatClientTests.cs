@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -1289,7 +1290,7 @@ public sealed class AGUIAgentTests
         // Arrange
         var stateData = new { counter = 42, status = "active" };
         string stateJson = JsonSerializer.Serialize(stateData);
-        byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
+        byte[] stateBytes = Encoding.UTF8.GetBytes(stateJson);
         var dataContent = new DataContent(stateBytes, "application/json");
 
         var captureHandler = new StateCapturingTestDelegatingHandler();
@@ -1359,7 +1360,7 @@ public sealed class AGUIAgentTests
     public async Task GetStreamingResponseAsync_WithMalformedStateJson_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        byte[] invalidJson = System.Text.Encoding.UTF8.GetBytes("{invalid json");
+        byte[] invalidJson = Encoding.UTF8.GetBytes("{invalid json");
         var dataContent = new DataContent(invalidJson, "application/json");
 
         using HttpClient httpClient = this.CreateMockHttpClient([]);
@@ -1389,7 +1390,7 @@ public sealed class AGUIAgentTests
         // Arrange
         var emptyState = new { };
         string stateJson = JsonSerializer.Serialize(emptyState);
-        byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
+        byte[] stateBytes = Encoding.UTF8.GetBytes(stateJson);
         var dataContent = new DataContent(stateBytes, "application/json");
 
         var captureHandler = new StateCapturingTestDelegatingHandler();
@@ -1425,12 +1426,12 @@ public sealed class AGUIAgentTests
         // Arrange
         var oldState = new { counter = 10 };
         string oldStateJson = JsonSerializer.Serialize(oldState);
-        byte[] oldStateBytes = System.Text.Encoding.UTF8.GetBytes(oldStateJson);
+        byte[] oldStateBytes = Encoding.UTF8.GetBytes(oldStateJson);
         var oldDataContent = new DataContent(oldStateBytes, "application/json");
 
         var newState = new { counter = 20 };
         string newStateJson = JsonSerializer.Serialize(newState);
-        byte[] newStateBytes = System.Text.Encoding.UTF8.GetBytes(newStateJson);
+        byte[] newStateBytes = Encoding.UTF8.GetBytes(newStateJson);
         var newDataContent = new DataContent(newStateBytes, "application/json");
 
         var captureHandler = new StateCapturingTestDelegatingHandler();
@@ -1470,7 +1471,7 @@ public sealed class AGUIAgentTests
     public async Task GetStreamingResponseAsync_WithNonJsonMediaType_IgnoresDataContentAsync()
     {
         // Arrange
-        byte[] imageData = System.Text.Encoding.UTF8.GetBytes("fake image data");
+        byte[] imageData = Encoding.UTF8.GetBytes("fake image data");
         var dataContent = new DataContent(imageData, "image/png");
 
         var captureHandler = new StateCapturingTestDelegatingHandler();
@@ -1498,6 +1499,94 @@ public sealed class AGUIAgentTests
         Assert.Null(captureHandler.CapturedState);
         // Message should not be removed since it's not state
         Assert.Equal(1, captureHandler.CapturedMessageCount);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithMultimodalUserMessage_SerializesInputContentArrayAsync()
+    {
+        // Arrange
+        var captureHandler = new StateCapturingTestDelegatingHandler();
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+        using HttpClient httpClient = new(captureHandler);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.User,
+            [
+                new TextContent("What is in this image?"),
+                new DataContent(Encoding.UTF8.GetBytes("png-bytes"), "image/png") { Name = "pixel.png" }
+            ])
+        ];
+
+        // Act
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, null))
+        {
+            // Just consume the stream
+        }
+
+        // Assert
+        Assert.NotNull(captureHandler.CapturedInput);
+        AGUIUserMessage userMessage = Assert.IsType<AGUIUserMessage>(captureHandler.CapturedInput.Messages.Single());
+        Assert.NotNull(userMessage.InputContents);
+        Assert.Equal(2, userMessage.InputContents.Length);
+
+        AGUITextInputContent textInput = Assert.IsType<AGUITextInputContent>(userMessage.InputContents[0]);
+        Assert.Equal("What is in this image?", textInput.Text);
+
+        AGUIBinaryInputContent binaryInput = Assert.IsType<AGUIBinaryInputContent>(userMessage.InputContents[1]);
+        Assert.Equal("image/png", binaryInput.MimeType);
+        Assert.Equal("pixel.png", binaryInput.Filename);
+        Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("png-bytes")), binaryInput.Data);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithUriAndHostedFileUserContent_SerializesInputContentArrayAsync()
+    {
+        // Arrange
+        var captureHandler = new StateCapturingTestDelegatingHandler();
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+        using HttpClient httpClient = new(captureHandler);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.User,
+            [
+                new TextContent("Inspect these assets"),
+                new UriContent("https://example.com/image.png", "image/png"),
+                new HostedFileContent("file_123") { MediaType = "application/pdf", Name = "doc.pdf" }
+            ])
+        ];
+
+        // Act
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, null))
+        {
+            // Just consume the stream
+        }
+
+        // Assert
+        Assert.NotNull(captureHandler.CapturedInput);
+        AGUIUserMessage userMessage = Assert.IsType<AGUIUserMessage>(captureHandler.CapturedInput.Messages.Single());
+        Assert.NotNull(userMessage.InputContents);
+        Assert.Equal(3, userMessage.InputContents.Length);
+
+        AGUIBinaryInputContent uriInput = Assert.IsType<AGUIBinaryInputContent>(userMessage.InputContents[1]);
+        Assert.Equal("https://example.com/image.png", uriInput.Url);
+        Assert.Equal("image/png", uriInput.MimeType);
+
+        AGUIBinaryInputContent hostedFileInput = Assert.IsType<AGUIBinaryInputContent>(userMessage.InputContents[2]);
+        Assert.Equal("file_123", hostedFileInput.Id);
+        Assert.Equal("application/pdf", hostedFileInput.MimeType);
+        Assert.Equal("doc.pdf", hostedFileInput.Filename);
     }
 
     [Fact]
@@ -1583,7 +1672,7 @@ public sealed class AGUIAgentTests
         DataContent dataContent = (DataContent)stateUpdate.Contents[0];
         Assert.Equal("application/json", dataContent.MediaType);
 
-        string jsonText = System.Text.Encoding.UTF8.GetString(dataContent.Data.ToArray());
+        string jsonText = Encoding.UTF8.GetString(dataContent.Data.ToArray());
         JsonElement deserializedState = JsonElement.Parse(jsonText);
         Assert.Equal("abc123", deserializedState.GetProperty("sessionId").GetString());
         Assert.Equal(5, deserializedState.GetProperty("step").GetInt32());
@@ -1690,6 +1779,7 @@ internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
     public bool RequestWasMade { get; private set; }
     public JsonElement? CapturedState { get; private set; }
     public int CapturedMessageCount { get; private set; }
+    public RunAgentInput? CapturedInput { get; private set; }
 
     public void AddResponse(BaseEvent[] events)
     {
@@ -1709,6 +1799,7 @@ internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
         RunAgentInput? input = JsonSerializer.Deserialize(requestBody, AGUIJsonSerializerContext.Default.RunAgentInput);
         if (input != null)
         {
+            this.CapturedInput = input;
             if (input.State.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
             {
                 this.CapturedState = input.State;
