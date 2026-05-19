@@ -841,6 +841,46 @@ async def test_served_model_header_not_captured_for_streaming_text_format() -> N
         assert update.model == "test-model"
 
 
+async def test_streaming_text_format_preserves_final_structured_output() -> None:
+    """Streaming structured output should still parse into the final ChatResponse value."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[],
+            delta='{"location":"Seattle","weather":"Sunny"}',
+        ),
+    ]
+
+    fake_stream_ctx = _FakeAsyncEventStreamContext(events)
+
+    with (
+        patch.object(
+            client,
+            "_prepare_request",
+            new=AsyncMock(
+                return_value=(
+                    client.client,
+                    {"text_format": OutputStruct},
+                    {"response_format": OutputStruct},
+                )
+            ),
+        ),
+        patch.object(client.client.responses, "stream", return_value=fake_stream_ctx),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        response = await stream.get_final_response()
+
+    assert response.model == "test-model"
+    assert response.value == OutputStruct(location="Seattle", weather="Sunny")
+
+
 async def test_bad_request_error_non_content_filter() -> None:
     """Test get_response BadRequestError without content_filter."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

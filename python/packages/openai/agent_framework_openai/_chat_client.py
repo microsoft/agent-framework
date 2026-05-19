@@ -681,8 +681,13 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     except Exception as ex:
                         self._handle_request_error(ex)
 
-            response_format = validated_options.get("response_format") if validated_options else None
-            return self._build_response_stream(_stream(), response_format=response_format)
+            return ResponseStream(
+                _stream(),
+                finalizer=lambda updates: self._finalize_response_updates(
+                    updates,
+                    response_format=validated_options.get("response_format") if validated_options else None,
+                ),
+            )
 
         # Non-streaming
         async def _get_response() -> ChatResponse:
