@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.A2A.UnitTests;
 public sealed class A2AClientExtensionsTests
 {
     [Fact]
-    public void GetAIAgent_WithAllParameters_ReturnsA2AAgentWithSpecifiedProperties()
+    public void AsAIAgent_WithAllParameters_ReturnsA2AAgentWithSpecifiedProperties()
     {
         // Arrange
         var a2aClient = new A2AClient(new Uri("http://test-endpoint"));
@@ -32,7 +32,7 @@ public sealed class A2AClientExtensionsTests
     }
 
     [Fact]
-    public void GetAIAgent_WithIA2AClient_ReturnsA2AAgentWithSpecifiedProperties()
+    public void AsAIAgent_WithIA2AClient_ReturnsA2AAgentWithSpecifiedProperties()
     {
         // Arrange - use IA2AClient reference type to verify the extension method works with the interface
         IA2AClient a2aClient = new A2AClient(new Uri("http://test-endpoint"));
@@ -53,7 +53,7 @@ public sealed class A2AClientExtensionsTests
     }
 
     [Fact]
-    public void GetAIAgent_WithIA2AClient_ExposesClientViaGetService()
+    public void AsAIAgent_WithIA2AClient_ExposesClientViaGetService()
     {
         // Arrange
         IA2AClient a2aClient = new A2AClient(new Uri("http://test-endpoint"));
@@ -68,7 +68,7 @@ public sealed class A2AClientExtensionsTests
     }
 
     [Fact]
-    public void GetAIAgent_WithOptions_ReturnsA2AAgentWithSpecifiedProperties()
+    public void AsAIAgent_WithOptions_ReturnsA2AAgentWithSpecifiedProperties()
     {
         // Arrange
         var a2aClient = new A2AClient(new Uri("http://test-endpoint"));
@@ -91,7 +91,7 @@ public sealed class A2AClientExtensionsTests
     }
 
     [Fact]
-    public void GetAIAgent_WithEmptyOptions_ReturnsA2AAgentWithDefaultProperties()
+    public void AsAIAgent_WithEmptyOptions_ReturnsA2AAgentWithDefaultProperties()
     {
         // Arrange
         var a2aClient = new A2AClient(new Uri("http://test-endpoint"));

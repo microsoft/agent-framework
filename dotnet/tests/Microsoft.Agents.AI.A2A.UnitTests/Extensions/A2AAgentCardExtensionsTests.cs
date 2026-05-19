@@ -31,7 +31,7 @@ public sealed class A2AAgentCardExtensionsTests
     }
 
     [Fact]
-    public void GetAIAgent_ReturnsAIAgent()
+    public void AsAIAgent_ReturnsAIAgent()
     {
         // Act
         var agent = this._agentCard.AsAIAgent();

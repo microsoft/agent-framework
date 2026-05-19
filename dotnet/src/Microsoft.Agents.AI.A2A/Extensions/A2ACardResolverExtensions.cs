@@ -64,7 +64,10 @@ public static class A2ACardResolverExtensions
     /// Configuration options that control the agent's identity. When provided, non-null values override the
     /// corresponding values from the resolved agent card.
     /// </param>
-    /// <param name="httpClient">The <see cref="HttpClient"/> to use for HTTP requests.</param>
+    /// <param name="httpClient">
+    /// The <see cref="HttpClient"/> to use for HTTP requests made by the created A2A client.
+    /// This is not used for fetching the agent card; the resolver uses its own configured client for that.
+    /// </param>
     /// <param name="clientOptions">
     /// Optional <see cref="A2AClientOptions"/> controlling protocol binding preference.
     /// When not provided, defaults to preferring HTTP+JSON first, with JSON-RPC as fallback.

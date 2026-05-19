@@ -62,6 +62,7 @@ public static class A2AAgentCardExtensions
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
     public static AIAgent AsAIAgent(this AgentCard card, A2AAgentOptions agentOptions, HttpClient? httpClient = null, A2AClientOptions? clientOptions = null, ILoggerFactory? loggerFactory = null)
     {
+        _ = Throw.IfNull(card);
         _ = Throw.IfNull(agentOptions);
 
         var a2aClient = A2AClientFactory.Create(card, httpClient, clientOptions);
