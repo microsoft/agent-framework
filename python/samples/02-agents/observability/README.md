@@ -394,118 +394,27 @@ Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-workflow>
 
 ## Migration Guide
 
-The observability API has been overhauled. The new API simplifies configuration by relying on standard OpenTelemetry environment variables and separates instrumentation from configuration.
+Instrumentation is now **enabled by default** (you no longer have to opt in by calling `enable_instrumentation()` at startup), and the way you opt in to capturing sensitive payloads has its own dedicated function.
 
-If you're updating from an earlier version of Agent Framework, here are the key changes:
-
-### Environment Variables
-
-| Old Variable | New Variable | Notes |
-|-------------|--------------|-------|
-| `OTLP_ENDPOINT` | `OTEL_EXPORTER_OTLP_ENDPOINT` | Standard OpenTelemetry env var |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | N/A | Use `configure_azure_monitor()` |
-| N/A | `ENABLE_CONSOLE_EXPORTERS` | New opt-in flag for console output |
-
-### OTLP Configuration
-
-**Before (Deprecated):**
-```
-from agent_framework.observability import setup_observability
-# Via parameter
-setup_observability(otlp_endpoint="http://localhost:4317")
-
-# Via environment variable
-# OTLP_ENDPOINT=http://localhost:4317
-setup_observability()
-```
-
-**After (Current):**
-```python
-from agent_framework.observability import configure_otel_providers
-# Via standard OTEL environment variable (recommended)
-# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-configure_otel_providers()
-
-# Or via custom exporters
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-
-configure_otel_providers(exporters=[
-    OTLPSpanExporter(endpoint="http://localhost:4317"),
-    OTLPLogExporter(endpoint="http://localhost:4317"),
-    OTLPMetricExporter(endpoint="http://localhost:4317"),
-])
-```
-
-### Azure Monitor Configuration
-
-**Before (Deprecated):**
-```
-from agent_framework.observability import setup_observability
-
-setup_observability(
-    applicationinsights_connection_string="InstrumentationKey=...",
-    applicationinsights_live_metrics=True,
-)
-```
-
-**After (Current):**
+If your code previously did:
 
 ```python
-from agent_framework.foundry import FoundryChatClient
-from agent_framework.observability import create_resource, enable_sensitive_telemetry
-from azure.identity import AzureCliCredential
-from azure.monitor.opentelemetry import configure_azure_monitor
+from agent_framework.observability import enable_instrumentation
 
-async def main():
-    # For Microsoft Foundry projects
-    client = FoundryChatClient(
-        project_endpoint="https://your-project.services.ai.azure.com",
-        model="gpt-4o",
-        credential=AzureCliCredential(),
-    )
-    await client.configure_azure_monitor(enable_live_metrics=True)
-
-    # For non-Azure AI projects
-    configure_azure_monitor(
-        connection_string="InstrumentationKey=...",
-        resource=create_resource(),
-        enable_live_metrics=True,
-    )
-    # Optional: opt in to capturing sensitive data
-    enable_sensitive_telemetry()
+enable_instrumentation(enable_sensitive_data=True)
 ```
 
-### Console Output
+replace it with:
 
-**Before (Deprecated):**
-```
-from agent_framework.observability import setup_observability
-
-# Console was used as automatic fallback
-setup_observability()  # Would output to console if no exporters configured
-```
-
-**After (Current):**
 ```python
-from agent_framework.observability import configure_otel_providers
+from agent_framework.observability import enable_sensitive_telemetry
 
-# Console exporters are now opt-in
-# ENABLE_CONSOLE_EXPORTERS=true
-configure_otel_providers()
-
-# Or programmatically
-configure_otel_providers(enable_console_exporters=True)
+enable_sensitive_telemetry()
 ```
 
-### Benefits of New API
+`enable_sensitive_telemetry()` ensures that instrumentation is on and turns sensitive-event capture on in one call. `enable_instrumentation()` still exists for the rare case where you want to programmatically force instrumentation on without enabling sensitive data (e.g. to override `ENABLE_INSTRUMENTATION=false`), and it now also accepts `force=True` to clear a previous `disable_instrumentation()` — see [Disabling instrumentation](#disabling-instrumentation).
 
-1. **Standards Compliant**: Uses standard OpenTelemetry environment variables
-2. **Simpler**: Less configuration needed, more relies on environment
-3. **Flexible**: Easy to add custom exporters alongside environment-based ones
-4. **Cleaner Separation**: Azure Monitor setup is in Azure-specific client
-5. **Better Compatibility**: Works with any OTEL-compatible tool (Jaeger, Zipkin, Prometheus, etc.)
+> **Note**: Sensitive data includes prompts, responses, and tool arguments. Only enable it in development or test environments — it may expose user or system secrets in production.
 
 ## Aspire Dashboard
 
