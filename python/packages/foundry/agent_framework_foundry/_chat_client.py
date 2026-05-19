@@ -16,6 +16,7 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
+from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
@@ -108,6 +109,26 @@ FoundryChatOptionsT = TypeVar(
 )
 
 FoundryChatOptions = OpenAIChatOptions
+
+
+def _require_sdk_class(name: str) -> Any:
+    """Resolve an ``azure.ai.projects.models`` class lazily.
+
+    Preview SDK classes (``*PreviewTool`` and their parameter helpers) are added
+    on a rolling cadence; importing them at module load time would break the
+    package on older ``azure-ai-projects`` versions. This helper resolves them
+    on demand and raises a clear ``ImportError`` when the installed SDK is too
+    old to provide the requested symbol.
+    """
+    from azure.ai.projects import models as _projects_models
+
+    cls = getattr(_projects_models, name, None)
+    if cls is None:
+        raise ImportError(
+            f"{name!r} is not available in the installed azure-ai-projects package. "
+            "Upgrade azure-ai-projects to a version that exposes this Foundry tool."
+        )
+    return cls
 
 
 class RawFoundryChatClient(  # type: ignore[misc]
@@ -498,6 +519,277 @@ class RawFoundryChatClient(  # type: ignore[misc]
                     mcp["require_approval"] = {"never": {"tool_names": never_require}}
 
         return mcp
+
+    # endregion
+
+    # region Experimental Foundry tool factories (preview SDK types)
+
+    @staticmethod
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    def get_azure_ai_search_tool(
+        *,
+        index_connection_id: str,
+        index_name: str,
+        query_type: str | None = None,
+        top_k: int | None = None,
+        filter: str | None = None,
+        index_asset_id: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Create an Azure AI Search tool configuration for Foundry.
+
+        Keyword Args:
+            index_connection_id: The Foundry project connection ID for the Azure AI Search index.
+            index_name: The name of the index to search.
+            query_type: Optional query type (``"simple"``, ``"semantic"``, ``"vector"``,
+                ``"vector_simple_hybrid"``, or ``"vector_semantic_hybrid"``).
+            top_k: Optional number of documents to retrieve.
+            filter: Optional OData filter expression.
+            index_asset_id: Optional index asset id for the search resource.
+            **kwargs: Additional arguments forwarded to the SDK ``AISearchIndexResource``.
+
+        Returns:
+            An ``AzureAISearchTool`` ready to pass to an Agent.
+        """
+        tool_cls = _require_sdk_class("AzureAISearchTool")
+        resource_cls = _require_sdk_class("AzureAISearchToolResource")
+        index_cls = _require_sdk_class("AISearchIndexResource")
+        index_kwargs: dict[str, Any] = {
+            "project_connection_id": index_connection_id,
+            "index_name": index_name,
+            **kwargs,
+        }
+        if query_type is not None:
+            index_kwargs["query_type"] = query_type
+        if top_k is not None:
+            index_kwargs["top_k"] = top_k
+        if filter is not None:
+            index_kwargs["filter"] = filter
+        if index_asset_id is not None:
+            index_kwargs["index_asset_id"] = index_asset_id
+        return tool_cls(azure_ai_search=resource_cls(indexes=[index_cls(**index_kwargs)]))
+
+    @staticmethod
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    def get_sharepoint_tool(
+        *,
+        connection_id: str,
+        **kwargs: Any,
+    ) -> Any:
+        """Create a SharePoint grounding tool configuration for Foundry.
+
+        Keyword Args:
+            connection_id: The Foundry project connection ID for the SharePoint resource.
+            **kwargs: Additional arguments forwarded to the SDK
+                ``SharepointGroundingToolParameters``.
+
+        Returns:
+            A ``SharepointPreviewTool`` ready to pass to an Agent.
+        """
+        tool_cls = _require_sdk_class("SharepointPreviewTool")
+        params_cls = _require_sdk_class("SharepointGroundingToolParameters")
+        connection_cls = _require_sdk_class("ToolProjectConnection")
+        return tool_cls(
+            sharepoint_grounding_preview=params_cls(
+                project_connections=[connection_cls(project_connection_id=connection_id)],
+                **kwargs,
+            )
+        )
+
+    @staticmethod
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    def get_fabric_tool(
+        *,
+        connection_id: str,
+        **kwargs: Any,
+    ) -> Any:
+        """Create a Microsoft Fabric data agent tool configuration for Foundry.
+
+        Keyword Args:
+            connection_id: The Foundry project connection ID for the Fabric data agent.
+            **kwargs: Additional arguments forwarded to the SDK
+                ``FabricDataAgentToolParameters``.
+
+        Returns:
+            A ``MicrosoftFabricPreviewTool`` ready to pass to an Agent.
+        """
+        tool_cls = _require_sdk_class("MicrosoftFabricPreviewTool")
+        params_cls = _require_sdk_class("FabricDataAgentToolParameters")
+        connection_cls = _require_sdk_class("ToolProjectConnection")
+        return tool_cls(
+            fabric_dataagent_preview=params_cls(
+                project_connections=[connection_cls(project_connection_id=connection_id)],
+                **kwargs,
+            )
+        )
+
+    @staticmethod
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    def get_memory_search_tool(
+        *,
+        memory_store_name: str,
+        scope: str,
+        search_options: Any | None = None,
+        update_delay: int | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Create a Memory Search tool configuration for Foundry.
+
+        Keyword Args:
+            memory_store_name: The name of the memory store to use.
+            scope: The namespace used to group and isolate memories (e.g. a user ID).
+                Use ``"{{$userId}}"`` to scope memories to the current signed-in user.
+            search_options: Optional ``MemorySearchOptions`` instance.
+            update_delay: Optional seconds to wait before updating memories after inactivity.
+            **kwargs: Additional arguments forwarded to the SDK ``MemorySearchPreviewTool``.
+
+        Returns:
+            A ``MemorySearchPreviewTool`` ready to pass to an Agent.
+        """
+        tool_cls = _require_sdk_class("MemorySearchPreviewTool")
+        params: dict[str, Any] = {
+            "memory_store_name": memory_store_name,
+            "scope": scope,
+            **kwargs,
+        }
+        if search_options is not None:
+            params["search_options"] = search_options
+        if update_delay is not None:
+            params["update_delay"] = update_delay
+        return tool_cls(**params)
+
+    @staticmethod
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    def get_computer_use_tool(
+        *,
+        environment: str,
+        display_width: int,
+        display_height: int,
+        **kwargs: Any,
+    ) -> Any:
+        """Create a Computer Use tool configuration for Foundry.
+
+        Keyword Args:
+            environment: The computer environment to control. One of ``"windows"``,
+                ``"mac"``, ``"linux"``, ``"ubuntu"``, or ``"browser"``.
+            display_width: The width of the computer display.
+            display_height: The height of the computer display.
+            **kwargs: Additional arguments forwarded to the SDK ``ComputerUsePreviewTool``.
+
+        Returns:
+            A ``ComputerUsePreviewTool`` ready to pass to an Agent.
+        """
+        tool_cls = _require_sdk_class("ComputerUsePreviewTool")
+        return tool_cls(
+            environment=environment,
+            display_width=display_width,
+            display_height=display_height,
+            **kwargs,
+        )
+
+    @staticmethod
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    def get_browser_automation_tool(
+        *,
+        connection_id: str,
+        **kwargs: Any,
+    ) -> Any:
+        """Create a Browser Automation tool configuration for Foundry.
+
+        Keyword Args:
+            connection_id: The Foundry project connection ID for the Azure Playwright resource.
+            **kwargs: Additional arguments forwarded to the SDK
+                ``BrowserAutomationToolParameters``.
+
+        Returns:
+            A ``BrowserAutomationPreviewTool`` ready to pass to an Agent.
+        """
+        tool_cls = _require_sdk_class("BrowserAutomationPreviewTool")
+        params_cls = _require_sdk_class("BrowserAutomationToolParameters")
+        connection_cls = _require_sdk_class("BrowserAutomationToolConnectionParameters")
+        return tool_cls(
+            browser_automation_preview=params_cls(
+                connection=connection_cls(project_connection_id=connection_id),
+                **kwargs,
+            )
+        )
+
+    @staticmethod
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    def get_bing_custom_search_tool(
+        *,
+        connection_id: str,
+        instance_name: str,
+        market: str | None = None,
+        set_lang: str | None = None,
+        count: int | None = None,
+        freshness: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Create a Bing Custom Search tool configuration for Foundry.
+
+        Keyword Args:
+            connection_id: The Foundry project connection ID for grounding with Bing search.
+            instance_name: The custom configuration instance name.
+            market: Optional Bing market identifier (e.g. ``"en-US"``).
+            set_lang: Optional UI language code passed to the Bing API.
+            count: Optional number of search results to return.
+            freshness: Optional time-range filter for search results.
+            **kwargs: Additional arguments forwarded to the SDK
+                ``BingCustomSearchConfiguration``.
+
+        Returns:
+            A ``BingCustomSearchPreviewTool`` ready to pass to an Agent.
+        """
+        tool_cls = _require_sdk_class("BingCustomSearchPreviewTool")
+        params_cls = _require_sdk_class("BingCustomSearchToolParameters")
+        config_cls = _require_sdk_class("BingCustomSearchConfiguration")
+        config_kwargs: dict[str, Any] = {
+            "project_connection_id": connection_id,
+            "instance_name": instance_name,
+            **kwargs,
+        }
+        if market is not None:
+            config_kwargs["market"] = market
+        if set_lang is not None:
+            config_kwargs["set_lang"] = set_lang
+        if count is not None:
+            config_kwargs["count"] = count
+        if freshness is not None:
+            config_kwargs["freshness"] = freshness
+        return tool_cls(bing_custom_search_preview=params_cls(search_configurations=[config_cls(**config_kwargs)]))
+
+    @staticmethod
+    @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
+    def get_a2a_tool(
+        *,
+        base_url: str | None = None,
+        agent_card_path: str | None = None,
+        project_connection_id: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Create an Agent-to-Agent (A2A) tool configuration for Foundry.
+
+        Keyword Args:
+            base_url: Base URL of the remote A2A agent.
+            agent_card_path: Path to the agent card relative to ``base_url``.
+                Defaults to ``"/.well-known/agent-card.json"`` server-side.
+            project_connection_id: Foundry connection ID for the A2A server. Stores
+                authentication and other connection details.
+            **kwargs: Additional arguments forwarded to the SDK ``A2APreviewTool``.
+
+        Returns:
+            An ``A2APreviewTool`` ready to pass to an Agent.
+        """
+        tool_cls = _require_sdk_class("A2APreviewTool")
+        params: dict[str, Any] = dict(kwargs)
+        if base_url is not None:
+            params["base_url"] = base_url
+        if agent_card_path is not None:
+            params["agent_card_path"] = agent_card_path
+        if project_connection_id is not None:
+            params["project_connection_id"] = project_connection_id
+        return tool_cls(**params)
 
     # endregion
 

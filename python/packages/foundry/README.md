@@ -39,3 +39,48 @@ async with Agent(
     result = await agent.run("What tools are available?")
     print(result.text)
 ```
+
+## Hosted tool factories
+
+`FoundryChatClient` exposes static factory methods that return Foundry SDK tool
+configurations ready to pass to an `Agent`'s `tools=[...]` argument. These
+factories don't require a `FoundryChatClient` instance — you can call them
+statically and reuse the same tool configuration across agents.
+
+```python
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
+
+agent = Agent(
+    client=FoundryChatClient(...),
+    instructions="...",
+    tools=[
+        FoundryChatClient.get_web_search_tool(),
+        FoundryChatClient.get_code_interpreter_tool(),
+    ],
+)
+```
+
+Generally available factories: `get_code_interpreter_tool`,
+`get_file_search_tool`, `get_web_search_tool`, `get_image_generation_tool`,
+`get_mcp_tool`.
+
+> **Experimental — `ExperimentalFeature.FOUNDRY_TOOLS`.** The following
+> factories wrap preview Foundry tool types and may change or be removed before
+> they reach GA. Each emits an `ExperimentalWarning` on first use.
+
+| Factory | Foundry SDK tool |
+|---------|-----------------|
+| `get_azure_ai_search_tool(index_connection_id, index_name, ...)` | `AzureAISearchTool` |
+| `get_sharepoint_tool(connection_id)` | `SharepointPreviewTool` |
+| `get_fabric_tool(connection_id)` | `MicrosoftFabricPreviewTool` |
+| `get_memory_search_tool(memory_store_name, scope, ...)` | `MemorySearchPreviewTool` |
+| `get_computer_use_tool(environment, display_width, display_height)` | `ComputerUsePreviewTool` |
+| `get_browser_automation_tool(connection_id)` | `BrowserAutomationPreviewTool` |
+| `get_bing_custom_search_tool(connection_id, instance_name, ...)` | `BingCustomSearchPreviewTool` |
+| `get_a2a_tool(base_url=..., project_connection_id=..., ...)` | `A2APreviewTool` |
+
+The preview tool classes are resolved from `azure-ai-projects` lazily. If your
+installed version doesn't expose one of them, the call raises a clear
+`ImportError` pointing at the missing symbol — upgrade `azure-ai-projects` to
+fix it.
