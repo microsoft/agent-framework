@@ -130,13 +130,9 @@ def _convert_tools(
         )
 
     for mcp_tool in mcp_tools or ():
-        if isinstance(mcp_tool, MCPTool):
-            raise ValueError(
-                f"Local MCP tool {mcp_tool.name!r} cannot be published as a prompt-agent tool. "
-                "Use FoundryChatClient.get_mcp_tool(...) to register a hosted MCP server instead."
-            )
-        raise ValueError(  # pragma: no cover - defensive
-            f"Unsupported mcp_tools entry: {type(mcp_tool).__name__}."
+        raise ValueError(
+            f"Local MCP tool {mcp_tool.name!r} cannot be published as a prompt-agent tool. "
+            "Use FoundryChatClient.get_mcp_tool(...) to register a hosted MCP server instead."
         )
 
     return converted
@@ -176,4 +172,4 @@ def _validate_mapping_tool(tool_item: Mapping[str, Any]) -> Tool:
 
     if "type" not in tool_item:
         raise ValueError("Dict-shaped tools must include a 'type' field matching a Foundry tool discriminator.")
-    return ProjectsTool(dict(tool_item))
+    return ProjectsTool(**tool_item)
