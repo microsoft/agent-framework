@@ -615,6 +615,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             seen_reasoning_delta_item_ids: set[str] = set()
             validated_options: dict[str, Any] | None = None
 
+            def _finalize_streamed_response(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
+                return self._finalize_response_updates(
+                    updates,
+                    response_format=validated_options.get("response_format") if validated_options else None,
+                )
+
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 nonlocal validated_options
                 if continuation_token is not None:
@@ -681,13 +687,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     except Exception as ex:
                         self._handle_request_error(ex)
 
-            return ResponseStream(
-                _stream(),
-                finalizer=lambda updates: self._finalize_response_updates(
-                    updates,
-                    response_format=validated_options.get("response_format") if validated_options else None,
-                ),
-            )
+            return ResponseStream(_stream(), finalizer=_finalize_streamed_response)
 
         # Non-streaming
         async def _get_response() -> ChatResponse:
