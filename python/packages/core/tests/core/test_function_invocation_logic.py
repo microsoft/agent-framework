@@ -2,15 +2,17 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 import pytest
+from pydantic import BaseModel
 
 from agent_framework import (
     Agent,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     Message,
     SupportsChatGetResponse,
     chat_middleware,
@@ -85,6 +87,79 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
     assert response.messages[1].contents[0].result == "Processed value1"
     assert response.messages[2].role == "assistant"
     assert response.messages[2].text == "done"
+
+
+async def test_auto_function_calling_preserves_explicit_null_arguments(chat_client_base: SupportsChatGetResponse):
+    captured_args: list[tuple[str, str | None]] = []
+
+    @tool(name="get_weather", approval_mode="never_require")
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        captured_args.append((location, unit))
+        return f"{location}:{unit or 'C'}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1",
+                        name="get_weather",
+                        arguments='{"location": "Seattle", "unit": null}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["weather in Seattle"])],
+        options={"tool_choice": "auto", "tools": [get_weather]},
+    )
+
+    assert captured_args == [("Seattle", None)]
+
+
+async def test_auto_function_calling_preserves_nested_explicit_null_arguments(
+    chat_client_base: SupportsChatGetResponse,
+):
+    class WeatherOptions(BaseModel):
+        unit: Literal["C", "F"] | None
+
+    class WeatherArgs(BaseModel):
+        location: str
+        options: WeatherOptions
+
+    captured_options: list[dict[str, Any]] = []
+
+    def get_weather(location: str, options: dict[str, Any]) -> str:
+        captured_options.append(options)
+        return f"{location}:{options['unit'] or 'C'}"
+
+    weather_tool = FunctionTool(name="get_weather", func=get_weather, input_model=WeatherArgs)
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1",
+                        name="get_weather",
+                        arguments='{"location": "Seattle", "options": {"unit": null}}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["weather in Seattle"])],
+        options={"tool_choice": "auto", "tools": [weather_tool]},
+    )
+
+    assert captured_options == [{"unit": None}]
 
 
 async def test_base_client_with_function_calling_string_input(chat_client_base: SupportsChatGetResponse):
