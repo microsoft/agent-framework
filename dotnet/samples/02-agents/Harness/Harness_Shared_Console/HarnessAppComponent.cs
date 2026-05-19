@@ -371,7 +371,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             };
 
             bottomChildHeight = ListSelection.CalculateHeight(listProps);
-            this._listSelection.Height = bottomChildHeight;
+            listProps = listProps with { Height = bottomChildHeight };
             this._listSelection.Props = listProps;
             bottomChild = this._listSelection;
         }
@@ -398,8 +398,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             }
 
             bottomChildHeight = TextInput.CalculateHeight(textInputProps, state.ConsoleWidth);
-            this._textInput.Width = state.ConsoleWidth;
-            this._textInput.Height = bottomChildHeight;
+            textInputProps = textInputProps with { Width = state.ConsoleWidth, Height = bottomChildHeight };
             this._textInput.Props = textInputProps;
             bottomChild = this._textInput;
         }
@@ -413,8 +412,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             };
 
             bottomChildHeight = TextInput.CalculateHeight(textInputProps, state.ConsoleWidth);
-            this._textInput.Width = state.ConsoleWidth;
-            this._textInput.Height = bottomChildHeight;
+            textInputProps = textInputProps with { Width = state.ConsoleWidth, Height = bottomChildHeight };
             this._textInput.Props = textInputProps;
             bottomChild = this._textInput;
         }
@@ -459,6 +457,16 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             System.Console.Write(AnsiEscapes.EraseScrollbackBuffer);
             this._textScrollPanel.Reset();
             this._resizedSinceLastRender = false;
+
+            // Invalidate all children so they re-render even if props haven't changed
+            this._rule.Invalidate();
+            this._textScrollPanel.Invalidate();
+            this._textPanel.Invalidate();
+            this._queuedPanel.Invalidate();
+            this._agentStatus.Invalidate();
+            this._modeAndHelp.Invalidate();
+            this._textInput.Invalidate();
+            this._listSelection.Invalidate();
         }
 
         this._scrollRegionBottom = scrollBottom;
@@ -470,35 +478,35 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             ? state.ScrollAreaContentItems.Take(state.ScrollAreaContentItems.Count - 1).ToList()
             : [];
 
-        this._textScrollPanel.X = 1;
-        this._textScrollPanel.Y = 1;
-        this._textScrollPanel.Width = state.ConsoleWidth;
-        this._textScrollPanel.Height = scrollBottom;
         this._textScrollPanel.Props = new TextScrollPanelProps
         {
+            X = 1,
+            Y = 1,
+            Width = state.ConsoleWidth,
+            Height = scrollBottom,
             Items = scrollItems,
         };
         this._textScrollPanel.Render();
 
         // Render the text panel for the last (dynamic) item just below the scroll region
-        this._textPanel.X = 1;
-        this._textPanel.Y = scrollBottom + 1;
-        this._textPanel.Width = state.ConsoleWidth;
-        this._textPanel.Height = textPanelHeight;
         this._textPanel.Props = new TextPanelProps
         {
+            X = 1,
+            Y = scrollBottom + 1,
+            Width = state.ConsoleWidth,
+            Height = textPanelHeight,
             Items = lastItems,
         };
         this._textPanel.Render();
 
         // Render queued input items between text panel and agent status
         int queuedPanelY = scrollBottom + textPanelHeight + 1;
-        this._queuedPanel.X = 1;
-        this._queuedPanel.Y = queuedPanelY;
-        this._queuedPanel.Width = state.ConsoleWidth;
-        this._queuedPanel.Height = queuedPanelHeight;
         this._queuedPanel.Props = new TextPanelProps
         {
+            X = 1,
+            Y = queuedPanelY,
+            Width = state.ConsoleWidth,
+            Height = queuedPanelHeight,
             Items = state.QueuedItems,
         };
         this._queuedPanel.Render();
@@ -507,31 +515,40 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
         int agentStatusY = queuedPanelY + queuedPanelHeight;
         if (showStatusAndHelp)
         {
-            this._agentStatus.X = 1;
-            this._agentStatus.Y = agentStatusY;
-            this._agentStatus.Width = state.ConsoleWidth;
-            this._agentStatus.Height = agentStatusHeight;
-            this._agentStatus.Props = agentStatusProps;
+            this._agentStatus.Props = agentStatusProps with
+            {
+                X = 1,
+                Y = agentStatusY,
+                Width = state.ConsoleWidth,
+                Height = agentStatusHeight,
+            };
             this._agentStatus.Render();
         }
 
         // Render the bottom rule + child below the agent status
-        this._rule.X = 1;
-        this._rule.Y = agentStatusY + agentStatusHeight;
-        this._rule.Props = ruleProps;
+        this._rule.Props = ruleProps with
+        {
+            X = 1,
+            Y = agentStatusY + agentStatusHeight,
+        };
         this._rule.Render();
 
         // Render the mode-and-help line below the bottom rule
         if (showStatusAndHelp)
         {
-            int modeAndHelpY = this._rule.Y + ruleHeight;
-            this._modeAndHelp.X = 1;
-            this._modeAndHelp.Y = modeAndHelpY;
-            this._modeAndHelp.Width = state.ConsoleWidth;
-            this._modeAndHelp.Height = modeAndHelpHeight;
-            this._modeAndHelp.Props = modeAndHelpProps;
+            int modeAndHelpY = agentStatusY + agentStatusHeight + ruleHeight;
+            this._modeAndHelp.Props = modeAndHelpProps with
+            {
+                X = 1,
+                Y = modeAndHelpY,
+                Width = state.ConsoleWidth,
+                Height = modeAndHelpHeight,
+            };
             this._modeAndHelp.Render();
         }
+
+        // Clear the bottom padding line
+        System.Console.Write(AnsiEscapes.MoveAndEraseLine(state.ConsoleHeight));
 
         // Position cursor for natural typing appearance
         this.PositionCursor(state);
@@ -546,7 +563,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             int textWidth = state.ConsoleWidth - promptLength;
             int textLength = state.InputText.Length;
 
-            int textInputY = this._rule.Y + 1;
+            int textInputY = (this._rule.Props?.Y ?? 0) + 1;
 
             if (textWidth <= 0 || textLength == 0)
             {
@@ -564,7 +581,7 @@ public class HarnessAppComponent : ConsoleReactiveComponent<ConsoleReactiveProps
             && state.ListSelectionIndex == state.ListSelectionOptions.Count)
         {
             int titleLines = state.ListSelectionTitle?.Split('\n').Length ?? 0;
-            int customOptionY = this._rule.Y + 1 + titleLines + state.ListSelectionOptions.Count;
+            int customOptionY = (this._rule.Props?.Y ?? 0) + 1 + titleLines + state.ListSelectionOptions.Count;
             int cursorCol = 2 + state.ListSelectionCustomInputText.Length + 1;
             System.Console.Write(AnsiEscapes.MoveCursor(customOptionY, cursorCol));
         }

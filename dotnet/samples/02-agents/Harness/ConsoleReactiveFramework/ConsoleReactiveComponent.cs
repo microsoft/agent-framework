@@ -3,8 +3,8 @@
 namespace Harness.ConsoleReactiveFramework;
 
 /// <summary>
-/// Abstract base class for all console UI components. Provides layout properties
-/// (position and size) and a <see cref="Render"/> method for drawing to the console.
+/// Abstract base class for all console UI components. Provides access to layout
+/// through <see cref="BaseProps"/> and a <see cref="Render"/> method for drawing to the console.
 /// Derive from <see cref="ConsoleReactiveComponent{TProps, TState}"/> instead of this class directly.
 /// </summary>
 public abstract class ConsoleReactiveComponent
@@ -13,20 +13,21 @@ public abstract class ConsoleReactiveComponent
     {
     }
 
-    /// <summary>Gets or sets the 1-based column position of the component.</summary>
-    public int X { get; set; }
-
-    /// <summary>Gets or sets the 1-based row position of the component.</summary>
-    public int Y { get; set; }
-
-    /// <summary>Gets or sets the width of the component in columns.</summary>
-    public int Width { get; set; }
-
-    /// <summary>Gets or sets the height of the component in rows.</summary>
-    public int Height { get; set; }
+    /// <summary>
+    /// Gets or sets the component's props as the base <see cref="ConsoleReactiveProps"/> type.
+    /// Used by parent components to set layout (X, Y, Width, Height) on children without
+    /// knowing the concrete props type.
+    /// </summary>
+    public abstract ConsoleReactiveProps? BaseProps { get; set; }
 
     /// <summary>Renders the component to the console at its current position.</summary>
     public abstract void Render();
+
+    /// <summary>
+    /// Invalidates the component's cached render state, causing the next <see cref="Render"/> call
+    /// to proceed even if props and state have not changed. Use after a screen erase to force repaint.
+    /// </summary>
+    public abstract void Invalidate();
 }
 
 /// <summary>
@@ -45,6 +46,13 @@ public abstract class ConsoleReactiveComponent<TProps, TState> : ConsoleReactive
 
     /// <summary>Gets or sets the component's props (external configuration).</summary>
     public TProps? Props { get; set; }
+
+    /// <inheritdoc/>
+    public override ConsoleReactiveProps? BaseProps
+    {
+        get => this.Props;
+        set => this.Props = (TProps?)value;
+    }
 
     /// <summary>Gets or sets the component's internal state.</summary>
     protected TState? State { get; set; }
@@ -73,8 +81,8 @@ public abstract class ConsoleReactiveComponent<TProps, TState> : ConsoleReactive
                 return;
             }
 
-            if (ReferenceEquals(this.Props, this._lastRenderedProps)
-                && ReferenceEquals(this.State, this._lastRenderedState))
+            if (EqualityComparer<TProps>.Default.Equals(this.Props, this._lastRenderedProps)
+                && EqualityComparer<TState>.Default.Equals(this.State, this._lastRenderedState))
             {
                 return;
             }
@@ -83,6 +91,16 @@ public abstract class ConsoleReactiveComponent<TProps, TState> : ConsoleReactive
 
             this._lastRenderedProps = this.Props;
             this._lastRenderedState = this.State;
+        }
+    }
+
+    /// <inheritdoc/>
+    public override void Invalidate()
+    {
+        lock (this._renderLock)
+        {
+            this._lastRenderedProps = default;
+            this._lastRenderedState = default;
         }
     }
 
@@ -95,11 +113,23 @@ public abstract class ConsoleReactiveComponent<TProps, TState> : ConsoleReactive
 }
 
 /// <summary>
-/// Base record for component props. Provides an optional <see cref="Children"/> collection
-/// for composing child components.
+/// Base record for component props. Provides layout properties (position and size)
+/// and an optional <see cref="Children"/> collection for composing child components.
 /// </summary>
 public record ConsoleReactiveProps
 {
+    /// <summary>Gets the 1-based column position of the component.</summary>
+    public int X { get; init; }
+
+    /// <summary>Gets the 1-based row position of the component.</summary>
+    public int Y { get; init; }
+
+    /// <summary>Gets the width of the component in columns.</summary>
+    public int Width { get; init; }
+
+    /// <summary>Gets the height of the component in rows.</summary>
+    public int Height { get; init; }
+
     /// <summary>Gets the child components to render within this component.</summary>
     public IReadOnlyList<ConsoleReactiveComponent> Children { get; init; } = [];
 }

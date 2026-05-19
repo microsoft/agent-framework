@@ -58,11 +58,11 @@ public class TextInput : ConsoleReactiveComponent<TextInputProps, ConsoleReactiv
     public override void RenderCore(TextInputProps props, ConsoleReactiveState state)
     {
         int promptLength = props.Prompt.Length;
-        int textWidth = this.Width - promptLength;
+        int textWidth = props.Width - promptLength;
         string indent = new(' ', promptLength);
 
         // First line: prompt + start of text
-        Console.Write(AnsiEscapes.MoveCursor(this.Y, this.X));
+        Console.Write(AnsiEscapes.MoveCursor(props.Y, props.X));
         Console.Write(AnsiEscapes.EraseEntireLine);
         Console.Write(props.Prompt);
 
@@ -90,7 +90,7 @@ public class TextInput : ConsoleReactiveComponent<TextInputProps, ConsoleReactiv
         while (offset < props.Text.Length)
         {
             int chunk = Math.Min(textWidth, props.Text.Length - offset);
-            Console.Write(AnsiEscapes.MoveCursor(this.Y + row, this.X));
+            Console.Write(AnsiEscapes.MoveCursor(props.Y + row, props.X));
             Console.Write(AnsiEscapes.EraseEntireLine);
             Console.Write(indent);
             Console.Write(props.Text[offset..(offset + chunk)]);
