@@ -874,7 +874,11 @@ async def test_streaming_text_format_preserves_final_structured_output() -> None
         patch.object(client.client.responses, "stream", return_value=fake_stream_ctx),
         patch.object(client, "_get_metadata_from_response", return_value={}),
     ):
-        stream = client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        stream = client.get_response(
+            messages=[Message(role="user", contents=["Hi"])],
+            options={"response_format": OutputStruct},
+            stream=True,
+        )
         response = await stream.get_final_response()
 
     assert response.model == "test-model"

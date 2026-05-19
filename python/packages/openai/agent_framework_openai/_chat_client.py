@@ -619,6 +619,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             response_format: Any | None = None
 
             def _finalize_with_captured_format(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
+                # ResponseStream only calls the finalizer after iterating or draining `_stream()`,
+                # so `response_format` has already been populated from the validated request state
+                # unless request setup failed before streaming began.
                 return self._finalize_response_updates(updates, response_format=response_format)
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
