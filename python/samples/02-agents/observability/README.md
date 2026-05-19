@@ -216,8 +216,15 @@ Framework integrations and third-party libraries can call `enable_instrumentatio
 ```python
 from agent_framework.observability import disable_instrumentation
 
-# After this call, no Agent Framework telemetry will be emitted no matter what
-# downstream library / framework code tries to do.
+# After this call, Agent Framework expresses your intent to opt out of telemetry.
+# Library and framework code is expected to honor that intent and not flip
+# instrumentation back on (e.g. by calling `enable_instrumentation()`,
+# `enable_sensitive_telemetry()`, or writing to public attributes on
+# `OBSERVABILITY_SETTINGS`). The framework actively short-circuits the public
+# enable paths so the user's intent stays leading. A determined caller can still
+# pass `force=True` or mutate private (`_`-prefixed) attributes to bypass it,
+# but those are out-of-contract escape hatches that should not be used by
+# integrations on the user's behalf.
 disable_instrumentation()
 ```
 
