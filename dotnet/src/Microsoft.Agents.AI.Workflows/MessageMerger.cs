@@ -97,16 +97,6 @@ internal sealed class MessageMerger
         }
     }
 
-    private int CompareByDateTimeOffset(AgentResponse left, int leftIndex, AgentResponse right, int rightIndex)
-    {
-        if (!left.CreatedAt.HasValue || !right.CreatedAt.HasValue || left.CreatedAt == right.CreatedAt)
-        {
-            return leftIndex.CompareTo(rightIndex);
-        }
-
-        return left.CreatedAt.Value.CompareTo(right.CreatedAt.Value);
-    }
-
     public AgentResponse ComputeMerged(string primaryResponseId, string? primaryAgentId = null, string? primaryAgentName = null)
     {
         List<ChatMessage> messages = [];
@@ -114,6 +104,15 @@ internal sealed class MessageMerger
         HashSet<string> agentIds = [];
         HashSet<ChatFinishReason> finishReasons = [];
 
+        // Ordering contract (see docs/decisions/0026-message-merger-invariants.md):
+        // - Outer loop iterates ResponseIds in first-seen order, which preserves step
+        //   ordering: each agent invocation owns its own ResponseId, and successive
+        //   super-steps emit their first update only after the prior step's updates
+        //   have all arrived. Iterating Dictionary<,>.Keys preserves insertion order.
+        // - Inner loop iterates MessageIds in first-seen order, then appends dangling
+        //   updates last. This preserves emission order within an agent's block.
+        // We deliberately do NOT sort by CreatedAt: timestamps from concurrent agents
+        // or different clocks would interleave per-agent blocks and break Goal 1.
         foreach (string responseId in this._mergeStates.Keys)
         {
             ResponseMergeState mergeState = this._mergeStates[responseId];
@@ -124,14 +123,7 @@ internal sealed class MessageMerger
                 responseList.Add(mergeState.ComputeDangling());
             }
 
-            List<(AgentResponse Response, int Index)> orderedResponseList = responseList
-                .Select((response, index) => (Response: response, Index: index))
-                .ToList();
-            orderedResponseList.Sort((left, right) => this.CompareByDateTimeOffset(left.Response, left.Index, right.Response, right.Index));
-
-            responses[responseId] = orderedResponseList
-                .Select(item => item.Response)
-                .Aggregate(MergeResponses);
+            responses[responseId] = responseList.Aggregate(MergeResponses);
             messages.AddRange(GetMessagesWithCreatedAt(responses[responseId]));
         }
 

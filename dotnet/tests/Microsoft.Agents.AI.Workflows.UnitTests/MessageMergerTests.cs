@@ -166,56 +166,70 @@ public class MessageMergerTests
     [Fact]
     public void Test_MessageMerger_PreservesInsertionOrder_WhenMixedTimestamps()
     {
-        // Arrange: Updates where some have CreatedAt and some don't
+        // Arrange: Updates with OUT-OF-ORDER timestamps relative to emission order.
+        // Emission order: A, B, C.
+        // Timestamp order: C (oldest), A, B (newest) - reverse of emission.
+        // Per Invariant 2, emission order wins; timestamps are ignored for ordering.
         string responseId = Guid.NewGuid().ToString("N");
         string messageIdA = Guid.NewGuid().ToString("N");
         string messageIdB = Guid.NewGuid().ToString("N");
         string messageIdC = Guid.NewGuid().ToString("N");
 
-        DateTimeOffset time1 = DateTimeOffset.UtcNow.AddMinutes(-2);
-        DateTimeOffset time3 = DateTimeOffset.UtcNow;
+        DateTimeOffset timeOldest = DateTimeOffset.UtcNow.AddMinutes(-10);
+        DateTimeOffset timeMiddle = DateTimeOffset.UtcNow.AddMinutes(-5);
+        DateTimeOffset timeNewest = DateTimeOffset.UtcNow;
 
         MessageMerger merger = new();
 
-        // A has timestamp (time1), B has no timestamp, C has timestamp (time3)
-        // Insertion order: A, B, C
-        // B should maintain its relative position among untimestamped messages
+        // Emit A first but stamp it with timeMiddle.
         merger.AddUpdate(new AgentResponseUpdate
         {
             ResponseId = responseId,
             MessageId = messageIdA,
             Role = ChatRole.Assistant,
-            CreatedAt = time1,
+            CreatedAt = timeMiddle,
             Contents = [new TextContent("Message A")],
         });
+        // Emit B second, without a timestamp.
         merger.AddUpdate(new AgentResponseUpdate
         {
             ResponseId = responseId,
             MessageId = messageIdB,
             Role = ChatRole.Assistant,
-            // No CreatedAt - should use insertion order as tiebreaker
+            // No CreatedAt
             Contents = [new TextContent("Message B")],
         });
+        // Emit C third but stamp it with timeOldest - if we sorted by timestamp,
+        // C would come first; the new merger MUST keep emission order (A, B, C).
         merger.AddUpdate(new AgentResponseUpdate
         {
             ResponseId = responseId,
             MessageId = messageIdC,
             Role = ChatRole.Assistant,
-            CreatedAt = time3,
+            CreatedAt = timeOldest,
             Contents = [new TextContent("Message C")],
+        });
+        // Stamp a fourth message with the newest timestamp - it should still come last
+        // because it was emitted last, not because of its timestamp.
+        string messageIdD = Guid.NewGuid().ToString("N");
+        merger.AddUpdate(new AgentResponseUpdate
+        {
+            ResponseId = responseId,
+            MessageId = messageIdD,
+            Role = ChatRole.Assistant,
+            CreatedAt = timeNewest,
+            Contents = [new TextContent("Message D")],
         });
 
         // Act
         AgentResponse response = merger.ComputeMerged(responseId);
 
-        // Assert: Untimestamped messages should maintain relative order via insertion index fallback
-        response.Messages.Should().HaveCount(3);
-
-        // A (time1) should come first, B (no timestamp, uses index 1) should be in middle,
-        // C (time3) should come last since it has the latest timestamp
+        // Assert: Emission order wins; CreatedAt is ignored for ordering.
+        response.Messages.Should().HaveCount(4);
         response.Messages[0].Text.Should().Be("Message A");
         response.Messages[1].Text.Should().Be("Message B");
         response.Messages[2].Text.Should().Be("Message C");
+        response.Messages[3].Text.Should().Be("Message D");
     }
 
     [Fact]
@@ -292,9 +306,14 @@ public class MessageMergerTests
         });
         AgentResponse response2 = merger2.ComputeMerged(responseId);
 
-        // Assert: Result is reproducible and consistent across runs with same input order
+        // Assert: Result is reproducible and consistent across runs with same input order.
+        // Per Invariant 2, both runs must produce emission order (A, B, C) regardless
+        // of the messages' CreatedAt values.
         response1.Messages.Should().HaveCount(3);
         response2.Messages.Should().HaveCount(3);
+
+        response1.Messages.Select(m => m.Text).Should().ContainInOrder(
+            "Message A (T=10)", "Message B (no timestamp)", "Message C (T=5)");
 
         // Both runs should produce identical ordering
         for (int i = 0; i < 3; i++)
@@ -499,6 +518,88 @@ public class MessageMergerTests
         bool a1BeforeA2 = lastA1Index < firstA2Index;
         bool a2BeforeA1 = lastA2Index < firstA1Index;
         (a1BeforeA2 || a2BeforeA1).Should().BeTrue("Agent message blocks should not interleave");
+    }
+
+    #endregion
+
+    #region Step Ordering Tests (workflow goals)
+
+    [Fact]
+    public void Test_MessageMerger_OrdersStepsBeforeNextStep_AndGroupsAgentsWithinStep()
+    {
+        // Scenario mirroring the workflow ordering goals:
+        //   Step 1: Agent1 alone emits 2 updates.
+        //   Step 2: Agent1 and Agent2 emit updates interleaved (concurrent in the step).
+        //   Step 3: Agent2 alone emits 2 updates.
+        // Each agent invocation has its own ResponseId, so per-ResponseId grouping
+        // yields per-agent grouping. Steps are naturally serialized in emission
+        // order (the next step cannot emit until the prior step's updates arrive),
+        // so the first-seen-ResponseId ordering preserves step boundaries.
+        const string step1Agent1 = "step1-agent1";
+        const string step2Agent1 = "step2-agent1";
+        const string step2Agent2 = "step2-agent2";
+        const string step3Agent2 = "step3-agent2";
+
+        MessageMerger merger = new();
+
+        // Step 1: Agent1 emits 2 messages.
+        AddSimpleUpdate(merger, step1Agent1, TestAgentId1, "S1-A1-m1");
+        AddSimpleUpdate(merger, step1Agent1, TestAgentId1, "S1-A1-m2");
+
+        // Step 2: Agent1 and Agent2 emit interleaved (A1, A2, A1, A2).
+        AddSimpleUpdate(merger, step2Agent1, TestAgentId1, "S2-A1-m1");
+        AddSimpleUpdate(merger, step2Agent2, TestAgentId2, "S2-A2-m1");
+        AddSimpleUpdate(merger, step2Agent1, TestAgentId1, "S2-A1-m2");
+        AddSimpleUpdate(merger, step2Agent2, TestAgentId2, "S2-A2-m2");
+
+        // Step 3: Agent2 emits 2 messages.
+        AddSimpleUpdate(merger, step3Agent2, TestAgentId2, "S3-A2-m1");
+        AddSimpleUpdate(merger, step3Agent2, TestAgentId2, "S3-A2-m2");
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(step1Agent1);
+
+        // Assert: expected output order
+        //   Step 1 block (Agent1):  S1-A1-m1, S1-A1-m2
+        //   Step 2 Agent1 block:    S2-A1-m1, S2-A1-m2
+        //   Step 2 Agent2 block:    S2-A2-m1, S2-A2-m2
+        //   Step 3 block (Agent2):  S3-A2-m1, S3-A2-m2
+        response.Messages.Should().HaveCount(8);
+        var texts = response.Messages.Select(m => m.Text).ToList();
+        texts.Should().ContainInOrder(
+            "S1-A1-m1", "S1-A1-m2",
+            "S2-A1-m1", "S2-A1-m2",
+            "S2-A2-m1", "S2-A2-m2",
+            "S3-A2-m1", "S3-A2-m2");
+
+        // Step boundaries: no step-2 or step-3 message may appear before the last step-1 message.
+        int lastStep1Index = texts.FindLastIndex(t => t.StartsWith("S1-", StringComparison.Ordinal));
+        int firstStep2Index = texts.FindIndex(t => t.StartsWith("S2-", StringComparison.Ordinal));
+        int lastStep2Index = texts.FindLastIndex(t => t.StartsWith("S2-", StringComparison.Ordinal));
+        int firstStep3Index = texts.FindIndex(t => t.StartsWith("S3-", StringComparison.Ordinal));
+        lastStep1Index.Should().BeLessThan(firstStep2Index, "all step-1 messages precede step-2");
+        lastStep2Index.Should().BeLessThan(firstStep3Index, "all step-2 messages precede step-3");
+
+        // Within step 2 (multi-agent), per-agent blocks must be contiguous.
+        int firstS2A1 = texts.FindIndex(t => t.StartsWith("S2-A1", StringComparison.Ordinal));
+        int lastS2A1 = texts.FindLastIndex(t => t.StartsWith("S2-A1", StringComparison.Ordinal));
+        int firstS2A2 = texts.FindIndex(t => t.StartsWith("S2-A2", StringComparison.Ordinal));
+        int lastS2A2 = texts.FindLastIndex(t => t.StartsWith("S2-A2", StringComparison.Ordinal));
+        (lastS2A1 - firstS2A1).Should().Be(1, "Agent1 step-2 messages should be contiguous");
+        (lastS2A2 - firstS2A2).Should().Be(1, "Agent2 step-2 messages should be contiguous");
+        (lastS2A1 < firstS2A2 || lastS2A2 < firstS2A1).Should().BeTrue("agent blocks within a step must not interleave");
+
+        static void AddSimpleUpdate(MessageMerger m, string responseId, string agentId, string text)
+        {
+            m.AddUpdate(new AgentResponseUpdate
+            {
+                ResponseId = responseId,
+                MessageId = Guid.NewGuid().ToString("N"),
+                AgentId = agentId,
+                Role = ChatRole.Assistant,
+                Contents = [new TextContent(text)],
+            });
+        }
     }
 
     #endregion
