@@ -22,7 +22,7 @@ You can connect to MCP servers in Foundry Toolbox that use different authenticat
 
 > Definitions of these authentication methods can be found in the [agent.manifest.yaml](agent.manifest.yaml) file in this sample.
 
-There are also Non-MCP tools in the toolbox that support different authentication methods. Learn more at the [Foundry sample repository](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/toolbox/azd#supported-scenarios).
+There are also Non-MCP tools in the toolbox that support different authentication methods. Learn more at the [Foundry sample repository](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/SUPPORTED_TOOLBOX_SCENARIOS.md).
 
 ## How It Works
 
