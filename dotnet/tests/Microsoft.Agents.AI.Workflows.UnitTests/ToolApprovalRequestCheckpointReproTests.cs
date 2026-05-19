@@ -540,6 +540,51 @@ public class ToolApprovalRequestCheckpointReproTests
     }
 
     /// <summary>
+    /// Track A2b — same as A2, but using a <c>HandoffWorkflowBuilder</c> instead of a group
+    /// chat. The initial agent is the same approval-tool-equipped <see cref="ChatClientAgent"/>
+    /// as test #7; a second dummy agent is registered solely so the handoff graph has a valid
+    /// peer (the mock chat client never emits a <c>handoff_to_*</c> call, so the workflow stays
+    /// on the initial agent). This isolates whether anything in the handoff-specific
+    /// orchestration (handoff tool injection, <c>HandoffMessagesFilter</c>, the
+    /// <c>HandoffStartExecutor</c>/<c>HandoffEndExecutor</c> wrap-up) perturbs the
+    /// <see cref="ToolApprovalRequestContent"/> payload across a JSON checkpoint resume.
+    ///
+    /// <para><b>Finding:</b> the handoff path is fully clean. The <see cref="FunctionCallContent"/>
+    /// type is preserved after resume <i>and</i> approving the resumed request completes the
+    /// workflow without errors and invokes the wrapped <see cref="AIFunction"/> exactly once.
+    /// This is in contrast to A2 (group chat), which preserves the type but crashes on
+    /// approval with a duplicate-key <see cref="ArgumentException"/> in FICC. The OP's
+    /// hypothesis (<c>TARC.ToolCall is not FunctionCallContent</c>) still does not reproduce.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Repro_5350_A2b_HandoffWorkflowBuilder_WithApprovalRequiredTool_JsonCheckpointResume_PreservesFunctionCallContentAndInvokesToolAsync()
+    {
+        ReproHarness harness = new();
+
+        // Second agent is a no-op peer required to give the handoff graph a valid target.
+        // The mock chat client only ever emits a FunctionCallContent for GetWeather, so the
+        // initial agent never actually hands off; the second agent is never invoked.
+        MockChatClient peerChatClient = new((messages, options) =>
+            new ChatResponse(new ChatMessage(ChatRole.Assistant, "(unused peer)")));
+        ChatClientAgent peerAgent = new(
+            peerChatClient,
+            instructions: "Unused peer agent.",
+            name: "PeerAgent");
+
+        Workflow workflow = AgentWorkflowBuilder
+            .CreateHandoffBuilderWith(harness.Agent)
+            .WithHandoff(harness.Agent, peerAgent)
+            .Build();
+
+        await RunReproAsync(
+            workflow,
+            harness,
+            CheckpointManager.CreateJson(new InMemoryJsonStore()),
+            scenarioName: "A2b (handoff)");
+    }
+
+    /// <summary>
     /// Track A3 — same as the maximal repro (test #7) but the checkpoint <see cref="JsonElement"/>
     /// is round-tripped through <see cref="JsonElement.GetRawText"/> + <see cref="JsonDocument.Parse(string,JsonDocumentOptions)"/>
     /// between commit and retrieve, to emulate the SQL <c>nvarchar</c> / Dapper hop in the
