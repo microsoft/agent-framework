@@ -80,13 +80,57 @@ def test_to_prompt_agent_rejects_non_foundry_client() -> None:
 
 
 def test_to_prompt_agent_rejects_missing_model() -> None:
-    """A FoundryChatClient with no model raises ValueError."""
+    """When neither default_options nor the client has a model, ValueError is raised."""
     client = _make_foundry_chat_client()
-    client.model = ""  # simulate unset model
+    client.model = ""  # simulate unset model on the client
     agent = _make_agent(client)
+    agent.default_options.pop("model", None)  # and on the agent
 
-    with pytest.raises(ValueError, match="model"):
+    with pytest.raises(ValueError, match="Agent has no model"):
         to_prompt_agent(agent)
+
+
+def test_to_prompt_agent_no_instructions() -> None:
+    """A tool-only agent (no instructions) produces a definition with instructions=None.
+
+    Agent.__init__ strips None values from default_options, so reading
+    default_options.get("instructions") returns None as expected.
+    """
+    agent = _make_agent(
+        _make_foundry_chat_client(),
+        tools=[WebSearchTool()],
+    )
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.model == "gpt-4o-mini"
+    assert definition.instructions is None
+    payload = definition.as_dict()
+    # The optional ``instructions`` field is omitted from the serialized output when unset.
+    assert "instructions" not in payload
+
+
+def test_to_prompt_agent_prefers_default_options_model() -> None:
+    """default_options['model'] wins over the bound client's model.
+
+    Matches Agent.__init__'s resolution order (_agents.py:740), so the value
+    the agent actually runs with is the same value the converter publishes.
+    """
+    client = _make_foundry_chat_client(model="client-model")
+    agent = _make_agent(client, instructions="x", default_options={"model": "agent-override"})
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.model == "agent-override"
+
+
+def test_to_prompt_agent_falls_back_to_client_model() -> None:
+    """When the agent has no model override, the bound client's model is used."""
+    agent = _make_agent(_make_foundry_chat_client(model="client-model"), instructions="x")
+
+    definition = to_prompt_agent(agent)
+
+    assert definition.model == "client-model"
 
 
 def test_to_prompt_agent_passes_through_sdk_tool_instances() -> None:
