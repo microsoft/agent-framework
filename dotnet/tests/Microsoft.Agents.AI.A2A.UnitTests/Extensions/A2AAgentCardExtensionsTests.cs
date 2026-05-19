@@ -165,6 +165,81 @@ public sealed class A2AAgentCardExtensionsTests
         Assert.ThrowsAny<Exception>(() => card.AsAIAgent());
     }
 
+    [Fact]
+    public void AsAIAgent_WithAgentOptions_OverridesCardValues()
+    {
+        // Arrange
+        var card = new AgentCard
+        {
+            Name = "Card Agent",
+            Description = "Card description",
+            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+        };
+
+        var agentOptions = new A2AAgentOptions
+        {
+            Id = "custom-id",
+            Name = "Custom Agent",
+            Description = "Custom description"
+        };
+
+        // Act
+        var agent = card.AsAIAgent(agentOptions);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<A2AAgent>(agent);
+        Assert.Equal("custom-id", agent.Id);
+        Assert.Equal("Custom Agent", agent.Name);
+        Assert.Equal("Custom description", agent.Description);
+    }
+
+    [Fact]
+    public void AsAIAgent_WithAgentOptions_FallsBackToCardValues()
+    {
+        // Arrange
+        var card = new AgentCard
+        {
+            Name = "Card Agent",
+            Description = "Card description",
+            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+        };
+
+        var agentOptions = new A2AAgentOptions
+        {
+            Id = "custom-id"
+        };
+
+        // Act
+        var agent = card.AsAIAgent(agentOptions);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("custom-id", agent.Id);
+        Assert.Equal("Card Agent", agent.Name);
+        Assert.Equal("Card description", agent.Description);
+    }
+
+    [Fact]
+    public void AsAIAgent_WithEmptyAgentOptions_UsesCardValues()
+    {
+        // Arrange
+        var card = new AgentCard
+        {
+            Name = "Card Agent",
+            Description = "Card description",
+            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+        };
+
+        // Act
+        var agent = card.AsAIAgent(new A2AAgentOptions());
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Card Agent", agent.Name);
+        Assert.Equal("Card description", agent.Description);
+    }
+
     internal sealed class HttpMessageHandlerStub : HttpMessageHandler
     {
         public Queue ResponsesToReturn { get; } = new();

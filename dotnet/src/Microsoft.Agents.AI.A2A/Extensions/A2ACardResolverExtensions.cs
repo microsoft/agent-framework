@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.A2A;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.Diagnostics;
 
 namespace A2A;
 
@@ -47,5 +48,37 @@ public static class A2ACardResolverExtensions
         var agentCard = await resolver.GetAgentCardAsync(cancellationToken).ConfigureAwait(false);
 
         return agentCard.AsAIAgent(httpClient, options, loggerFactory);
+    }
+
+    /// <summary>
+    /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
+    /// </summary>
+    /// <remarks>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#1-well-known-uri">Well-Known URI</see>
+    /// discovery mechanism. When <paramref name="agentOptions"/> is provided, any non-null values override
+    /// the corresponding values from the resolved <see cref="AgentCard"/>.
+    /// </remarks>
+    /// <param name="resolver">The <see cref="A2ACardResolver" /> to use for the agent creation.</param>
+    /// <param name="agentOptions">
+    /// Configuration options that control the agent's identity. When provided, non-null values override the
+    /// corresponding values from the resolved agent card.
+    /// </param>
+    /// <param name="httpClient">The <see cref="HttpClient"/> to use for HTTP requests.</param>
+    /// <param name="clientOptions">
+    /// Optional <see cref="A2AClientOptions"/> controlling protocol binding preference.
+    /// When not provided, defaults to preferring HTTP+JSON first, with JSON-RPC as fallback.
+    /// </param>
+    /// <param name="loggerFactory">The logger factory for enabling logging within the agent.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
+    public static async Task<AIAgent> GetAIAgentAsync(this A2ACardResolver resolver, A2AAgentOptions agentOptions, HttpClient? httpClient = null, A2AClientOptions? clientOptions = null, ILoggerFactory? loggerFactory = null, CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(agentOptions);
+
+        // Obtain the agent card from the resolver.
+        var agentCard = await resolver.GetAgentCardAsync(cancellationToken).ConfigureAwait(false);
+
+        return agentCard.AsAIAgent(agentOptions, httpClient, clientOptions, loggerFactory);
     }
 }

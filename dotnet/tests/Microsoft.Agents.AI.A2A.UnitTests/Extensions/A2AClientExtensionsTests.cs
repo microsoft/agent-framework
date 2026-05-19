@@ -66,4 +66,45 @@ public sealed class A2AClientExtensionsTests
         Assert.NotNull(service);
         Assert.Same(a2aClient, service);
     }
+
+    [Fact]
+    public void GetAIAgent_WithOptions_ReturnsA2AAgentWithSpecifiedProperties()
+    {
+        // Arrange
+        var a2aClient = new A2AClient(new Uri("http://test-endpoint"));
+        var options = new A2AAgentOptions
+        {
+            Id = "options-agent-id",
+            Name = "Options Agent",
+            Description = "Agent created with options"
+        };
+
+        // Act
+        var agent = a2aClient.AsAIAgent(options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<A2AAgent>(agent);
+        Assert.Equal("options-agent-id", agent.Id);
+        Assert.Equal("Options Agent", agent.Name);
+        Assert.Equal("Agent created with options", agent.Description);
+    }
+
+    [Fact]
+    public void GetAIAgent_WithEmptyOptions_ReturnsA2AAgentWithDefaultProperties()
+    {
+        // Arrange
+        var a2aClient = new A2AClient(new Uri("http://test-endpoint"));
+
+        // Act
+        var agent = a2aClient.AsAIAgent(new A2AAgentOptions());
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<A2AAgent>(agent);
+        Assert.NotNull(agent.Id);
+        Assert.NotEmpty(agent.Id);
+        Assert.Null(agent.Name);
+        Assert.Null(agent.Description);
+    }
 }
