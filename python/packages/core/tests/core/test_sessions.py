@@ -107,6 +107,39 @@ class TestSessionContext:
         stored = ctx.context_messages["rag"][0]
         assert stored.additional_properties["_attribution"] == {"source_id": "rag", "source_type": "MyProvider"}
 
+    def test_extend_messages_origin_session_id_default_omits_field(self) -> None:
+        ctx = SessionContext(input_messages=[])
+        msg = Message(role="system", contents=["ctx"])
+        ctx.extend_messages("rag", [msg])
+        stored = ctx.context_messages["rag"][0]
+        # Default (no origin_session_id passed) preserves the historical attribution shape
+        # so observers can distinguish "no origin info" from "explicit cross-session marker."
+        assert "origin_session_id" not in stored.additional_properties["_attribution"]
+
+    def test_extend_messages_origin_session_id_recorded_on_attribution(self) -> None:
+        ctx = SessionContext(session_id="current", input_messages=[])
+        msg = Message(role="system", contents=["loaded from a prior session"])
+        ctx.extend_messages("memory_provider", [msg], origin_session_id="prior-session-id")
+        stored = ctx.context_messages["memory_provider"][0]
+        assert stored.additional_properties["_attribution"] == {
+            "source_id": "memory_provider",
+            "origin_session_id": "prior-session-id",
+        }
+
+    def test_extend_messages_origin_session_id_with_provider_object(self) -> None:
+        class MyMemoryProvider:
+            source_id = "memory"
+
+        ctx = SessionContext(session_id="current", input_messages=[])
+        msg = Message(role="assistant", contents=["consolidated memory content"])
+        ctx.extend_messages(MyMemoryProvider(), [msg], origin_session_id="prior")
+        stored = ctx.context_messages["memory"][0]
+        assert stored.additional_properties["_attribution"] == {
+            "source_id": "memory",
+            "source_type": "MyMemoryProvider",
+            "origin_session_id": "prior",
+        }
+
     def test_extend_instructions_string(self) -> None:
         ctx = SessionContext(input_messages=[])
         ctx.extend_instructions("sys", "Be helpful")
