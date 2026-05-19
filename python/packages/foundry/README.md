@@ -164,9 +164,26 @@ Behaviour:
 - Foundry SDK tool instances returned by `FoundryChatClient.get_*_tool()` are
   passed through unchanged.
 - AF `FunctionTool` instances (and `@tool`-decorated callables) are emitted as
-  Foundry `FunctionTool` **declarations**. Prompt agents are server-side, so
-  the deployed agent receives the schema but cannot execute the local Python.
-  Wire server-side execution separately if needed.
+  Foundry `FunctionTool` **declarations** — the prompt agent receives the
+  schema only, not the Python implementation. To execute the function when
+  invoking the deployed prompt agent, connect with `FoundryAgent` and pass the
+  same callable via `tools=`:
+
+  ```python
+  from agent_framework.foundry import FoundryAgent
+
+  deployed = FoundryAgent(
+      project_endpoint=project_endpoint,
+      agent_name="travel-agent",
+      credential=credential,
+      tools=[book_hotel],  # same @tool-decorated callable used at publish time
+  )
+  result = await deployed.run("Book me a hotel in Seattle for 3 nights.")
+  ```
+
+  `FoundryAgent` runs the function locally when the prompt agent calls it, so
+  the declaration on the server and the implementation on the client stay in
+  sync via the shared `@tool` definition.
 - Local Agent Framework MCP tools cannot be published as prompt-agent tools —
   the converter raises `ValueError` and points at
   `FoundryChatClient.get_mcp_tool(...)` for hosted MCP servers.
