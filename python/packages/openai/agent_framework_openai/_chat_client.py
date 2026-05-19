@@ -614,9 +614,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             function_call_ids: dict[int, tuple[str, str]] = {}
             seen_reasoning_delta_item_ids: set[str] = set()
             validated_options: dict[str, Any] | None = None
+            # Captured once request options are validated/prepared so the streaming finalizer can
+            # still parse the aggregated response into structured output after the stream completes.
             response_format: Any | None = None
 
-            def _finalize_streamed_response(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
+            def _finalize_with_captured_format(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
                 return self._finalize_response_updates(updates, response_format=response_format)
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -687,7 +689,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     except Exception as ex:
                         self._handle_request_error(ex)
 
-            return ResponseStream(_stream(), finalizer=_finalize_streamed_response)
+            return ResponseStream(_stream(), finalizer=_finalize_with_captured_format)
 
         # Non-streaming
         async def _get_response() -> ChatResponse:
