@@ -62,35 +62,28 @@ from azure.identity.aio import AzureCliCredential
 
 
 async def main() -> None:
-    async with AzureCliCredential() as credential:
-        client = FoundryChatClient(
-            project_endpoint="https://<your-project>.services.ai.azure.com",
+    credential = AzureCliCredential()
+    project_endpoint = "https://<your-project>.services.ai.azure.com"
+
+    agent = Agent(
+        client=FoundryChatClient(
+            project_endpoint=project_endpoint,
             model="gpt-4o",
             credential=credential,
-        )
+        ),
+        name="TravelAgent",
+        instructions="You are a helpful travel assistant.",
+        tools=[
+            FoundryChatClient.get_web_search_tool(),
+            FoundryChatClient.get_code_interpreter_tool(),
+        ],
+    )
 
-        agent = Agent(
-            client=client,
-            name="TravelAgent",
-            instructions="You are a helpful travel assistant.",
-            tools=[
-                FoundryChatClient.get_web_search_tool(),
-                FoundryChatClient.get_code_interpreter_tool(),
-            ],
-        )
-
-        # Either run locally...
-        await agent.run("Book a hotel in Seattle for 3 nights.")
-
-        # ...or publish the same definition as a prompt agent.
-        async with AIProjectClient(
-            endpoint="https://<your-project>.services.ai.azure.com",
-            credential=credential,
-        ) as project_client:
-            await project_client.agents.create_version(
-                name="travel-agent",
-                definition=to_prompt_agent(agent),
-            )
+    project_client = AIProjectClient(endpoint=project_endpoint, credential=credential)
+    await project_client.agents.create_version(
+        name="travel-agent",
+        definition=to_prompt_agent(agent),
+    )
 
 
 asyncio.run(main())
