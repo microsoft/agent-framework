@@ -555,9 +555,9 @@ class RawFoundryChatClient(  # type: ignore[misc]
         resource_cls = _require_sdk_class("AzureAISearchToolResource")
         index_cls = _require_sdk_class("AISearchIndexResource")
         index_kwargs: dict[str, Any] = {
+            **kwargs,
             "project_connection_id": index_connection_id,
             "index_name": index_name,
-            **kwargs,
         }
         if query_type is not None:
             index_kwargs["query_type"] = query_type
@@ -648,9 +648,9 @@ class RawFoundryChatClient(  # type: ignore[misc]
         """
         tool_cls = _require_sdk_class("MemorySearchPreviewTool")
         params: dict[str, Any] = {
+            **kwargs,
             "memory_store_name": memory_store_name,
             "scope": scope,
-            **kwargs,
         }
         if search_options is not None:
             params["search_options"] = search_options
@@ -745,9 +745,9 @@ class RawFoundryChatClient(  # type: ignore[misc]
         params_cls = _require_sdk_class("BingCustomSearchToolParameters")
         config_cls = _require_sdk_class("BingCustomSearchConfiguration")
         config_kwargs: dict[str, Any] = {
+            **kwargs,
             "project_connection_id": connection_id,
             "instance_name": instance_name,
-            **kwargs,
         }
         if market is not None:
             config_kwargs["market"] = market

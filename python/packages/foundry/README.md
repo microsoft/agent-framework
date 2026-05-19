@@ -67,7 +67,10 @@ Generally available factories: `get_code_interpreter_tool`,
 
 > **Experimental — `ExperimentalFeature.FOUNDRY_TOOLS`.** The following
 > factories wrap preview Foundry tool types and may change or be removed before
-> they reach GA. Each emits an `ExperimentalWarning` on first use.
+> they reach GA. Calls to any of these factories emit an `ExperimentalWarning`
+> the first time the `FOUNDRY_TOOLS` feature is exercised in a process; the
+> warning is then deduplicated across all eight factories (one warning per
+> feature id per process).
 
 | Factory | Foundry SDK tool |
 |---------|-----------------|
