@@ -30,6 +30,8 @@ from ._types import (
     ChannelIdentity,
     ChannelPush,
     ChannelRequest,
+    ChannelResponseContext,
+    ChannelResponseHook,
     ChannelRunHook,
     ChannelSession,
     ChannelStreamTransformHook,
@@ -37,6 +39,7 @@ from ._types import (
     HostedRunResult,
     ResponseTarget,
     ResponseTargetKind,
+    apply_response_hook,
     apply_run_hook,
 )
 
@@ -57,6 +60,8 @@ __all__ = [
     "ChannelIdentity",
     "ChannelPush",
     "ChannelRequest",
+    "ChannelResponseContext",
+    "ChannelResponseHook",
     "ChannelRunHook",
     "ChannelSession",
     "ChannelStreamTransformHook",
@@ -66,6 +71,7 @@ __all__ = [
     "ResponseTarget",
     "ResponseTargetKind",
     "__version__",
+    "apply_response_hook",
     "apply_run_hook",
     "get_current_isolation_keys",
     "logger",

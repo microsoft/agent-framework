@@ -30,6 +30,8 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
+    Content,
+    Message,
     ResponseStream,
     SupportsAgentRun,
     Workflow,
@@ -43,9 +45,6 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------- #
 # Channel-neutral request envelope
 # --------------------------------------------------------------------------- #
-
-
-_EMPTY_MAPPING: Mapping[str, Any] = {}
 
 
 class ChannelSession:
@@ -80,7 +79,7 @@ class ChannelIdentity:
     ) -> None:
         self.channel = channel
         self.native_id = native_id
-        self.attributes: Mapping[str, Any] = attributes if attributes is not None else _EMPTY_MAPPING
+        self.attributes: Mapping[str, Any] = attributes if attributes is not None else dict()
 
 
 class ResponseTargetKind(str, Enum):
@@ -122,39 +121,50 @@ class ResponseTarget:
         self,
         kind: ResponseTargetKind = ResponseTargetKind.ORIGINATING,
         targets: tuple[str, ...] = (),
+        *,
+        echo_input: bool = False,
     ) -> None:
         self.kind = kind
         self.targets = targets
+        # When True, the host first pushes the originating user message
+        # to every non-originating destination (so end-user apps observing
+        # those channels can keep their UI in sync) before pushing the
+        # agent response. Defaults to False — opt-in only, because not
+        # every channel knows how to render ``role="user"`` content
+        # gracefully on its own surface.
+        self.echo_input = echo_input
 
     # -- builders ---------------------------------------------------------- #
 
     @classmethod
-    def channel(cls, name: str) -> ResponseTarget:
+    def channel(cls, name: str, *, echo_input: bool = False) -> ResponseTarget:
         """Target a single named destination channel."""
-        return cls(kind=ResponseTargetKind.CHANNELS, targets=(name,))
+        return cls(kind=ResponseTargetKind.CHANNELS, targets=(name,), echo_input=echo_input)
 
     @classmethod
-    def channels(cls, names: Sequence[str]) -> ResponseTarget:
+    def channels(cls, names: Sequence[str], *, echo_input: bool = False) -> ResponseTarget:
         """Target an explicit list of destination channels."""
-        return cls(kind=ResponseTargetKind.CHANNELS, targets=tuple(names))
+        return cls(kind=ResponseTargetKind.CHANNELS, targets=tuple(names), echo_input=echo_input)
 
     # -- value semantics --------------------------------------------------- #
     # ``ResponseTarget`` is treated as immutable, so two instances with the
-    # same ``kind`` + ``targets`` are interchangeable. Tests and channel
-    # parsers compare instances with ``==`` and use them as dict keys.
+    # same ``kind`` + ``targets`` + ``echo_input`` are interchangeable.
+    # Tests and channel parsers compare instances with ``==`` and use them
+    # as dict keys.
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ResponseTarget):
             return NotImplemented
-        return self.kind is other.kind and self.targets == other.targets
+        return self.kind is other.kind and self.targets == other.targets and self.echo_input == other.echo_input
 
     def __hash__(self) -> int:
-        return hash((self.kind, self.targets))
+        return hash((self.kind, self.targets, self.echo_input))
 
     def __repr__(self) -> str:
+        suffix = ", echo_input=True" if self.echo_input else ""
         if self.kind is ResponseTargetKind.CHANNELS:
-            return f"ResponseTarget.channels({list(self.targets)!r})"
-        return f"ResponseTarget.{self.kind.value}"
+            return f"ResponseTarget.channels({list(self.targets)!r}{suffix})"
+        return f"ResponseTarget.{self.kind.value}{suffix}"
 
 
 # Module-level singletons so callers can write ``ResponseTarget.originating``
@@ -234,11 +244,99 @@ class ChannelContribution:
         self.on_shutdown = on_shutdown
 
 
-class HostedRunResult:
-    """Channel-neutral result of an agent invocation routed through the host."""
+class _Unset:
+    """Sentinel for ``HostedRunResult.replace`` overrides.
 
-    def __init__(self, text: str) -> None:
-        self.text = text
+    Distinguishes "caller did not pass this kwarg" from "caller passed
+    ``None`` explicitly" — needed because ``raw_response`` is ``None`` in
+    most envelopes and we want the no-arg call to preserve it.
+    """
+
+
+_UNSET = _Unset()
+
+
+class HostedRunResult:
+    """Channel-neutral result of an agent invocation routed through the host.
+
+    Carries the full ordered list of :class:`~agent_framework.Message`
+    objects the agent (or workflow) produced. Channels are expected to
+    decide what to render from this list based on their own capabilities:
+    a text-only channel renders text content; a card-capable channel can
+    render images / structured content. The host intentionally does not
+    flatten or filter — multi-modality is preserved end-to-end so
+    individual channels can opt in or out.
+
+    Three construction modes:
+
+    * ``HostedRunResult(messages=[...])`` — the canonical path; channels
+      and the host use this when forwarding agent output.
+    * ``HostedRunResult(text="...")`` — back-compat shim that wraps the
+      string as a single ``role="assistant"`` text content. Useful in
+      tests and from channels that only emit plain strings.
+    * ``HostedRunResult()`` — synthesises an empty assistant message so
+      delivery-layer fan-out still has a well-formed payload to push.
+
+    The ``raw_response`` attribute (when supplied) carries the original
+    :class:`~agent_framework.AgentResponse` so channels can recover
+    response-level metadata (``response_id``, ``usage_details``,
+    ``finish_reason``, structured ``value``, …) without re-running the
+    agent.
+
+    Treat instances as immutable: the host clones per-destination before
+    invoking a per-channel ``response_hook`` so one channel's transform
+    cannot perturb the payload another destination observes.
+    """
+
+    def __init__(
+        self,
+        messages: Sequence[Message] | None = None,
+        *,
+        text: str | None = None,
+        raw_response: AgentResponse | None = None,
+    ) -> None:
+        if messages is None:
+            messages = [Message(role="assistant", contents=[Content.from_text(text=text or "")])]
+        self.messages: list[Message] = list(messages)
+        self.raw_response = raw_response
+
+    @property
+    def text(self) -> str:
+        """Best-effort text projection across all messages.
+
+        Concatenates every ``text`` content; non-text content (images,
+        function calls, structured tool results, …) is intentionally
+        omitted. Channels that care about full fidelity iterate
+        ``messages`` / ``contents`` directly.
+        """
+        parts: list[str] = []
+        for message in self.messages:
+            for content in message.contents:
+                if content.type == "text" and content.text:
+                    parts.append(content.text)
+        return "".join(parts)
+
+    @property
+    def contents(self) -> list[Content]:
+        """Flattened content list across all messages, in order."""
+        return [content for message in self.messages for content in message.contents]
+
+    def replace(
+        self,
+        *,
+        messages: Sequence[Message] | None = None,
+        raw_response: AgentResponse | _Unset | None = _UNSET,
+    ) -> HostedRunResult:
+        """Return a shallow copy with the supplied fields overridden.
+
+        Used by the host's delivery layer to clone a result before
+        applying a per-destination ``response_hook``, so one channel's
+        transform cannot mutate the payload another destination sees.
+        """
+        new = HostedRunResult.__new__(HostedRunResult)
+        new.messages = list(messages) if messages is not None else list(self.messages)
+        new.raw_response = self.raw_response if isinstance(raw_response, _Unset) else raw_response
+        return new
 
 
 class DeliveryReport:
@@ -258,6 +356,15 @@ class DeliveryReport:
     expired credentials, rate limits) and is the right signal for a
     caller that wants to surface a degraded reply to the originating
     user instead of treating the request as fully delivered.
+
+    When ``ResponseTarget.echo_input`` is set the host first pushes the
+    user message to each non-originating destination *before* the agent
+    response. ``echoed`` records the destinations that received the echo
+    successfully; ``echo_failed`` mirrors ``failed`` for the echo phase
+    so callers can tell "echo succeeded, response failed" from "both
+    succeeded" or "echo failed, response succeeded". The agent-response
+    push is still attempted even when the echo push raised — channels
+    that drop echoes are expected to keep accepting the response push.
     """
 
     def __init__(
@@ -266,6 +373,8 @@ class DeliveryReport:
         pushed: tuple[str, ...] = (),
         skipped: tuple[str, ...] = (),
         failed: tuple[tuple[str, str], ...] = (),
+        echoed: tuple[str, ...] = (),
+        echo_failed: tuple[tuple[str, str], ...] = (),
     ) -> None:
         self.include_originating = include_originating
         self.pushed = pushed  # destination tokens delivered to (e.g. "telegram:123")
@@ -277,6 +386,15 @@ class DeliveryReport:
         # the "all destinations down" outage case from the documented
         # "no link recorded" drop case (which lands in ``skipped``).
         self.failed = failed
+        # When ``ResponseTarget.echo_input`` is set the host also pushes
+        # the originating user message to each non-originating
+        # destination *before* the agent response. We track the
+        # successful echoes separately from ``pushed`` so callers can
+        # distinguish "input echo + response both succeeded" from
+        # "response pushed twice"; ``echo_failed`` mirrors ``failed``
+        # for the echo phase.
+        self.echoed = echoed
+        self.echo_failed = echo_failed
 
 
 # A transform hook runs over each AgentResponseUpdate as the channel consumes
@@ -334,6 +452,78 @@ async def apply_run_hook(
 
 
 # --------------------------------------------------------------------------- #
+# Channel response hook
+# --------------------------------------------------------------------------- #
+
+
+class ChannelResponseContext:
+    """Per-destination context handed to a :data:`ChannelResponseHook`.
+
+    Response hooks run on the *output* side of the host pipeline, after
+    the agent / workflow has produced a :class:`HostedRunResult` but
+    before the destination channel serialises it to its wire format.
+    Hooks may need to make decisions based on *where* the payload is
+    headed — e.g. flatten multi-modal output to text for a text-only
+    destination, or pick which content variant to deliver to a card-
+    capable channel. The context captures that information without
+    forcing hooks to parse stringly destination tokens.
+    """
+
+    def __init__(
+        self,
+        request: ChannelRequest,
+        channel_name: str,
+        destination_identity: ChannelIdentity | None,
+        originating: bool,
+        is_echo: bool = False,
+    ) -> None:
+        self.request = request
+        self.channel_name = channel_name
+        # ``None`` when the originating channel is rendering its own reply
+        # (no push identity needed for "respond on the wire you came in
+        # on") or when the destination is named without a known native id.
+        self.destination_identity = destination_identity
+        # True when this hook invocation is for the originating channel's
+        # synchronous reply. False for non-originating push targets.
+        self.originating = originating
+        # True when the payload being shaped is the user-message echo
+        # rather than the agent response (only happens when
+        # ``ResponseTarget.echo_input`` is set).
+        self.is_echo = is_echo
+
+
+# Response hooks accept the :class:`HostedRunResult` the host has assembled
+# and return a (possibly modified) replacement. Channels invoke the hook
+# with both the payload and the per-destination
+# :class:`ChannelResponseContext` as keyword arguments — the call
+# convention is ``await hook(result, context=...)``.
+#
+# The ergonomic minimum for a hook implementation is a function accepting
+# ``result`` positionally plus ``**kwargs`` and returning a (possibly
+# rewritten) :class:`HostedRunResult`. Hooks that need to branch on the
+# destination read it off the ``context`` keyword argument.
+ChannelResponseHook = Callable[..., "Awaitable[HostedRunResult] | HostedRunResult"]
+
+
+async def apply_response_hook(
+    hook: ChannelResponseHook,
+    result: HostedRunResult,
+    *,
+    context: ChannelResponseContext,
+) -> HostedRunResult:
+    """Channel-side helper to invoke a :data:`ChannelResponseHook` with the standard kwargs.
+
+    Channels (and the host's delivery layer) call this rather than calling
+    the hook directly so the invocation convention (``result`` positional,
+    ``context`` keyword) is enforced in one place.
+    """
+    out = hook(result, context=context)
+    if isinstance(out, Awaitable):
+        return await out
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Channel protocols
 # --------------------------------------------------------------------------- #
 
@@ -381,6 +571,8 @@ __all__ = [
     "ChannelIdentity",
     "ChannelPush",
     "ChannelRequest",
+    "ChannelResponseContext",
+    "ChannelResponseHook",
     "ChannelRunHook",
     "ChannelSession",
     "ChannelStreamTransformHook",
@@ -389,5 +581,6 @@ __all__ = [
     "ResponseStream",
     "ResponseTarget",
     "ResponseTargetKind",
+    "apply_response_hook",
     "apply_run_hook",
 ]
