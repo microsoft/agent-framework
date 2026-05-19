@@ -56,7 +56,7 @@ public abstract class ToolCallFormatter
         [
             new TodoToolFormatter(),
             new ModeToolFormatter(),
-            new SubAgentToolFormatter(),
+            new BackgroundAgentToolFormatter(),
             new FileMemoryToolFormatter(),
             new WebSearchToolFormatter(),
             new FallbackToolFormatter(),

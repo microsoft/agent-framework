@@ -69,10 +69,10 @@ builder.Services.AddFoundryToolboxes(toolboxName);
 var app = builder.Build();
 app.MapFoundryResponses();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapFoundryResponses("openai/v1");
-}
+// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
+// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
+// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
+app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();
 

@@ -8,21 +8,21 @@ using Microsoft.Shared.DiagnosticIds;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Represents the serializable state of sub-tasks managed by the <see cref="SubAgentsProvider"/>,
+/// Represents the serializable state of background tasks managed by the <see cref="BackgroundAgentsProvider"/>,
 /// stored in the session's <see cref="AgentSessionStateBag"/>.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-internal sealed class SubAgentState
+internal sealed class BackgroundAgentState
 {
     /// <summary>
-    /// Gets or sets the next ID to assign to a new sub-task.
+    /// Gets or sets the next ID to assign to a new background task.
     /// </summary>
     [JsonPropertyName("nextTaskId")]
     public int NextTaskId { get; set; } = 1;
 
     /// <summary>
-    /// Gets the list of sub-task metadata entries.
+    /// Gets the list of background task metadata entries.
     /// </summary>
     [JsonPropertyName("tasks")]
-    public List<SubTaskInfo> Tasks { get; set; } = [];
+    public List<BackgroundTaskInfo> Tasks { get; set; } = [];
 }

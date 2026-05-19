@@ -206,4 +206,16 @@ public sealed class HarnessAgentOptions
     /// following the Semantic Conventions for Generative AI systems.
     /// </remarks>
     public bool DisableOpenTelemetry { get; set; }
+
+    /// <summary>
+    /// Gets or sets the OpenTelemetry source name used by the <see cref="OpenTelemetryAgent"/> wrapper.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/> (the default), the framework's default source name
+    /// (<c>"Experimental.Microsoft.Agents.AI"</c>) is used.
+    /// Set this to a custom value to enable filtering spans from a specific <see cref="System.Diagnostics.ActivitySource"/>
+    /// in your <c>TracerProvider</c> configuration.
+    /// This property is ignored when <see cref="DisableOpenTelemetry"/> is <see langword="true"/>.
+    /// </remarks>
+    public string? OpenTelemetrySourceName { get; set; }
 }

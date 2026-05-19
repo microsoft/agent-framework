@@ -923,7 +923,7 @@ class TestWorkflowAgent:
 
         # Build workflow: start -> agent1 (no output) -> agent2 (output visible)
         workflow = (
-            WorkflowBuilder(start_executor=start_exec, output_executors=[start_exec, agent2])
+            WorkflowBuilder(start_executor=start_exec, output_from=[start_exec, agent2])
             .add_edge(start_exec, agent1)
             .add_edge(agent1, agent2)
             .build()

@@ -54,7 +54,7 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
         
         Use these tools to manage your tasks:
         - Use TodoList_Add to break down complex work into trackable items (supports adding one or many at once).
-        - Use TodoList_Complete to mark items as done when finished (supports one or many at once).
+        - Use TodoList_Complete to mark items as done when finished (supports one or many at once). Include a reason describing how the items were completed.
         - Use TodoList_GetRemaining to check what work is still pending.
         - Use TodoList_GetAll to review the full list including completed items.
         - Use TodoList_Remove to remove items that are no longer needed (supports one or many at once).
@@ -235,14 +235,14 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
                 }),
 
             AIFunctionFactory.Create(
-                async (List<int> ids) =>
+                async (List<TodoCompleteInput> items) =>
                 {
                     SemaphoreSlim sessionLock = this.GetSessionLock(session);
                     await sessionLock.WaitAsync().ConfigureAwait(false);
                     try
                     {
                         TodoState state = this._sessionState.GetOrInitializeState(session);
-                        var idSet = new HashSet<int>(ids);
+                        var idSet = new HashSet<int>(items.Select(i => i.Id));
                         int completed = 0;
                         foreach (TodoItem item in state.Items)
                         {
@@ -268,7 +268,7 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
                 new AIFunctionFactoryOptions
                 {
                     Name = "TodoList_Complete",
-                    Description = "Mark one or more todo items as complete by their IDs. Returns the number of items that were found and marked complete.",
+                    Description = "Mark one or more todo items as complete. Each entry has an ID and a reason describing how/why the item was completed. Returns the number of items that were found and marked complete.",
                     SerializerOptions = serializerOptions,
                 }),
 

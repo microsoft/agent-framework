@@ -8,7 +8,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 |--------|-------------|
 | [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → hosting |
 | [`02-agents/`](./02-agents/) | Deep-dive by concept: tools, middleware, providers, orchestrations |
-| [`03-workflows/`](./03-workflows/) | Workflow patterns: sequential, concurrent, state, declarative |
+| [`03-workflows/`](./03-workflows/) | Workflow patterns: sequential, concurrent, state, declarative, explicit output designation |
 | [`04-hosting/`](./04-hosting/) | Deployment: Azure Functions, Durable Tasks, A2A |
 | [`05-end-to-end/`](./05-end-to-end/) | Full applications, evaluation, demos |
 

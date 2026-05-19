@@ -130,7 +130,7 @@ public sealed class HarnessAgent : DelegatingAIAgent
 
         if (options?.DisableOpenTelemetry is not true)
         {
-            builder.UseOpenTelemetry();
+            builder.UseOpenTelemetry(sourceName: options?.OpenTelemetrySourceName);
         }
 
         return builder.Build();
@@ -183,6 +183,8 @@ public sealed class HarnessAgent : DelegatingAIAgent
                 AIContextProviders = contextProviders,
                 UseProvidedChatClientAsIs = true,
                 RequirePerServiceCallChatHistoryPersistence = true,
+                WarnOnChatHistoryProviderConflict = false,
+                ThrowOnChatHistoryProviderConflict = false,
             });
     }
 

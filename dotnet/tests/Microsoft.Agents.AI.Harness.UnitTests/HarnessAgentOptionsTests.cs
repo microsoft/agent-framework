@@ -31,6 +31,7 @@ public class HarnessAgentOptionsTests
         Assert.False(options.DisableAgentModeProvider);
         Assert.False(options.DisableAgentSkillsProvider);
         Assert.False(options.DisableOpenTelemetry);
+        Assert.Null(options.OpenTelemetrySourceName);
         Assert.Null(options.MaximumIterationsPerRequest);
         Assert.Null(options.FileMemoryStore);
         Assert.Null(options.FileAccessStore);
@@ -75,6 +76,7 @@ public class HarnessAgentOptionsTests
             DisableAgentSkillsProvider = true,
             AgentSkillsSource = skillsSource,
             DisableOpenTelemetry = true,
+            OpenTelemetrySourceName = "custom-source",
         };
 
         // Assert
@@ -100,5 +102,6 @@ public class HarnessAgentOptionsTests
         Assert.True(options.DisableAgentSkillsProvider);
         Assert.Same(skillsSource, options.AgentSkillsSource);
         Assert.True(options.DisableOpenTelemetry);
+        Assert.Equal("custom-source", options.OpenTelemetrySourceName);
     }
 }
