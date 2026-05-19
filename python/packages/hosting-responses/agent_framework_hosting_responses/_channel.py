@@ -132,7 +132,7 @@ class ResponsesChannel:
     async def _handle(self, request: Request) -> Response:
         """Handle a single ``POST /responses`` call.
 
-        Parses the OpenAI Responses-shaped body into ``ChatMessage`` /
+        Parses the OpenAI Responses-shaped body into ``Message`` /
         ``options`` / ``ChannelSession`` triples via :mod:`._parsing`,
         applies the optional ``run_hook``, and either streams an SSE
         response stream or returns a one-shot OpenAI ``Response`` envelope.

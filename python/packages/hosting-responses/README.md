@@ -7,12 +7,11 @@ Responses API request body and returns either a Responses-shaped JSON
 body or a Server-Sent-Events stream when `stream=True`.
 
 ```python
-from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_hosting import AgentFrameworkHost
 from agent_framework_hosting_responses import ResponsesChannel
 
-agent = ChatAgent(name="Assistant", chat_client=OpenAIChatClient())
+agent = OpenAIChatClient().as_agent(name="Assistant")
 
 host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel()])
 host.serve(port=8000)
