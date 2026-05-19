@@ -24,14 +24,12 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
-    Content,
-    Message,
     ResponseStream,
     SupportsAgentRun,
     Workflow,
@@ -248,35 +246,50 @@ class _Unset:
     """Sentinel for ``HostedRunResult.replace`` overrides.
 
     Distinguishes "caller did not pass this kwarg" from "caller passed
-    ``None`` explicitly" — needed because ``raw_response`` is ``None`` in
-    most envelopes and we want the no-arg call to preserve it.
+    ``None`` explicitly" — needed because ``session`` is ``None`` in
+    many envelopes and we want the no-arg call to preserve it.
     """
 
 
 _UNSET = _Unset()
 
 
-class HostedRunResult:
-    """Channel-neutral result of an agent invocation routed through the host.
+TResult = TypeVar("TResult")
 
-    Carries the full ordered list of :class:`~agent_framework.Message`
-    objects the agent (or workflow) produced. Channels are expected to
-    decide what to render from this list based on their own capabilities:
-    a text-only channel renders text content; a card-capable channel can
-    render images / structured content. The host intentionally does not
-    flatten or filter — multi-modality is preserved end-to-end so
-    individual channels can opt in or out.
 
-    The canonical constructor is ``HostedRunResult(messages=[...])``. Use
-    :meth:`from_text` as the ergonomic shortcut for the
-    single-assistant-text-message case (tests, channels that only emit
-    plain strings, the echo-input phase wrapping a user's text turn).
+class HostedRunResult(Generic[TResult]):
+    r"""Channel-neutral envelope around the target's full-fidelity result.
 
-    The ``raw_response`` attribute (when supplied) carries the original
-    :class:`~agent_framework.AgentResponse` so channels can recover
-    response-level metadata (``response_id``, ``usage_details``,
-    ``finish_reason``, structured ``value``, …) without re-running the
-    agent.
+    Carries the underlying execution payload **unchanged** so channels
+    (and developer-supplied ``response_hook``\\s) can read everything the
+    target produced — full multi-modal contents, structured ``value``,
+    ``usage_details``, ``response_id``, workflow per-executor outputs,
+    final ``WorkflowRunState``, etc.
+
+    ``result`` is generic in ``TResult`` so callers retain static typing:
+
+    * Agent targets always produce
+      ``HostedRunResult[AgentResponse]`` — channels read
+      ``result.messages``, ``result.value``, ``result.usage_details``, …
+      directly.
+    * Workflow targets produce ``HostedRunResult[WorkflowRunResult]``
+      today (``Workflow`` is not itself generic, so the static narrowing
+      is only as tight as ``Workflow.run``'s return). Channels iterate
+      ``result.get_outputs()`` and inspect ``result.get_final_state()``
+      to render workflow-specific UX. When a host author drives the
+      workflow themselves and knows the final-output type, they may
+      narrow to ``HostedRunResult[MyOutput]`` in their own
+      ``response_hook`` signatures.
+    * The echo-input phase synthesises an ``HostedRunResult[AgentResponse]``
+      wrapping the originating user turn so the same per-destination
+      delivery machinery applies.
+
+    The optional ``session`` slot carries the resolved
+    :class:`~agent_framework.AgentSession` the host bound to this
+    invocation (``None`` for workflow targets, which do not own session
+    state in the agent sense). Channels that want to surface session
+    metadata (e.g. echo the resolved isolation key into a response
+    header) read it here.
 
     Treat instances as immutable: the host clones per-destination before
     invoking a per-channel ``response_hook`` so one channel's transform
@@ -285,71 +298,31 @@ class HostedRunResult:
 
     def __init__(
         self,
-        messages: Sequence[Message],
+        result: TResult,
         *,
-        raw_response: AgentResponse | None = None,
+        session: Any | None = None,
     ) -> None:
-        self.messages: list[Message] = list(messages)
-        self.raw_response = raw_response
-
-    @classmethod
-    def from_text(
-        cls,
-        text: str,
-        *,
-        role: str = "assistant",
-        raw_response: AgentResponse | None = None,
-    ) -> HostedRunResult:
-        """Build a :class:`HostedRunResult` carrying a single text message.
-
-        Convenience for the common "agent (or test fixture) emitted a
-        plain string" case — equivalent to constructing a single
-        :class:`~agent_framework.Message` with one text
-        :class:`~agent_framework.Content`. Defaults ``role`` to
-        ``"assistant"``; callers wrapping an input echo pass
-        ``role="user"``.
-        """
-        return cls(
-            messages=[Message(role=role, contents=[Content.from_text(text=text)])],
-            raw_response=raw_response,
-        )
-
-    @property
-    def text(self) -> str:
-        """Best-effort text projection across all messages.
-
-        Concatenates every ``text`` content; non-text content (images,
-        function calls, structured tool results, …) is intentionally
-        omitted. Channels that care about full fidelity iterate
-        ``messages`` / ``contents`` directly.
-        """
-        parts: list[str] = []
-        for message in self.messages:
-            for content in message.contents:
-                if content.type == "text" and content.text:
-                    parts.append(content.text)
-        return "".join(parts)
-
-    @property
-    def contents(self) -> list[Content]:
-        """Flattened content list across all messages, in order."""
-        return [content for message in self.messages for content in message.contents]
+        self.result = result
+        self.session = session
 
     def replace(
         self,
         *,
-        messages: Sequence[Message] | None = None,
-        raw_response: AgentResponse | _Unset | None = _UNSET,
-    ) -> HostedRunResult:
+        result: TResult | _Unset = _UNSET,
+        session: Any | _Unset | None = _UNSET,
+    ) -> HostedRunResult[TResult]:
         """Return a shallow copy with the supplied fields overridden.
 
-        Used by the host's delivery layer to clone a result before
+        Used by the host's delivery layer to clone the envelope before
         applying a per-destination ``response_hook``, so one channel's
         transform cannot mutate the payload another destination sees.
+        The clone is shallow — channels that need to mutate
+        ``result.messages`` (or any other nested mutable container) are
+        responsible for deep-cloning that container themselves.
         """
-        new = HostedRunResult.__new__(HostedRunResult)
-        new.messages = list(messages) if messages is not None else list(self.messages)
-        new.raw_response = self.raw_response if isinstance(raw_response, _Unset) else raw_response
+        new: HostedRunResult[TResult] = HostedRunResult.__new__(HostedRunResult)  # pyright: ignore[reportUnknownVariableType]
+        new.result = self.result if isinstance(result, _Unset) else result
+        new.session = self.session if isinstance(session, _Unset) else session
         return new
 
 
@@ -516,15 +489,22 @@ class ChannelResponseContext:
 # ``result`` positionally plus ``**kwargs`` and returning a (possibly
 # rewritten) :class:`HostedRunResult`. Hooks that need to branch on the
 # destination read it off the ``context`` keyword argument.
-ChannelResponseHook = Callable[..., "Awaitable[HostedRunResult] | HostedRunResult"]
+#
+# ``HostedRunResult`` is generic in the underlying ``result`` type; the
+# hook callable signature stays ``Any``-typed so a single
+# ``response_hook`` attribute on a channel can serve both agent
+# (``HostedRunResult[AgentResponse]``) and workflow
+# (``HostedRunResult[WorkflowRunResult]``) payloads — channels narrow
+# at hook entry if they need static checking.
+ChannelResponseHook = Callable[..., "Awaitable[HostedRunResult[Any]] | HostedRunResult[Any]"]
 
 
 async def apply_response_hook(
     hook: ChannelResponseHook,
-    result: HostedRunResult,
+    result: HostedRunResult[Any],
     *,
     context: ChannelResponseContext,
-) -> HostedRunResult:
+) -> HostedRunResult[Any]:
     """Channel-side helper to invoke a :data:`ChannelResponseHook` with the standard kwargs.
 
     Channels (and the host's delivery layer) call this rather than calling
@@ -572,7 +552,7 @@ class ChannelPush(Protocol):
 
     name: str
 
-    async def push(self, identity: ChannelIdentity, payload: HostedRunResult) -> None: ...
+    async def push(self, identity: ChannelIdentity, payload: HostedRunResult[Any]) -> None: ...
 
 
 __all__ = [

@@ -88,7 +88,7 @@ class _RecordingChannel:
         self.name = name
         self.path = path
         self.context: ChannelContext | None = None
-        self.pushes: list[tuple[ChannelIdentity, HostedRunResult]] = []
+        self.pushes: list[tuple[ChannelIdentity, HostedRunResult[Any]]] = []
         self._push_raises: Exception | None = None
         self._supports_push = supports_push
         # Provide a single trivial route so contribute() exercises the mount path.
@@ -98,7 +98,7 @@ class _RecordingChannel:
         self.context = context
         return ChannelContribution(routes=self._routes)
 
-    async def push(self, identity: ChannelIdentity, payload: HostedRunResult) -> None:
+    async def push(self, identity: ChannelIdentity, payload: HostedRunResult[Any]) -> None:
         if self._push_raises is not None:
             raise self._push_raises
         self.pushes.append((identity, payload))
@@ -113,6 +113,21 @@ class _NoPushChannel:
 
     def contribute(self, context: ChannelContext) -> ChannelContribution:
         return ChannelContribution()
+
+
+def _assistant_response(text: str) -> AgentResponse:
+    """Build a one-message ``AgentResponse`` to use as a ``HostedRunResult.result``."""
+    return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(text=text)])])
+
+
+def _make_reply(text: str = "reply") -> HostedRunResult[AgentResponse]:
+    """Build a ``HostedRunResult[AgentResponse]`` carrying a single assistant text message.
+
+    Test ergonomic mirroring what the host's ``_invoke`` produces for an
+    agent target — channels (and our delivery tests) receive a typed
+    envelope whose ``result`` is a real :class:`AgentResponse`.
+    """
+    return HostedRunResult(_assistant_response(text))
 
 
 @dataclass
@@ -206,7 +221,7 @@ class TestHostInvoke:
         )
         result = await ch.context.run(req)
 
-        assert result.text == "hello"
+        assert result.result.text == "hello"
         assert len(agent.calls) == 1
         msg = agent.calls[0]["messages"]
         assert msg.role == "user"
@@ -329,7 +344,7 @@ class TestHostWorkflowTarget:
         req = ChannelRequest(channel="fake", operation="message.create", input="hello")
         result = await ch.context.run(req)
 
-        assert result.text == "HELLO"
+        assert list(result.result.get_outputs()) == ["HELLO"]
         # No session caching for workflow targets — Workflow has no
         # ``create_session`` and the host must not invent one.
         assert host._sessions == {}
@@ -430,7 +445,7 @@ class TestHostWorkflowCheckpointing:
         req = ChannelRequest(channel="fake", operation="message.create", input="hi")
         result = await ch.context.run(req)
 
-        assert result.text == "HI"
+        assert list(result.result.get_outputs()) == ["HI"]
         assert list(tmp_path.iterdir()) == []
 
     @pytest.mark.asyncio
@@ -450,7 +465,7 @@ class TestHostWorkflowCheckpointing:
             session=ChannelSession(isolation_key="alice"),
         )
         result = await ch.context.run(req)
-        assert result.text == "HI"
+        assert list(result.result.get_outputs()) == ["HI"]
 
         # FileCheckpointStorage rooted at <tmp_path>/<isolation_key> should
         # have produced at least one checkpoint file scoped to that user.
@@ -587,7 +602,7 @@ class TestHostWorkflowCheckpointingPathTraversal:
         with caplog.at_level(_logging.WARNING, logger="agent_framework.hosting"):
             result = await ch.context.run(req)
 
-        assert result.text == "HI"
+        assert list(result.result.get_outputs()) == ["HI"]
         # Nothing should have been written under tmp_path.
         assert list(tmp_path.iterdir()) == []
         assert any(
@@ -614,7 +629,7 @@ class TestHostWorkflowCheckpointingPathTraversal:
         )
         result = await ch.context.run(req)
 
-        assert result.text == "HI"
+        assert list(result.result.get_outputs()) == ["HI"]
         assert list(tmp_path.iterdir()) == []
 
 
@@ -644,7 +659,7 @@ class TestDeliverResponse:
     async def test_originating_returns_include_originating(self) -> None:
         _, _, _, ctx = _make_host_with_two_channels()
         req = ChannelRequest(channel="responses", operation="op", input="x")
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.include_originating is True
         assert report.pushed == ()
         assert report.skipped == ()
@@ -658,7 +673,7 @@ class TestDeliverResponse:
             input="x",
             response_target=ResponseTarget.none,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.include_originating is False
         assert report.pushed == ()
         assert report.skipped == ()
@@ -677,7 +692,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.active,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.include_originating is False
         assert report.pushed == ("telegram:42",)
         assert b.pushes and b.pushes[0][0].native_id == "42"
@@ -693,7 +708,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.active,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.include_originating is True
 
     @pytest.mark.asyncio
@@ -707,7 +722,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram"),
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         # Skipped → fallback to originating.
         assert report.include_originating is True
         assert report.skipped == ("telegram",)
@@ -722,7 +737,7 @@ class TestDeliverResponse:
             input="x",
             response_target=ResponseTarget.channel("telegram:99"),
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.pushed == ("telegram:99",)
         assert report.include_originating is False
         assert b.pushes[0][0].native_id == "99"
@@ -738,7 +753,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channels(["originating", "telegram"]),
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.include_originating is True
         assert report.pushed == ("telegram:42",)
 
@@ -751,7 +766,7 @@ class TestDeliverResponse:
             input="x",
             response_target=ResponseTarget.channel("nope"),
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.include_originating is True  # fallback
         assert report.skipped == ("nope",)
 
@@ -773,7 +788,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("nopush"),
         )
-        report = await a.context.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await a.context.deliver_response(req, _make_reply("reply"))
         assert report.skipped == ("nopush:42",)
         assert report.include_originating is True  # fallback
 
@@ -791,10 +806,10 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.all_linked,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.include_originating is True
         assert report.pushed == ("telegram:42",)
-        assert b.pushes and b.pushes[0][1].text == "reply"
+        assert b.pushes and b.pushes[0][1].result.text == "reply"
 
     @pytest.mark.asyncio
     async def test_all_linked_no_other_channels_falls_back(self) -> None:
@@ -806,7 +821,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.all_linked,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.include_originating is True
         assert report.pushed == ()
 
@@ -831,7 +846,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram"),
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         # Push raised → ``failed``, NOT ``skipped``.
         assert report.skipped == ()
         assert len(report.failed) == 1
@@ -857,7 +872,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram", echo_input=True),
         )
-        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.pushed == ("telegram:42",)
         assert report.echoed == ("telegram:42",)
         assert report.echo_failed == ()
@@ -865,12 +880,12 @@ class TestDeliverResponse:
         assert len(b.pushes) == 2
         echo_identity, echo_payload = b.pushes[0]
         assert echo_identity.native_id == "42"
-        assert echo_payload.text == "hello there"
-        assert str(echo_payload.messages[0].role) == "user"
+        assert echo_payload.result.text == "hello there"
+        assert str(echo_payload.result.messages[0].role) == "user"
         resp_identity, resp_payload = b.pushes[1]
         assert resp_identity.native_id == "42"
-        assert resp_payload.text == "reply"
-        assert str(resp_payload.messages[0].role) == "assistant"
+        assert resp_payload.result.text == "reply"
+        assert str(resp_payload.result.messages[0].role) == "assistant"
 
     @pytest.mark.asyncio
     async def test_echo_input_failure_does_not_block_response(self) -> None:
@@ -889,7 +904,7 @@ class TestDeliverResponse:
         calls = {"n": 0}
         real_push = b.push
 
-        async def flaky_push(identity: ChannelIdentity, payload: HostedRunResult) -> None:
+        async def flaky_push(identity: ChannelIdentity, payload: HostedRunResult[Any]) -> None:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("echo down")
@@ -904,13 +919,13 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram", echo_input=True),
         )
-        report = await a.context.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await a.context.deliver_response(req, _make_reply("reply"))
         assert report.echo_failed and report.echo_failed[0][0] == "telegram:42"
         assert "RuntimeError" in report.echo_failed[0][1]
         assert report.echoed == ()
         # Response push attempted and succeeded despite the echo failure.
         assert report.pushed == ("telegram:42",)
-        assert b.pushes and b.pushes[0][1].text == "reply"
+        assert b.pushes and b.pushes[0][1].result.text == "reply"
 
 
 # --------------------------------------------------------------------------- #
@@ -932,14 +947,16 @@ class TestResponseHookFanOut:
         seen: list[tuple[str, str, bool]] = []
 
         async def telegram_hook(
-            result: HostedRunResult,
+            result: HostedRunResult[AgentResponse],
             *,
             context: Any,
             **_: Any,
-        ) -> HostedRunResult:
+        ) -> HostedRunResult[AgentResponse]:
             seen.append((context.channel_name, context.destination_identity.native_id, context.is_echo))
             return result.replace(
-                messages=[Message(role="assistant", contents=[Content.from_text("[hooked] " + result.text)])]
+                result=AgentResponse(
+                    messages=[Message(role="assistant", contents=[Content.from_text("[hooked] " + result.result.text)])]
+                ),
             )
 
         b.response_hook = telegram_hook  # type: ignore[attr-defined]
@@ -955,29 +972,30 @@ class TestResponseHookFanOut:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram"),
         )
-        report = await a.context.deliver_response(req, HostedRunResult.from_text("reply"))
+        report = await a.context.deliver_response(req, _make_reply("reply"))
         assert report.pushed == ("telegram:42",)
         # The pushed payload reflects the hook's transform.
-        assert b.pushes[0][1].text == "[hooked] reply"
+        assert b.pushes[0][1].result.text == "[hooked] reply"
         assert seen == [("telegram", "42", False)]
 
     @pytest.mark.asyncio
     async def test_response_hook_mutation_isolated_per_destination(self) -> None:
-        """A hook that mutates ``messages`` on its payload must NOT affect
-        the payload another destination sees. The host clones before each
-        hook invocation."""
+        """A hook that rebinds ``result`` on its payload must NOT affect
+        the payload another destination sees. The host clones the
+        envelope before each hook invocation so a per-destination
+        :meth:`HostedRunResult.replace` cannot leak across destinations."""
         agent = _FakeAgent()
         a = _RecordingChannel(name="responses", path="/r")
         b = _RecordingChannel(name="telegram", path="/t")
         c = _RecordingChannel(name="extra", path="/x")
 
-        async def hook_that_mutates(result: HostedRunResult, **_: Any) -> HostedRunResult:
-            # Naughty hook: in-place mutation of the (presumably shared)
-            # message list. Host's per-destination clone makes this safe.
-            result.messages.clear()
-            return result
+        async def hook_that_rebinds(result: HostedRunResult[AgentResponse], **_: Any) -> HostedRunResult[AgentResponse]:
+            # Naughty hook: rebind ``result`` to a fresh AgentResponse.
+            # Host's per-destination clone via ``replace()`` makes this safe
+            # for sibling destinations.
+            return result.replace(result=AgentResponse(messages=[]))
 
-        b.response_hook = hook_that_mutates  # type: ignore[attr-defined]
+        b.response_hook = hook_that_rebinds  # type: ignore[attr-defined]
         host = AgentFrameworkHost(target=agent, channels=[a, b, c])
         _ = host.app
         assert a.context is not None
@@ -985,8 +1003,8 @@ class TestResponseHookFanOut:
         host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
         host._identities["alice"]["extra"] = ChannelIdentity(channel="extra", native_id="9")
 
-        original = HostedRunResult.from_text("reply")
-        original_messages_snapshot = list(original.messages)
+        original = _make_reply("reply")
+        original_result_snapshot = original.result
 
         req = ChannelRequest(
             channel="responses",
@@ -997,12 +1015,12 @@ class TestResponseHookFanOut:
         )
         report = await a.context.deliver_response(req, original)
         assert sorted(report.pushed) == ["extra:9", "telegram:42"]
-        # The mutation on the telegram clone must not have touched the
-        # original payload, nor the extra channel's view.
-        assert original.messages == original_messages_snapshot
+        # The rebind on the telegram clone must not have touched the
+        # original envelope, nor the extra channel's view.
+        assert original.result is original_result_snapshot
         # ``extra`` channel saw the original-shaped payload.
         extra_push = next(p for p in c.pushes)
-        assert extra_push[1].text == "reply"
+        assert extra_push[1].result.text == "reply"
 
     @pytest.mark.asyncio
     async def test_response_hook_fires_on_echo_with_is_echo_true(self) -> None:
@@ -1015,7 +1033,9 @@ class TestResponseHookFanOut:
 
         phases: list[bool] = []
 
-        async def telegram_hook(result: HostedRunResult, *, context: Any, **_: Any) -> HostedRunResult:
+        async def telegram_hook(
+            result: HostedRunResult[AgentResponse], *, context: Any, **_: Any
+        ) -> HostedRunResult[AgentResponse]:
             phases.append(context.is_echo)
             return result
 
@@ -1032,60 +1052,77 @@ class TestResponseHookFanOut:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram", echo_input=True),
         )
-        await a.context.deliver_response(req, HostedRunResult.from_text("reply"))
+        await a.context.deliver_response(req, _make_reply("reply"))
         assert phases == [True, False]
 
 
 # --------------------------------------------------------------------------- #
-# HostedRunResult — multi-modal preservation                                   #
+# HostedRunResult — generic typed envelope                                     #
 # --------------------------------------------------------------------------- #
 
 
-class TestHostedRunResultMultiModal:
-    def test_from_text_classmethod_builds_assistant_message(self) -> None:
-        result = HostedRunResult.from_text("hello")
-        assert result.text == "hello"
-        assert len(result.messages) == 1
-        assert str(result.messages[0].role) == "assistant"
-        assert result.messages[0].contents[0].type == "text"
+class TestHostedRunResult:
+    """The envelope is a thin generic wrapper around the target's
+    full-fidelity ``result`` plus an optional session reference. The
+    host does NOT pre-shape or flatten ``result.messages`` /
+    ``result.get_outputs()`` — channels read the canonical accessor on
+    the underlying result type themselves."""
 
-    def test_from_text_role_kwarg_overrides_default(self) -> None:
-        result = HostedRunResult.from_text("hi", role="user")
-        assert str(result.messages[0].role) == "user"
+    def test_result_field_carries_full_fidelity_payload(self) -> None:
+        resp = AgentResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("hello")])],
+            response_id="r-1",
+        )
+        env: HostedRunResult[AgentResponse] = HostedRunResult(resp)
+        # ``result`` is the canonical accessor; metadata like
+        # ``response_id`` round-trips through unchanged because the host
+        # never re-shapes the payload.
+        assert env.result is resp
+        assert env.result.text == "hello"
+        assert env.result.response_id == "r-1"
+        assert env.session is None
 
-    def test_messages_positional_carries_full_list(self) -> None:
-        msgs = [
-            Message(role="assistant", contents=[Content.from_text("one")]),
-            Message(role="assistant", contents=[Content.from_text("two")]),
-        ]
-        result = HostedRunResult(msgs)
-        assert result.text == "onetwo"
-        assert result.contents and len(result.contents) == 2
+    def test_session_field_attached_and_optional(self) -> None:
+        resp = _assistant_response("ok")
+        session = _FakeAgentSession(session_id="sess-1")
+        env = HostedRunResult(resp, session=session)
+        assert env.session is session
 
-    def test_replace_clones_messages_so_mutations_dont_leak(self) -> None:
-        original = HostedRunResult.from_text("orig")
-        clone = original.replace(messages=original.messages)
-        clone.messages.clear()
-        assert original.text == "orig"
+    def test_replace_clones_envelope_without_touching_result_by_default(self) -> None:
+        resp = _assistant_response("orig")
+        original = HostedRunResult(resp, session=_FakeAgentSession(session_id="s"))
+        clone = original.replace()
+        # Clone is a distinct envelope but the inner ``result`` is the
+        # same object — channels that need a deep copy of ``result``
+        # itself do the copy themselves.
+        assert clone is not original
+        assert clone.result is original.result
+        assert clone.session is original.session
 
-    def test_replace_preserves_raw_response_by_default(self) -> None:
-        # ``raw_response`` is an opaque payload from the host; ``replace``
-        # without ``raw_response=`` must keep whatever was on the source.
-        sentinel = object()
-        original = HostedRunResult.from_text("x")
-        original.raw_response = sentinel  # type: ignore[assignment]
-        clone = original.replace(messages=original.messages)
-        assert clone.raw_response is sentinel
+    def test_replace_rebinds_result_without_perturbing_original(self) -> None:
+        original = HostedRunResult(_assistant_response("orig"))
+        clone = original.replace(result=_assistant_response("shaped"))
+        assert original.result.text == "orig"
+        assert clone.result.text == "shaped"
+
+    def test_replace_supports_explicit_none_session(self) -> None:
+        original = HostedRunResult(_assistant_response("x"), session=_FakeAgentSession(session_id="s"))
+        clone = original.replace(session=None)
+        assert clone.session is None
+        # Source envelope untouched.
+        assert original.session is not None
 
     @pytest.mark.asyncio
-    async def test_invoke_forwards_multi_modal_message_list(self) -> None:
-        """The host's ``_invoke`` must pass ``AgentResponse.messages``
-        through unchanged so channels see image / tool / structured
-        content alongside text."""
+    async def test_invoke_preserves_full_agent_response_on_result(self) -> None:
+        """The host's ``_invoke`` carries the agent's ``AgentResponse``
+        through unchanged on ``result``. Channels see image / tool /
+        structured content alongside text — and metadata like
+        ``response_id`` — without the host pre-shaping anything."""
 
         class _MultiModalResponse:
             def __init__(self) -> None:
                 self.text = "summary"
+                self.response_id = "resp-xyz"
                 self.messages = [
                     Message(
                         role="assistant",
@@ -1110,10 +1147,12 @@ class TestHostedRunResultMultiModal:
         assert ch.context is not None
 
         req = ChannelRequest(channel="responses", operation="op", input="hi")
-        result = await ch.context.run(req)
-        assert result.text == "summary"
-        assert len(result.messages) == 1
-        types = [c.type for c in result.messages[0].contents]
+        env = await ch.context.run(req)
+        # Full agent response carried through verbatim — no flattening.
+        assert env.result.text == "summary"
+        assert env.result.response_id == "resp-xyz"
+        assert len(env.result.messages) == 1
+        types = [c.type for c in env.result.messages[0].contents]
         assert "text" in types and "data" in types
 
 
@@ -1255,7 +1294,7 @@ class TestBindRequestContext:
             attributes={"response_id": "resp_abc", "previous_response_id": "resp_prev"},
         )
         result = await ch.context.run(req)
-        assert result.text == "ok"
+        assert result.result.text == "ok"
 
         # Bind ↔ unbind brackets the agent run.
         events = [name for name, _ in prov.events]
