@@ -663,6 +663,7 @@ export function WorkflowView({
               item &&
               item.type === "message" &&
               (!("metadata" in item) || !(item.metadata as { source?: string } | undefined)?.source) &&
+              (item.metadata as { workflow_output_kind?: string } | undefined)?.workflow_output_kind !== "intermediate" &&
               "content" in item &&
               Array.isArray(item.content)
             ) {
@@ -1121,27 +1122,30 @@ export function WorkflowView({
 
           // Handle workflow output messages
           if (item && item.type === "message" && "content" in item && Array.isArray(item.content)) {
-            // Extract text from message content
-            for (const content of item.content as Array<{ type: string; text?: string }>) {
-              if (content.type === "output_text" && content.text) {
-                const text = content.text; // Capture for closure
-                // Append to workflow result (support multiple yield_output calls)
-                setWorkflowResult((prev) => {
-                  if (prev && prev.length > 0) {
-                    // If there's existing output, add separator
-                    return prev + "\n\n" + text;
-                  }
-                  return text;
-                });
+            const metadata = item.metadata as { workflow_output_kind?: string } | undefined;
+            if (metadata?.workflow_output_kind !== "intermediate") {
+              // Extract text from message content
+              for (const content of item.content as Array<{ type: string; text?: string }>) {
+                if (content.type === "output_text" && content.text) {
+                  const text = content.text; // Capture for closure
+                  // Append to workflow result (support multiple yield_output calls)
+                  setWorkflowResult((prev) => {
+                    if (prev && prev.length > 0) {
+                      // If there's existing output, add separator
+                      return prev + "\n\n" + text;
+                    }
+                    return text;
+                  });
 
-                // Try to parse as JSON for structured metadata
-                try {
-                  const parsed = JSON.parse(text);
-                  if (typeof parsed === "object" && parsed !== null) {
-                    workflowMetadata.current = parsed;
+                  // Try to parse as JSON for structured metadata
+                  try {
+                    const parsed = JSON.parse(text);
+                    if (typeof parsed === "object" && parsed !== null) {
+                      workflowMetadata.current = parsed;
+                    }
+                  } catch {
+                    // Not JSON, keep as text
                   }
-                } catch {
-                  // Not JSON, keep as text
                 }
               }
             }

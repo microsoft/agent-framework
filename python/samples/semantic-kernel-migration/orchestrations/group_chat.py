@@ -248,13 +248,13 @@ async def run_agent_framework_example(task: str) -> str:
         participants=[researcher, planner],
         orchestrator_agent=Agent(client=client),
         max_rounds=8,
-        intermediate_outputs=True,
+        intermediate_output_from=[researcher, planner],
     ).build()
 
     output_messages: list[Message] = []
     last_message_id: str | None = None
     async for event in workflow.run(task, stream=True):
-        if event.type == "output":
+        if event.type in ("intermediate", "output"):
             if isinstance(event.data, AgentResponseUpdate):
                 if event.data.message_id != last_message_id:
                     last_message_id = event.data.message_id

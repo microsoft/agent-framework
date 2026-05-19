@@ -359,6 +359,14 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
 
+    # Azure OpenAI Responses API may include this header in responses naming the actual model that
+    # served the request (e.g. ``gpt-5-nano-2025-08-07``), which can differ from the deployment alias
+    # that the request was addressed to and that ``response.model`` reports. When present, we use it
+    # as the value of ``ChatResponse.model`` / ``ChatResponseUpdate.model`` so telemetry and callers
+    # see the actually served model. (Chat Completions API already returns the snapshot in
+    # ``response.model``, so this header only matters for the Responses API.)
+    SERVED_MODEL_HEADER: ClassVar[str] = "x-ms-served-model"
+
     FILE_SEARCH_MAX_RESULTS: int = 50
 
     @overload
@@ -606,25 +614,40 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             function_call_ids: dict[int, tuple[str, str]] = {}
             seen_reasoning_delta_item_ids: set[str] = set()
             validated_options: dict[str, Any] | None = None
+            # Captured once request options are validated/prepared so the streaming finalizer can
+            # still parse the aggregated response into structured output after the stream completes.
+            response_format: Any | None = None
+
+            def _finalize_with_captured_format(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
+                # ResponseStream only calls the finalizer after iterating or draining `_stream()`,
+                # so `response_format` has already been populated from the validated request state
+                # unless request setup failed before streaming began.
+                return self._finalize_response_updates(updates, response_format=response_format)
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                nonlocal validated_options
+                nonlocal response_format, validated_options
                 if continuation_token is not None:
                     # Resume a background streaming response by retrieving with stream=True
                     client = self.client
                     validated_options = await self._validate_options(options)
+                    response_format = validated_options.get("response_format")
                     try:
-                        stream_response = await client.responses.retrieve(
+                        raw_stream_response = await client.responses.with_raw_response.retrieve(
                             continuation_token["response_id"],
                             stream=True,
                         )
-                        async for chunk in stream_response:
-                            yield self._parse_chunk_from_openai(
-                                chunk,
-                                options=validated_options,
-                                function_call_ids=function_call_ids,
-                                seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
-                            )
+                        served_model = self._extract_served_model(raw_stream_response.headers)
+                        async with raw_stream_response.parse() as stream_response:
+                            async for chunk in stream_response:
+                                update = self._parse_chunk_from_openai(
+                                    chunk,
+                                    options=validated_options,
+                                    function_call_ids=function_call_ids,
+                                    seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                )
+                                if served_model is not None:
+                                    update.model = served_model
+                                yield update
                     except Exception as ex:
                         self._handle_request_error(ex)
                 else:
@@ -633,8 +656,15 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         run_options,
                         validated_options,
                     ) = await self._prepare_request(messages, options)
+                    response_format = validated_options.get("response_format")
                     try:
                         if "text_format" in run_options:
+                            # The SDK's ``responses.stream(text_format=...)`` helper preserves
+                            # client-side ``output_parsed`` partial parsing for structured outputs,
+                            # but it does not expose the raw HTTP response (no ``x-ms-served-model``
+                            # access). We accept that trade-off: this single streaming path keeps
+                            # the deployment alias as the reported model name. All other paths
+                            # surface the served-model header.
                             async with client.responses.stream(**run_options) as response:
                                 async for chunk in response:
                                     yield self._parse_chunk_from_openai(
@@ -644,18 +674,25 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                         seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
                                     )
                         else:
-                            async for chunk in await client.responses.create(stream=True, **run_options):
-                                yield self._parse_chunk_from_openai(
-                                    chunk,
-                                    options=validated_options,
-                                    function_call_ids=function_call_ids,
-                                    seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
-                                )
+                            raw_create_response = await client.responses.with_raw_response.create(
+                                stream=True, **run_options
+                            )
+                            served_model = self._extract_served_model(raw_create_response.headers)
+                            async with raw_create_response.parse() as stream_response:
+                                async for chunk in stream_response:
+                                    update = self._parse_chunk_from_openai(
+                                        chunk,
+                                        options=validated_options,
+                                        function_call_ids=function_call_ids,
+                                        seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                    )
+                                    if served_model is not None:
+                                        update.model = served_model
+                                    yield update
                     except Exception as ex:
                         self._handle_request_error(ex)
 
-            response_format = validated_options.get("response_format") if validated_options else None
-            return self._build_response_stream(_stream(), response_format=response_format)
+            return ResponseStream(_stream(), finalizer=_finalize_with_captured_format)
 
         # Non-streaming
         async def _get_response() -> ChatResponse:
@@ -664,10 +701,14 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 client = self.client
                 validated_options = await self._validate_options(options)
                 try:
-                    response = await client.responses.retrieve(continuation_token["response_id"])
+                    raw_response = await client.responses.with_raw_response.retrieve(continuation_token["response_id"])
+                    response = raw_response.parse()
                 except Exception as ex:
                     self._handle_request_error(ex)
                 chat_response = self._parse_response_from_openai(response, options=validated_options)
+                served_model = self._extract_served_model(raw_response.headers)
+                if served_model is not None:
+                    chat_response.model = served_model
                 # Once the background response completes, drop the continuation_token from
                 # the caller's options dict. FunctionInvocationLayer reuses the same dict
                 # across tool-loop iterations, so leaving it in place makes the next iteration
@@ -680,14 +721,38 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
-                    response = await client.responses.parse(stream=False, **run_options)
+                    raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)  # type: ignore
                 else:
-                    response = await client.responses.create(stream=False, **run_options)
+                    raw_response = await client.responses.with_raw_response.create(stream=False, **run_options)  # type: ignore
+                response = raw_response.parse()
             except Exception as ex:
                 self._handle_request_error(ex)
-            return self._parse_response_from_openai(response, options=validated_options)
+            chat_response = self._parse_response_from_openai(response, options=validated_options)
+            served_model = self._extract_served_model(raw_response.headers)
+            if served_model is not None:
+                chat_response.model = served_model
+            return chat_response
 
         return _get_response()
+
+    @classmethod
+    def _extract_served_model(cls, headers: Any) -> str | None:
+        """Return the Azure OpenAI ``x-ms-served-model`` response header value when present.
+
+        Azure OpenAI Responses API returns the deployment alias in ``response.model`` but the actual
+        snapshot served via the ``x-ms-served-model`` response header (e.g. ``gpt-5-nano-2025-08-07``
+        vs deployment alias ``gpt-5-nano``). When present, the served snapshot is the source of truth
+        for observability and downstream callers. Empty/whitespace-only header values are rejected
+        here so every caller can simply check ``if served_model is not None``.
+        """
+        if headers is None:
+            return None
+        served_model = headers.get(cls.SERVED_MODEL_HEADER)
+        if isinstance(served_model, str):
+            stripped = served_model.strip()
+            if stripped:
+                return stripped
+        return None
 
     def _prepare_response_and_text_format(
         self,
@@ -1429,9 +1494,10 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         props = content.additional_properties or {}
                         # Local-shell variant serializes as `local_shell_call` carrying a server-issued id;
                         # plain function_call_output pairs by call_id and is safe under storage.
-                        if (
-                            props.get(OPENAI_SHELL_OUTPUT_TYPE_KEY) == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL
-                            and props.get(OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY)
+                        if props.get(
+                            OPENAI_SHELL_OUTPUT_TYPE_KEY
+                        ) == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL and props.get(
+                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
                         ):
                             continue
                     new_args: dict[str, Any] = {}
