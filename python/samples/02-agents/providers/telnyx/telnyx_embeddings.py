@@ -47,8 +47,8 @@ async def main() -> None:
     # 3. Print the embedding dimensions and a preview of each vector.
     for i, embedding in enumerate(response):
         print(f"Text {i + 1}: \"{texts[i]}\"")
-        print(f"  Dimensions: {len(embedding)}")
-        print(f"  Preview: [{', '.join(str(v) for v in embedding[:5])}, ...]")
+        print(f"  Dimensions: {embedding.dimensions}")
+        print(f"  Preview: [{', '.join(str(v) for v in embedding.vector[:5])}, ...]")
         print()
 
     print("Done!")
