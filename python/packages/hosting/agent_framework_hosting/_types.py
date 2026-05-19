@@ -541,13 +541,42 @@ class Channel(Protocol):
 
 @runtime_checkable
 class ChannelPush(Protocol):
-    """Optional capability: a channel that can deliver outbound messages without a prior request.
+    r"""Optional capability: a channel that can deliver outbound messages without a prior request.
 
     Per SPEC-002 (req #13), channels that can do proactive delivery
     (Telegram bot proactive message, Teams proactive bot message,
     webhook callbacks, SSE broadcasts) implement ``push`` on top of the
     base :class:`Channel` protocol. Channels without push can only be
     addressed as the ``originating`` :class:`ResponseTarget`.
+
+    Distinguishing user echoes from agent replies
+    ---------------------------------------------
+    When the originating :class:`ResponseTarget` opts in to
+    ``echo_input=True``, the host pushes the user's input message to
+    each non-originating destination **before** the agent reply. Both
+    pushes go through the same ``push(identity, payload)`` entry point;
+    the channel distinguishes them by inspecting the role on the
+    payload's underlying :class:`~agent_framework.Message`\\(s):
+
+    * ``payload.result.messages[i].role == "user"`` → the echo phase
+      (originating user's turn mirrored onto this destination so the
+      channel's UX can stay coherent with the user's actual prompt).
+      Channels that cannot impersonate the user (most chat bots can
+      only send AS the bot) typically render echoes as a quoted /
+      prefixed block, drop them, or skip them via a
+      ``response_hook`` — see below.
+    * ``payload.result.messages[i].role == "assistant"`` → the agent's
+      reply.
+
+    Channels that want to branch on phase WITHOUT inspecting roles can
+    instead expose a ``response_hook`` attribute on the channel
+    instance: the host calls the hook with a
+    :class:`ChannelResponseContext` whose ``is_echo`` flag carries the
+    same phase information explicitly, and the hook returns a
+    (possibly rewritten) :class:`HostedRunResult` that the host then
+    hands to ``push``. The hook seam is duck-typed and intentionally
+    NOT part of this Protocol so adding hook support to an existing
+    channel never breaks its public contract.
     """
 
     name: str
