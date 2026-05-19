@@ -267,15 +267,10 @@ class HostedRunResult:
     flatten or filter — multi-modality is preserved end-to-end so
     individual channels can opt in or out.
 
-    Three construction modes:
-
-    * ``HostedRunResult(messages=[...])`` — the canonical path; channels
-      and the host use this when forwarding agent output.
-    * ``HostedRunResult(text="...")`` — back-compat shim that wraps the
-      string as a single ``role="assistant"`` text content. Useful in
-      tests and from channels that only emit plain strings.
-    * ``HostedRunResult()`` — synthesises an empty assistant message so
-      delivery-layer fan-out still has a well-formed payload to push.
+    The canonical constructor is ``HostedRunResult(messages=[...])``. Use
+    :meth:`from_text` as the ergonomic shortcut for the
+    single-assistant-text-message case (tests, channels that only emit
+    plain strings, the echo-input phase wrapping a user's text turn).
 
     The ``raw_response`` attribute (when supplied) carries the original
     :class:`~agent_framework.AgentResponse` so channels can recover
@@ -290,15 +285,34 @@ class HostedRunResult:
 
     def __init__(
         self,
-        messages: Sequence[Message] | None = None,
+        messages: Sequence[Message],
         *,
-        text: str | None = None,
         raw_response: AgentResponse | None = None,
     ) -> None:
-        if messages is None:
-            messages = [Message(role="assistant", contents=[Content.from_text(text=text or "")])]
         self.messages: list[Message] = list(messages)
         self.raw_response = raw_response
+
+    @classmethod
+    def from_text(
+        cls,
+        text: str,
+        *,
+        role: str = "assistant",
+        raw_response: AgentResponse | None = None,
+    ) -> HostedRunResult:
+        """Build a :class:`HostedRunResult` carrying a single text message.
+
+        Convenience for the common "agent (or test fixture) emitted a
+        plain string" case — equivalent to constructing a single
+        :class:`~agent_framework.Message` with one text
+        :class:`~agent_framework.Content`. Defaults ``role`` to
+        ``"assistant"``; callers wrapping an input echo pass
+        ``role="user"``.
+        """
+        return cls(
+            messages=[Message(role=role, contents=[Content.from_text(text=text)])],
+            raw_response=raw_response,
+        )
 
     @property
     def text(self) -> str:

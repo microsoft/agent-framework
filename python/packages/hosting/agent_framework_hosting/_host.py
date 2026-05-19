@@ -828,7 +828,7 @@ class AgentFrameworkHost:
         # decide what it is able to render. The host stays modality-
         # agnostic; channels (or developer-supplied response hooks) pick
         # the right projection for their wire format.
-        return HostedRunResult(messages=result.messages, raw_response=result)
+        return HostedRunResult(result.messages, raw_response=result)
 
     def _invoke_stream(self, request: ChannelRequest) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         self._log_incoming(request, stream=True)
@@ -921,7 +921,7 @@ class AgentFrameworkHost:
         messages: list[Message] = []
         for output in result.get_outputs():
             messages.extend(_workflow_output_to_messages(output))
-        return HostedRunResult(messages=messages)
+        return HostedRunResult(messages)
 
     @staticmethod
     async def _restore_workflow_checkpoint(
@@ -1122,23 +1122,21 @@ class AgentFrameworkHost:
         """
         raw = request.input
         if isinstance(raw, Message):
-            return HostedRunResult(
-                messages=[Message(role="user", contents=list(raw.contents), author_name=raw.author_name)]
-            )
+            return HostedRunResult([Message(role="user", contents=list(raw.contents), author_name=raw.author_name)])
         if isinstance(raw, list) and raw and all(isinstance(m, Message) for m in raw):
             messages = [
                 Message(role="user", contents=list(m.contents), author_name=m.author_name)
                 for m in raw
                 if isinstance(m, Message)
             ]
-            return HostedRunResult(messages=messages)
+            return HostedRunResult(messages)
         if isinstance(raw, str):
-            return HostedRunResult(messages=[Message(role="user", contents=[Content.from_text(text=raw)])])
+            return HostedRunResult.from_text(raw, role="user")
         if isinstance(raw, Content):
-            return HostedRunResult(messages=[Message(role="user", contents=[raw])])
+            return HostedRunResult([Message(role="user", contents=[raw])])
         # AgentRunInputs allows other shapes (mapping, sequence of mixed
         # str/Content); stringify as a defensive fallback.
-        return HostedRunResult(messages=[Message(role="user", contents=[Content.from_text(text=str(raw))])])
+        return HostedRunResult.from_text(str(raw), role="user")
 
     async def _deliver_payload_to_channel(
         self,
