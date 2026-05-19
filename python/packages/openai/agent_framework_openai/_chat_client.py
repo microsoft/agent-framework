@@ -706,7 +706,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 except Exception as ex:
                     self._handle_request_error(ex)
                 chat_response = self._parse_response_from_openai(response, options=validated_options)
-                self._apply_served_model_header(chat_response, raw_response.headers)
+                served_model = self._extract_served_model(raw_response.headers)
+                if served_model is not None:
+                    chat_response.model = served_model
                 # Once the background response completes, drop the continuation_token from
                 # the caller's options dict. FunctionInvocationLayer reuses the same dict
                 # across tool-loop iterations, so leaving it in place makes the next iteration
@@ -726,26 +728,23 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             except Exception as ex:
                 self._handle_request_error(ex)
             chat_response = self._parse_response_from_openai(response, options=validated_options)
-            self._apply_served_model_header(chat_response, raw_response.headers)
+            served_model = self._extract_served_model(raw_response.headers)
+            if served_model is not None:
+                chat_response.model = served_model
             return chat_response
 
         return _get_response()
 
     @classmethod
-    def _apply_served_model_header(cls, chat_response: ChatResponse, headers: Any) -> None:
-        """Override ``ChatResponse.model`` with the Azure OpenAI served-model header when present.
+    def _extract_served_model(cls, headers: Any) -> str | None:
+        """Return the Azure OpenAI ``x-ms-served-model`` response header value when present.
 
         Azure OpenAI Responses API returns the deployment alias in ``response.model`` but the actual
-        snapshot served via the ``x-ms-served-model`` response header. When present, the served
-        snapshot is the source of truth for observability and downstream callers.
+        snapshot served via the ``x-ms-served-model`` response header (e.g. ``gpt-5-nano-2025-08-07``
+        vs deployment alias ``gpt-5-nano``). When present, the served snapshot is the source of truth
+        for observability and downstream callers. Empty/whitespace-only header values are rejected
+        here so every caller can simply check ``if served_model is not None``.
         """
-        served_model = cls._extract_served_model(headers)
-        if served_model is not None:
-            chat_response.model = served_model
-
-    @classmethod
-    def _extract_served_model(cls, headers: Any) -> str | None:
-        """Return the ``x-ms-served-model`` response header value when present and non-empty."""
         if headers is None:
             return None
         served_model = headers.get(cls.SERVED_MODEL_HEADER)
