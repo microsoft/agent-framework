@@ -255,6 +255,7 @@ class MCPTool:
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
+        self._load_tools_lock = asyncio.Lock()
         self._lifecycle_queue: asyncio.Queue[tuple[str, bool, asyncio.Future[None]]] | None = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
@@ -1023,6 +1024,10 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        async with self._load_tools_lock:
+            await self._load_tools_unlocked()
+
+    async def _load_tools_unlocked(self) -> None:
         from mcp import types
 
         # Track existing function names to prevent duplicates

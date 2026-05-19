@@ -3202,6 +3202,51 @@ async def test_load_tools_pagination_with_duplicates():
     assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3"]
 
 
+async def test_load_tools_serializes_concurrent_reloads():
+    tool = MCPTool(name="test_tool")
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="tool_1",
+            description="First tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+        ),
+    ]
+    page.nextCursor = None
+
+    first_call_started = asyncio.Event()
+    release_first_call = asyncio.Event()
+    call_count = 0
+
+    async def mock_list_tools(params=None):
+        nonlocal call_count
+        assert params is None
+        call_count += 1
+        if call_count == 1:
+            first_call_started.set()
+            await release_first_call.wait()
+        return page
+
+    mock_session.list_tools = AsyncMock(side_effect=mock_list_tools)
+
+    first_reload = asyncio.create_task(tool.load_tools())
+    await first_call_started.wait()
+
+    second_reload = asyncio.create_task(tool.load_tools())
+    await asyncio.sleep(0)
+    assert not second_reload.done()
+
+    release_first_call.set()
+    await asyncio.gather(first_reload, second_reload)
+
+    assert mock_session.list_tools.call_count == 2
+    assert [func.name for func in tool._functions] == ["tool_1"]
+
+
 async def test_load_prompts_pagination_with_duplicates():
     """Test that load_prompts prevents duplicates across paginated results."""
     from unittest.mock import AsyncMock, MagicMock
