@@ -30,7 +30,6 @@ def test_entra_isolation_key_format() -> None:
 
 
 class TestEntraIdentityStore:
-    @pytest.mark.asyncio
     async def test_link_writes_entra_namespaced_value(self, tmp_path: Path) -> None:
         store = EntraIdentityStore(tmp_path / "links.json")
         await store.link("telegram:42", "oid-xyz")
@@ -39,7 +38,6 @@ class TestEntraIdentityStore:
         saved = json.loads((tmp_path / "links.json").read_text())
         assert saved == {"telegram:42": "entra:oid-xyz"}
 
-    @pytest.mark.asyncio
     async def test_unlink_removes_entry(self, tmp_path: Path) -> None:
         store = EntraIdentityStore(tmp_path / "links.json")
         await store.link("telegram:42", "oid")
@@ -47,7 +45,6 @@ class TestEntraIdentityStore:
         assert store.lookup("telegram:42") is None
         assert json.loads((tmp_path / "links.json").read_text()) == {}
 
-    @pytest.mark.asyncio
     async def test_unlink_unknown_is_noop(self, tmp_path: Path) -> None:
         store = EntraIdentityStore(tmp_path / "links.json")
         await store.unlink("telegram:never")  # must not raise
