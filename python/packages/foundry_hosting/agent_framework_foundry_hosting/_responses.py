@@ -1559,23 +1559,19 @@ def _stringify_mcp_output(output: Any) -> str:
         return ""
     if isinstance(output, str):
         return output
+    if isinstance(output, Mapping):
+        text = cast(Any, output).get("text")
+        if isinstance(text, str):
+            return text
+        return json.dumps(output, default=str)
     if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
         parts: list[str] = []
         for entry in output:
             if isinstance(entry, Content) and entry.type == "text":
                 parts.append(entry.text or "")
                 continue
-            if isinstance(entry, Mapping):
-                text = cast(Any, entry).get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-                    continue
-                parts.append(json.dumps(entry, default=str))
-                continue
-            parts.append(str(entry))
+            parts.append(_stringify_mcp_output(entry))
         return "".join(parts)
-    if isinstance(output, Mapping):
-        return json.dumps(output, default=str)
     return str(output)
 
 
