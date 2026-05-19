@@ -520,12 +520,21 @@ def _iter_real_entries(root: Path) -> Iterator[Path]:
 def _path_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
     """Return a stable signature of the real (non-symlink) file tree under ``path``.
 
-    Uses ``lstat()`` and skips symlinks so the signature reflects only entries
-    that physically live inside the tree. This keeps the cache key consistent
-    with what ``_copy_path`` actually stages.
+    If ``path`` itself is a symlink, it is resolved first so the signature
+    reflects the real target's contents. This matches the public construction
+    flow (``_resolve_workspace_root`` / ``_normalize_file_mount_input`` already
+    resolve roots up front) and acts as defense in depth for any direct caller
+    that builds a ``_RunConfig`` without going through the constructor.
+
+    Symlinks encountered inside the walked tree are skipped, and ``lstat()`` is
+    used so size/mtime are read from the entry itself, never through a
+    target. The result mirrors what ``_copy_path`` actually stages.
     """
     if path.is_symlink():
-        return ()
+        try:
+            path = path.resolve(strict=True)
+        except OSError:
+            return ()
     if path.is_file():
         stat = path.lstat()
         return ((path.name, int(stat.st_size), int(stat.st_mtime_ns)),)
@@ -545,11 +554,17 @@ def _path_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
 def _copy_path(source: Path, destination: Path) -> None:
     """Stage ``source`` into ``destination`` without following symlinks.
 
-    Symlinks (file or directory) are skipped entirely so a sandbox input tree
-    can only contain real entries that physically live under the configured
-    ``workspace_root`` or a ``file_mounts`` host path. ``Path.is_dir()``,
-    ``Path.is_file()`` and ``shutil.copy2`` all follow symlinks by default,
-    which is unsafe when the source tree may be attacker-controlled.
+    Symlinks (file or directory) found in the source tree are skipped entirely
+    so a sandbox input tree can only contain real entries that physically live
+    under the configured ``workspace_root`` or a ``file_mounts`` host path.
+    ``Path.is_dir()``, ``Path.is_file()`` and ``shutil.copy2`` all follow
+    symlinks by default, which is unsafe for symlinks planted in the source
+    tree at rest.
+
+    This helper does not attempt to make the copy atomic with respect to
+    concurrent mutation of the source tree. Callers that need protection from
+    an adversary modifying the workspace mid-stage should pass in an
+    immutable / snapshotted directory.
     """
     # Detect symlinks before doing anything else - ``is_symlink()`` does not
     # follow the link, unlike ``is_dir()`` / ``is_file()``.

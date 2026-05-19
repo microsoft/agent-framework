@@ -563,6 +563,37 @@ def test_path_tree_signature_does_not_follow_symlinks(tmp_path: Path) -> None:
     assert "link.txt" not in names
 
 
+def test_path_tree_signature_walks_through_symlinked_root(tmp_path: Path) -> None:
+    """A symlinked workspace root must produce a real signature, not an empty one.
+
+    Defends against the cache never invalidating when a caller passes a
+    symlinked workspace and the underlying real directory's contents change.
+    """
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+
+    real_workspace = tmp_path / "real_workspace"
+    real_workspace.mkdir()
+    target = real_workspace / "data.txt"
+    target.write_text("v1", encoding="utf-8")
+
+    linked_workspace = tmp_path / "linked_workspace"
+    linked_workspace.symlink_to(real_workspace, target_is_directory=True)
+
+    signature_v1 = execute_code_module._path_tree_signature(linked_workspace)
+    names = [entry[0] for entry in signature_v1]
+    assert "data.txt" in names, f"signature should include the target's contents, got {signature_v1!r}"
+
+    # Mutate the real contents; the symlinked-root signature must reflect the change
+    # so the cache key invalidates.
+    import time
+
+    time.sleep(0.01)  # ensure mtime_ns moves on filesystems with coarse granularity
+    target.write_text("v2-content-larger", encoding="utf-8")
+    signature_v2 = execute_code_module._path_tree_signature(linked_workspace)
+    assert signature_v1 != signature_v2, "signature should change when symlinked target contents change"
+
+
 def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by_target() -> None:
     execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
 
