@@ -7,6 +7,7 @@ from typing import Annotated
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient, to_prompt_agent
+from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -48,14 +49,12 @@ async def main() -> None:
     print("=== Foundry Portable Agent Example ===\n")
 
     async with AzureCliCredential() as credential:
-        client = FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["FOUNDRY_MODEL"],
-            credential=credential,
-        )
-
         agent = Agent(
-            client=client,
+            client=FoundryChatClient(
+                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                model=os.environ["FOUNDRY_MODEL"],
+                credential=credential,
+            ),
             name="TravelAgent",
             instructions="You are a helpful travel assistant. Use the booking tool when asked.",
             tools=[
@@ -73,21 +72,15 @@ async def main() -> None:
 
         # 2) Publish the same definition as a Foundry prompt agent
         definition = to_prompt_agent(agent)
-        print("PromptAgentDefinition (would be sent to AIProjectClient.agents.create_version):")
-        print(definition.as_dict())
-
-        # Uncomment to actually publish the prompt agent to your Foundry project:
-        # from azure.ai.projects.aio import AIProjectClient
-        #
-        # async with AIProjectClient(
-        #     endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        #     credential=credential,
-        # ) as project_client:
-        #     created = await project_client.agents.create_version(
-        #         name="travel-agent",
-        #         definition=definition,
-        #     )
-        #     print(f"Prompt agent published: {created.name} v{created.version}")
+        async with AIProjectClient(
+            endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            credential=credential,
+        ) as project_client:
+            created = await project_client.agents.create_version(
+                name="travel-agent",
+                definition=definition,
+            )
+            print(f"Prompt agent published: {created.name} v{created.version}")
 
 
 if __name__ == "__main__":
