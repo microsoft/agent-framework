@@ -203,7 +203,6 @@ class TestHostWiring:
 
 
 class TestHostInvoke:
-    @pytest.mark.asyncio
     async def test_invoke_wraps_input_with_hosting_metadata(self) -> None:
         agent = _FakeAgent(reply="hello")
         ch = _RecordingChannel(name="responses")
@@ -236,7 +235,6 @@ class TestHostInvoke:
             "targets": [],
         }
 
-    @pytest.mark.asyncio
     async def test_invoke_caches_session_per_isolation_key(self) -> None:
         agent = _FakeAgent()
         ch = _RecordingChannel()
@@ -261,7 +259,6 @@ class TestHostInvoke:
         assert agent.calls[0]["session"] is agent.calls[1]["session"]
         assert agent.calls[0]["session"] is not agent.calls[2]["session"]
 
-    @pytest.mark.asyncio
     async def test_session_disabled_does_not_create_session(self) -> None:
         agent = _FakeAgent()
         ch = _RecordingChannel()
@@ -280,7 +277,6 @@ class TestHostInvoke:
         assert agent.created_sessions == []
         assert agent.calls[0]["session"] is None
 
-    @pytest.mark.asyncio
     async def test_reset_session_rotates_id_and_drops_cache(self) -> None:
         agent = _FakeAgent()
         ch = _RecordingChannel()
@@ -301,7 +297,6 @@ class TestHostInvoke:
         assert second_session.session_id != "alice"
         assert second_session.session_id.startswith("alice#")
 
-    @pytest.mark.asyncio
     async def test_options_propagates_to_target_run(self) -> None:
         agent = _FakeAgent()
         ch = _RecordingChannel()
@@ -328,7 +323,6 @@ class TestHostInvoke:
 class TestHostWorkflowTarget:
     """The host accepts a ``Workflow`` and dispatches to ``workflow.run(...)``."""
 
-    @pytest.mark.asyncio
     async def test_invoke_workflow_collapses_outputs_to_hosted_run_result(self) -> None:
         from tests._workflow_fixtures import build_upper_workflow
 
@@ -349,7 +343,6 @@ class TestHostWorkflowTarget:
         # ``create_session`` and the host must not invent one.
         assert host._sessions == {}
 
-    @pytest.mark.asyncio
     async def test_stream_workflow_yields_updates_and_finalizes(self) -> None:
         from tests._workflow_fixtures import build_echo_workflow
 
@@ -378,7 +371,6 @@ class TestHostWorkflowTarget:
         final = await stream.get_final_response()
         assert final.text == "hi"
 
-    @pytest.mark.asyncio
     async def test_stream_workflow_yields_one_update_per_output_event(self) -> None:
         from tests._workflow_fixtures import build_multi_chunk_workflow
 
@@ -431,7 +423,6 @@ class TestHostWorkflowCheckpointing:
         assert host._checkpoint_location is None
         assert any("checkpoint_location" in rec.message for rec in caplog.records)
 
-    @pytest.mark.asyncio
     async def test_invoke_skips_checkpointing_when_no_isolation_key(self, tmp_path: Any) -> None:
         from tests._workflow_fixtures import build_upper_workflow
 
@@ -448,7 +439,6 @@ class TestHostWorkflowCheckpointing:
         assert list(result.result.get_outputs()) == ["HI"]
         assert list(tmp_path.iterdir()) == []
 
-    @pytest.mark.asyncio
     async def test_invoke_writes_checkpoint_under_isolation_key(self, tmp_path: Any) -> None:
         from tests._workflow_fixtures import build_upper_workflow
 
@@ -473,7 +463,6 @@ class TestHostWorkflowCheckpointing:
         assert scoped.exists()
         assert any(scoped.iterdir()), "expected at least one checkpoint to be written under the per-user dir"
 
-    @pytest.mark.asyncio
     async def test_stream_writes_checkpoint_under_isolation_key(self, tmp_path: Any) -> None:
         from tests._workflow_fixtures import build_echo_workflow
 
@@ -498,7 +487,6 @@ class TestHostWorkflowCheckpointing:
         assert scoped.exists()
         assert any(scoped.iterdir())
 
-    @pytest.mark.asyncio
     async def test_caller_supplied_checkpoint_storage_used_as_is(self, tmp_path: Any) -> None:
         from agent_framework import InMemoryCheckpointStorage
 
@@ -581,7 +569,6 @@ class TestCheckpointPathForIsolationKey:
 class TestHostWorkflowCheckpointingPathTraversal:
     """End-to-end: malicious isolation keys must not escape ``checkpoint_location``."""
 
-    @pytest.mark.asyncio
     async def test_traversal_key_skips_checkpointing_with_warning(self, tmp_path: Any, caplog: Any) -> None:
         import logging as _logging
 
@@ -609,7 +596,6 @@ class TestHostWorkflowCheckpointingPathTraversal:
             "Skipping checkpoint storage" in rec.message and "isolation_key" in rec.message for rec in caplog.records
         )
 
-    @pytest.mark.asyncio
     async def test_separator_in_key_skips_checkpointing(self, tmp_path: Any) -> None:
         from tests._workflow_fixtures import build_upper_workflow
 
@@ -655,7 +641,6 @@ def _record_identity_on(host: AgentFrameworkHost, isolation_key: str, channel: s
 
 
 class TestDeliverResponse:
-    @pytest.mark.asyncio
     async def test_originating_returns_include_originating(self) -> None:
         _, _, _, ctx = _make_host_with_two_channels()
         req = ChannelRequest(channel="responses", operation="op", input="x")
@@ -664,7 +649,6 @@ class TestDeliverResponse:
         assert report.pushed == ()
         assert report.skipped == ()
 
-    @pytest.mark.asyncio
     async def test_none_suppresses_everything(self) -> None:
         _, _, _, ctx = _make_host_with_two_channels()
         req = ChannelRequest(
@@ -678,7 +662,6 @@ class TestDeliverResponse:
         assert report.pushed == ()
         assert report.skipped == ()
 
-    @pytest.mark.asyncio
     async def test_active_pushes_to_other_channel(self) -> None:
         host, a, b, ctx = _make_host_with_two_channels()
         # Alice was last seen on telegram.
@@ -697,7 +680,6 @@ class TestDeliverResponse:
         assert report.pushed == ("telegram:42",)
         assert b.pushes and b.pushes[0][0].native_id == "42"
 
-    @pytest.mark.asyncio
     async def test_active_falls_back_to_originating_when_self(self) -> None:
         host, _a, _b, ctx = _make_host_with_two_channels()
         _record_identity_on(host, "alice", "responses", "user:1")
@@ -711,7 +693,6 @@ class TestDeliverResponse:
         report = await ctx.deliver_response(req, _make_reply("reply"))
         assert report.include_originating is True
 
-    @pytest.mark.asyncio
     async def test_channels_with_unknown_identity_skipped(self) -> None:
         _, _, _, ctx = _make_host_with_two_channels()
         # No prior identity seeded for telegram on alice.
@@ -728,7 +709,6 @@ class TestDeliverResponse:
         assert report.skipped == ("telegram",)
         assert report.pushed == ()
 
-    @pytest.mark.asyncio
     async def test_channels_with_explicit_native_id_token(self) -> None:
         _, _, b, ctx = _make_host_with_two_channels()
         req = ChannelRequest(
@@ -742,7 +722,6 @@ class TestDeliverResponse:
         assert report.include_originating is False
         assert b.pushes[0][0].native_id == "99"
 
-    @pytest.mark.asyncio
     async def test_channels_originating_pseudo_includes_origin(self) -> None:
         host, _a, _b, ctx = _make_host_with_two_channels()
         _record_identity_on(host, "alice", "telegram", "42")
@@ -757,7 +736,6 @@ class TestDeliverResponse:
         assert report.include_originating is True
         assert report.pushed == ("telegram:42",)
 
-    @pytest.mark.asyncio
     async def test_channels_unknown_channel_name_skipped(self) -> None:
         _, _, _, ctx = _make_host_with_two_channels()
         req = ChannelRequest(
@@ -770,7 +748,6 @@ class TestDeliverResponse:
         assert report.include_originating is True  # fallback
         assert report.skipped == ("nope",)
 
-    @pytest.mark.asyncio
     async def test_no_push_capability_skipped(self) -> None:
         agent = _FakeAgent()
         a = _RecordingChannel(name="responses", path="/r")
@@ -792,7 +769,6 @@ class TestDeliverResponse:
         assert report.skipped == ("nopush:42",)
         assert report.include_originating is True  # fallback
 
-    @pytest.mark.asyncio
     async def test_all_linked_pushes_to_every_other_channel(self) -> None:
         host, _a, b, ctx = _make_host_with_two_channels()
         # Alice on responses (originating) and telegram.
@@ -811,7 +787,6 @@ class TestDeliverResponse:
         assert report.pushed == ("telegram:42",)
         assert b.pushes and b.pushes[0][1].result.text == "reply"
 
-    @pytest.mark.asyncio
     async def test_all_linked_no_other_channels_falls_back(self) -> None:
         host, _a, _b, ctx = _make_host_with_two_channels()
         req = ChannelRequest(
@@ -825,7 +800,6 @@ class TestDeliverResponse:
         assert report.include_originating is True
         assert report.pushed == ()
 
-    @pytest.mark.asyncio
     async def test_push_exception_lands_in_failed_no_fallback(self) -> None:
         """Push-raised destinations land in ``DeliveryReport.failed`` (with
         an ``error_summary``) and do NOT trigger the originating-fallback.
@@ -857,7 +831,6 @@ class TestDeliverResponse:
         # No fallback: caller decides whether to surface a degraded reply.
         assert report.include_originating is False
 
-    @pytest.mark.asyncio
     async def test_echo_input_pushes_user_message_then_response(self) -> None:
         """``echo_input=True`` triggers two pushes per destination: the
         originating user message first, then the agent reply. Channels
@@ -887,7 +860,6 @@ class TestDeliverResponse:
         assert resp_payload.result.text == "reply"
         assert str(resp_payload.result.messages[0].role) == "assistant"
 
-    @pytest.mark.asyncio
     async def test_echo_input_failure_does_not_block_response(self) -> None:
         """An echo push that raises lands in ``echo_failed`` but the
         response push must still be attempted on the same destination."""
@@ -934,7 +906,6 @@ class TestDeliverResponse:
 
 
 class TestResponseHookFanOut:
-    @pytest.mark.asyncio
     async def test_response_hook_applied_per_destination(self) -> None:
         """Channels with a ``response_hook`` attribute see their hook
         applied before push, with a ``ChannelResponseContext`` carrying
@@ -978,7 +949,6 @@ class TestResponseHookFanOut:
         assert b.pushes[0][1].result.text == "[hooked] reply"
         assert seen == [("telegram", "42", False)]
 
-    @pytest.mark.asyncio
     async def test_response_hook_mutation_isolated_per_destination(self) -> None:
         """A hook that rebinds ``result`` on its payload must NOT affect
         the payload another destination sees. The host clones the
@@ -1022,7 +992,6 @@ class TestResponseHookFanOut:
         extra_push = next(p for p in c.pushes)
         assert extra_push[1].result.text == "reply"
 
-    @pytest.mark.asyncio
     async def test_response_hook_fires_on_echo_with_is_echo_true(self) -> None:
         """When ``echo_input`` is set, the channel's response_hook fires
         TWICE per destination — once for the echo (is_echo=True), once
@@ -1112,7 +1081,6 @@ class TestHostedRunResult:
         # Source envelope untouched.
         assert original.session is not None
 
-    @pytest.mark.asyncio
     async def test_invoke_preserves_full_agent_response_on_result(self) -> None:
         """The host's ``_invoke`` carries the agent's ``AgentResponse``
         through unchanged on ``result``. Channels see image / tool /
@@ -1277,7 +1245,6 @@ class TestBindRequestContext:
     name, drops the descent, or fails to keep the binding open across
     the agent run silently breaks chained writes."""
 
-    @pytest.mark.asyncio
     async def test_bind_called_with_request_attributes(self) -> None:
         prov = _RecordingContextProvider()
         agent = _ProvidersAgent([prov])
@@ -1305,7 +1272,6 @@ class TestBindRequestContext:
         assert enter_payload["response_id"] == "resp_abc"
         assert enter_payload["previous_response_id"] == "resp_prev"
 
-    @pytest.mark.asyncio
     async def test_bind_skipped_when_no_response_id_attribute(self) -> None:
         """Without a ``response_id`` attribute on the request, the host
         skips the binding entirely — the contract requires one to anchor
@@ -1321,7 +1287,6 @@ class TestBindRequestContext:
         await ch.context.run(req)
         assert prov.events == [("agent_start", None), ("agent_end", None)]
 
-    @pytest.mark.asyncio
     async def test_bind_does_not_descend_into_providers_attribute(self) -> None:
         """The host does not introspect ``ContextProviderBase`` aggregator
         wrappers. Aggregator providers are responsible for forwarding the
@@ -1347,7 +1312,6 @@ class TestBindRequestContext:
         # inner provider must NOT have been entered by the host.
         assert ("enter", {"response_id": "resp_xyz", "previous_response_id": None}) not in prov.events
 
-    @pytest.mark.asyncio
     async def test_bind_held_open_until_stream_exhaustion(self) -> None:
         """Streaming runs return a ``ResponseStream`` synchronously but
         consumption happens later. The binding must survive that gap and
@@ -1404,7 +1368,6 @@ class TestBoundResponseStream:
     (which now routes through ``get_final_response`` so it doesn't
     leak the binding)."""
 
-    @pytest.mark.asyncio
     async def test_get_final_response_closes_binding(self) -> None:
         prov = _RecordingContextProvider()
         agent = _ProvidersAgent([prov])
@@ -1430,7 +1393,6 @@ class TestBoundResponseStream:
         assert names.count("enter") == 1
         assert names.count("exit") == 1
 
-    @pytest.mark.asyncio
     async def test_double_close_is_idempotent(self) -> None:
         prov = _RecordingContextProvider()
         agent = _ProvidersAgent([prov])
@@ -1456,7 +1418,6 @@ class TestBoundResponseStream:
         names = [n for n, _ in prov.events]
         assert names.count("exit") == 1
 
-    @pytest.mark.asyncio
     async def test_aclose_releases_binding_when_stream_abandoned(self) -> None:
         """A channel that abandons the stream without iterating must
         be able to call ``aclose()`` so the host-bound contextvars
@@ -1485,7 +1446,6 @@ class TestBoundResponseStream:
         # Agent never ran — we abandoned before iteration.
         assert "agent_start" not in names
 
-    @pytest.mark.asyncio
     async def test_getattr_forwards_to_inner_stream(self) -> None:
         """``_BoundResponseStream.__getattr__`` forwards unknown
         attributes to the inner ``ResponseStream``; channels that
@@ -1512,7 +1472,6 @@ class TestBoundResponseStream:
         finally:
             await stream.aclose()  # type: ignore[attr-defined]
 
-    @pytest.mark.asyncio
     async def test_await_path_routes_through_get_final_response(self) -> None:
         """``await stream`` is a convenience for ``await
         get_final_response()``. The previous direct delegation leaked
@@ -1552,7 +1511,6 @@ class TestWrapInputListMessages:
     a regression stamping ``messages[0]`` instead silently breaks
     every multi-message payload."""
 
-    @pytest.mark.asyncio
     async def test_metadata_lands_on_last_message_only(self) -> None:
         agent = _FakeAgent()
         ch = _RecordingChannel(name="responses")
@@ -1582,7 +1540,6 @@ class TestWrapInputListMessages:
         assert hosting["channel"] == "responses"
         assert hosting["identity"]["native_id"] == "user:1"
 
-    @pytest.mark.asyncio
     async def test_single_message_payload_still_works(self) -> None:
         """Regression guard: the single-``Message`` branch must be
         unchanged by the LAST-of-list logic above."""
