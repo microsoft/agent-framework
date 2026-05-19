@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from opentelemetry import propagate
 
+from ._middleware import FunctionInvocationContext
 from ._tools import FunctionTool
 from ._types import (
     ChatOptions,
@@ -39,7 +40,6 @@ if TYPE_CHECKING:
     from mcp.shared.session import RequestResponder
 
     from ._clients import SupportsChatGetResponse
-    from ._middleware import FunctionInvocationContext
 
 
 logger = logging.getLogger(__name__)
@@ -1334,15 +1334,26 @@ class MCPTool:
                         "parameters": func.parameters(),
                     }
                 )
-            return json.dumps(tool_list, indent=2)
+            return json.dumps(tool_list, separators=(",", ":"))
 
-        async def _call_tool(server: str, tool: str, arguments: dict[str, Any] | None = None) -> str | list[Content]:
+        async def _call_tool(
+            server: str,
+            tool: str,
+            arguments: dict[str, Any] | None = None,
+            context: FunctionInvocationContext | None = None,
+        ) -> Any:
             """Call a specific tool on this MCP server.
+
+            Note:
+                Any approval_mode or middleware configured on the underlying target tool
+                are enforced at the call_mcp wrapper tool level, as call_mcp is the
+                actual FunctionTool that traverses the agent execution pipeline.
 
             Args:
                 server: The name of the server. Must match this server's name.
                 tool: The name of the tool to call.
                 arguments: The arguments to pass to the tool.
+                context: The framework function invocation context.
             """
             if server != self.name:
                 raise ToolExecutionException(f"Unknown server '{server}'. This dispatcher is for server '{self.name}'.")
@@ -1361,10 +1372,7 @@ class MCPTool:
             if not target_func:
                 raise ToolExecutionException(f"Tool '{tool}' not found or not allowed on server '{self.name}'.")
 
-            # Route through the existing SDK internals via the matched FunctionTool's invoke method
-            # Any approval or middleware logic is deliberately skipped here to maintain
-            # compatibility and rely on the agent's outer evaluation context if needed.
-            return await target_func.invoke(arguments=arguments or {})
+            return await target_func.invoke(arguments=arguments or {}, context=context)
 
         list_tool = FunctionTool(
             name=list_tool_name,

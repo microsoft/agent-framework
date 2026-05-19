@@ -4780,7 +4780,107 @@ async def test_progressive_call_mcp_preserves_error_handling():
     
     with pytest.raises(ToolExecutionException) as exc_info:
         await call_tool.invoke(arguments={"server": "my-server", "tool": "tool_a"})
-        
+
     assert "Inner error" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_progressive_call_mcp_respects_approval_mode():
+    from agent_framework import Content, FunctionTool
+    from agent_framework._mcp import MCPTool
+    from agent_framework._tools import _try_execute_function_calls, normalize_function_invocation_configuration
+
+    tool = MCPTool(name="my-server")
+
+    async def _mock_func():
+        return "Executed!"
+
+    func1 = FunctionTool(
+        name="tool_a",
+        description="A tool that requires approval",
+        func=_mock_func,
+    )
+    tool._functions = [func1]
+
+    prog_tools = tool.as_progressive_tools()
+    call_tool = prog_tools[1]
+    # Configure approval_mode on the wrapper tool
+    call_tool.approval_mode = "always_require"
+
+    fcc = Content.from_function_call(
+        call_id="test_call_id",
+        name=call_tool.name,
+        arguments={"server": "my-server", "tool": "tool_a"}
+    )
+    config = normalize_function_invocation_configuration(None)
+
+    results, _ = await _try_execute_function_calls(
+        custom_args={},
+        attempt_idx=0,
+        function_calls=[fcc],
+        tools=[call_tool],
+        config=config,
+    )
+
+    assert len(results) == 1
+    assert results[0].type == "function_approval_request"
+    assert results[0].function_call is not None
+    assert results[0].function_call.name == "call_mcp"
+    arguments = results[0].function_call.arguments
+    assert isinstance(arguments, dict)
+    assert arguments.get("server") == "my-server"
+    assert arguments.get("tool") == "tool_a"
+
+
+@pytest.mark.asyncio
+async def test_progressive_call_mcp_executes_middleware():
+    from agent_framework import Content, FunctionInvocationContext, FunctionMiddleware, FunctionTool
+    from agent_framework._mcp import MCPTool
+    from agent_framework._middleware import FunctionMiddlewarePipeline
+    from agent_framework._tools import _try_execute_function_calls, normalize_function_invocation_configuration
+
+    tool = MCPTool(name="my-server")
+
+    async def _mock_func():
+        return "Executed!"
+
+    func1 = FunctionTool(name="tool_a", description="A tool", func=_mock_func)
+    tool._functions = [func1]
+
+    prog_tools = tool.as_progressive_tools()
+    call_tool = prog_tools[1]
+
+    executed_functions = []
+
+    class TestMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next):
+            executed_functions.append(context.function.name)
+            await call_next()
+
+    pipeline = FunctionMiddlewarePipeline(TestMiddleware())
+
+    fcc = Content.from_function_call(
+        call_id="test_call_id",
+        name=call_tool.name,
+        arguments={"server": "my-server", "tool": "tool_a"}
+    )
+
+    results, _ = await _try_execute_function_calls(
+        custom_args={},
+        attempt_idx=0,
+        function_calls=[fcc],
+        tools=[call_tool],
+        config=normalize_function_invocation_configuration(None),
+        middleware_pipeline=pipeline,
+    )
+
+    assert len(results) == 1
+    assert results[0].type == "function_result"
+    assert results[0].result == "Executed!"
+
+    # Middleware runs for call_mcp wrapper. Nested tool invocation does not
+    # trigger redundant middleware execution.
+    assert executed_functions == ["call_mcp"]
+
 
 # endregion
