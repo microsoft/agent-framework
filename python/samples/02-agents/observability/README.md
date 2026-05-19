@@ -181,7 +181,7 @@ Agent Framework reads the following environment variables:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ENABLE_INSTRUMENTATION` | `true` | Set to `false` to disable native instrumentation. |
+| `ENABLE_INSTRUMENTATION` | `true` | Set to `false` to disable native instrumentation. See [Disabling instrumentation](#disabling-instrumentation) for the programmatic alternative with sticky semantics. |
 | `ENABLE_SENSITIVE_DATA` | `false` | Set to `true` to emit sensitive data (prompts, responses, etc.). |
 | `ENABLE_CONSOLE_EXPORTERS` | `false` | Set to `true` to add console exporters. Only used by `configure_otel_providers()`. |
 | `VS_CODE_EXTENSION_PORT` | unset | Port used by the [AI Toolkit for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio#tracing) tracing integration. Only used by `configure_otel_providers()`. |
@@ -189,6 +189,85 @@ Agent Framework reads the following environment variables:
 You can also call `enable_sensitive_telemetry()` from `agent_framework.observability` to opt in to sensitive-data capture programmatically.
 
 > **Note**: Sensitive data includes prompts, responses, and tool arguments. Only enable it in development or test environments — it may expose user or system secrets in production.
+
+### Disabling instrumentation
+
+There are two ways to turn Agent Framework's native instrumentation off, and they have **different scopes**:
+
+| Approach | Scope | Sticky? | When framework code calls `enable_instrumentation()` later, what happens? |
+|----------|-------|---------|---------------------------------------------------------------------------|
+| `ENABLE_INSTRUMENTATION=false` in the environment | Initial settings only | No  | Instrumentation flips back **on**. |
+| `disable_instrumentation()` called from code     | Process-wide, sticky    | Yes | Instrumentation **stays off** — the user-disable intent wins. |
+
+If you want telemetry off **and want it to stay off**, use `disable_instrumentation()`.
+
+#### Sticky semantics — why this matters
+
+Framework integrations and third-party libraries can call `enable_instrumentation()`, `enable_sensitive_telemetry()`, or `configure_otel_providers()` as part of their own setup. For example, `FoundryChatClient.configure_azure_monitor()` calls `enable_instrumentation()` after wiring up Azure Monitor. That's normally what you want — but if **you** have explicitly opted out, you don't want any of those calls to silently re-enable telemetry.
+
+`disable_instrumentation()` solves this by setting a **sticky** flag on `OBSERVABILITY_SETTINGS` that remains in effect until you explicitly clear it. While the flag is set:
+
+1. `OBSERVABILITY_SETTINGS.enable_instrumentation` and `enable_sensitive_data` **read as `False`** regardless of the stored value.
+2. `enable_instrumentation()` and `enable_sensitive_telemetry()` are **no-ops** and log an info-level message.
+3. `configure_otel_providers()` still configures providers / exporters / views (so a later force-enable can use them), but does not flip instrumentation on.
+4. Direct attribute writes like `OBSERVABILITY_SETTINGS.enable_instrumentation = True` from any code are **silently dropped** (defense in depth).
+5. Integrations that consult `OBSERVABILITY_SETTINGS.is_user_disabled` (e.g. `FoundryChatClient.configure_azure_monitor()`, `FoundryAgent.configure_azure_monitor()`) **skip their setup entirely**, so global Azure Monitor providers aren't installed unnecessarily.
+
+```python
+from agent_framework.observability import disable_instrumentation
+
+# After this call, no Agent Framework telemetry will be emitted no matter what
+# downstream library / framework code tries to do.
+disable_instrumentation()
+```
+
+#### Forcing re-enablement after a disable
+
+To intentionally re-enable telemetry after `disable_instrumentation()`, pass `force=True` to either of the two public enable helpers. This is the only way to clear the sticky disable, so the user's opt-out can only be reversed by a deliberate user opt-in:
+
+```python
+from agent_framework.observability import (
+    disable_instrumentation,
+    enable_instrumentation,
+    enable_sensitive_telemetry,
+)
+
+disable_instrumentation()
+
+# Without force=True, these are no-ops while the disable is sticky:
+enable_instrumentation()              # logs info, does nothing
+enable_sensitive_telemetry()          # logs info, does nothing
+
+# With force=True, the sticky disable is cleared and the call proceeds:
+enable_instrumentation(force=True)
+# or
+enable_sensitive_telemetry(force=True)
+
+# After a force-enable you can `disable_instrumentation()` again to re-arm
+# the sticky disable.
+```
+
+#### Checking the disable state from integrations
+
+If you're writing an integration that performs telemetry setup as a side effect (e.g. provisioning a third-party exporter), consult the public read-only `is_user_disabled` property and early-return when it's set:
+
+```python
+from agent_framework.observability import OBSERVABILITY_SETTINGS
+
+if OBSERVABILITY_SETTINGS.is_user_disabled:
+    logger.info(
+        "Skipping telemetry setup because the user called disable_instrumentation()."
+    )
+    return
+```
+
+This is what the built-in `FoundryChatClient.configure_azure_monitor()` and `FoundryAgent.configure_azure_monitor()` do — so calling `disable_instrumentation()` reliably prevents Azure Monitor's global providers from being installed by those helpers.
+
+#### What `disable_instrumentation()` does **not** do
+
+- It does not tear down OpenTelemetry providers, exporters, or in-flight spans that were already set up before the disable call. It only gates **future** captures by Agent Framework code paths.
+- It does not stop telemetry from third-party instrumentations (e.g. `azure-monitor-opentelemetry`'s system metrics) that are wired up outside Agent Framework. Configure those separately if needed.
+- It does not persist across processes. Each Python process starts with the disable flag cleared; if you always want telemetry off in a given environment, set `ENABLE_INSTRUMENTATION=false` as an environment variable in addition to (or instead of) the programmatic call.
 
 #### Environment variables for `configure_otel_providers()`
 
