@@ -2,6 +2,7 @@
 
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -196,5 +197,26 @@ public sealed class FileSystemJsonCheckpointStoreTests
         // Assert
         retrieved.GetProperty("name").GetString().Should().Be("test");
         retrieved.GetProperty("value").GetInt32().Should().Be(42);
+    }
+
+    [Fact]
+    public async Task RetrieveIndexAsync_ShouldFilterBySessionIdAsync()
+    {
+        // Arrange
+        using TempDirectory tempDirectory = new();
+        using FileSystemJsonCheckpointStore store = new(tempDirectory);
+
+        string firstSessionId = Guid.NewGuid().ToString("N");
+        string secondSessionId = Guid.NewGuid().ToString("N");
+
+        CheckpointInfo firstCheckpoint = await store.CreateCheckpointAsync(firstSessionId, TestData);
+        CheckpointInfo secondCheckpoint = await store.CreateCheckpointAsync(secondSessionId, TestData);
+
+        // Act
+        var firstIndex = (await store.RetrieveIndexAsync(firstSessionId)).ToList();
+
+        // Assert
+        firstIndex.Should().Equal(firstCheckpoint);
+        firstIndex.Should().NotContain(secondCheckpoint);
     }
 }
