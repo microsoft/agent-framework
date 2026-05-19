@@ -50,7 +50,7 @@ class InvocationsChannel:
         channel's routes (the actual handler is ``POST {path}/invoke``).
         ``run_hook`` may rewrite the :class:`ChannelRequest` before the host
         invokes the target — typically to attach session metadata or
-        translate the wire payload into ``ChatMessage`` instances.
+        translate the wire payload into ``Message`` instances.
         ``stream_transform_hook`` lets callers map or drop individual
         ``AgentResponseUpdate`` chunks while streaming.
         """
