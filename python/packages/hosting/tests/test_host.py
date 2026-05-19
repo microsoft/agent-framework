@@ -644,7 +644,7 @@ class TestDeliverResponse:
     async def test_originating_returns_include_originating(self) -> None:
         _, _, _, ctx = _make_host_with_two_channels()
         req = ChannelRequest(channel="responses", operation="op", input="x")
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.include_originating is True
         assert report.pushed == ()
         assert report.skipped == ()
@@ -658,7 +658,7 @@ class TestDeliverResponse:
             input="x",
             response_target=ResponseTarget.none,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.include_originating is False
         assert report.pushed == ()
         assert report.skipped == ()
@@ -677,7 +677,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.active,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.include_originating is False
         assert report.pushed == ("telegram:42",)
         assert b.pushes and b.pushes[0][0].native_id == "42"
@@ -693,7 +693,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.active,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.include_originating is True
 
     @pytest.mark.asyncio
@@ -707,7 +707,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram"),
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         # Skipped → fallback to originating.
         assert report.include_originating is True
         assert report.skipped == ("telegram",)
@@ -722,7 +722,7 @@ class TestDeliverResponse:
             input="x",
             response_target=ResponseTarget.channel("telegram:99"),
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.pushed == ("telegram:99",)
         assert report.include_originating is False
         assert b.pushes[0][0].native_id == "99"
@@ -738,7 +738,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channels(["originating", "telegram"]),
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.include_originating is True
         assert report.pushed == ("telegram:42",)
 
@@ -751,7 +751,7 @@ class TestDeliverResponse:
             input="x",
             response_target=ResponseTarget.channel("nope"),
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.include_originating is True  # fallback
         assert report.skipped == ("nope",)
 
@@ -773,7 +773,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("nopush"),
         )
-        report = await a.context.deliver_response(req, HostedRunResult(text="reply"))
+        report = await a.context.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.skipped == ("nopush:42",)
         assert report.include_originating is True  # fallback
 
@@ -791,7 +791,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.all_linked,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.include_originating is True
         assert report.pushed == ("telegram:42",)
         assert b.pushes and b.pushes[0][1].text == "reply"
@@ -806,7 +806,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.all_linked,  # type: ignore[attr-defined]
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.include_originating is True
         assert report.pushed == ()
 
@@ -831,7 +831,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram"),
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         # Push raised → ``failed``, NOT ``skipped``.
         assert report.skipped == ()
         assert len(report.failed) == 1
@@ -857,7 +857,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram", echo_input=True),
         )
-        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        report = await ctx.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.pushed == ("telegram:42",)
         assert report.echoed == ("telegram:42",)
         assert report.echo_failed == ()
@@ -904,7 +904,7 @@ class TestDeliverResponse:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram", echo_input=True),
         )
-        report = await a.context.deliver_response(req, HostedRunResult(text="reply"))
+        report = await a.context.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.echo_failed and report.echo_failed[0][0] == "telegram:42"
         assert "RuntimeError" in report.echo_failed[0][1]
         assert report.echoed == ()
@@ -955,7 +955,7 @@ class TestResponseHookFanOut:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram"),
         )
-        report = await a.context.deliver_response(req, HostedRunResult(text="reply"))
+        report = await a.context.deliver_response(req, HostedRunResult.from_text("reply"))
         assert report.pushed == ("telegram:42",)
         # The pushed payload reflects the hook's transform.
         assert b.pushes[0][1].text == "[hooked] reply"
@@ -985,7 +985,7 @@ class TestResponseHookFanOut:
         host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
         host._identities["alice"]["extra"] = ChannelIdentity(channel="extra", native_id="9")
 
-        original = HostedRunResult(text="reply")
+        original = HostedRunResult.from_text("reply")
         original_messages_snapshot = list(original.messages)
 
         req = ChannelRequest(
@@ -1032,7 +1032,7 @@ class TestResponseHookFanOut:
             session=ChannelSession(isolation_key="alice"),
             response_target=ResponseTarget.channel("telegram", echo_input=True),
         )
-        await a.context.deliver_response(req, HostedRunResult(text="reply"))
+        await a.context.deliver_response(req, HostedRunResult.from_text("reply"))
         assert phases == [True, False]
 
 
@@ -1042,24 +1042,28 @@ class TestResponseHookFanOut:
 
 
 class TestHostedRunResultMultiModal:
-    def test_text_kwarg_synthesises_assistant_message(self) -> None:
-        result = HostedRunResult(text="hello")
+    def test_from_text_classmethod_builds_assistant_message(self) -> None:
+        result = HostedRunResult.from_text("hello")
         assert result.text == "hello"
         assert len(result.messages) == 1
         assert str(result.messages[0].role) == "assistant"
         assert result.messages[0].contents[0].type == "text"
 
-    def test_messages_kwarg_carries_full_list(self) -> None:
+    def test_from_text_role_kwarg_overrides_default(self) -> None:
+        result = HostedRunResult.from_text("hi", role="user")
+        assert str(result.messages[0].role) == "user"
+
+    def test_messages_positional_carries_full_list(self) -> None:
         msgs = [
             Message(role="assistant", contents=[Content.from_text("one")]),
             Message(role="assistant", contents=[Content.from_text("two")]),
         ]
-        result = HostedRunResult(messages=msgs)
+        result = HostedRunResult(msgs)
         assert result.text == "onetwo"
         assert result.contents and len(result.contents) == 2
 
     def test_replace_clones_messages_so_mutations_dont_leak(self) -> None:
-        original = HostedRunResult(text="orig")
+        original = HostedRunResult.from_text("orig")
         clone = original.replace(messages=original.messages)
         clone.messages.clear()
         assert original.text == "orig"
@@ -1068,7 +1072,7 @@ class TestHostedRunResultMultiModal:
         # ``raw_response`` is an opaque payload from the host; ``replace``
         # without ``raw_response=`` must keep whatever was on the source.
         sentinel = object()
-        original = HostedRunResult(text="x")
+        original = HostedRunResult.from_text("x")
         original.raw_response = sentinel  # type: ignore[assignment]
         clone = original.replace(messages=original.messages)
         assert clone.raw_response is sentinel
