@@ -43,14 +43,16 @@ pip install "agent-framework-hosting[serve]" agent-framework-hosting-responses
 ## Quickstart
 
 ```python
-from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_hosting import AgentFrameworkHost
-from agent_framework_hosting_responses import ResponsesChannel
+from agent_framework_hosting import AgentFrameworkHost, Channel
 
-agent = ChatAgent(name="Assistant", chat_client=OpenAIChatClient())
+agent = OpenAIChatClient().as_agent(name="Assistant")
 
-host = AgentFrameworkHost(target=agent, channels=[ResponsesChannel()])
+# Add channels from sibling packages, e.g. `agent-framework-hosting-responses`
+# exposes a `ResponsesChannel` that serves the OpenAI Responses API.
+channels: list[Channel] = []
+
+host = AgentFrameworkHost(target=agent, channels=channels)
 host.serve(port=8000)
 ```
 
