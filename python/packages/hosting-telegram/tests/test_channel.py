@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from agent_framework_hosting import (
     AgentFrameworkHost,
     ChannelCommand,
@@ -63,7 +62,6 @@ class TestMediaFileId:
         assert result == ("v1", "audio/ogg")
 
 
-@pytest.mark.asyncio
 class TestParseTelegramMessage:
     async def test_text_only(self) -> None:
         async def resolve(_: str) -> str | None:
@@ -167,7 +165,6 @@ class TestTelegramWebhook:
         assert not agent.runs
 
 
-@pytest.mark.asyncio
 class TestPushAndCommand:
     async def test_push_calls_send(self) -> None:
         ch, _agent = _make_telegram()
@@ -217,7 +214,6 @@ class TestPushAndCommand:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.asyncio
 class TestPerChatOrdering:
     async def test_updates_for_same_chat_run_serially(self) -> None:
         """Two updates for the same chat must process in arrival order."""
@@ -290,7 +286,6 @@ class TestPerChatOrdering:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.asyncio
 class TestWebhookAckBeforeRun:
     async def test_webhook_returns_200_before_agent_completes(self) -> None:
         """The webhook must ack before the agent runs, to dodge Telegram's 60s redelivery."""
@@ -336,7 +331,6 @@ class TestWebhookAckBeforeRun:
                 await w
 
 
-@pytest.mark.asyncio
 class TestShutdownDrainsWorkers:
     async def test_shutdown_cancels_in_flight_chat_workers(self) -> None:
         """`_on_shutdown` must drain per-chat workers, not leak them."""
