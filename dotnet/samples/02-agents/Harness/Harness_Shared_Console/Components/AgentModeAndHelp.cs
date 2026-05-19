@@ -43,7 +43,7 @@ public class AgentModeAndHelp : ConsoleReactiveComponent<AgentModeAndHelpProps, 
         }
 
         System.Console.Write(AnsiEscapes.SaveCursor);
-        System.Console.Write(AnsiEscapes.MoveAndEraseLine(this.Y));
+        System.Console.Write(AnsiEscapes.MoveAndEraseLine(props.Y));
 
         bool hasMode = props.Mode is not null;
 

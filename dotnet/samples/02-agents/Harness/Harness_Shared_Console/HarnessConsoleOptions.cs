@@ -46,6 +46,12 @@ public class HarnessConsoleOptions
     public Dictionary<string, ConsoleColor> ModeColors { get; set; } = new(DefaultModeColors, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Gets or sets an optional factory for creating the <see cref="AgentSession"/>.
+    /// When <see langword="null"/> (the default), <see cref="AIAgent.CreateSessionAsync"/> is used.
+    /// </summary>
+    public Func<AIAgent, Task<AgentSession>>? SessionFactory { get; set; }
+
+    /// <summary>
     /// Creates the default set of observers without planning support.
     /// Includes tool call display, tool approval, error display, reasoning display,
     /// usage display, and text output.
