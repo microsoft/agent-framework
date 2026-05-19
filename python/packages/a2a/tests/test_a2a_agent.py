@@ -1130,9 +1130,14 @@ async def test_streaming_working_update_without_message_is_skipped(
 
 async def test_streaming_working_update_user_role_mapping(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test that A2ARole.ROLE_USER in status message maps to role='user'."""
-    mock_a2a_client.add_in_progress_task_response(
-        "task-u", context_id="ctx-u", text="User echo", role=A2ARole.ROLE_USER
+    message = A2AMessage(
+        message_id="msg-user-echo",
+        role=A2ARole.ROLE_USER,
+        parts=[Part(text="User echo")],
     )
+    status = TaskStatus(state=TaskState.TASK_STATE_WORKING, message=message)
+    task = Task(id="task-u", context_id="ctx-u", status=status)
+    mock_a2a_client.responses.append(StreamResponse(task=task))
     mock_a2a_client.add_task_response("task-u", [{"id": "art-u", "content": "Done"}])
 
     updates: list[AgentResponseUpdate] = []
@@ -1142,6 +1147,7 @@ async def test_streaming_working_update_user_role_mapping(a2a_agent: A2AAgent, m
     assert len(updates) == 2
     assert updates[0].contents[0].text == "User echo"
     assert updates[0].role == "user"
+    assert updates[0].message_id == "msg-user-echo"
 
 
 async def test_background_with_status_message_yields_continuation_token(
@@ -1247,7 +1253,7 @@ async def test_streaming_status_update_event_yields_content(
         status=TaskStatus(
             state=TaskState.TASK_STATE_WORKING,
             message=A2AMessage(
-                message_id=str(uuid4()),
+                message_id="msg-status",
                 role=A2ARole.ROLE_AGENT,
                 parts=[Part(text="Still working")],
             ),
@@ -1262,6 +1268,7 @@ async def test_streaming_status_update_event_yields_content(
     assert len(updates) == 1
     assert updates[0].text == "Still working"
     assert updates[0].role == "assistant"
+    assert updates[0].message_id == "msg-status"
     assert updates[0].raw_representation == update_event
 
 
