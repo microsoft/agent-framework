@@ -48,39 +48,40 @@ def book_hotel(
 async def main() -> None:
     print("=== Foundry Portable Agent Example ===\n")
 
-    async with AzureCliCredential() as credential:
-        agent = Agent(
-            client=FoundryChatClient(
-                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-                model=os.environ["FOUNDRY_MODEL"],
-                credential=credential,
-            ),
-            name="TravelAgent",
-            instructions="You are a helpful travel assistant. Use the booking tool when asked.",
-            tools=[
-                FoundryChatClient.get_web_search_tool(),
-                FoundryChatClient.get_code_interpreter_tool(),
-                book_hotel,
-            ],
-        )
+    credential = AzureCliCredential()
 
-        # 1) Run locally via the Foundry Responses API
-        local_query = "Book me a hotel in Seattle for 3 nights."
-        print(f"User (local run): {local_query}")
-        response = await agent.run(local_query)
-        print(f"Agent: {response}\n")
-
-        # 2) Publish the same definition as a Foundry prompt agent
-        definition = to_prompt_agent(agent)
-        async with AIProjectClient(
-            endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    agent = Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=credential,
-        ) as project_client:
-            created = await project_client.agents.create_version(
-                name="travel-agent",
-                definition=definition,
-            )
-            print(f"Prompt agent published: {created.name} v{created.version}")
+        ),
+        name="TravelAgent",
+        instructions="You are a helpful travel assistant. Use the booking tool when asked.",
+        tools=[
+            FoundryChatClient.get_web_search_tool(),
+            FoundryChatClient.get_code_interpreter_tool(),
+            book_hotel,
+        ],
+    )
+
+    # 1) Run locally via the Foundry Responses API
+    local_query = "Book me a hotel in Seattle for 3 nights."
+    print(f"User (local run): {local_query}")
+    response = await agent.run(local_query)
+    print(f"Agent: {response}\n")
+
+    # 2) Publish the same definition as a Foundry prompt agent
+    definition = to_prompt_agent(agent)
+    project_client = AIProjectClient(
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=credential,
+    )
+    created = await project_client.agents.create_version(
+        name="travel-agent",
+        definition=definition,
+    )
+    print(f"Prompt agent published: {created.name} v{created.version}")
 
 
 if __name__ == "__main__":
