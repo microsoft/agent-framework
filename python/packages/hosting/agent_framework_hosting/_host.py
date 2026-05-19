@@ -23,6 +23,7 @@ contribute on top of this surface.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
@@ -62,9 +63,12 @@ from ._types import (
     ChannelIdentity,
     ChannelPush,
     ChannelRequest,
+    ChannelResponseContext,
+    ChannelResponseHook,
     DeliveryReport,
     HostedRunResult,
     ResponseTargetKind,
+    apply_response_hook,
 )
 
 if TYPE_CHECKING:
@@ -141,6 +145,40 @@ def _workflow_output_to_text(value: Any) -> str:
     return str(value)
 
 
+def _workflow_output_to_messages(value: Any) -> list[Message]:
+    r"""Render a single workflow ``output`` payload as one or more ``Message``\(s).
+
+    Workflow executors are free to emit any Python object; the host
+    preserves modality where it can:
+
+    * :class:`~agent_framework.AgentResponse` → its underlying
+      ``messages`` list (carries multi-modal contents).
+    * :class:`~agent_framework.AgentResponseUpdate` → a single assistant
+      message wrapping the update's ``contents`` (role / author preserved).
+    * :class:`~agent_framework.Message` → returned as-is.
+    * :class:`~agent_framework.Content` → wrapped in a single assistant
+      message.
+    * anything else → stringified into a single text content (back-compat
+      with workflows that emit raw ``str`` or arbitrary objects).
+    """
+    if isinstance(value, AgentResponse):
+        return list(value.messages)
+    if isinstance(value, AgentResponseUpdate):
+        contents = list(value.contents) if value.contents else []
+        return [
+            Message(
+                role=value.role or "assistant",
+                contents=contents,
+                author_name=value.author_name,
+            )
+        ]
+    if isinstance(value, Message):
+        return [value]
+    if isinstance(value, Content):
+        return [Message(role="assistant", contents=[value])]
+    return [Message(role="assistant", contents=[Content.from_text(text=_workflow_output_to_text(value))])]
+
+
 def _workflow_event_to_update(event: WorkflowEvent[Any]) -> AgentResponseUpdate | None:
     """Map a :class:`WorkflowEvent` to a channel-friendly :class:`AgentResponseUpdate`.
 
@@ -157,6 +195,16 @@ def _workflow_event_to_update(event: WorkflowEvent[Any]) -> AgentResponseUpdate 
         if payload.raw_representation is None:
             payload.raw_representation = event
         return payload
+    if isinstance(payload, Content):
+        # Preserve the original content (image, function call, audio, …)
+        # rather than stringifying — the host stays modality-agnostic
+        # and lets each destination channel decide what it can render.
+        return AgentResponseUpdate(
+            contents=[payload],
+            role="assistant",
+            author_name=event.executor_id,
+            raw_representation=event,
+        )
     text = _workflow_output_to_text(payload)
     return AgentResponseUpdate(
         contents=[Content.from_text(text=text)],
@@ -479,9 +527,6 @@ class AgentFrameworkHost:
                 ``access_log_format=...``) can be set directly.
         """
         try:
-            import asyncio
-            from typing import cast as _cast
-
             from hypercorn.asyncio import (  # pyright: ignore[reportMissingImports]
                 serve as _hypercorn_serve,  # pyright: ignore[reportUnknownVariableType]
             )
@@ -509,7 +554,7 @@ class AgentFrameworkHost:
         # (multiple ASGI/WSGI app overloads) and its ``Scope`` definition
         # diverges from Starlette's; cast both sides to ``Any`` to keep the
         # call site readable without sprinkling per-error suppressions.
-        serve_callable = _cast(Any, _hypercorn_serve)
+        serve_callable = cast(Any, _hypercorn_serve)
         asyncio.run(serve_callable(app, config))
 
     def reset_session(self, isolation_key: str) -> None:
@@ -685,7 +730,7 @@ class AgentFrameworkHost:
         return run_kwargs
 
     def _log_incoming(self, request: ChannelRequest, *, stream: bool) -> None:
-        """Emit a one-line INFO summary for every incoming target invocation.
+        """Emit a structured INFO summary for every incoming target invocation.
 
         When ``debug=True`` is set on the host, also dump the channel-native
         settings the channel attached to the ``ChannelRequest`` — ``options``
@@ -693,40 +738,31 @@ class AgentFrameworkHost:
         payload, e.g. temperature/tools/tool_choice for Responses), plus
         ``attributes`` / ``metadata`` (the channel's protocol-specific bag,
         e.g. ``chat_id`` / ``callback_query_id`` for Telegram).
+
+        Uses ``extra={...}`` so structured-logging consumers (the
+        Foundry hosted-agent log shipper, OpenTelemetry handlers, …)
+        can index per-field rather than re-parsing a template string.
         """
         isolation_key = request.session.isolation_key if request.session is not None else None
         logger.info(
-            "channel=%s op=%s stream=%s session=%s session_mode=%s",
-            request.channel,
-            request.operation,
-            stream,
-            isolation_key,
-            request.session_mode,
+            "channel request",
+            extra={
+                "channel": request.channel,
+                "operation": request.operation,
+                "stream": stream,
+                "session": isolation_key,
+                "session_mode": request.session_mode,
+            },
         )
         logger.debug(
-            "  ↳ options=%s attributes=%s metadata=%s",
-            dict(request.options) if request.options else {},
-            dict(request.attributes) if request.attributes else {},
-            dict(request.metadata) if request.metadata else {},
+            "channel request details",
+            extra={
+                "channel": request.channel,
+                "options": dict(request.options) if request.options else {},
+                "attributes": dict(request.attributes) if request.attributes else {},
+                "metadata": dict(request.metadata) if request.metadata else {},
+            },
         )
-
-    def _flat_context_providers(self) -> list[Any]:
-        """Flatten ``target.context_providers`` one level for duck-typed hooks.
-
-        ``ContextProviderBase`` aggregates child providers under a
-        ``providers`` attribute when wrapped (e.g. by ``ChatClientAgent``).
-        We descend one level so the host catches both styles without
-        forcing a particular wiring on the agent.
-        """
-        providers = getattr(self.target, "context_providers", None) or ()
-        flat: list[Any] = []
-        for entry in providers:
-            children = getattr(entry, "providers", None)
-            if children:
-                flat.extend(children)
-            else:
-                flat.append(entry)
-        return flat
 
     def _bind_request_context(self, request: ChannelRequest) -> ExitStack:
         """Bind any per-request anchors a target's context-providers expose.
@@ -757,9 +793,9 @@ class AgentFrameworkHost:
         if previous_response_id is not None and not isinstance(previous_response_id, str):
             previous_response_id = None
 
-        flat: list[Any] = self._flat_context_providers()
+        providers: Sequence[Any] = getattr(self.target, "context_providers", None) or ()
 
-        for provider in flat:
+        for provider in providers:
             bind = getattr(provider, "bind_request_context", None)
             if not callable(bind):
                 continue
@@ -783,11 +819,16 @@ class AgentFrameworkHost:
         with self._bind_request_context(request):
             # ``_is_workflow`` is False here so ``self.target`` is an
             # ``Agent``-shaped target whose ``.run`` returns
-            # :class:`AgentResponse`. Narrow back to keep ``result.text``
+            # :class:`AgentResponse`. Narrow back to keep ``result.messages``
             # well-typed without conditional imports of ``Agent``.
             agent_target = cast("SupportsAgentRun", self.target)
             result = await agent_target.run(self._wrap_input(request), **run_kwargs)
-        return HostedRunResult(text=result.text)
+        # Forward the full message list — including non-text content
+        # (images, function calls, …) — so each destination channel can
+        # decide what it is able to render. The host stays modality-
+        # agnostic; channels (or developer-supplied response hooks) pick
+        # the right projection for their wire format.
+        return HostedRunResult(messages=result.messages, raw_response=result)
 
     def _invoke_stream(self, request: ChannelRequest) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         self._log_incoming(request, stream=True)
@@ -842,7 +883,7 @@ class AgentFrameworkHost:
         return self._checkpoint_location
 
     async def _invoke_workflow(self, request: ChannelRequest) -> HostedRunResult:
-        """Dispatch to ``Workflow.run`` and collapse outputs into a ``HostedRunResult``.
+        """Dispatch to ``Workflow.run`` and collect outputs into a ``HostedRunResult``.
 
         The channel's ``run_hook`` is the canonical adapter for shaping
         ``request.input`` into the workflow start executor's typed input
@@ -856,6 +897,12 @@ class AgentFrameworkHost:
         restored from its latest checkpoint (if any) and then re-run with
         the new input — mirroring the resume semantics of the Foundry
         Responses host.
+
+        Each workflow output is mapped to one or more
+        :class:`~agent_framework.Message` instances via
+        :func:`_workflow_output_to_messages`, preserving multi-modality so
+        each destination channel decides what it can render rather than
+        the host collapsing everything to text.
         """
         # Workflows do not own session state in the agent sense and do not
         # accept ``session=`` / ``options=`` kwargs. The channel's run_hook is
@@ -868,15 +915,13 @@ class AgentFrameworkHost:
             if storage is not None
             else await workflow.run(request.input)
         )
-        # NOTE: blocking workflow output is text-only today. Richer
-        # modalities (image, audio, structured tool results) ride the
-        # streaming path via ``AgentResponseUpdate`` and are forwarded by
-        # the channel as content parts; channels that need full-fidelity
-        # output for blocking calls should drive the workflow through
-        # ``stream=True`` and aggregate via ``get_final_response()``.
-        outputs = result.get_outputs()
-        text = "\n".join(_workflow_output_to_text(o) for o in outputs) if outputs else ""
-        return HostedRunResult(text=text)
+        # Build a flat message list across all outputs; each output expands
+        # to its own messages, preserving order. Channels see a coherent
+        # ordered sequence with their full original modality.
+        messages: list[Message] = []
+        for output in result.get_outputs():
+            messages.extend(_workflow_output_to_messages(output))
+        return HostedRunResult(messages=messages)
 
     @staticmethod
     async def _restore_workflow_checkpoint(
@@ -1065,6 +1110,73 @@ class AgentFrameworkHost:
         self._identities.setdefault(key, {})[request.identity.channel] = request.identity
         self._active[key] = request.identity.channel
 
+    def _build_echo_payload(self, request: ChannelRequest) -> HostedRunResult:
+        """Build a ``HostedRunResult`` representing the originating user message.
+
+        Used when ``ResponseTarget.echo_input`` is set so non-originating
+        destinations can mirror the user's turn before the agent reply
+        arrives. The hosting metadata that ``_wrap_input`` attaches for
+        agent invocation is intentionally stripped — the echo is
+        end-user-facing and we don't leak host-internal bookkeeping
+        onto another channel's wire.
+        """
+        raw = request.input
+        if isinstance(raw, Message):
+            return HostedRunResult(
+                messages=[Message(role="user", contents=list(raw.contents), author_name=raw.author_name)]
+            )
+        if isinstance(raw, list) and raw and all(isinstance(m, Message) for m in raw):
+            messages = [
+                Message(role="user", contents=list(m.contents), author_name=m.author_name)
+                for m in raw
+                if isinstance(m, Message)
+            ]
+            return HostedRunResult(messages=messages)
+        if isinstance(raw, str):
+            return HostedRunResult(messages=[Message(role="user", contents=[Content.from_text(text=raw)])])
+        if isinstance(raw, Content):
+            return HostedRunResult(messages=[Message(role="user", contents=[raw])])
+        # AgentRunInputs allows other shapes (mapping, sequence of mixed
+        # str/Content); stringify as a defensive fallback.
+        return HostedRunResult(messages=[Message(role="user", contents=[Content.from_text(text=str(raw))])])
+
+    async def _deliver_payload_to_channel(
+        self,
+        channel: ChannelPush,
+        identity: ChannelIdentity,
+        payload: HostedRunResult,
+        *,
+        request: ChannelRequest,
+        is_echo: bool,
+    ) -> HostedRunResult:
+        """Clone, run the channel's ``response_hook`` (if any), and push.
+
+        The clone keeps fan-out free from cross-destination mutation: a
+        hook that rewrites ``messages`` on one destination cannot leak
+        into the next push. Returns the (possibly hook-shaped) payload
+        so callers can log the actual delivered text length rather than
+        the pre-hook one.
+
+        ``response_hook`` is duck-typed on the channel: any attribute
+        named ``response_hook`` that is callable participates. The
+        :class:`Channel` Protocol stays a small "name / path / contribute"
+        contract; richer surfaces stay attribute-level so adding hook
+        support to a new channel does not require updating the Protocol.
+        """
+        shaped = payload.replace(messages=payload.messages)
+        hook = cast(ChannelResponseHook | None, getattr(channel, "response_hook", None))
+        if callable(hook):
+            ctx = ChannelResponseContext(
+                request=request,
+                channel_name=channel.name,
+                destination_identity=identity,
+                originating=False,
+                is_echo=is_echo,
+            )
+            shaped = await apply_response_hook(hook, shaped, context=ctx)
+        await channel.push(identity, shaped)
+        return shaped
+
     async def _deliver_response(self, request: ChannelRequest, payload: HostedRunResult) -> DeliveryReport:
         """Resolve ``request.response_target`` and call ``ChannelPush.push`` on each.
 
@@ -1076,6 +1188,20 @@ class AgentFrameworkHost:
         :class:`DeliveryReport.skipped`. If every destination drops, we
         fall back to delivering on the originating channel (matching the
         spec's policy default).
+
+        When ``request.response_target.echo_input`` is True the host first
+        builds a user-message payload (see :meth:`_build_echo_payload`)
+        and pushes it to each non-originating destination *before* the
+        agent response. Echo failures land in :class:`DeliveryReport`
+        ``echo_failed`` and do not abort the corresponding agent-response
+        push — channels that drop echoes (or whose echo phase fails) are
+        still expected to accept the response push.
+
+        Each per-destination push goes through
+        :meth:`_deliver_payload_to_channel`, which clones the payload and
+        applies the channel's optional ``response_hook`` so per-channel
+        transforms (e.g. flatten multi-modal to text for a text-only
+        wire) can't leak across destinations.
         """
         target = request.response_target
         kind = target.kind
@@ -1144,6 +1270,9 @@ class AgentFrameworkHost:
         # the documented "no link recorded" drop (no identity yet
         # mapped to that channel for this isolation_key).
         failed: list[tuple[str, str]] = []
+        echoed: list[str] = []
+        echo_failed: list[tuple[str, str]] = []
+        echo_payload = self._build_echo_payload(request) if target.echo_input else None
         for channel_name, dest_identity in destinations:
             channel = by_name.get(channel_name)
             token = f"{channel_name}:{dest_identity.native_id}" if dest_identity is not None else channel_name
@@ -1167,14 +1296,45 @@ class AgentFrameworkHost:
                 )
                 skipped.append(token)
                 continue
+            push_channel = cast(ChannelPush, channel)
+            # Echo phase — fire-and-record. A failure here does NOT abort
+            # the response push: the user-visible failure mode is
+            # "response delivered without echo" rather than "no response
+            # at all".
+            if echo_payload is not None:
+                try:
+                    shaped_echo = await self._deliver_payload_to_channel(
+                        push_channel,
+                        dest_identity,
+                        echo_payload,
+                        request=request,
+                        is_echo=True,
+                    )
+                except Exception as exc:
+                    logger.exception("deliver_response: echo push failed for target=%s", token)
+                    echo_failed.append((token, f"{type(exc).__name__}: {exc}"))
+                else:
+                    echoed.append(token)
+                    logger.info(
+                        "deliver_response: echoed user message to %s (%d chars)",
+                        token,
+                        len(shaped_echo.text),
+                    )
+            # Response phase.
             try:
-                await channel.push(dest_identity, payload)
+                shaped = await self._deliver_payload_to_channel(
+                    push_channel,
+                    dest_identity,
+                    payload,
+                    request=request,
+                    is_echo=False,
+                )
             except Exception as exc:
                 logger.exception("deliver_response: push failed for target=%s", token)
                 failed.append((token, f"{type(exc).__name__}: {exc}"))
                 continue
             pushed.append(token)
-            logger.info("deliver_response: pushed to %s (%d chars)", token, len(payload.text))
+            logger.info("deliver_response: pushed to %s (%d chars)", token, len(shaped.text))
 
         if not pushed and not include_originating:
             # Spec policy: if every destination drops *without ever
@@ -1198,6 +1358,8 @@ class AgentFrameworkHost:
             pushed=tuple(pushed),
             skipped=tuple(skipped),
             failed=tuple(failed),
+            echoed=tuple(echoed),
+            echo_failed=tuple(echo_failed),
         )
 
 

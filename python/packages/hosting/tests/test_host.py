@@ -48,6 +48,14 @@ class _FakeAgentSession:
 class _FakeAgentResponse:
     text: str
 
+    @property
+    def messages(self) -> list[Message]:
+        # Real ``AgentResponse`` carries a list of messages; the host's
+        # ``_invoke`` forwards them on the ``HostedRunResult``. Synthesise
+        # a single assistant text message so tests that assert on
+        # ``payload.text`` keep working unchanged.
+        return [Message(role="assistant", contents=[Content.from_text(text=self.text)])]
+
 
 class _FakeAgent:
     """Minimal :class:`SupportsAgentRun` implementation that records invocations."""
@@ -834,6 +842,276 @@ class TestDeliverResponse:
         # No fallback: caller decides whether to surface a degraded reply.
         assert report.include_originating is False
 
+    @pytest.mark.asyncio
+    async def test_echo_input_pushes_user_message_then_response(self) -> None:
+        """``echo_input=True`` triggers two pushes per destination: the
+        originating user message first, then the agent reply. Channels
+        downstream of a workflow that emits to multiple channels need this
+        to keep their UI state coherent with the user's actual prompt."""
+        host, _a, b, ctx = _make_host_with_two_channels()
+        host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hello there",
+            session=ChannelSession(isolation_key="alice"),
+            response_target=ResponseTarget.channel("telegram", echo_input=True),
+        )
+        report = await ctx.deliver_response(req, HostedRunResult(text="reply"))
+        assert report.pushed == ("telegram:42",)
+        assert report.echoed == ("telegram:42",)
+        assert report.echo_failed == ()
+        # Two pushes: echo first, then response.
+        assert len(b.pushes) == 2
+        echo_identity, echo_payload = b.pushes[0]
+        assert echo_identity.native_id == "42"
+        assert echo_payload.text == "hello there"
+        assert str(echo_payload.messages[0].role) == "user"
+        resp_identity, resp_payload = b.pushes[1]
+        assert resp_identity.native_id == "42"
+        assert resp_payload.text == "reply"
+        assert str(resp_payload.messages[0].role) == "assistant"
+
+    @pytest.mark.asyncio
+    async def test_echo_input_failure_does_not_block_response(self) -> None:
+        """An echo push that raises lands in ``echo_failed`` but the
+        response push must still be attempted on the same destination."""
+        agent = _FakeAgent()
+        a = _RecordingChannel(name="responses", path="/r")
+        b = _RecordingChannel(name="telegram", path="/t")
+        host = AgentFrameworkHost(target=agent, channels=[a, b])
+        _ = host.app
+        assert a.context is not None
+
+        host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
+
+        # Make the FIRST push (echo) raise, but the SECOND (response) succeed.
+        calls = {"n": 0}
+        real_push = b.push
+
+        async def flaky_push(identity: ChannelIdentity, payload: HostedRunResult) -> None:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("echo down")
+            await real_push(identity, payload)
+
+        b.push = flaky_push  # type: ignore[method-assign]
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            session=ChannelSession(isolation_key="alice"),
+            response_target=ResponseTarget.channel("telegram", echo_input=True),
+        )
+        report = await a.context.deliver_response(req, HostedRunResult(text="reply"))
+        assert report.echo_failed and report.echo_failed[0][0] == "telegram:42"
+        assert "RuntimeError" in report.echo_failed[0][1]
+        assert report.echoed == ()
+        # Response push attempted and succeeded despite the echo failure.
+        assert report.pushed == ("telegram:42",)
+        assert b.pushes and b.pushes[0][1].text == "reply"
+
+
+# --------------------------------------------------------------------------- #
+# Response hook + multi-modal payload + clone-on-fan-out                       #
+# --------------------------------------------------------------------------- #
+
+
+class TestResponseHookFanOut:
+    @pytest.mark.asyncio
+    async def test_response_hook_applied_per_destination(self) -> None:
+        """Channels with a ``response_hook`` attribute see their hook
+        applied before push, with a ``ChannelResponseContext`` carrying
+        the destination identity, the originating request, and an
+        ``is_echo`` flag."""
+        agent = _FakeAgent()
+        a = _RecordingChannel(name="responses", path="/r")
+        b = _RecordingChannel(name="telegram", path="/t")
+
+        seen: list[tuple[str, str, bool]] = []
+
+        async def telegram_hook(
+            result: HostedRunResult,
+            *,
+            context: Any,
+            **_: Any,
+        ) -> HostedRunResult:
+            seen.append((context.channel_name, context.destination_identity.native_id, context.is_echo))
+            return result.replace(
+                messages=[Message(role="assistant", contents=[Content.from_text("[hooked] " + result.text)])]
+            )
+
+        b.response_hook = telegram_hook  # type: ignore[attr-defined]
+        host = AgentFrameworkHost(target=agent, channels=[a, b])
+        _ = host.app
+        assert a.context is not None
+
+        host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            session=ChannelSession(isolation_key="alice"),
+            response_target=ResponseTarget.channel("telegram"),
+        )
+        report = await a.context.deliver_response(req, HostedRunResult(text="reply"))
+        assert report.pushed == ("telegram:42",)
+        # The pushed payload reflects the hook's transform.
+        assert b.pushes[0][1].text == "[hooked] reply"
+        assert seen == [("telegram", "42", False)]
+
+    @pytest.mark.asyncio
+    async def test_response_hook_mutation_isolated_per_destination(self) -> None:
+        """A hook that mutates ``messages`` on its payload must NOT affect
+        the payload another destination sees. The host clones before each
+        hook invocation."""
+        agent = _FakeAgent()
+        a = _RecordingChannel(name="responses", path="/r")
+        b = _RecordingChannel(name="telegram", path="/t")
+        c = _RecordingChannel(name="extra", path="/x")
+
+        async def hook_that_mutates(result: HostedRunResult, **_: Any) -> HostedRunResult:
+            # Naughty hook: in-place mutation of the (presumably shared)
+            # message list. Host's per-destination clone makes this safe.
+            result.messages.clear()
+            return result
+
+        b.response_hook = hook_that_mutates  # type: ignore[attr-defined]
+        host = AgentFrameworkHost(target=agent, channels=[a, b, c])
+        _ = host.app
+        assert a.context is not None
+
+        host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
+        host._identities["alice"]["extra"] = ChannelIdentity(channel="extra", native_id="9")
+
+        original = HostedRunResult(text="reply")
+        original_messages_snapshot = list(original.messages)
+
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            session=ChannelSession(isolation_key="alice"),
+            response_target=ResponseTarget.channels(["telegram", "extra"]),
+        )
+        report = await a.context.deliver_response(req, original)
+        assert sorted(report.pushed) == ["extra:9", "telegram:42"]
+        # The mutation on the telegram clone must not have touched the
+        # original payload, nor the extra channel's view.
+        assert original.messages == original_messages_snapshot
+        # ``extra`` channel saw the original-shaped payload.
+        extra_push = next(p for p in c.pushes)
+        assert extra_push[1].text == "reply"
+
+    @pytest.mark.asyncio
+    async def test_response_hook_fires_on_echo_with_is_echo_true(self) -> None:
+        """When ``echo_input`` is set, the channel's response_hook fires
+        TWICE per destination — once for the echo (is_echo=True), once
+        for the response (is_echo=False)."""
+        agent = _FakeAgent()
+        a = _RecordingChannel(name="responses", path="/r")
+        b = _RecordingChannel(name="telegram", path="/t")
+
+        phases: list[bool] = []
+
+        async def telegram_hook(result: HostedRunResult, *, context: Any, **_: Any) -> HostedRunResult:
+            phases.append(context.is_echo)
+            return result
+
+        b.response_hook = telegram_hook  # type: ignore[attr-defined]
+        host = AgentFrameworkHost(target=agent, channels=[a, b])
+        _ = host.app
+        assert a.context is not None
+
+        host._identities.setdefault("alice", {})["telegram"] = ChannelIdentity(channel="telegram", native_id="42")
+        req = ChannelRequest(
+            channel="responses",
+            operation="op",
+            input="hi",
+            session=ChannelSession(isolation_key="alice"),
+            response_target=ResponseTarget.channel("telegram", echo_input=True),
+        )
+        await a.context.deliver_response(req, HostedRunResult(text="reply"))
+        assert phases == [True, False]
+
+
+# --------------------------------------------------------------------------- #
+# HostedRunResult — multi-modal preservation                                   #
+# --------------------------------------------------------------------------- #
+
+
+class TestHostedRunResultMultiModal:
+    def test_text_kwarg_synthesises_assistant_message(self) -> None:
+        result = HostedRunResult(text="hello")
+        assert result.text == "hello"
+        assert len(result.messages) == 1
+        assert str(result.messages[0].role) == "assistant"
+        assert result.messages[0].contents[0].type == "text"
+
+    def test_messages_kwarg_carries_full_list(self) -> None:
+        msgs = [
+            Message(role="assistant", contents=[Content.from_text("one")]),
+            Message(role="assistant", contents=[Content.from_text("two")]),
+        ]
+        result = HostedRunResult(messages=msgs)
+        assert result.text == "onetwo"
+        assert result.contents and len(result.contents) == 2
+
+    def test_replace_clones_messages_so_mutations_dont_leak(self) -> None:
+        original = HostedRunResult(text="orig")
+        clone = original.replace(messages=original.messages)
+        clone.messages.clear()
+        assert original.text == "orig"
+
+    def test_replace_preserves_raw_response_by_default(self) -> None:
+        # ``raw_response`` is an opaque payload from the host; ``replace``
+        # without ``raw_response=`` must keep whatever was on the source.
+        sentinel = object()
+        original = HostedRunResult(text="x")
+        original.raw_response = sentinel  # type: ignore[assignment]
+        clone = original.replace(messages=original.messages)
+        assert clone.raw_response is sentinel
+
+    @pytest.mark.asyncio
+    async def test_invoke_forwards_multi_modal_message_list(self) -> None:
+        """The host's ``_invoke`` must pass ``AgentResponse.messages``
+        through unchanged so channels see image / tool / structured
+        content alongside text."""
+
+        class _MultiModalResponse:
+            def __init__(self) -> None:
+                self.text = "summary"
+                self.messages = [
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_text("summary"),
+                            # Non-text content the host must NOT drop.
+                            Content.from_data(data=b"\x89PNG", media_type="image/png"),
+                        ],
+                    ),
+                ]
+
+        class _MultiModalAgent:
+            def create_session(self, *, session_id: str | None = None) -> _FakeAgentSession:
+                return _FakeAgentSession(session_id=session_id)
+
+            async def run(self, *_args: Any, **_kwargs: Any) -> Any:
+                return _MultiModalResponse()
+
+        ch = _RecordingChannel(name="responses")
+        host = AgentFrameworkHost(target=_MultiModalAgent(), channels=[ch])
+        _ = host.app
+        assert ch.context is not None
+
+        req = ChannelRequest(channel="responses", operation="op", input="hi")
+        result = await ch.context.run(req)
+        assert result.text == "summary"
+        assert len(result.messages) == 1
+        types = [c.type for c in result.messages[0].contents]
+        assert "text" in types and "data" in types
+
 
 # --------------------------------------------------------------------------- #
 # Bind request context — duck-typed hook on context providers                 #
@@ -1001,11 +1279,12 @@ class TestBindRequestContext:
         assert prov.events == [("agent_start", None), ("agent_end", None)]
 
     @pytest.mark.asyncio
-    async def test_bind_descends_one_level_into_providers_attribute(self) -> None:
-        """``ContextProviderBase`` style aggregation wraps children under
-        a ``providers`` attribute; the host descends one level so the
-        Foundry history provider gets called even when the agent
-        configures it via the wrapper."""
+    async def test_bind_does_not_descend_into_providers_attribute(self) -> None:
+        """The host does not introspect ``ContextProviderBase`` aggregator
+        wrappers. Aggregator providers are responsible for forwarding the
+        bind to their children themselves (``AggregateContextProvider``
+        already does this). The host treats whatever ``agent.context_providers``
+        exposes as the final, flat list."""
         prov = _RecordingContextProvider(name="inner")
         wrapper = _ProviderWrapper([prov])
         agent = _ProvidersAgent([wrapper])
@@ -1021,7 +1300,9 @@ class TestBindRequestContext:
             attributes={"response_id": "resp_xyz"},
         )
         await ch.context.run(req)
-        assert ("enter", {"response_id": "resp_xyz", "previous_response_id": None}) in prov.events
+        # The wrapper does not implement ``response_context``, so the
+        # inner provider must NOT have been entered by the host.
+        assert ("enter", {"response_id": "resp_xyz", "previous_response_id": None}) not in prov.events
 
     @pytest.mark.asyncio
     async def test_bind_held_open_until_stream_exhaustion(self) -> None:

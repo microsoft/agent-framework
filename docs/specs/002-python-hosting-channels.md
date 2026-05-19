@@ -408,6 +408,8 @@ Messages that don't satisfy the rule are ignored at the channel layer — no `Ch
 | All linked | `ResponseTarget.all_linked` | Delivered to every channel where the resolved `isolation_key` is known. |
 | None | `ResponseTarget.none` | Background-only — caller must poll the `ContinuationToken`. Forces `background=True`. |
 
+`ResponseTarget` constructors that take at least one channel id (`.channel(...)`, `.channels([...])`, `.identities([...])`) accept an `echo_input: bool = False` kwarg. When true, the host pushes the **originating user's input** to each non-originating destination as a `role="user"` `HostedRunResult` **before** the agent reply. Used when the developer wants downstream channels to mirror what the user said so their UI stays coherent (e.g. a workflow originating on Telegram that pushes to Teams as well — the Teams transcript shows both turns). Echo failures land in `DeliveryReport.echo_failed` and do **not** abort the corresponding response push: a channel that drops echoes still receives the agent reply. Channels are free to ignore or transform the echo via their `response_hook`; the host stamps `ChannelResponseContext.is_echo=True` so hooks can branch on phase.
+
 When `response_target` is anything other than `originating`, the originating channel's protocol response is the **`ContinuationToken`** (e.g. an Invocations 202 with the token in the response body and/or a polling URL header), and the actual agent response is delivered out-of-band via the destination channel(s)' `ChannelPush`. If the destination channel doesn't implement `ChannelPush`, the host falls back per the configured policy (default: deliver to `originating`; surfaces a warning in telemetry). The configured `LinkPolicy` is consulted for every destination — destinations that fail the policy (e.g. a corp-tier channel addressed from a public-tier originating request) are dropped, and if every destination is dropped the host falls back to `originating`.
 
 **`ChannelPush`** (Protocol) — optional capability for channels that can deliver outbound messages without a prior request.
@@ -460,10 +462,22 @@ Pluggable v1-fast-follow implementations (Cosmos, SQL, Redis) plug into the same
 
 | Type | Fields | Description |
 |---|---|---|
-| `HostedRunResult` | `response: AgentResponse`, `session: AgentSession?`, `text` | One-shot outcome. |
+| `HostedRunResult` | `messages: list[Message]`, `raw_response: AgentResponse \| None`, `text` (property), `contents` (property) | One-shot outcome. Carries the **full, ordered list of `Message` objects** the agent (or workflow) produced — text, images, function calls, tool results, structured `value`s, etc. The host never collapses to text; channels (and the developer-supplied `response_hook`) decide what subset their wire renders. `raw_response` is the underlying `AgentResponse` for agent targets so channels can recover `response_id`, `usage_details`, `finish_reason`, structured `value`, … without re-running. `.text` is a best-effort, lossy projection across `Content.text`-typed contents; `.contents` is the flattened content list. A back-compat shim `HostedRunResult(text="...")` wraps a single assistant text message. Treat instances as immutable — the host clones per-destination via `result.replace(messages=...)` before invoking each channel's `response_hook`. |
 | `HostedStreamResult` | `updates: ResponseStream[...]`, `raw_events: AsyncIterable[Any] \| None`, `session: AgentSession?` | Streaming outcome. `updates` is the **normalized** stream of `AgentRunResponseUpdate` (lossless for messages, function calls, usage) and is the happy path for Responses, Invocations, Telegram, and most channels. `raw_events` is an optional **passthrough seam** onto the underlying agent event stream (before update normalization) for channels whose protocol carries domain events the framework does not model — e.g. AG-UI's `StateSnapshotEvent` / `StateDeltaEvent` / `ToolCallStartEvent`. Channels that consume `raw_events` bear responsibility for the full event translation; the request still flows through `context.stream(...)` so session resolution, identity, push, and policy continue to apply. `None` when the host has no raw upstream (e.g. a workflow-only target produced from cached events). |
 
 The host does **not** emit protocol events directly — channels translate `HostedRunResult`/`HostedStreamResult` into Responses events, Invocations SSE, webhook callbacks, or platform messages.
+
+**`ChannelResponseHook` / `ChannelResponseContext`** — dev-supplied post-processing seam applied per destination before push.
+
+| Type | Shape | Description |
+|---|---|---|
+| `ChannelResponseHook` | `Callable[[HostedRunResult, *, context: ChannelResponseContext], HostedRunResult \| Awaitable[HostedRunResult]]` | Stored as a `response_hook` attribute on a channel instance — **duck-typed**, not part of the `Channel` Protocol. Receives a per-destination clone of the `HostedRunResult` and returns a (possibly rewritten) replacement. Common uses: flatten multi-modal output to text for a text-only wire, filter out tool-call contents, replace workflow `value=` outputs with a channel-friendly rendering, attach citation entities, decide an Adaptive Card vs plain-text presentation. |
+| `ChannelResponseContext` | `request: ChannelRequest`, `channel_name: str`, `destination_identity: ChannelIdentity`, `originating: bool`, `is_echo: bool` | Per-destination context passed to a hook. `originating=False` for push deliveries (current scope of the host's `_deliver_response`); `is_echo=True` when this invocation is for the `ResponseTarget.echo_input` user-message phase rather than the agent reply phase. |
+| `apply_response_hook(hook, result, *, context)` | helper | Standardised invocation convention so channels (and the host's delivery layer) all call hooks the same way. |
+
+The host runs each destination's hook on a **cloned** `HostedRunResult`, so a hook that mutates `messages` or `contents` cannot leak into the payload another destination observes. Hooks are free to mutate in-place.
+
+
 
 ### Built-in channel constructors
 
@@ -1299,19 +1313,39 @@ external request/event
     -> channel-specific parsing + validation
     -> ChannelIdentity extraction (per-channel native id)
     -> default channel invocation mapping
-    -> optional run_hook
-    -> ChannelRequest (carries response_target, background)
+    -> optional run_hook (dev-supplied; default no-op)
+    -> ChannelRequest (carries response_target, background, echo_input)
     -> AgentFrameworkHost / ChannelContext
     -> identity_resolver(ChannelIdentity) -> isolation_key
     -> host records (isolation_key, channel, now) as last-seen (for ResponseTarget.active)
     -> AgentSession resolution (per session_mode, scoped by isolation_key)
-    -> [foreground] target execution seam -> HostedRunResult/HostedStreamResult -> originating channel serialization
+    -> target execution seam (Agent.run / Workflow.run)
+    -> HostedRunResult (multi-modal list of Message; raw AgentResponse preserved for agent targets)
+    -> [foreground] fan-out:
+            for each destination resolved from ResponseTarget:
+                -> clone HostedRunResult (per-destination isolation)
+                -> optional channel response_hook (dev-supplied; default = identity)
+                    -> hook receives ChannelResponseContext(request, channel_name, destination_identity, originating, is_echo)
+                    -> hook may flatten, filter, or transform modality for that channel's wire
+                -> channel-native serialization (channel chooses what content types it can render)
+                -> channel.push(identity, shaped_payload) | originating return value
+            if ResponseTarget.echo_input is True:
+                each non-originating destination receives the user's input first (as role="user" message),
+                then the agent reply. Echo failures land in DeliveryReport.echo_failed and do NOT abort the
+                response push on the same destination.
     -> [background or response_target != originating]
             -> ContinuationToken returned immediately to originating channel
             -> target executes asynchronously
-            -> on completion, deliver to ResponseTarget via destination channel.push(...)
+            -> on completion, the same fan-out (clone + response_hook + push) applies
             -> ContinuationToken updated; available via host.get_continuation(token) and channel poll routes
 ```
+
+**Multi-modality contract.** The host never collapses agent / workflow output to text; `HostedRunResult.messages` carries the full ordered list of `Message` objects (text, images, function calls, tool results, structured `value`s, …). Each channel — through its `response_hook` and its own serializer — decides what subset its wire can carry. A text-only channel renders the concatenated `.text` projection; a card-capable channel inspects `.contents` directly.
+
+**Per-destination cloning.** Before invoking a channel's `response_hook`, the host clones the `HostedRunResult` so one channel's transform cannot leak into the payload another destination observes. Hooks are free to mutate the clone in-place; the original (and every other clone) remains untouched.
+
+**`response_hook` is a channel-level convention, not part of the `Channel` Protocol.** Channels expose a `response_hook` attribute (callable accepting `(result, *, context: ChannelResponseContext) -> HostedRunResult | Awaitable[HostedRunResult]`). The host duck-types this attribute. Adding hook support to an existing channel package does not break the public `Channel` Protocol.
+
 
 A parallel **link ceremony flow** runs out-of-band when a user invokes the host-provided `link`/`connect` command on a channel:
 
@@ -1589,6 +1623,9 @@ Original numbering preserved so external references (checkpoints, ADR cross-link
 | 24 | Where does the Foundry history provider live? | Tentative name **`FoundryHostedAgentHistoryProvider`**, in the **`foundry-hosting`** package (shares the dependency). Confirm with Foundry package owners before launch. |
 | 25 | `Channel.confidentiality_tier` opaque vs enum? | Keep as `str?` for now; can revisit before Release. |
 | 26 | Where does the delivery-replay mechanism live? | **In the Host**, but **out of scope for v1.** The on-message `deliveries[]` envelope is sufficient input for any future replayer. |
+| 28 | Should the host collapse agent / workflow output to text? | **No.** `HostedRunResult` carries the full ordered list of `Message` objects (multi-modal). Channels decide what subset their wire renders; a `response_hook` may flatten to text for text-only channels. The host never loses fidelity it has, and never restricts modality. |
+| 29 | How do channels do per-destination post-processing (text flattening, card rendering, citation attachment) without breaking the `Channel` Protocol? | **Channels expose a `response_hook` instance attribute** (callable accepting `(result, *, context: ChannelResponseContext) -> HostedRunResult | Awaitable[HostedRunResult]`). The host duck-types this attribute and applies it on a per-destination clone of `HostedRunResult` before push. The `Channel` Protocol stays a small `name / path / contribute` contract — adding hook support to a new channel does not require Protocol changes. |
+| 30 | Should non-originating destinations also see the user's input message, not just the agent reply? | **Opt-in via `ResponseTarget.channel(name, echo_input=True)`** (and the same kwarg on `.channels([...])` / `.identities([...])`). The host pushes the user message as a separate `role="user"` payload to each non-originating destination before the agent reply. Echo failures land in `DeliveryReport.echo_failed` and do not block the corresponding response push. Channels can transform or drop echoes via their `response_hook` (which receives `is_echo=True` for the echo phase). |
 
 ### Decisions-driven follow-ups
 
