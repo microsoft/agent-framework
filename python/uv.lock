@@ -602,7 +602,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "github-copilot-sdk", marker = "python_full_version >= '3.11'", specifier = "<=1.0.0b2,>=1.0.0b2" },
+    { name = "github-copilot-sdk", marker = "python_full_version >= '3.11'", specifier = ">=1.0.0b2,<=1.0.0b2" },
 ]
 
 [[package]]

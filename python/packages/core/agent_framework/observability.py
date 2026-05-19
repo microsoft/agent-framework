@@ -4,6 +4,7 @@
 
 Commonly used exports:
 - enable_instrumentation
+- disable_instrumentation
 - enable_sensitive_telemetry
 - configure_otel_providers
 - AgentTelemetryLayer
@@ -81,6 +82,7 @@ __all__ = [
     "configure_otel_providers",
     "create_metric_views",
     "create_resource",
+    "disable_instrumentation",
     "enable_instrumentation",
     "enable_sensitive_telemetry",
     "get_meter",
@@ -679,11 +681,18 @@ class ObservabilitySettings:
             env_file_encoding=env_file_encoding,
             **kwargs,
         )
+        # Sticky-disable flag, set by `disable_instrumentation()`. When True, this
+        # singleton refuses to be re-enabled by any subsequent assignment to the
+        # `enable_instrumentation` / `enable_sensitive_data` properties (including
+        # direct third-party writes). It can only be cleared by an explicit
+        # `enable_instrumentation(force=True)` / `enable_sensitive_telemetry(force=True)`
+        # call, which is the user re-stating their intent.
+        self._user_disabled: bool = False
         # `enable_instrumentation` is defaulted to True if not set
         instrumentation_value = data.get("enable_instrumentation")
-        self.enable_instrumentation: bool = True if instrumentation_value is None else instrumentation_value
-        self.enable_sensitive_data: bool = data.get("enable_sensitive_data") or False
-        if self.enable_sensitive_data and not self.enable_instrumentation:
+        self._enable_instrumentation: bool = True if instrumentation_value is None else instrumentation_value
+        self._enable_sensitive_data: bool = data.get("enable_sensitive_data") or False
+        if self._enable_sensitive_data and not self._enable_instrumentation:
             logger.warning(
                 "Sensitive data capture is enabled but instrumentation is disabled. "
                 "Sensitive data will not be captured. Please enable instrumentation to capture sensitive data."
@@ -694,6 +703,51 @@ class ObservabilitySettings:
         self.env_file_path = env_file_path
         self.env_file_encoding = env_file_encoding
         self._executed_setup = False
+
+    @property
+    def enable_instrumentation(self) -> bool:
+        """Whether instrumentation is enabled.
+
+        Always returns False once ``disable_instrumentation()`` has been called,
+        regardless of the stored value, until ``enable_instrumentation(force=True)``
+        clears the sticky disable.
+        """
+        if self._user_disabled:
+            return False
+        return self._enable_instrumentation
+
+    @enable_instrumentation.setter
+    def enable_instrumentation(self, value: bool) -> None:
+        if self._user_disabled and value:
+            # Defense in depth: a third-party (or internal) write of True is
+            # silently dropped while the user-disabled flag is set, so the
+            # sticky disable cannot be circumvented by direct attribute writes.
+            logger.debug(
+                "Ignoring enable_instrumentation=True assignment: instrumentation was explicitly disabled via "
+                "disable_instrumentation(). Call enable_instrumentation(force=True) to clear the disable."
+            )
+            return
+        self._enable_instrumentation = value
+
+    @property
+    def enable_sensitive_data(self) -> bool:
+        """Whether sensitive-data capture is enabled.
+
+        Always returns False once ``disable_instrumentation()`` has been called.
+        """
+        if self._user_disabled:
+            return False
+        return self._enable_sensitive_data
+
+    @enable_sensitive_data.setter
+    def enable_sensitive_data(self, value: bool) -> None:
+        if self._user_disabled and value:
+            logger.debug(
+                "Ignoring enable_sensitive_data=True assignment: instrumentation was explicitly disabled via "
+                "disable_instrumentation(). Call enable_sensitive_telemetry(force=True) to clear the disable."
+            )
+            return
+        self._enable_sensitive_data = value
 
     @property
     def ENABLED(self) -> bool:
@@ -715,6 +769,17 @@ class ObservabilitySettings:
     def is_setup(self) -> bool:
         """Check if the setup has been executed."""
         return self._executed_setup
+
+    @property
+    def is_user_disabled(self) -> bool:
+        """Whether ``disable_instrumentation()`` has been called and the disable is still in effect.
+
+        Integrations that perform telemetry setup as a side-effect (e.g. provisioning Azure Monitor
+        providers from a Foundry project's connection string) should consult this flag before doing
+        their setup work, so the user's explicit opt-out is respected end-to-end and not just at the
+        framework's span-emission boundary.
+        """
+        return self._user_disabled
 
     def _configure(
         self,
@@ -961,7 +1026,7 @@ def _read_int_env(name: str, *, default: int | None = None) -> int | None:
         return default
 
 
-def enable_sensitive_telemetry() -> None:
+def enable_sensitive_telemetry(*, force: bool = False) -> None:
     """Enable capture of sensitive data in telemetry for your application.
 
     Instrumentation is enabled by default; this method exists to opt-in to capturing
@@ -971,17 +1036,57 @@ def enable_sensitive_telemetry() -> None:
     instrumentation is enabled (in case it was explicitly disabled via the
     ENABLE_INSTRUMENTATION environment variable).
 
+    Keyword Args:
+        force: When True, clears any sticky disable previously set by
+            ``disable_instrumentation()`` before enabling. Without it, calls are
+            no-ops if instrumentation has been explicitly disabled.
+
     Warning:
         Sensitive events should only be enabled on test and development environments.
     """
     global OBSERVABILITY_SETTINGS
+    if OBSERVABILITY_SETTINGS._user_disabled and not force:  # type: ignore[reportPrivateUsage]
+        logger.info(
+            "enable_sensitive_telemetry() ignored: instrumentation was explicitly disabled via "
+            "disable_instrumentation(). Pass force=True to re-enable."
+        )
+        return
+    if force:
+        OBSERVABILITY_SETTINGS._user_disabled = False  # type: ignore[reportPrivateUsage]
     OBSERVABILITY_SETTINGS.enable_instrumentation = True
     OBSERVABILITY_SETTINGS.enable_sensitive_data = True
+
+
+def disable_instrumentation() -> None:
+    """Explicitly disable Agent Framework instrumentation for this process.
+
+    The disable is **sticky**: subsequent attempts by framework auto-setup paths,
+    library integrations, ``enable_instrumentation()``, ``enable_sensitive_telemetry()``,
+    ``configure_otel_providers()``, or direct writes to
+    ``OBSERVABILITY_SETTINGS.enable_instrumentation`` are ignored and no spans, metrics,
+    or logs are emitted by Agent Framework code paths.
+
+    To override the disable later, call ``enable_instrumentation(force=True)`` or
+    ``enable_sensitive_telemetry(force=True)``. This makes the user's intent to opt out
+    win against framework code that would otherwise re-enable instrumentation
+    automatically.
+
+    Note:
+        Disabling does not tear down already-configured OpenTelemetry providers,
+        exporters, or in-flight spans; it gates future captures by Agent Framework
+        instrumentation only. To stop emitting telemetry from third-party
+        instrumentations as well, configure them separately.
+    """
+    global OBSERVABILITY_SETTINGS
+    OBSERVABILITY_SETTINGS._user_disabled = True  # type: ignore[reportPrivateUsage]
+    OBSERVABILITY_SETTINGS._enable_instrumentation = False  # type: ignore[reportPrivateUsage]
+    OBSERVABILITY_SETTINGS._enable_sensitive_data = False  # type: ignore[reportPrivateUsage]
 
 
 def enable_instrumentation(
     *,
     enable_sensitive_data: bool | None = None,
+    force: bool = False,
 ) -> None:
     """Enable instrumentation for Microsoft Agent Framework.
 
@@ -993,8 +1098,19 @@ def enable_instrumentation(
     Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+        force: When True, clears any sticky disable previously set by
+            ``disable_instrumentation()`` before enabling. Without it, calls are
+            no-ops if instrumentation has been explicitly disabled.
     """
     global OBSERVABILITY_SETTINGS
+    if OBSERVABILITY_SETTINGS._user_disabled and not force:  # type: ignore[reportPrivateUsage]
+        logger.info(
+            "enable_instrumentation() ignored: instrumentation was explicitly disabled via "
+            "disable_instrumentation(). Pass force=True to re-enable."
+        )
+        return
+    if force:
+        OBSERVABILITY_SETTINGS._user_disabled = False  # type: ignore[reportPrivateUsage]
     OBSERVABILITY_SETTINGS.enable_instrumentation = True
     if enable_sensitive_data is not None:
         OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
@@ -1125,6 +1241,12 @@ def configure_otel_providers(
         - https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/
     """
     global OBSERVABILITY_SETTINGS
+    if OBSERVABILITY_SETTINGS._user_disabled:  # type: ignore[reportPrivateUsage]
+        logger.info(
+            "configure_otel_providers(): instrumentation was explicitly disabled via "
+            "disable_instrumentation(); providers and exporters will still be configured but "
+            "Agent Framework will emit no telemetry until enable_instrumentation(force=True) is called."
+        )
     if env_file_path:
         # Build kwargs, excluding None values
         settings_kwargs: dict[str, Any] = {

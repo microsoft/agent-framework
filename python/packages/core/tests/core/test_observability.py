@@ -1387,6 +1387,189 @@ def test_configure_otel_providers_explicit_console_exporters_overrides_env(monke
     assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is False
 
 
+# region Test default-on instrumentation
+
+
+def test_observability_settings_defaults_instrumentation_true(monkeypatch):
+    """ENABLE_INSTRUMENTATION unset → ObservabilitySettings defaults to True."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    settings = ObservabilitySettings()
+    assert settings.enable_instrumentation is True
+
+
+def test_enable_instrumentation_reads_env_sensitive_data(monkeypatch):
+    """No-arg enable_instrumentation() re-reads ENABLE_SENSITIVE_DATA from env at call time.
+
+    Covers the fallback branch where the env var is set AFTER import (e.g. via load_dotenv()).
+    """
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    # Simulate load_dotenv() setting the env var after import
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+    observability.enable_instrumentation()
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+
+
+# region Test disable_instrumentation sticky behavior
+
+
+def test_disable_instrumentation_flips_settings_off(monkeypatch):
+    """disable_instrumentation() immediately turns instrumentation and sensitive data off."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.enable_sensitive_telemetry()
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+    assert observability.OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED is True
+
+    observability.disable_instrumentation()
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+    assert observability.OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED is False
+    assert observability.OBSERVABILITY_SETTINGS.ENABLED is False
+
+
+def test_disable_instrumentation_is_sticky_against_enable_instrumentation(monkeypatch):
+    """Sticky disable: enable_instrumentation() without force is a no-op after disable."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.enable_instrumentation(enable_sensitive_data=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_disable_instrumentation_is_sticky_against_enable_sensitive_telemetry(monkeypatch):
+    """Sticky disable: enable_sensitive_telemetry() without force is a no-op after disable."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.enable_sensitive_telemetry()
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_disable_instrumentation_is_sticky_against_configure_otel_providers(monkeypatch):
+    """Sticky disable: configure_otel_providers() does not flip instrumentation back on."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers(enable_sensitive_data=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_disable_instrumentation_intercepts_direct_attribute_writes(monkeypatch):
+    """Sticky disable: direct OBSERVABILITY_SETTINGS.enable_instrumentation = True is intercepted."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.OBSERVABILITY_SETTINGS.enable_instrumentation = True
+    observability.OBSERVABILITY_SETTINGS.enable_sensitive_data = True
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_enable_instrumentation_force_clears_disable(monkeypatch):
+    """enable_instrumentation(force=True) clears the sticky disable."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.enable_instrumentation(force=True, enable_sensitive_data=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+
+
+def test_enable_sensitive_telemetry_force_clears_disable(monkeypatch):
+    """enable_sensitive_telemetry(force=True) clears the sticky disable."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.enable_sensitive_telemetry(force=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+
+
+def test_disable_instrumentation_persists_after_force_until_redisabled(monkeypatch):
+    """After force-enable then disable again, the sticky disable is re-armed."""
+    import importlib
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    observability.disable_instrumentation()
+    observability.enable_instrumentation(force=True)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+
+    observability.disable_instrumentation()
+    observability.enable_instrumentation()
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+
+
+def test_disable_instrumentation_in_all(monkeypatch):
+    """disable_instrumentation must be re-exported from the module's __all__."""
+    import agent_framework.observability as observability
+
+    assert "disable_instrumentation" in observability.__all__
+    assert callable(observability.disable_instrumentation)
+
+
 # region Test _to_otel_part content types
 
 
