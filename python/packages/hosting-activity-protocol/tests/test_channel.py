@@ -157,7 +157,6 @@ class TestTeamsWebhook:
         assert not agent.runs
 
 
-@pytest.mark.asyncio
 class TestOutbound:
     async def test_send_message_posts_to_conversation_url(self) -> None:
         ch, _agent = _make_teams()
@@ -265,7 +264,6 @@ class TestInboundAuthValidator:
         assert not agent.runs
 
 
-@pytest.mark.asyncio
 class TestOutboundAuthHeader:
     async def test_no_credential_sends_no_authorization_header(self) -> None:
         ch, _agent = _make_teams()
@@ -324,7 +322,6 @@ class TestRetrySignal:
         assert r.status_code == 200
 
 
-@pytest.mark.asyncio
 class TestStreaming:
     async def test_stream_sends_placeholder_and_edits(self) -> None:
         ch, _agent = _make_teams(stream=True)
