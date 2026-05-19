@@ -425,6 +425,175 @@ async def test_execute_code_tool_populates_input_dir_with_workspace_and_file_mou
     assert (input_root / "data" / "input.txt").read_text(encoding="utf-8") == "hello from mount"
 
 
+def _build_run_config(
+    *,
+    workspace_root: Path | None = None,
+    file_mounts: tuple = (),
+) -> Any:
+    """Build a minimal _RunConfig for tests that exercise _populate_input_dir directly."""
+    return execute_code_module._RunConfig(
+        backend="wasm",
+        module="python_guest.path",
+        module_path=None,
+        approval_mode="never_require",
+        tools=(),
+        workspace_root=workspace_root,
+        workspace_signature=(),
+        file_mounts=file_mounts,
+        allowed_domains=(),
+    )
+
+
+def _symlinks_supported(tmp: Path) -> bool:
+    """Return True if the current platform/environment supports symlinks.
+
+    Mirrors python/packages/core/tests/core/test_skills.py so the symlink
+    regression tests are skipped on restricted Windows CI runners instead of
+    failing on ``OSError`` / ``NotImplementedError`` during creation.
+    """
+    test_target = tmp / "_symlink_test_target"
+    test_link = tmp / "_symlink_test_link"
+    try:
+        test_target.write_text("test", encoding="utf-8")
+        test_link.symlink_to(test_target)
+        return True
+    except (OSError, NotImplementedError):
+        return False
+    finally:
+        test_link.unlink(missing_ok=True)
+        test_target.unlink(missing_ok=True)
+
+
+def test_populate_input_dir_skips_symlink_to_file_outside_workspace(tmp_path: Path) -> None:
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside-content", encoding="utf-8")
+    (workspace / "real.txt").write_text("real-content", encoding="utf-8")
+    (workspace / "link.txt").symlink_to(outside)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+
+    execute_code_module._populate_input_dir(
+        config=_build_run_config(workspace_root=workspace),
+        input_root=input_root,
+    )
+
+    # Real file copied; symlink and its target are absent.
+    assert (input_root / "real.txt").read_text(encoding="utf-8") == "real-content"
+    assert not (input_root / "link.txt").exists()
+    assert not (input_root / "link.txt").is_symlink()
+    # Sanity: no outside-content anywhere in the input tree.
+    leaked = [
+        path
+        for path in input_root.rglob("*")
+        if path.is_file() and path.read_text(encoding="utf-8") == "outside-content"
+    ]
+    assert leaked == []
+
+
+def test_populate_input_dir_skips_symlinked_directory_outside_workspace(tmp_path: Path) -> None:
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "deep.txt").write_text("deep-content", encoding="utf-8")
+    (workspace / "linked_dir").symlink_to(outside_dir, target_is_directory=True)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+
+    execute_code_module._populate_input_dir(
+        config=_build_run_config(workspace_root=workspace),
+        input_root=input_root,
+    )
+
+    # Neither the symlink itself nor anything under the symlinked target leaks.
+    assert not (input_root / "linked_dir").exists()
+    leaked = [
+        path for path in input_root.rglob("*") if path.is_file() and path.read_text(encoding="utf-8") == "deep-content"
+    ]
+    assert leaked == []
+
+
+def test_populate_input_dir_skips_nested_symlinks(tmp_path: Path) -> None:
+    """A symlink several levels deep inside a real subdir must also be skipped."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    workspace = tmp_path / "workspace"
+    (workspace / "real_sub").mkdir(parents=True)
+    (workspace / "real_sub" / "ok.txt").write_text("ok", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside-content", encoding="utf-8")
+    (workspace / "real_sub" / "link.txt").symlink_to(outside)
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+
+    execute_code_module._populate_input_dir(
+        config=_build_run_config(workspace_root=workspace),
+        input_root=input_root,
+    )
+
+    assert (input_root / "real_sub" / "ok.txt").read_text(encoding="utf-8") == "ok"
+    assert not (input_root / "real_sub" / "link.txt").exists()
+
+
+def test_path_tree_signature_does_not_follow_symlinks(tmp_path: Path) -> None:
+    """The cache-key signature must reflect only real files (mirrors the staged tree)."""
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    real = workspace / "real.txt"
+    real.write_text("real-content", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside-content", encoding="utf-8")
+    (workspace / "link.txt").symlink_to(outside)
+
+    signature = execute_code_module._path_tree_signature(workspace)
+
+    names = [entry[0] for entry in signature]
+    assert "real.txt" in names
+    assert "link.txt" not in names
+
+
+def test_path_tree_signature_walks_through_symlinked_root(tmp_path: Path) -> None:
+    """A symlinked workspace root must produce a real signature, not an empty one.
+
+    Defends against the cache never invalidating when a caller passes a
+    symlinked workspace and the underlying real directory's contents change.
+    """
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+
+    real_workspace = tmp_path / "real_workspace"
+    real_workspace.mkdir()
+    target = real_workspace / "data.txt"
+    target.write_text("v1", encoding="utf-8")
+
+    linked_workspace = tmp_path / "linked_workspace"
+    linked_workspace.symlink_to(real_workspace, target_is_directory=True)
+
+    signature_v1 = execute_code_module._path_tree_signature(linked_workspace)
+    names = [entry[0] for entry in signature_v1]
+    assert "data.txt" in names, f"signature should include the target's contents, got {signature_v1!r}"
+
+    # Mutate the real contents; the symlinked-root signature must reflect the change
+    # so the cache key invalidates.
+    import time
+
+    time.sleep(0.01)  # ensure mtime_ns moves on filesystems with coarse granularity
+    target.write_text("v2-content-larger", encoding="utf-8")
+    signature_v2 = execute_code_module._path_tree_signature(linked_workspace)
+    assert signature_v1 != signature_v2, "signature should change when symlinked target contents change"
+
+
 def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by_target() -> None:
     execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
 

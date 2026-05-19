@@ -982,7 +982,8 @@ class FunctionalWorkflow:
 
                 # Emit the return value as the workflow output.
                 if return_value is not None:
-                    await ctx.add_event(WorkflowEvent.output(self.name, return_value))
+                    with _framework_event_origin():
+                        await ctx.add_event(WorkflowEvent("output", executor_id=self.name, data=return_value))
 
                 # Persist step cache for response-only replay
                 self._last_step_cache = dict(ctx._step_cache)

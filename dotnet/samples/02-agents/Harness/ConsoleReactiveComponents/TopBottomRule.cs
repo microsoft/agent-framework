@@ -9,9 +9,6 @@ namespace Harness.ConsoleReactiveComponents;
 /// </summary>
 public record TopBottomRuleProps : ConsoleReactiveProps
 {
-    /// <summary>Gets the width of the horizontal rules in characters.</summary>
-    public int Width { get; init; }
-
     /// <summary>Gets the foreground color of the horizontal rules. If <c>null</c>, the default terminal color is used.</summary>
     public ConsoleColor? Color { get; init; }
 }
@@ -32,7 +29,7 @@ public class TopBottomRule : ConsoleReactiveComponent<TopBottomRuleProps, Consol
         int childrenHeight = 0;
         foreach (var child in props.Children)
         {
-            childrenHeight += child.Height;
+            childrenHeight += child.BaseProps?.Height ?? 0;
         }
 
         // Top rule + children + bottom rule
@@ -51,11 +48,11 @@ public class TopBottomRule : ConsoleReactiveComponent<TopBottomRuleProps, Consol
         }
 
         // Top rule
-        Console.Write(AnsiEscapes.MoveCursor(this.Y, this.X));
+        Console.Write(AnsiEscapes.MoveCursor(props.Y, props.X));
         Console.Write(rule);
 
         // Render children stacked below the top rule
-        int currentY = this.Y + 1;
+        int currentY = props.Y + 1;
 
         if (props.Color.HasValue)
         {
@@ -64,10 +61,9 @@ public class TopBottomRule : ConsoleReactiveComponent<TopBottomRuleProps, Consol
 
         foreach (var child in props.Children)
         {
-            child.X = this.X;
-            child.Y = currentY;
+            child.BaseProps = child.BaseProps! with { X = props.X, Y = currentY };
             child.Render();
-            currentY += child.Height;
+            currentY += child.BaseProps.Height;
         }
 
         if (props.Color.HasValue)
@@ -76,7 +72,7 @@ public class TopBottomRule : ConsoleReactiveComponent<TopBottomRuleProps, Consol
         }
 
         // Bottom rule
-        Console.Write(AnsiEscapes.MoveCursor(currentY, this.X));
+        Console.Write(AnsiEscapes.MoveCursor(currentY, props.X));
         Console.Write(rule);
 
         if (props.Color.HasValue)

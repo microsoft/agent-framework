@@ -79,7 +79,14 @@ agent_framework/
 ### Workflows (`_workflows/`)
 
 - **`Workflow`** - Graph-based workflow definition
-- **`WorkflowBuilder`** - Fluent API for building workflows
+- **`WorkflowBuilder`** - Fluent API for building workflows, including explicit
+  `output_from` / `intermediate_output_from` selection for caller-facing emissions. `output_from`
+  is an allow-list for **Workflow Output**; unselected executor payloads are hidden unless
+  `intermediate_output_from` selects them as **Intermediate Output**. Use `output_from="all"` for
+  explicit all-output behavior and `intermediate_output_from="all_other"` for visible progress from
+  every output-capable executor not selected by `output_from`.
+- **`WorkflowRunResult`** - Non-streaming workflow result with Workflow Output `get_outputs()`
+  and Intermediate Output `get_intermediate_outputs()` accessors
 - **Orchestrators**: `SequentialOrchestrator`, `ConcurrentOrchestrator`, `GroupChatOrchestrator`, `MagenticOrchestrator`, `HandoffOrchestrator`
 
 ## Built-in Providers

@@ -39,7 +39,7 @@ public class ListSelection : ConsoleReactiveComponent<ListSelectionProps, Consol
         {
             foreach (string line in props.Title.Split('\n'))
             {
-                Console.Write(AnsiEscapes.MoveCursor(this.Y + row, this.X));
+                Console.Write(AnsiEscapes.MoveCursor(props.Y + row, props.X));
                 Console.Write(AnsiEscapes.EraseEntireLine);
                 Console.Write(line);
                 row++;
@@ -51,7 +51,7 @@ public class ListSelection : ConsoleReactiveComponent<ListSelectionProps, Consol
 
         for (int i = 0; i < totalItems; i++)
         {
-            Console.Write(AnsiEscapes.MoveCursor(this.Y + row, this.X));
+            Console.Write(AnsiEscapes.MoveCursor(props.Y + row, props.X));
             Console.Write(AnsiEscapes.EraseEntireLine);
 
             bool isSelected = i == props.SelectedIndex;
