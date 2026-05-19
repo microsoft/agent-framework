@@ -1012,9 +1012,20 @@ def test_get_mcp_tool_with_connection_id() -> None:
     assert tool_obj is not None
 
 
+def _skip_if_sdk_class_missing(name: str) -> Any:
+    """Return the SDK class or skip the test if older azure-ai-projects lacks it."""
+    from azure.ai.projects import models as projects_models
+
+    cls = getattr(projects_models, name, None)
+    if cls is None:
+        pytest.skip(f"azure-ai-projects in this environment does not expose {name!r}.")
+    return cls
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
 def test_get_azure_ai_search_tool() -> None:
     """Azure AI Search tool factory builds the nested resource correctly."""
-    from azure.ai.projects.models import AzureAISearchTool
+    azure_ai_search_tool_cls = _skip_if_sdk_class_missing("AzureAISearchTool")
 
     tool_obj = FoundryChatClient.get_azure_ai_search_tool(
         index_connection_id="conn-1",
@@ -1023,7 +1034,7 @@ def test_get_azure_ai_search_tool() -> None:
         top_k=5,
         filter="category eq 'docs'",
     )
-    assert isinstance(tool_obj, AzureAISearchTool)
+    assert isinstance(tool_obj, azure_ai_search_tool_cls)
     indexes = tool_obj.azure_ai_search.indexes
     assert len(indexes) == 1
     index = indexes[0]
@@ -1034,72 +1045,78 @@ def test_get_azure_ai_search_tool() -> None:
     assert index.filter == "category eq 'docs'"
 
 
+@pytest.mark.filterwarnings("ignore::FutureWarning")
 def test_get_sharepoint_tool() -> None:
     """SharePoint tool factory wires the connection through nested params."""
-    from azure.ai.projects.models import SharepointPreviewTool
+    sharepoint_tool_cls = _skip_if_sdk_class_missing("SharepointPreviewTool")
 
     tool_obj = FoundryChatClient.get_sharepoint_tool(connection_id="sp-conn")
-    assert isinstance(tool_obj, SharepointPreviewTool)
+    assert isinstance(tool_obj, sharepoint_tool_cls)
     connections = tool_obj.sharepoint_grounding_preview.project_connections
     assert connections is not None
     assert len(connections) == 1
     assert connections[0].project_connection_id == "sp-conn"
 
 
+@pytest.mark.filterwarnings("ignore::FutureWarning")
 def test_get_fabric_tool() -> None:
     """Fabric tool factory wires the connection through nested params."""
-    from azure.ai.projects.models import MicrosoftFabricPreviewTool
+    fabric_tool_cls = _skip_if_sdk_class_missing("MicrosoftFabricPreviewTool")
 
     tool_obj = FoundryChatClient.get_fabric_tool(connection_id="fab-conn")
-    assert isinstance(tool_obj, MicrosoftFabricPreviewTool)
+    assert isinstance(tool_obj, fabric_tool_cls)
     connections = tool_obj.fabric_dataagent_preview.project_connections
     assert connections is not None
     assert len(connections) == 1
     assert connections[0].project_connection_id == "fab-conn"
 
 
+@pytest.mark.filterwarnings("ignore::FutureWarning")
 def test_get_memory_search_tool() -> None:
     """Memory search tool factory passes core fields through."""
-    from azure.ai.projects.models import MemorySearchPreviewTool
+    memory_tool_cls = _skip_if_sdk_class_missing("MemorySearchPreviewTool")
 
     tool_obj = FoundryChatClient.get_memory_search_tool(
         memory_store_name="store-1",
         scope="{{$userId}}",
         update_delay=600,
     )
-    assert isinstance(tool_obj, MemorySearchPreviewTool)
+    assert isinstance(tool_obj, memory_tool_cls)
     assert tool_obj.memory_store_name == "store-1"
     assert tool_obj.scope == "{{$userId}}"
     assert tool_obj.update_delay == 600
 
 
+@pytest.mark.filterwarnings("ignore::FutureWarning")
 def test_get_computer_use_tool() -> None:
     """Computer use tool factory passes environment + display dimensions."""
-    from azure.ai.projects.models import ComputerUsePreviewTool
+    computer_use_cls = _skip_if_sdk_class_missing("ComputerUsePreviewTool")
 
     tool_obj = FoundryChatClient.get_computer_use_tool(
         environment="browser",
         display_width=1920,
         display_height=1080,
     )
-    assert isinstance(tool_obj, ComputerUsePreviewTool)
+    assert isinstance(tool_obj, computer_use_cls)
     assert tool_obj.environment == "browser"
     assert tool_obj.display_width == 1920
     assert tool_obj.display_height == 1080
 
 
+@pytest.mark.filterwarnings("ignore::FutureWarning")
 def test_get_browser_automation_tool() -> None:
     """Browser automation tool factory wraps the connection id in the params type."""
-    from azure.ai.projects.models import BrowserAutomationPreviewTool
+    browser_tool_cls = _skip_if_sdk_class_missing("BrowserAutomationPreviewTool")
 
     tool_obj = FoundryChatClient.get_browser_automation_tool(connection_id="playwright-conn")
-    assert isinstance(tool_obj, BrowserAutomationPreviewTool)
+    assert isinstance(tool_obj, browser_tool_cls)
     assert tool_obj.browser_automation_preview.connection.project_connection_id == "playwright-conn"
 
 
+@pytest.mark.filterwarnings("ignore::FutureWarning")
 def test_get_bing_custom_search_tool() -> None:
     """Bing custom search tool factory builds the nested search configuration."""
-    from azure.ai.projects.models import BingCustomSearchPreviewTool
+    bing_tool_cls = _skip_if_sdk_class_missing("BingCustomSearchPreviewTool")
 
     tool_obj = FoundryChatClient.get_bing_custom_search_tool(
         connection_id="bing-conn",
@@ -1107,7 +1124,7 @@ def test_get_bing_custom_search_tool() -> None:
         market="en-US",
         count=10,
     )
-    assert isinstance(tool_obj, BingCustomSearchPreviewTool)
+    assert isinstance(tool_obj, bing_tool_cls)
     configs = tool_obj.bing_custom_search_preview.search_configurations
     assert len(configs) == 1
     config = configs[0]
@@ -1117,45 +1134,53 @@ def test_get_bing_custom_search_tool() -> None:
     assert config.count == 10
 
 
+@pytest.mark.filterwarnings("ignore::FutureWarning")
 def test_get_a2a_tool() -> None:
     """A2A tool factory carries base_url, agent_card_path, and project_connection_id."""
-    from azure.ai.projects.models import A2APreviewTool
+    a2a_tool_cls = _skip_if_sdk_class_missing("A2APreviewTool")
 
     tool_obj = FoundryChatClient.get_a2a_tool(
         base_url="https://agent.example.com",
         agent_card_path="/.well-known/agent-card.json",
         project_connection_id="a2a-conn",
     )
-    assert isinstance(tool_obj, A2APreviewTool)
+    assert isinstance(tool_obj, a2a_tool_cls)
     assert tool_obj.base_url == "https://agent.example.com"
     assert tool_obj.agent_card_path == "/.well-known/agent-card.json"
     assert tool_obj.project_connection_id == "a2a-conn"
 
 
-@pytest.mark.parametrize(
-    "factory_name, kwargs",
-    [
-        ("get_azure_ai_search_tool", {"index_connection_id": "c", "index_name": "i"}),
-        ("get_sharepoint_tool", {"connection_id": "c"}),
-        ("get_fabric_tool", {"connection_id": "c"}),
-        (
-            "get_memory_search_tool",
-            {"memory_store_name": "s", "scope": "u"},
-        ),
-        (
-            "get_computer_use_tool",
-            {"environment": "browser", "display_width": 1, "display_height": 1},
-        ),
-        ("get_browser_automation_tool", {"connection_id": "c"}),
-        (
-            "get_bing_custom_search_tool",
-            {"connection_id": "c", "instance_name": "i"},
-        ),
-        ("get_a2a_tool", {"base_url": "https://a.example.com"}),
-    ],
-)
-def test_experimental_foundry_tool_factories_are_marked(factory_name: str, kwargs: dict[str, Any]) -> None:
+_EXPERIMENTAL_FACTORY_CASES: list[tuple[str, str, dict[str, Any]]] = [
+    ("get_azure_ai_search_tool", "AzureAISearchTool", {"index_connection_id": "c", "index_name": "i"}),
+    ("get_sharepoint_tool", "SharepointPreviewTool", {"connection_id": "c"}),
+    ("get_fabric_tool", "MicrosoftFabricPreviewTool", {"connection_id": "c"}),
+    (
+        "get_memory_search_tool",
+        "MemorySearchPreviewTool",
+        {"memory_store_name": "s", "scope": "u"},
+    ),
+    (
+        "get_computer_use_tool",
+        "ComputerUsePreviewTool",
+        {"environment": "browser", "display_width": 1, "display_height": 1},
+    ),
+    ("get_browser_automation_tool", "BrowserAutomationPreviewTool", {"connection_id": "c"}),
+    (
+        "get_bing_custom_search_tool",
+        "BingCustomSearchPreviewTool",
+        {"connection_id": "c", "instance_name": "i"},
+    ),
+    ("get_a2a_tool", "A2APreviewTool", {"base_url": "https://a.example.com"}),
+]
+
+
+@pytest.mark.filterwarnings("ignore::FutureWarning")
+@pytest.mark.parametrize("factory_name, sdk_class_name, kwargs", _EXPERIMENTAL_FACTORY_CASES)
+def test_experimental_foundry_tool_factories_are_marked(
+    factory_name: str, sdk_class_name: str, kwargs: dict[str, Any]
+) -> None:
     """Each new factory carries the FOUNDRY_TOOLS experimental feature metadata."""
+    _skip_if_sdk_class_missing(sdk_class_name)
     factory = getattr(FoundryChatClient, factory_name)
     # `@staticmethod` + `@experimental` wraps the underlying function; metadata sits on it.
     assert getattr(factory, "__feature_stage__", None) == "experimental"
@@ -1165,10 +1190,15 @@ def test_experimental_foundry_tool_factories_are_marked(factory_name: str, kwarg
 
 
 def test_get_azure_ai_search_tool_requires_sdk_class(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A missing preview class raises a clear ImportError, not AttributeError."""
+    """A missing preview class raises a clear ImportError, not AttributeError.
+
+    Uses ``setattr(..., None, raising=False)`` rather than ``delattr`` so the
+    test is robust against modules that implement PEP 562 ``__getattr__`` and
+    would otherwise rehydrate the attribute on access.
+    """
     from azure.ai.projects import models as projects_models
 
-    monkeypatch.delattr(projects_models, "AzureAISearchTool", raising=False)
+    monkeypatch.setattr(projects_models, "AzureAISearchTool", None, raising=False)
     with pytest.raises(ImportError, match="AzureAISearchTool"):
         FoundryChatClient.get_azure_ai_search_tool(
             index_connection_id="c",

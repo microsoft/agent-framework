@@ -757,7 +757,8 @@ class RawFoundryChatClient(  # type: ignore[misc]
             config_kwargs["count"] = count
         if freshness is not None:
             config_kwargs["freshness"] = freshness
-        return tool_cls(bing_custom_search_preview=params_cls(search_configurations=[config_cls(**config_kwargs)]))
+        search_params = params_cls(search_configurations=[config_cls(**config_kwargs)])
+        return tool_cls(bing_custom_search_preview=search_params)
 
     @staticmethod
     @experimental(feature_id=ExperimentalFeature.FOUNDRY_TOOLS)
