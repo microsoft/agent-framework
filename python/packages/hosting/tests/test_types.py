@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from agent_framework_hosting import (
     ChannelIdentity,
     ChannelRequest,
@@ -128,7 +126,6 @@ class TestApplyRunHook:
     and assert kwargs forwarding so a regression that drops `target`
     or `protocol_request` is caught."""
 
-    @pytest.mark.asyncio
     async def test_sync_hook_returning_modified_request(self) -> None:
         captured: dict[str, Any] = {}
 
@@ -151,7 +148,6 @@ class TestApplyRunHook:
         assert captured["target"] is target
         assert captured["protocol_request"] is proto
 
-    @pytest.mark.asyncio
     async def test_async_hook_returning_modified_request(self) -> None:
         captured: dict[str, Any] = {}
 
@@ -172,7 +168,6 @@ class TestApplyRunHook:
         assert captured["target"] is target
         assert captured["protocol_request"] is proto
 
-    @pytest.mark.asyncio
     async def test_protocol_request_can_be_none(self) -> None:
         """Channels that don't have a raw protocol payload (e.g. CLI / test
         harness invocations) pass ``protocol_request=None``; the helper

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
@@ -272,7 +271,6 @@ class TestNonHttpScopesPassThrough:
     lifespan / websocket scopes are forwarded untouched. A regression
     that touched lifespan scopes here would crash boot."""
 
-    @pytest.mark.asyncio
     async def test_lifespan_scope_does_not_consult_headers(self) -> None:
         # The TestClient context manager exercises the lifespan scope
         # implicitly; if the middleware tried to decode headers on a
