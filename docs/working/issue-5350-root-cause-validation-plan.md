@@ -4,9 +4,12 @@
 
 **Status of repro:** A focused repro test class
 `dotnet/tests/Microsoft.Agents.AI.Workflows.UnitTests/ToolApprovalRequestCheckpointReproTests.cs`
-was added covering six progressively more end-to-end variants of the path the issue
-describes. **All six tests pass** on `main`, i.e. *the bug as described does not
-reproduce* at any of the layers exercised here:
+was added covering seven progressively more end-to-end variants of the path the issue
+describes — including a **maximal** end-to-end test that uses a real
+`ChatClientAgent` driven by `FunctionInvokingChatClient` with an
+`ApprovalRequiredAIFunction`. **All seven tests pass** on `main`, consistently across
+5 back-to-back runs, i.e. *the bug as described does not reproduce* at any of the
+layers exercised here:
 
 | # | Test                                                                                | What it exercises                                                                                                                                                  | Result |
 |---|-------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------|
@@ -16,6 +19,7 @@ reproduce* at any of the layers exercised here:
 | 4 | `Repro_5350_DirectJsonMarshallerRoundtrip_IsDeterministic`                          | 25× repetition of #1 to rule out flakiness / JIT order                                                                                                             | Pass   |
 | 5 | `Repro_5350_CaptureWireFormat_ForInspection`                                        | Captures the on-the-wire shape so we can compare against the OP's SQL row                                                                                          | Pass   |
 | 6 | `Repro_5350_EndToEnd_JsonCheckpointResume_PreservesFunctionCallContentAsync`        | Full `CheckpointManager.CreateJson(InMemoryJsonStore) → RunStreamingAsync → SuperStep checkpoint → ResumeStreamingAsync` cycle with a `RequestPort<TARC, TARR>`    | Pass   |
+| 7 | `Repro_5350_EndToEnd_ChatClientAgent_WithApprovalRequiredTool_JsonCheckpointResume_PreservesFunctionCallContentAndInvokesToolAsync` | **Maximal**: `ChatClientAgent` over a `MockChatClient` with an `ApprovalRequiredAIFunction`, single-agent `WorkflowBuilder` (no orchestration), `CheckpointManager.CreateJson(InMemoryJsonStore)`. Asserts both that the resumed `RequestInfoEvent.Request` still carries a `FunctionCallContent` AND that approving the request actually invokes the underlying `AIFunction` and lets the workflow continue. | Pass   |
 
 This is **consistent with [@lokitoth's second comment](https://github.com/microsoft/agent-framework/issues/5350#issuecomment-4379664401)**:
 
@@ -71,16 +75,19 @@ the OP's reported scenario, varying one dimension at a time.
 
 ### Track A — Reproduce in a configuration closer to the OP's pattern "B"
 
-The OP's repro path differs from the new tests in three concrete ways. Each is a
-candidate root cause; the test matrix below isolates them. Each row is "add a
-test that reproduces the OP's symptom (`postResume.ToolCall is not FunctionCallContent`)".
+The OP's repro path differs from the new tests in three concrete ways. Test #7 (the
+maximal repro added to this PR) closes the biggest gap — it uses a real
+`ChatClientAgent` + `FunctionInvokingChatClient` + `ApprovalRequiredAIFunction` and
+still passes — but the remaining differences are still worth isolating. Each row below
+is "add a test that reproduces the OP's symptom (`postResume.ToolCall is not
+FunctionCallContent`)".
 
 | Step | Variable that changes vs. the passing tests in this repo                                                                                              | Why it matters                                                                                                                                                                                                       | Pass criteria                                                                |
 |------|--------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------|
-| A1   | Use `ChatClientAgent` + `ApprovalRequiredAIFunction` bound into a `WorkflowBuilder` (the GroupChatToolApproval "pattern B" path), with a fake `IChatClient` that emits a single `FunctionCallContent`. | This is the only major piece of the OP's setup that the current tests do not exercise. The TARC in this path is *generated* by `FunctionInvokingChatClient` and flows through the `AIAgentHostExecutor`. | Test fails (TARC.ToolCall comes back as base type) → root cause is in the agent-host/FICC bridge, not the marshaller. |
-| A2   | Same as A1 but with the request payload also surfaced as part of a `ChatMessage.Contents`-style transport (whatever the agent host actually serializes through). Inspect the on-the-wire JSON for the inner `toolCall` and look for an absent or differently-named `$type`. | If the TARC is round-tripped as `AIContent`/`ChatMessage` instead of as itself, the polymorphism is two-deep (`AIContent` → TARC, TARC → ToolCall). It is plausible that one branch resolves but the other doesn't.  | Find missing `$type` in serialized payload.                                  |
-| A3   | Same as the passing test #6 in this file, but with the SQL Server-style store that round-trips the `JsonElement` through `string` and back (e.g. `element.GetRawText()` → `JsonDocument.Parse`).                                                                                                              | The OP uses Dapper + SQL Server. If the column is `nvarchar` and the round-trip preserves ordering, this should be identity-preserving — but if the OP uses `jsonb`-like storage that reorders metadata properties, the `$type` discriminator can be moved out of "first" position, which then requires `AllowOutOfOrderMetadataProperties = true`. Note `JsonMarshaller` only propagates that one flag from the user's `customOptions`. | Test fails when ordering is permuted before deserialization. Confirms the storage layer is reordering metadata. |
-| A4   | Same as #6 but with a non-default `JsonSerializerOptions` passed as `customOptions` to `CheckpointManager.CreateJson`, where the user-supplied options do **not** include the polymorphism resolver and `JsonMarshaller`'s `LookupTypeInfo` falls back to them for some type. | `JsonMarshaller.LookupTypeInfo` only goes to the external options when the internal chain doesn't know about the type. For most cases this won't trigger, but it's worth confirming that supplying a custom `JsonSerializerOptions` does not silently displace the internal chain.                            | Either the external options are never consulted for `AIContent` (good), or there is a sneak path where they are (regression).                                                                                                  |
+| A1   | ~~Use `ChatClientAgent` + `ApprovalRequiredAIFunction` bound into a `WorkflowBuilder`~~ — **covered by test #7 in this PR; passes.**                  | Was the largest gap to the OP's repro. Closed.                                                                                                                                                                       | N/A — already passing.                                                       |
+| A2   | Multi-agent variant: same as #7 but with the agent inside `GroupChatBuilder` (the OP's actual orchestration), to rule out a group-chat-specific re-wrap or replay path that drops the TARC.ToolCall type. | If group chat re-encodes TARC as part of `ChatMessage.Contents` (`AIContent` polymorphism is two-deep through `ToolApprovalRequestContent`), one branch may resolve and the other not.                              | Test fails → root cause is in the group-chat message round-trip, not the marshaller. |
+| A3   | Same as #7 but with the JSON `JsonElement` round-tripped through `string` + `JsonDocument.Parse` between commit and retrieve (i.e. emulating the SQL `nvarchar` hop in the OP's Dapper store).                                                                                              | The OP uses Dapper + SQL Server. If the column / driver round-trip preserves ordering, this should be identity-preserving — but if it reorders metadata properties, the `$type` discriminator can be moved out of first position, which then requires `AllowOutOfOrderMetadataProperties = true`. Note `JsonMarshaller` only propagates that one flag from the user's `customOptions`. | Test fails when ordering is permuted before deserialization. Confirms the storage layer is reordering metadata. |
+| A4   | Same as #7 but with a non-default `JsonSerializerOptions` passed as `customOptions` to `CheckpointManager.CreateJson`, where the user-supplied options do **not** include the polymorphism resolver and `JsonMarshaller`'s `LookupTypeInfo` falls back to them for some type. | `JsonMarshaller.LookupTypeInfo` only goes to the external options when the internal chain doesn't know about the type. For most cases this won't trigger, but it's worth confirming that supplying a custom `JsonSerializerOptions` does not silently displace the internal chain.                            | Either the external options are never consulted for `AIContent` (good), or there is a sneak path where they are (regression).                                                                                                  |
 
 ### Track B — Validate the wire format the OP actually persists
 
@@ -130,8 +137,14 @@ The combination of:
 - the resolver chain in `WorkflowsJsonUtilities.CreateDefaultOptions()` already
   putting `AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver` first
   (which itself puts `AIJsonUtilities.DefaultOptions.TypeInfoResolver` first),
-- the wire format captured above showing `"$type": "functionCall"` is present, and
-- the full `Run → checkpoint → Resume` test in this PR passing,
+- the wire format captured above showing `"$type": "functionCall"` is present,
+- the full `Run → checkpoint → Resume` test in this PR passing for a plain
+  `RequestPort<TARC, ToolApprovalResponseContent>` workflow, **and**
+- the maximal `ChatClientAgent` + `FunctionInvokingChatClient` +
+  `ApprovalRequiredAIFunction` test in this PR also passing — including the
+  assertion that the wrapped `AIFunction` is actually invoked exactly once after
+  approval and that the workflow then receives the resulting
+  `FunctionResultContent` and produces a final assistant message,
 
 is sufficient to **disprove** the OP's stated hypothesis. Once Track A or
 Track B identifies the actual cause, the issue should be updated with a brief

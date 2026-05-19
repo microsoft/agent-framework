@@ -2,6 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -252,5 +255,234 @@ public class ToolApprovalRequestCheckpointReproTests
         // Always-true assertion — purpose of this test is to expose the wire format.
         serialized.Should().NotBeNullOrEmpty();
         serialized.Should().Contain(CallId, "the call id should be present in the serialized form");
+    }
+
+    /// <summary>
+    /// Maximal end-to-end repro for issue #5350 using the same shape as the OP's reported
+    /// scenario (pattern "B" in the GroupChatToolApproval sample), but with a single
+    /// <see cref="ChatClientAgent"/> bound directly into a <see cref="WorkflowBuilder"/>
+    /// (no orchestration), and with a real <see cref="ApprovalRequiredAIFunction"/>-wrapped
+    /// tool that the agent actually attempts to call. The test:
+    /// <list type="number">
+    /// <item>builds a <see cref="ChatClientAgent"/> over a <see cref="MockChatClient"/> that
+    /// returns a <see cref="FunctionCallContent"/> on the first turn and a final assistant
+    /// text on the second turn (so <see cref="FunctionInvokingChatClient"/> converts the FCC
+    /// to a <see cref="ToolApprovalRequestContent"/> and surfaces it as a workflow
+    /// <see cref="RequestInfoEvent"/>),</item>
+    /// <item>persists checkpoints via the OP's exact path —
+    /// <c>CheckpointManager.CreateJson(InMemoryJsonStore)</c> +
+    /// <c>InProcessExecutionEnvironment.WithCheckpointing(...).RunStreamingAsync(...)</c> —
+    /// so every checkpoint is round-tripped through the same <see cref="JsonMarshaller"/> +
+    /// <see cref="PortableValueConverter"/> pipeline the OP's SQL-backed store uses,</item>
+    /// <item>validates that the first-run <see cref="RequestInfoEvent.Request"/> carries a
+    /// <see cref="ToolApprovalRequestContent"/> whose <c>ToolCall</c> is a
+    /// <see cref="FunctionCallContent"/>,</item>
+    /// <item>disposes the run and resumes from the last <see cref="SuperStepCompletedEvent"/>
+    /// checkpoint via <see cref="InProcessExecutionEnvironment.ResumeStreamingAsync"/>,</item>
+    /// <item>validates the re-emitted <see cref="RequestInfoEvent.Request"/> still carries a
+    /// <see cref="ToolApprovalRequestContent"/> whose <c>ToolCall</c> is a
+    /// <see cref="FunctionCallContent"/> — this is the assertion the OP claims fails,</item>
+    /// <item>sends an approval response back into the resumed run and asserts the wrapped
+    /// function is actually invoked (counter increments) and the workflow completes with a
+    /// final assistant message.</item>
+    /// </list>
+    /// </summary>
+    [Fact]
+    public async Task Repro_5350_EndToEnd_ChatClientAgent_WithApprovalRequiredTool_JsonCheckpointResume_PreservesFunctionCallContentAndInvokesToolAsync()
+    {
+        // Arrange — counting tool wrapped for approval
+        int invocationCount = 0;
+        const string ToolName = "GetWeather";
+        const string ToolResultText = "Sunny, 22°C";
+
+        AIFunction underlyingTool = AIFunctionFactory.Create(
+            ([Description("City to look up")] string city) =>
+            {
+                Interlocked.Increment(ref invocationCount);
+                return ToolResultText;
+            },
+            name: ToolName,
+            description: "Gets the weather for the given city");
+
+        ApprovalRequiredAIFunction approvalTool = new(underlyingTool);
+
+        // Arrange — mock chat client that turn-1 emits an FCC for the approval-required tool,
+        // turn-2 (after FunctionInvokingChatClient processes the approval + invokes the tool +
+        // appends a FunctionResultContent) emits a final assistant text.
+        const string ToolCallId = "call-1";
+        const string FinalAssistantText = "The weather in Amsterdam is sunny and 22°C.";
+        int chatCallIndex = 0;
+        List<List<ChatMessage>> capturedInputs = new();
+
+        MockChatClient mockChatClient = new((messages, options) =>
+        {
+            // Capture a snapshot of the inputs the agent passed in for this service call so the
+            // test can later assert the FunctionResultContent flowed back to the model.
+            capturedInputs.Add(new List<ChatMessage>(messages));
+
+            int index = Interlocked.Increment(ref chatCallIndex) - 1;
+            return index switch
+            {
+                0 => new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                    [new FunctionCallContent(
+                        callId: ToolCallId,
+                        name: ToolName,
+                        arguments: new Dictionary<string, object?> { ["city"] = "Amsterdam" })])),
+                _ => new ChatResponse(new ChatMessage(ChatRole.Assistant, FinalAssistantText)),
+            };
+        });
+
+        ChatClientAgent agent = new(
+            mockChatClient,
+            instructions: "You are a weather agent.",
+            name: "WeatherAgent",
+            tools: [approvalTool]);
+
+        // Arrange — single-agent workflow. The AIAgent is auto-promoted to an ExecutorBinding
+        // via the implicit operator on ExecutorBinding.
+        Workflow workflow = new WorkflowBuilder(agent).Build();
+
+        // Arrange — JSON checkpoint manager backed by an in-memory JSON store. This mirrors
+        // the OP's "JsonCheckpointStore-backed CheckpointManager.CreateJson(...)" path —
+        // every checkpoint is round-tripped through the same JsonMarshaller +
+        // PortableValueConverter that the OP's SQL-backed store uses, just without the
+        // disk/SQL hop.
+        CheckpointManager checkpointManager = CheckpointManager.CreateJson(new InMemoryJsonStore());
+
+        InProcessExecutionEnvironment env = InProcessExecution.OffThread;
+        List<ChatMessage> inputMessages = [new(ChatRole.User, "What's the weather in Amsterdam?")];
+
+        // Act 1 — run until we see the approval request, then capture the latest checkpoint.
+        ExternalRequest? firstRunRequest = null;
+        CheckpointInfo? checkpoint = null;
+
+        await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
+                                                      .RunStreamingAsync(workflow, inputMessages))
+        {
+            // Trigger an actual turn — without a TurnToken the AIAgentHostExecutor will not
+            // invoke the agent. This matches the GroupChatToolApproval sample and the
+            // StreamAsyncWithTurnTokenShouldExecuteWorkflow pattern in InProcessExecutionTests.
+            (await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)))
+                .Should().BeTrue("the workflow should accept a TurnToken");
+
+            using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
+            await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
+            {
+                if (evt is RequestInfoEvent requestInfo)
+                {
+                    firstRunRequest ??= requestInfo.Request;
+                }
+
+                if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
+                {
+                    checkpoint = cp;
+                }
+            }
+        }
+
+        firstRunRequest.Should().NotBeNull(
+            "the ChatClientAgent + FICC pipeline should have surfaced the approval request as a workflow RequestInfoEvent");
+        checkpoint.Should().NotBeNull(
+            "a checkpoint should have been produced while the approval request was pending");
+        chatCallIndex.Should().Be(1, "the mock chat client should have been called exactly once before the approval was requested");
+        invocationCount.Should().Be(0, "the underlying tool must NOT have been invoked before the approval was granted");
+
+        ToolApprovalRequestContent? preCheckpoint = firstRunRequest!.Data.As<ToolApprovalRequestContent>();
+        preCheckpoint.Should().NotBeNull("the pending external request should carry a ToolApprovalRequestContent payload");
+        preCheckpoint!.ToolCall.Should().BeOfType<FunctionCallContent>(
+            "the pre-checkpoint pending request payload must already be a FunctionCallContent");
+
+        // Act 2 — resume from the checkpoint with a brand-new env / handle so that any
+        // in-process AIAgentHostExecutor instance state is gone and everything has to be
+        // rehydrated from the on-disk JSON.
+        ExternalRequest? resumedRequest = null;
+        List<WorkflowEvent> postResumeEvents = [];
+
+        await using (StreamingRun resumed = await env.WithCheckpointing(checkpointManager)
+                                                     .ResumeStreamingAsync(workflow, checkpoint!))
+        {
+            using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
+
+            // First pass: see the re-emitted RequestInfoEvent, but don't block on it.
+            await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
+            {
+                if (evt is RequestInfoEvent requestInfo)
+                {
+                    resumedRequest ??= requestInfo.Request;
+                }
+            }
+
+            resumedRequest.Should().NotBeNull(
+                "the resumed workflow should re-emit the pending approval RequestInfoEvent");
+
+            // The core issue #5350 assertion.
+            ToolApprovalRequestContent? postResume = resumedRequest!.Data.As<ToolApprovalRequestContent>();
+            postResume.Should().NotBeNull(
+                "ExternalRequest.Data.As<ToolApprovalRequestContent>() should materialize the payload after a JSON-file checkpoint resume");
+            postResume!.ToolCall.Should().NotBeNull("the resumed TARC must carry its ToolCall");
+            postResume.ToolCall.Should().BeOfType<FunctionCallContent>(
+                "after CheckpointManager.CreateJson(InMemoryJsonStore) round-trip via " +
+                "ResumeStreamingAsync, ToolApprovalRequestContent.ToolCall must still be a " +
+                "FunctionCallContent so that FunctionInvokingChatClient's pattern match " +
+                "(`tarc.ToolCall is FunctionCallContent`) continues to fire (issue #5350).");
+
+            FunctionCallContent resumedFcc = (FunctionCallContent)postResume.ToolCall;
+            resumedFcc.Name.Should().Be(ToolName);
+            resumedFcc.CallId.Should().EndWith(ToolCallId,
+                "the workflow rewrites the CallId with an executor-scoped prefix, but should preserve the original tail");
+
+            // Act 3 — send the approval response back into the resumed run and watch the
+            // remaining stream. This drives FunctionInvokingChatClient through its
+            // post-approval branch, where it must invoke the underlying AIFunction, append a
+            // FunctionResultContent, and call the model a second time.
+            ToolApprovalResponseContent approvalResponse = postResume.CreateResponse(approved: true);
+            await resumed.SendResponseAsync(resumedRequest.CreateResponse(approvalResponse));
+
+            using CancellationTokenSource cts2 = new(TimeSpan.FromSeconds(30));
+            await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(blockOnPendingRequest: false, cts2.Token))
+            {
+                postResumeEvents.Add(evt);
+            }
+        }
+
+        // Assert 3 — the tool actually got called as part of the approval round-trip, and
+        // the workflow continued without raising errors.
+        invocationCount.Should().Be(1,
+            "approving the request should cause FunctionInvokingChatClient to invoke the wrapped AIFunction exactly once");
+        chatCallIndex.Should().Be(2,
+            "after the tool was invoked, FunctionInvokingChatClient should have made a second chat-client call to produce the final assistant message");
+        capturedInputs.Should().HaveCount(2);
+        capturedInputs[1].Should().Contain(
+            m => m.Contents.OfType<FunctionResultContent>().Any(),
+            "the second chat-client call must include the FunctionResultContent produced by the approved tool invocation");
+
+        postResumeEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty(
+            "no workflow errors should be raised when responding to the resumed approval request");
+        postResumeEvents.OfType<ExecutorFailedEvent>().Should().BeEmpty(
+            "no executor failures should be raised when responding to the resumed approval request");
+    }
+
+    /// <summary>
+    /// Minimal <see cref="IChatClient"/> stub for repro tests; delegates each call to a caller-supplied factory.
+    /// </summary>
+    private sealed class MockChatClient(Func<IEnumerable<ChatMessage>, ChatOptions?, ChatResponse> responseFactory) : IChatClient
+    {
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+            => Task.FromResult(responseFactory(messages, options));
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            ChatResponse response = await this.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+            foreach (ChatResponseUpdate update in response.ToChatResponseUpdates())
+            {
+                yield return update;
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
     }
 }
