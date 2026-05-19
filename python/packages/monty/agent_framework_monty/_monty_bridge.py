@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import keyword
 import types
 import typing
 from collections.abc import Callable, Sequence
@@ -98,6 +99,11 @@ def generate_type_stubs(tool_callables: dict[str, Callable[..., Any]]) -> str:
     Stubs are fed to Monty's ``type_check_stubs`` so ``ty`` can validate the
     LLM-generated code against the actual tool signatures before any host
     call runs.
+
+    Tools whose ``name`` is not a valid Python identifier are skipped because
+    their name cannot be safely splatted into stub source. The model can still
+    reach them via the ``call_tool("weird name", ...)`` fallback at runtime,
+    but they will not get type-checked stubs.
     """
     lines: list[str] = [
         "from typing import Any",
@@ -110,6 +116,11 @@ def generate_type_stubs(tool_callables: dict[str, Callable[..., Any]]) -> str:
     ]
 
     for name, func in sorted(tool_callables.items()):
+        if not name.isidentifier() or keyword.iskeyword(name):
+            # A non-identifier name (or a Python keyword) would inject invalid
+            # / dangerous syntax into the stub source. Skip stub generation;
+            # the tool stays reachable through ``call_tool(name, ...)``.
+            continue
         try:
             sig = inspect.signature(func)
             hints = get_type_hints(func, include_extras=True)
@@ -303,12 +314,14 @@ class InlineCodeBridge:
         return snapshot.resume(resume_results)
 
     async def _invoke_tool(self, cid: int, name: str, kwargs: dict[str, Any]) -> tuple[int, Any]:
+        # Every entry in ``self.tool_map`` is produced by ``_make_tool_callback``
+        # as ``partial(FunctionTool.invoke, skip_parsing=True)``. ``FunctionTool.invoke``
+        # is always ``async def``, so a plain ``await`` is correct for every call and
+        # avoids relying on ``inspect.iscoroutinefunction(partial(...))``, which can
+        # return ``False`` for some ``partial`` shapes (cpython#98590) and would route
+        # the call through ``asyncio.to_thread`` with an unawaited coroutine return.
         try:
-            tool_func = self.tool_map[name]
-            if inspect.iscoroutinefunction(tool_func):
-                result = await tool_func(**kwargs)
-            else:
-                result = await asyncio.to_thread(tool_func, **kwargs)
+            result = await self.tool_map[name](**kwargs)
             return cid, {"return_value": _ensure_json_value(result)}
         except Exception as exc:
             return cid, _external_error(exc)

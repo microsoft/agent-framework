@@ -582,3 +582,61 @@ def test_generate_type_stubs_preserves_none_and_optional() -> None:
     assert "async def optional_param(x: int | None = ...) -> bool:" in stubs
     # Multi-arm union with None.
     assert "async def union_param(x: int | str | None) -> str:" in stubs
+
+
+def test_generate_type_stubs_skips_non_identifier_tool_names() -> None:
+    """Tool names that are not valid Python identifiers must not be splatted into stub source.
+
+    The model can still reach them via ``call_tool("weird-name", ...)`` at
+    runtime; they just don't get type-checked stubs.
+    """
+
+    def evil(x: int) -> int:
+        return x
+
+    def normal(x: int) -> int:
+        return x
+
+    stubs = bridge_module.generate_type_stubs({
+        # Hyphens are not valid identifier chars.
+        "weird-name": evil,
+        # Newlines in the name would inject arbitrary stub source.
+        "broken\n    pass\nasync def injected": evil,
+        # Python keywords are valid identifiers per ``str.isidentifier()`` but
+        # would still produce uncompilable stubs.
+        "async": evil,
+        # Real tool that should still appear.
+        "normal": normal,
+    })
+
+    assert "async def normal(x: int) -> int:" in stubs
+    assert "weird-name" not in stubs
+    assert "injected" not in stubs
+    assert "async def async(" not in stubs
+
+
+async def test_invoke_tool_awaits_partial_wrapped_async_method() -> None:
+    """A FunctionTool callback registered via partial(FunctionTool.invoke, ...) must be awaited.
+
+    Regression for PR #5915 review feedback: relying on ``inspect.iscoroutinefunction``
+    to choose between ``await`` and ``asyncio.to_thread`` is fragile for
+    ``functools.partial`` wrappers (cpython#98590) and would surface the
+    returned coroutine as a JSON-serialization error instead of the real
+    tool result. The bridge must always ``await`` entries in ``self.tool_map``.
+    """
+    from functools import partial
+
+    from agent_framework_monty._monty_bridge import InlineCodeBridge
+
+    @tool
+    def adder(a: Annotated[int, ""], b: Annotated[int, ""]) -> int:
+        """Add."""
+        return a + b
+
+    # Mirrors what _make_tool_callback returns.
+    cb = partial(adder.invoke, skip_parsing=True)
+    bridge = InlineCodeBridge({"adder": cb})
+
+    cid, payload = await bridge._invoke_tool(7, "adder", {"a": 6, "b": 7})
+    assert cid == 7
+    assert payload == {"return_value": 13}, payload
