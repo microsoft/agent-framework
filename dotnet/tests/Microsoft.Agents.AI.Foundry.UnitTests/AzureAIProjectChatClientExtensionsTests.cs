@@ -1380,6 +1380,133 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
     #endregion
 
+    #region AsAIAgent(AIProjectClient, Uri agentEndpoint) Tests
+
+    private const string TestAgentEndpointUrl = "https://test.services.ai.azure.com/api/projects/test-project/agents/it-happy-path/endpoint/protocols/openai";
+
+    /// <summary>
+    /// Verify that AsAIAgent(Uri agentEndpoint) throws ArgumentNullException when AIProjectClient is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithAgentEndpoint_WithNullClient_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AIProjectClient? client = null;
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            client!.AsAIAgent(new Uri(TestAgentEndpointUrl)));
+
+        Assert.Equal("aiProjectClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent(Uri agentEndpoint) throws ArgumentNullException when agentEndpoint is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithAgentEndpoint_WithNullEndpoint_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            client.AsAIAgent((Uri)null!));
+
+        Assert.Equal("agentEndpoint", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent(Uri agentEndpoint) populates Name/Id from the parsed endpoint slug
+    /// and exposes the supplied <see cref="AIProjectClient"/> via <see cref="AIAgent.GetService{TService}(object?)"/>.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithAgentEndpoint_PopulatesNameAndIdFromSlugAndReusesProjectClient()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+
+        // Act
+        var agent = client.AsAIAgent(new Uri(TestAgentEndpointUrl));
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<FoundryAgent>(agent);
+        Assert.Equal("it-happy-path", agent.Name);
+        Assert.Equal("it-happy-path", agent.Id);
+        Assert.Same(client, agent.GetService<AIProjectClient>());
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent(Uri agentEndpoint) applies the supplied client factory exactly once.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithAgentEndpoint_WithClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        TestChatClient? testChatClient = null;
+
+        // Act
+        var agent = client.AsAIAgent(
+            new Uri(TestAgentEndpointUrl),
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent(Uri agentEndpoint) forwards the supplied tools to the inner
+    /// <see cref="ChatClientAgent"/>'s <see cref="ChatOptions.Tools"/>.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithAgentEndpoint_ForwardsToolsToInnerChatOptions()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        var tool1 = AIFunctionFactory.Create(() => "result-1", "tool_1", "First test tool.");
+        var tool2 = AIFunctionFactory.Create(() => "result-2", "tool_2", "Second test tool.");
+        List<AITool> tools = [tool1, tool2];
+
+        // Act
+        var agent = client.AsAIAgent(new Uri(TestAgentEndpointUrl), tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        ChatOptions? chatOptions = GetAgentChatOptions(agent);
+        Assert.NotNull(chatOptions);
+        Assert.NotNull(chatOptions!.Tools);
+        Assert.Equal(2, chatOptions.Tools!.Count);
+        Assert.Same(tool1, chatOptions.Tools[0]);
+        Assert.Same(tool2, chatOptions.Tools[1]);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent(Uri agentEndpoint) accepts a null tools argument without throwing
+    /// and produces an agent whose inner <see cref="ChatOptions.Tools"/> is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithAgentEndpoint_WithNullTools_DoesNotThrow()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+
+        // Act
+        var agent = client.AsAIAgent(new Uri(TestAgentEndpointUrl), tools: null);
+
+        // Assert
+        Assert.NotNull(agent);
+        ChatOptions? chatOptions = GetAgentChatOptions(agent);
+        Assert.NotNull(chatOptions);
+        Assert.Null(chatOptions!.Tools);
+    }
+
+    #endregion
+
     #region Helper Methods
 
     /// <summary>

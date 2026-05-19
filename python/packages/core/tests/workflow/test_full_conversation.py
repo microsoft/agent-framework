@@ -177,7 +177,7 @@ async def test_agent_executor_populates_full_conversation_non_streaming() -> Non
     agent_exec = AgentExecutor(agent, id="agent1-exec")
     capturer = _CaptureFullConversation(id="capture")
 
-    wf = WorkflowBuilder(start_executor=agent_exec, output_executors=[capturer]).add_edge(agent_exec, capturer).build()
+    wf = WorkflowBuilder(start_executor=agent_exec, output_from=[capturer]).add_edge(agent_exec, capturer).build()
 
     # Act: use run() to test non-streaming mode
     result = await wf.run("hello world")
@@ -344,7 +344,7 @@ async def test_agent_executor_full_conversation_round_trip_does_not_duplicate_hi
     coordinator = _RoundTripCoordinator(target_agent_id="writer_agent")
 
     wf = (
-        WorkflowBuilder(start_executor=agent_exec, output_executors=[coordinator])
+        WorkflowBuilder(start_executor=agent_exec, output_from=[coordinator])
         .add_edge(agent_exec, coordinator)
         .add_edge(coordinator, agent_exec)
         .build()
@@ -450,7 +450,7 @@ async def test_run_request_with_full_history_clears_service_session_id() -> None
     coordinator = _FullHistoryReplayCoordinator(id="coord", target_exec=spy_exec)
 
     wf = (
-        WorkflowBuilder(start_executor=tool_exec, output_executors=[coordinator])
+        WorkflowBuilder(start_executor=tool_exec, output_from=[coordinator])
         .add_edge(tool_exec, coordinator)
         .add_edge(coordinator, spy_exec)
         .build()
@@ -478,7 +478,7 @@ async def test_from_response_preserves_service_session_id() -> None:
     # Simulate a prior run on the spy executor.
     spy_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
 
-    wf = WorkflowBuilder(start_executor=tool_exec, output_executors=[spy_exec]).add_edge(tool_exec, spy_exec).build()
+    wf = WorkflowBuilder(start_executor=tool_exec, output_from=[spy_exec]).add_edge(tool_exec, spy_exec).build()
 
     result = await wf.run("start")
     assert result.get_outputs() is not None
@@ -517,7 +517,7 @@ async def test_with_text_preserves_full_conversation_through_custom_executor() -
     capturer = _CaptureFullConversation(id="capture")
 
     wf = (
-        WorkflowBuilder(start_executor=agent1, output_executors=[capturer])
+        WorkflowBuilder(start_executor=agent1, output_from=[capturer])
         .add_chain([agent1, agent2, _upper_case_executor, agent3, capturer])
         .build()
     )

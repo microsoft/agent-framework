@@ -67,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **agent-framework-foundry-hosting**: Add hosted Durable Workflow support — propagate full conversation history to workflow agents and wire `Workflow.as_agent()` end-to-end via the foundry hosting layer ([#5531](https://github.com/microsoft/agent-framework/pull/5531))
 
 ### Changed
-- **agent-framework-orchestrations**: [BREAKING] Standardize orchestration terminal outputs as `AgentResponse` so `Workflow.as_agent()` returns the final answer only; aligns sequential-approval (`with_request_info`) and concurrent (`intermediate_outputs=True`) flows on the same output contract ([#5301](https://github.com/microsoft/agent-framework/pull/5301))
+- **agent-framework-orchestrations**: [BREAKING] Standardize orchestration terminal outputs as `AgentResponse` so `Workflow.as_agent()` returns the final answer only; aligns sequential-approval (`with_request_info`) and concurrent participant output designation flows on the same output contract ([#5301](https://github.com/microsoft/agent-framework/pull/5301))
 - **agent-framework-core**, **agent-framework-declarative**: Preserve `Workflow.run()` shared state across calls so multi-turn `WorkflowAgent` invocations retain context, accept `list[Message]` input in the declarative start executor, and coerce `Enum` values when serializing PowerFx symbols ([#5531](https://github.com/microsoft/agent-framework/pull/5531))
 - **dependencies**: Update workspace package dependencies and preserve `mcp[ws]` / `uvicorn[standard]` extras through override-dependencies in `/python` ([#5555](https://github.com/microsoft/agent-framework/pull/5555))
 

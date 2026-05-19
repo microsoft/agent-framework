@@ -1056,7 +1056,7 @@ class PassthroughExecutor(Executor):
 
 
 async def test_output_executors_empty_yields_all_outputs() -> None:
-    """Test that when _output_executors is empty (default), all outputs are yielded."""
+    """Test that omitted output selection yields all outputs for compatibility."""
     # Create executors that each produce different outputs
     executor_a = PassthroughExecutor(id="executor_a", output_value=10)
     executor_b = OutputProducerExecutor(id="executor_b", output_value=20)
@@ -1085,9 +1085,7 @@ async def test_output_executors_filters_outputs_non_streaming() -> None:
 
     # Build workflow with a -> b
     workflow = (
-        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_b])
-        .add_edge(executor_a, executor_b)
-        .build()
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_b]).add_edge(executor_a, executor_b).build()
     )
 
     result = await workflow.run(NumberMessage(data=0))
@@ -1110,9 +1108,7 @@ async def test_output_executors_filters_outputs_streaming() -> None:
 
     # Build workflow with a -> b
     workflow = (
-        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_a])
-        .add_edge(executor_a, executor_b)
-        .build()
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_a]).add_edge(executor_a, executor_b).build()
     )
 
     # Collect outputs from streaming
@@ -1136,7 +1132,7 @@ async def test_output_executors_with_multiple_specified_executors() -> None:
 
     # Build workflow with a -> b -> c
     workflow = (
-        WorkflowBuilder(start_executor=executor_a, output_executors=[executor_a, executor_c])
+        WorkflowBuilder(start_executor=executor_a, output_from=[executor_a, executor_c])
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_c)
         .build()
@@ -1154,12 +1150,15 @@ async def test_output_executors_with_multiple_specified_executors() -> None:
 
 async def test_output_executors_with_nonexistent_executor_id() -> None:
     """Test that specifying a non-existent executor ID doesn't break the workflow."""
+    from agent_framework._workflows._workflow import OutputDesignation
+
     executor_a = OutputProducerExecutor(id="executor_a", output_value=42)
 
     workflow = WorkflowBuilder(start_executor=executor_a).build()
 
-    # Set output_executors to an ID that doesn't exist
-    workflow._output_executors = ["nonexistent_executor"]  # type: ignore
+    # Designate a nonexistent executor so the workflow-level filter drops every yield.
+    workflow._output_designation = OutputDesignation(outputs=frozenset({"nonexistent_executor"}))  # type: ignore[attr-defined]
+    workflow._runner.context.set_yield_output_classifier(workflow._output_designation.classify)  # type: ignore[attr-defined,reportPrivateUsage]
 
     result = await workflow.run(NumberMessage(data=0))
     outputs = result.get_outputs()
@@ -1199,7 +1198,7 @@ async def test_output_executors_filtering_with_fan_in() -> None:
 
     # Build fan-in workflow: start -> [a, b] -> aggregator
     workflow = (
-        WorkflowBuilder(start_executor=executor_start, output_executors=[aggregator])
+        WorkflowBuilder(start_executor=executor_start, output_from=[aggregator])
         .add_fan_out_edges(executor_start, [executor_a, executor_b])
         .add_fan_in_edges([executor_a, executor_b], aggregator)
         .build()
@@ -1218,7 +1217,7 @@ async def test_output_executors_filtering_with_run_responses() -> None:
     """Test output filtering works correctly with run(responses=...) method."""
     executor = MockExecutorRequestApproval(id="approval_executor")
 
-    workflow = WorkflowBuilder(start_executor=executor, output_executors=[executor]).build()
+    workflow = WorkflowBuilder(start_executor=executor, output_from=[executor]).build()
 
     # Run workflow which will request approval
     result = await workflow.run(NumberMessage(data=42))
@@ -1252,8 +1251,11 @@ async def test_output_executors_filtering_with_run_responses_streaming() -> None
     request_events = [e for e in events_list if e.type == "request_info"]
     assert len(request_events) == 1
 
-    # Set output_executors to exclude the approval executor
-    workflow._output_executors = ["other_executor"]  # type: ignore
+    # Designate a different executor so the workflow-level filter drops the approval yield.
+    from agent_framework._workflows._workflow import OutputDesignation
+
+    workflow._output_designation = OutputDesignation(outputs=frozenset({"other_executor"}))  # type: ignore[attr-defined]
+    workflow._runner.context.set_yield_output_classifier(workflow._output_designation.classify)  # type: ignore[attr-defined,reportPrivateUsage]
 
     # Send approval response via streaming
     responses = {request_events[0].request_id: ApprovalMessage(approved=True)}

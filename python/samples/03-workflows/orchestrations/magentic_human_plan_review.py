@@ -55,7 +55,7 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
         if event.type == "request_info" and event.request_type is MagenticPlanReviewRequest:
             requests[event.request_id] = cast(MagenticPlanReviewRequest, event.data)
 
-        if event.type == "output":
+        if event.type in ("intermediate", "output"):
             data = event.data
             if isinstance(data, AgentResponseUpdate):
                 rid = data.response_id
@@ -129,13 +129,14 @@ async def main() -> None:
 
     print("\nBuilding Magentic Workflow with Human Plan Review...")
 
-    # enable_plan_review=True: Request human input for plan review
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # enable_plan_review=True: Request human input for plan review.
+    # Mark participant responses as intermediate so the stream shows the
+    # conversation as it unfolds while the manager's final answer remains the
+    # terminal workflow output.
     workflow = MagenticBuilder(
         participants=[researcher_agent, analyst_agent],
         enable_plan_review=True,
-        intermediate_outputs=True,
+        intermediate_output_from=[researcher_agent, analyst_agent],
         manager_agent=manager_agent,
         max_round_count=10,
         max_stall_count=1,

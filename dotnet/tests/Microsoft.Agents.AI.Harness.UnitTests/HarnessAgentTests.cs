@@ -678,6 +678,25 @@ public class HarnessAgentTests
         Assert.Null(agent.GetService<OpenTelemetryAgent>());
     }
 
+    /// <summary>
+    /// Verify that a custom OpenTelemetrySourceName is accepted without error.
+    /// </summary>
+    [Fact]
+    public void OpenTelemetry_CustomSourceNameIsAccepted()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var options = CreateAllDisabledOptions();
+        options.DisableOpenTelemetry = false;
+        options.OpenTelemetrySourceName = "MyApp.AgentTracing";
+
+        // Act
+        var agent = new HarnessAgent(chatClient, TestMaxContextWindowTokens, TestMaxOutputTokens, options);
+
+        // Assert
+        Assert.NotNull(agent.GetService<OpenTelemetryAgent>());
+    }
+
     #endregion
 
     #region Feature: WebSearch

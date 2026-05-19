@@ -1816,7 +1816,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("writer", [aer1]),
             WorkflowEvent.executor_invoked("reviewer", [aer1]),
             WorkflowEvent.executor_completed("reviewer", [aer2]),
-            WorkflowEvent.output("end", final_output),
+            WorkflowEvent("output", executor_id="end", data=final_output),
         ]
         wf_result = WorkflowRunResult(events, [])
 
@@ -1845,7 +1845,7 @@ class TestEvaluateWorkflow:
         events = [
             WorkflowEvent.executor_invoked("agent", "Test query"),
             WorkflowEvent.executor_completed("agent", [aer]),
-            WorkflowEvent.output("end", final_output),
+            WorkflowEvent("output", executor_id="end", data=final_output),
         ]
         wf_result = WorkflowRunResult(events, [])
 
@@ -1875,7 +1875,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("input-conversation", None),
             WorkflowEvent.executor_invoked("planner", "Plan trip"),
             WorkflowEvent.executor_completed("planner", [aer]),
-            WorkflowEvent.output("end", final_output),
+            WorkflowEvent("output", executor_id="end", data=final_output),
         ]
         wf_result = WorkflowRunResult(events, [])
 
@@ -1941,7 +1941,7 @@ class TestEvaluateWorkflow:
             WorkflowEvent.executor_completed("input-conversation", None),
             WorkflowEvent.executor_invoked("researcher", "What's the weather?"),
             WorkflowEvent.executor_completed("researcher", [aer]),
-            WorkflowEvent.output("end", [Message("assistant", ["Weather is sunny"])]),
+            WorkflowEvent("output", executor_id="end", data=[Message("assistant", ["Weather is sunny"])]),
         ]
         wf_result = WorkflowRunResult(events, [])
 
@@ -2050,7 +2050,7 @@ class TestEvaluateWorkflow:
         events = [
             WorkflowEvent.executor_invoked("agent", "Test query"),
             WorkflowEvent.executor_completed("agent", [aer]),
-            WorkflowEvent.output("end", final_output),
+            WorkflowEvent("output", executor_id="end", data=final_output),
         ]
         wf_result = WorkflowRunResult(events, [])
 
@@ -2089,7 +2089,7 @@ class TestEvaluateWorkflow:
         events = [
             WorkflowEvent.executor_invoked("agent", "Test query"),
             WorkflowEvent.executor_completed("agent", [aer]),
-            WorkflowEvent.output("end", final_output),
+            WorkflowEvent("output", executor_id="end", data=final_output),
         ]
         wf_result = WorkflowRunResult(events, [])
 
