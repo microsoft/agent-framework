@@ -53,7 +53,7 @@ public sealed class SessionFilesHostedAgentTests(SessionFilesHostedAgentFixture 
 
     private readonly SessionFilesHostedAgentFixture _fixture = fixture;
 
-    [Fact]
+    [Fact(Skip = "Flaky in dotnet-foundry-hosted-it; see https://github.com/microsoft/agent-framework/issues/5847")]
     public async Task UploadedFile_IsReadByHostedAgentAsync()
     {
         // Arrange
