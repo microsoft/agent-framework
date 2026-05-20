@@ -27,14 +27,18 @@ from agent_framework import (
     ResponseStream,
 )
 from azure.ai.agentserver.responses import InMemoryResponseProvider
+from mcp import McpError
+from mcp.types import ErrorData
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
+    CONSENT_ERROR_CODE,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    consent_url_from_error,
 )
 
 
@@ -2888,6 +2892,187 @@ class TestCheckpointContextPathValidation:
             f"before={before} after={after}"
         )
         assert list(root.iterdir()) == [], f"Checkpoint directory created inside root for {context_field}={bad_id!r}"
+# region Agent lifecycle (lazy entry & OAuth consent surfacing)
+
+
+def _make_consent_error(url: str = "https://consent.example.com/auth") -> Exception:
+    """Build an exception wrapping a Foundry MCP gateway consent error.
+
+    Mirrors the real-world wrapping produced by ``MCPStreamableHTTPTool.__aenter__``,
+    which catches connection-time ``McpError``s and re-raises them as a
+    ``ToolExecutionException`` (an ``AgentFrameworkException`` subclass) with the
+    original error attached via ``inner_exception``. ``consent_url_from_error``
+    then finds the wrapped ``McpError`` in ``exc.args``.
+    """
+    from agent_framework.exceptions import ToolExecutionException
+
+    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=url))
+    return ToolExecutionException("MCP consent required", inner_exception=inner)
+
+
+class TestConsentUrlFromError:
+    def test_returns_consent_url_when_inner_arg_is_consent_mcp_error(self) -> None:
+        exc = _make_consent_error("https://example.com/consent")
+        assert consent_url_from_error(exc) == "https://example.com/consent"
+
+    def test_returns_none_when_no_mcp_error_in_args(self) -> None:
+        assert consent_url_from_error(Exception("boom")) is None
+
+    def test_returns_none_when_mcp_error_has_different_code(self) -> None:
+        inner = McpError(ErrorData(code=-32000, message="some other error"))
+        exc = Exception("wrapped", inner)
+        assert consent_url_from_error(exc) is None
+
+    def test_returns_none_for_bare_mcp_error_without_wrapping(self) -> None:
+        # `args` of a bare McpError holds the message string, not an McpError
+        # instance, so it does not match the wrapping pattern produced by the
+        # MCP client when it bubbles consent errors up.
+        bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
+        assert consent_url_from_error(bare) is None
+
+
+class TestAgentLifecycle:
+    async def test_agent_entered_lazily_on_first_request(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        server = _make_server(agent)
+        # Construction must not enter the agent.
+        assert agent.__aenter__.await_count == 0
+
+        await _post(server, input_text="hello", stream=False)
+        assert agent.__aenter__.await_count == 1
+
+    async def test_agent_entered_only_once_across_requests(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        server = _make_server(agent)
+
+        await _post(server, input_text="first", stream=False)
+        await _post(server, input_text="second", stream=False)
+        await _post(server, input_text="third", stream=False)
+        assert agent.__aenter__.await_count == 1
+
+    async def test_cleanup_exits_agent_and_allows_reentry(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        server = _make_server(agent)
+
+        await _post(server, input_text="hello", stream=False)
+        assert agent.__aenter__.await_count == 1
+        assert agent.__aexit__.await_count == 0
+
+        await server._cleanup_agent()  # pyright: ignore[reportPrivateUsage]
+        assert agent.__aexit__.await_count == 1
+
+        # Cleanup is idempotent.
+        await server._cleanup_agent()  # pyright: ignore[reportPrivateUsage]
+        assert agent.__aexit__.await_count == 1
+
+        # After cleanup, a follow-up request re-enters the agent.
+        await _post(server, input_text="again", stream=False)
+        assert agent.__aenter__.await_count == 2
+
+    async def test_failed_entry_does_not_cache_stack(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = [_make_consent_error(), None]
+        server = _make_server(agent)
+
+        await _post(server, input_text="first", stream=False)
+        # Failed entry must leave the stack empty so the next request retries.
+        await _post(server, input_text="second", stream=False)
+        assert agent.__aenter__.await_count == 2
+
+
+class TestOAuthConsentSurfacing:
+    async def test_non_streaming_consent_error_emits_oauth_output_item(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("https://consent.example.com/auth")
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+
+        oauth_items = [it for it in body["output"] if it["type"] == "oauth_consent_request"]
+        assert len(oauth_items) == 1
+        assert oauth_items[0]["consent_link"] == "https://consent.example.com/auth"
+        assert oauth_items[0]["server_label"] == "Foundry Toolbox"
+
+        # The agent must not be run when entry fails.
+        agent.run.assert_not_called()
+
+    async def test_streaming_consent_error_emits_oauth_output_item(self) -> None:
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")])
+        agent.__aenter__.side_effect = _make_consent_error("https://consent.example.com/auth")
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=True)
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        assert types[0] == "response.created"
+        assert types[1] == "response.in_progress"
+        assert types[-1] == "response.completed"
+
+        added = [e for e in events if e["event"] == "response.output_item.added"]
+        oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
+        assert len(oauth_added) == 1
+        assert oauth_added[0]["data"]["item"]["consent_link"] == "https://consent.example.com/auth"
+        assert oauth_added[0]["data"]["item"]["server_label"] == "Foundry Toolbox"
+
+        done = [e for e in events if e["event"] == "response.output_item.done"]
+        assert any(e["data"]["item"]["type"] == "oauth_consent_request" for e in done)
+
+        agent.run.assert_not_called()
+
+    async def test_non_consent_error_during_entry_propagates(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = RuntimeError("boom")
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        # Non-consent errors are not swallowed: the response is marked failed
+        # and no `oauth_consent_request` item is emitted.
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert not any(it["type"] == "oauth_consent_request" for it in body.get("output", []))
+        agent.run.assert_not_called()
+
+    async def test_retry_after_consent_succeeds(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hello!")])])
+        )
+        agent.__aenter__.side_effect = [_make_consent_error("https://consent.example.com/auth"), None]
+        server = _make_server(agent)
+
+        # First request surfaces consent; agent.run is not called.
+        resp1 = await _post(server, input_text="first", stream=False)
+        assert resp1.status_code == 200
+        body1 = resp1.json()
+        oauth = [it for it in body1["output"] if it["type"] == "oauth_consent_request"]
+        assert len(oauth) == 1
+        agent.run.assert_not_called()
+
+        # After the user authenticates, the next request enters successfully.
+        resp2 = await _post(server, input_text="second", stream=False)
+        assert resp2.status_code == 200
+        body2 = resp2.json()
+        assert body2["status"] == "completed"
+        assert any(it["type"] == "message" for it in body2["output"])
+        assert agent.__aenter__.await_count == 2
+        agent.run.assert_awaited_once()
 
 
 # endregion
