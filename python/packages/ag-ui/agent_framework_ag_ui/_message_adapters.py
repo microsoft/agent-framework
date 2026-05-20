@@ -30,6 +30,11 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
     """Normalize tool ordering and inject synthetic results for AG-UI edge cases."""
     sanitized: list[Message] = []
     pending_tool_call_ids: set[str] | None = None
+    # Buffer individual function_result Contents keyed by call_id for tool messages that
+    # arrive before their assistant message (out-of-order history). Buffering at the Content
+    # level (not the Message level) prevents a multi-result tool message from being
+    # re-injected multiple times or leaking unrelated results into the wrong assistant turn.
+    orphaned_tool_results: dict[str, Any] = {}
     pending_confirm_changes_id: str | None = None
 
     for msg in messages:
@@ -77,6 +82,20 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
             pending_confirm_changes_id = (
                 str(confirm_changes_call.call_id) if confirm_changes_call and confirm_changes_call.call_id else None
             )
+
+            # Re-inject any buffered tool results that belong to this assistant message.
+            # Build a single synthetic Message containing only the matched Contents so that
+            # unrelated results from the same original message are not re-emitted, and the
+            # same result is never appended more than once.
+            matched_contents = []
+            for call_id in list(tool_ids):
+                if call_id in orphaned_tool_results:
+                    matched_contents.append(orphaned_tool_results.pop(call_id))
+                    if pending_tool_call_ids:
+                        pending_tool_call_ids.discard(call_id)
+            if matched_contents:
+                sanitized.append(Message(role="tool", contents=matched_contents))
+
             continue
 
         if role_value == "user":
@@ -172,6 +191,12 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
 
         if role_value == "tool":
             if not pending_tool_call_ids:
+                # Tool result arrived before its assistant message — buffer each Content
+                # individually so re-injection can reconstruct a filtered Message containing
+                # only the results that belong to a given assistant turn.
+                for content in msg.contents or []:
+                    if content.type == "function_result" and content.call_id:
+                        orphaned_tool_results[str(content.call_id)] = content
                 continue
             keep = False
             for content in msg.contents or []:
