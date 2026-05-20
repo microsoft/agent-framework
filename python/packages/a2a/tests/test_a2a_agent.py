@@ -44,6 +44,7 @@ class MockA2AClient:
         self.subscribe_responses: list[StreamResponse] = []
         self.get_task_response: Task | None = None
         self.last_message: Any = None
+        self.last_request: Any = None
 
     def add_message_response(self, message_id: str, text: str, role: str = "agent") -> None:
         """Add a mock Message response."""
@@ -783,6 +784,7 @@ async def test_non_streaming_run_uses_non_streaming_client() -> None:
     assert non_streaming_client.call_count == 1
     assert streaming_client.call_count == 0
     assert response.messages[0].text == "Non-streaming result"
+    assert non_streaming_client.last_request.configuration.return_immediately is False
 
 
 async def test_streaming_run_uses_streaming_client() -> None:

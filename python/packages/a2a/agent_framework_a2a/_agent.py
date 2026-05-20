@@ -304,7 +304,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         # Use non-streaming transport for non-streaming calls when available.
         # This sends a single HTTP request/response instead of opening an SSE
         # connection, matching the protocol's intent for synchronous operations.
-        active_client = self._non_streaming_client if (not stream and self._non_streaming_client) else self.client
+        active_client = (
+            self._non_streaming_client if (not stream and self._non_streaming_client is not None) else self.client
+        )
 
         if continuation_token is not None:
             a2a_stream: AsyncIterable[A2AStreamItem] = self.client.subscribe(
