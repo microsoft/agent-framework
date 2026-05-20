@@ -295,7 +295,7 @@ jobs:
         run: curl -fsSL https://ollama.com/install.sh | sh
         working-directory: .
       - name: Cache Ollama models
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.ollama/models
           key: ollama-models-qwen2.5-1.5b-nomic-embed-text-v1
@@ -692,7 +692,7 @@ jobs:
           pattern: test-results-*
           path: test-results/
       - name: Restore report history cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: python/integration-report-history.json
           key: integration-report-history-merge-${{ github.run_id }}
@@ -709,7 +709,7 @@ jobs:
         run: cat integration-test-report.md >> $GITHUB_STEP_SUMMARY
       - name: Save report history cache
         if: always()
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: python/integration-report-history.json
           key: integration-report-history-merge-${{ github.run_id }}
