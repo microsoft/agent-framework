@@ -43,21 +43,28 @@ async with Agent(
 ## Publishing an agent as a Foundry prompt agent
 
 > **Experimental — `ExperimentalFeature.TO_PROMPT_AGENT`.** `to_prompt_agent`
-> is a preview API and may change before reaching GA. It emits an
-> `ExperimentalWarning` on first use.
+> and `deploy_as_prompt_agent` are preview APIs and may change before reaching
+> GA. The warning fires the first time the `TO_PROMPT_AGENT` feature is
+> exercised in a process and is then deduplicated.
 
 `to_prompt_agent(agent)` converts an `Agent` whose chat client is a
-`FoundryChatClient` into a Foundry `PromptAgentDefinition`. The model is lifted
-from the bound `FoundryChatClient`, so the same agent definition you run
-locally can be published as a hosted prompt agent without restating the model
-deployment name.
+`FoundryChatClient` into a Foundry `PromptAgentDefinition`. The model is read
+from `default_options["model"]` first and falls back to the bound
+`FoundryChatClient.model` (matching `Agent.__init__`'s resolution order), so
+the same agent definition you run locally can be published as a hosted prompt
+agent without restating the model deployment name.
+
+For the common case of "convert and publish in one step", use
+`deploy_as_prompt_agent(agent, agent_name=...)`. It reuses the bound
+`FoundryChatClient`'s project client to call
+`project_client.agents.create_version(...)`, so the caller does not need to
+construct a separate `AIProjectClient`:
 
 ```python
 import asyncio
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, to_prompt_agent
-from azure.ai.projects.aio import AIProjectClient
+from agent_framework.foundry import FoundryChatClient, deploy_as_prompt_agent
 from azure.identity.aio import AzureCliCredential
 
 
@@ -79,15 +86,16 @@ async def main() -> None:
         ],
     )
 
-    project_client = AIProjectClient(endpoint=project_endpoint, credential=credential)
-    await project_client.agents.create_version(
-        name="travel-agent",
-        definition=to_prompt_agent(agent),
-    )
+    created = await deploy_as_prompt_agent(agent, agent_name="travel-agent")
+    print(f"Published {created.name} v{created.version}")
 
 
 asyncio.run(main())
 ```
+
+Reach for `to_prompt_agent(agent)` directly when you need a standalone
+`PromptAgentDefinition` (e.g. to inspect, serialize, or pass to a separately
+managed `AIProjectClient`).
 
 Behaviour:
 
@@ -122,5 +130,12 @@ Behaviour:
   the converter raises `ValueError` and points at
   `FoundryChatClient.get_mcp_tool(...)` for hosted MCP servers.
 
-See [`samples/02-agents/providers/foundry/foundry_portable_agent.py`](../../samples/02-agents/providers/foundry/foundry_portable_agent.py)
-for an end-to-end runnable example.
+See the runnable examples under `samples/02-agents/providers/foundry/`:
+
+- [`creating_prompt_agents.py`](../../samples/02-agents/providers/foundry/creating_prompt_agents.py)
+  \u2014 build an Agent, run it locally, and publish it via both
+  `deploy_as_prompt_agent` and `to_prompt_agent` + `AIProjectClient`.
+- [`using_prompt_agents.py`](../../samples/02-agents/providers/foundry/using_prompt_agents.py)
+  \u2014 publish with `deploy_as_prompt_agent`, then connect back with
+  `FoundryAgent` and execute the same local `@tool` callable that the
+  deployed prompt agent invokes by name.

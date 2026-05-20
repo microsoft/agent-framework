@@ -30,7 +30,7 @@ from ._chat_client import RawFoundryChatClient
 
 if TYPE_CHECKING:
     from agent_framework import Agent
-    from azure.ai.projects.models import PromptAgentDefinition, Tool
+    from azure.ai.projects.models import AgentVersionDetails, PromptAgentDefinition, Tool
 
 
 @experimental(feature_id=ExperimentalFeature.TO_PROMPT_AGENT)
@@ -47,50 +47,86 @@ def to_prompt_agent(agent: Agent) -> PromptAgentDefinition:
         A ``PromptAgentDefinition`` carrying the agent's model, instructions,
         and tools. Pass it to ``AIProjectClient.agents.create_version(...)``
         to publish the agent as a prompt agent.
-
-    Raises:
-        TypeError: If ``agent.client`` is not a ``FoundryChatClient``
-            (or subclass).
-        ValueError: If the bound ``FoundryChatClient`` has no ``model``, or if
-            the agent has a local MCP tool or an unsupported tool type that
-            cannot be expressed in a ``PromptAgentDefinition``.
-        ImportError: If the installed ``azure-ai-projects`` does not expose
-            ``PromptAgentDefinition`` or ``FunctionTool``.
     """
     if not isinstance(agent.client, RawFoundryChatClient):
         raise TypeError(
-            "to_prompt_agent requires an Agent whose client is a FoundryChatClient; "
+            "Creating a Foundry Prompt Agent requires an Agent whose client is a FoundryChatClient; "
             f"got {type(agent.client).__name__!r}."
         )
 
     # Match the resolution order Agent.__init__ uses when building default_options:
     # an agent-level model override in default_options wins over the bound client's model.
     model = agent.default_options.get("model") or agent.client.model
-    if not model:
-        raise ValueError(
-            "Agent has no model. Set 'model' on the FoundryChatClient (via the FOUNDRY_MODEL "
-            "environment variable or the model= argument), or pass default_options={'model': ...} "
-            "to the Agent before converting."
-        )
-
     instructions = agent.default_options.get("instructions")
     tools = _convert_tools(
         agent.default_options.get("tools", []),
         getattr(agent, "mcp_tools", []),
     )
 
-    try:
-        from azure.ai.projects.models import PromptAgentDefinition
-    except ImportError as exc:  # pragma: no cover - sanity guard
-        raise ImportError(
-            "PromptAgentDefinition is not available in the installed azure-ai-projects. "
-            "Upgrade azure-ai-projects to use to_prompt_agent."
-        ) from exc
+    from azure.ai.projects.models import PromptAgentDefinition
 
     return PromptAgentDefinition(
         model=model,
         instructions=instructions,
         tools=tools or None,
+    )
+
+
+@experimental(feature_id=ExperimentalFeature.TO_PROMPT_AGENT)
+async def deploy_as_prompt_agent(
+    agent: Agent,
+    *,
+    metadata: Mapping[str, str] | None = None,
+    agent_name: str | None = None,
+    description: str | None = None,
+    **kwargs: Any,
+) -> AgentVersionDetails:
+    """Publish an ``Agent`` to Foundry as a new prompt-agent version.
+
+    Convenience wrapper around :func:`to_prompt_agent` that uses the
+    :class:`FoundryChatClient` already bound to ``agent`` to call
+    ``project_client.agents.create_version(...)`` \u2014 so the caller does not
+    need to construct a separate :class:`AIProjectClient`.
+
+    Args:
+        agent: An Agent Framework agent whose client is a ``FoundryChatClient``.
+
+    Keyword Args:
+        metadata: Optional metadata dict (up to 16 key/value pairs) attached
+            to the version.
+        agent_name: The unique Foundry agent name. Must start and end with
+            alphanumeric characters, may contain hyphens in the middle, and
+            must not exceed 63 characters. Defaults to ``agent.name``,
+            this can be used to override the name set on the agent, in case it does
+            not adhere to the foundry naming restrictions.
+        description: Optional human-readable description for the version.
+            Defaults to ``agent.description``.
+        **kwargs: Forwarded to ``project_client.agents.create_version(...)``.
+
+    Returns:
+        The ``AgentVersionDetails`` returned by the Foundry service for the
+        newly created version.
+    """
+    # to_prompt_agent enforces the FoundryChatClient requirement and model resolution.
+    definition = to_prompt_agent(agent)
+    client = cast("RawFoundryChatClient", agent.client)
+
+    resolved_name = agent_name or agent.name
+    if not resolved_name:
+        raise ValueError("Foundry agent_name is required. Pass agent_name= or set name= on the Agent.")
+
+    resolved_description = description if description is not None else agent.description
+
+    create_kwargs: dict[str, Any] = dict(kwargs)
+    if metadata is not None:
+        create_kwargs["metadata"] = dict(metadata)
+    if resolved_description is not None:
+        create_kwargs["description"] = resolved_description
+
+    return await client.project_client.agents.create_version(
+        agent_name=resolved_name,
+        definition=definition,
+        **create_kwargs,
     )
 
 
@@ -152,8 +188,7 @@ def _function_tool_to_foundry(tool_item: FunctionTool) -> Tool:
         from azure.ai.projects.models import FunctionTool as ProjectsFunctionTool
     except ImportError as exc:  # pragma: no cover - sanity guard
         raise ImportError(
-            "FunctionTool is not available in the installed azure-ai-projects. "
-            "Upgrade azure-ai-projects to use to_prompt_agent."
+            "FunctionTool is not available in the installed azure-ai-projects. Upgrade azure-ai-projects."
         ) from exc
 
     return ProjectsFunctionTool(
