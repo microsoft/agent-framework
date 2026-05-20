@@ -2158,12 +2158,21 @@ def _capture_messages(
     normalized_messages = normalize_messages(messages)
     logging_messages = prepend_instructions_to_messages(normalized_messages, system_instructions)
     span_messages = [_to_otel_message(message) for message in normalized_messages]
-    span_message_iter = iter(span_messages)
     prepended_count = len(logging_messages) - len(normalized_messages)
-    for index, message in enumerate(logging_messages):
-        otel_message = _to_otel_message(message) if index < prepended_count else next(span_message_iter)
+    for index, message in enumerate(logging_messages[:prepended_count]):
+        otel_message = _to_otel_message(message)
         # Reuse the otel message representation for logging instead of calling to_dict()
         # to avoid expensive Pydantic serialization overhead
+        logger.info(
+            otel_message,
+            extra={
+                OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role),
+                OtelAttr.PROVIDER_NAME: provider_name,
+                MessageListTimestampFilter.INDEX_KEY: index,
+            },
+        )
+    for index, message in enumerate(normalized_messages, start=prepended_count):
+        otel_message = span_messages[index - prepended_count]
         logger.info(
             otel_message,
             extra={

@@ -3046,7 +3046,7 @@ def test_capture_messages_logs_prepended_instructions_without_serializing_them(
     input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
-    assert mock_logger_info.call_count == 2
+    assert mock_logger_info.call_count == 2, f"Expected 2 log calls, got {mock_logger_info.call_count}"
     first_call, second_call = mock_logger_info.call_args_list
     assert first_call.args
     assert second_call.args
