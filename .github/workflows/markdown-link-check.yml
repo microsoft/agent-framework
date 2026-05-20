@@ -19,13 +19,13 @@ jobs:
     runs-on: ubuntu-22.04
     # check out the latest version of the code
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
       # Checks the status of hyperlinks in all files
       - name: Run linkspector
-        uses: umbrelladocs/action-linkspector@v1
+        uses: umbrelladocs/action-linkspector@963b6264d7de32c904942a70b488d3407453049e # v1
         with:
           reporter: local
           filter_mode: nofilter
