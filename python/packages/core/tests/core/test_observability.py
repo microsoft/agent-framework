@@ -3056,6 +3056,44 @@ def test_capture_messages_logs_prepended_instructions_without_serializing_them(
     assert logged_messages[1]["parts"][0]["content"] == "Test"
 
 
+def test_capture_messages_logs_framework_and_chat_history_system_messages_once(
+    span_exporter: InMemorySpanExporter,
+):
+    """Test framework instructions and chat-history system messages each log once."""
+    import json
+
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        _capture_messages(
+            span=span,
+            provider_name="test_provider",
+            messages=[
+                Message(role="system", contents=["Original system message"]),
+                Message(role="user", contents=["Test"]),
+            ],
+            system_instructions="Framework system instruction",
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["system", "user"]
+
+    assert mock_logger_info.call_count == 3, f"Expected 3 log calls, got {mock_logger_info.call_count}"
+    logged_messages = [call.args[0] for call in mock_logger_info.call_args_list]
+    assert [msg["role"] for msg in logged_messages] == ["system", "system", "user"]
+    assert logged_messages[0]["parts"][0]["content"] == "Framework system instruction"
+    assert logged_messages[1]["parts"][0]["content"] == "Original system message"
+    assert logged_messages[2]["parts"][0]["content"] == "Test"
+
+
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
     """Test that non-ASCII characters are preserved in tool arguments span attribute."""

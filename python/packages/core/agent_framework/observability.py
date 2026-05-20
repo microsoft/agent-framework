@@ -2157,14 +2157,12 @@ def _capture_messages(
 
     normalized_messages = normalize_messages(messages)
     logging_messages = prepend_instructions_to_messages(normalized_messages, system_instructions)
-    span_messages = [_to_otel_message(message) for message in normalized_messages]
     prepended_count = len(logging_messages) - len(normalized_messages)
-    prepended_messages = [_to_otel_message(message) for message in logging_messages[:prepended_count]]
-    for index, (message, otel_message) in enumerate(
-        zip(logging_messages[:prepended_count], prepended_messages, strict=True)
-    ):
+    span_messages = []
+    for index, message in enumerate(logging_messages):
         # Reuse the otel message representation for logging instead of calling to_dict()
         # to avoid expensive Pydantic serialization overhead
+        otel_message = _to_otel_message(message)
         logger.info(
             otel_message,
             extra={
@@ -2173,17 +2171,8 @@ def _capture_messages(
                 MessageListTimestampFilter.INDEX_KEY: index,
             },
         )
-    for index, (message, otel_message) in enumerate(
-        zip(normalized_messages, span_messages, strict=True), start=prepended_count
-    ):
-        logger.info(
-            otel_message,
-            extra={
-                OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role),
-                OtelAttr.PROVIDER_NAME: provider_name,
-                MessageListTimestampFilter.INDEX_KEY: index,
-            },
-        )
+        if index >= prepended_count:
+            span_messages.append(otel_message)
     if finish_reason:
         span_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
     span.set_attribute(
