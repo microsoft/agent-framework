@@ -4885,4 +4885,112 @@ async def test_progressive_call_mcp_executes_middleware():
     assert executed_functions == ["call_mcp"]
 
 
+@pytest.mark.asyncio
+async def test_progressive_call_mcp_dict_approval_mode_normalised():
+    """When MCPTool.approval_mode is a dict (MCPSpecificApproval), as_progressive_tools()
+    must normalise it to "always_require" for the call_mcp wrapper so that
+    _try_execute_function_calls can enforce it as a concrete policy string."""
+    from agent_framework import Content, FunctionTool
+    from agent_framework._mcp import MCPTool
+    from agent_framework._tools import _try_execute_function_calls, normalize_function_invocation_configuration
+
+    # Dict-style approval_mode (MCPSpecificApproval)
+    tool = MCPTool(
+        name="my-server",
+        approval_mode={"always_require_approval": ["tool_a"], "never_require_approval": None},
+    )
+
+    async def _mock_func():
+        return "Executed!"
+
+    func1 = FunctionTool(name="tool_a", description="A tool", func=_mock_func)
+    tool._functions = [func1]
+
+    prog_tools = tool.as_progressive_tools()
+    call_tool = prog_tools[1]
+
+    # Attribute check: dict must be normalised to the conservative "always_require" string
+    assert call_tool.approval_mode == "always_require"
+
+    # Behavioral check: executing call_mcp actually triggers an approval request
+    fcc = Content.from_function_call(
+        call_id="test_call_id",
+        name=call_tool.name,
+        arguments={"server": "my-server", "tool": "tool_a"}
+    )
+    config = normalize_function_invocation_configuration(None)
+
+    results, _ = await _try_execute_function_calls(
+        custom_args={},
+        attempt_idx=0,
+        function_calls=[fcc],
+        tools=[call_tool],
+        config=config,
+    )
+
+    assert len(results) == 1
+    assert results[0].type == "function_approval_request"
+    assert results[0].function_call is not None
+    assert results[0].function_call.name == "call_mcp"
+
+
+@pytest.mark.asyncio
+async def test_progressive_call_mcp_context_not_mutated():
+    """The wrapper call_mcp must not forward its own FunctionInvocationContext into
+    target_func.invoke(). FunctionTool.invoke mutates context in-place, so sharing
+    the same object would corrupt any middleware that inspects context after call_next()."""
+    from agent_framework import Content, FunctionInvocationContext, FunctionMiddleware, FunctionTool
+    from agent_framework._mcp import MCPTool
+    from agent_framework._middleware import FunctionMiddlewarePipeline
+    from agent_framework._tools import _try_execute_function_calls, normalize_function_invocation_configuration
+
+    tool = MCPTool(name="my-server")
+
+    async def _mock_func():
+        return "Executed!"
+
+    func1 = FunctionTool(name="tool_a", description="A tool", func=_mock_func)
+    tool._functions = [func1]
+
+    prog_tools = tool.as_progressive_tools()
+    call_tool = prog_tools[1]
+
+    # Capture the context state that the middleware sees BEFORE and AFTER call_next()
+    context_function_before: list[str] = []
+    context_function_after: list[str] = []
+
+    class ContextSnapshotMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next):
+            context_function_before.append(context.function.name)
+            await call_next()
+            # After the nested invoke, the wrapper's context.function must still
+            # point to call_mcp — not to the inner tool_a.
+            context_function_after.append(context.function.name)
+
+    pipeline = FunctionMiddlewarePipeline(ContextSnapshotMiddleware())
+
+    fcc = Content.from_function_call(
+        call_id="test_call_id",
+        name=call_tool.name,
+        arguments={"server": "my-server", "tool": "tool_a"}
+    )
+
+    results, _ = await _try_execute_function_calls(
+        custom_args={},
+        attempt_idx=0,
+        function_calls=[fcc],
+        tools=[call_tool],
+        config=normalize_function_invocation_configuration(None),
+        middleware_pipeline=pipeline,
+    )
+
+    assert results[0].type == "function_result"
+    assert results[0].result == "Executed!"
+
+    # Before call_next: context belongs to call_mcp
+    assert context_function_before == ["call_mcp"]
+    # After call_next: context.function must STILL be call_mcp (not mutated to tool_a)
+    assert context_function_after == ["call_mcp"]
+
+
 # endregion

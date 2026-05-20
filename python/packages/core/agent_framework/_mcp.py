@@ -1372,7 +1372,17 @@ class MCPTool:
             if not target_func:
                 raise ToolExecutionException(f"Tool '{tool}' not found or not allowed on server '{self.name}'.")
 
-            return await target_func.invoke(arguments=arguments or {}, context=context)
+            # Create a fresh context for the target tool so that FunctionTool.invoke's
+            # in-place mutations (context.function, context.arguments, context.kwargs)
+            # do not corrupt the wrapper call_mcp's context that middleware may still
+            # be observing after call_next() returns.
+            target_context = FunctionInvocationContext(
+                function=target_func,
+                arguments=arguments or {},
+                session=context.session if context is not None else None,
+                kwargs=context.kwargs if context is not None else None,
+            )
+            return await target_func.invoke(arguments=arguments or {}, context=target_context)
 
         list_tool = FunctionTool(
             name=list_tool_name,
@@ -1381,11 +1391,18 @@ class MCPTool:
             approval_mode="never_require",
         )
 
+        # When approval_mode is a dict (MCPSpecificApproval with per-tool allow/deny
+        # lists), the framework's _try_execute_function_calls cannot interpret it as
+        # a wrapper-level policy string and will silently bypass approval. Normalise
+        # any dict value to "always_require" so the dispatch wrapper is always gated
+        # conservatively.
+        wrapper_approval_mode = "always_require" if isinstance(self.approval_mode, dict) else self.approval_mode
+
         call_tool = FunctionTool(
             name=call_tool_name,
             description=f"Call a specific tool on the {self.name} MCP server.",
             func=_call_tool,
-            approval_mode=self.approval_mode,
+            approval_mode=wrapper_approval_mode,
         )
 
         return [list_tool, call_tool]
