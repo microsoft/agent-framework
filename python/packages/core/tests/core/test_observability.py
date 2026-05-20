@@ -3019,10 +3019,10 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
 
-def test_capture_messages_logs_prepended_instructions_without_serializing_them(
+def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_messages(
     span_exporter: InMemorySpanExporter,
 ):
-    """Test prepended instructions still emit log events while span input_messages stays chat-history only."""
+    """Test separate framework instructions do not appear in chat-history logs or span messages."""
     import json
 
     from opentelemetry import trace
@@ -3046,20 +3046,18 @@ def test_capture_messages_logs_prepended_instructions_without_serializing_them(
     input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
-    assert mock_logger_info.call_count == 2, f"Expected 2 log calls, got {mock_logger_info.call_count}"
-    first_call, second_call = mock_logger_info.call_args_list
+    assert mock_logger_info.call_count == 1, f"Expected 1 log call, got {mock_logger_info.call_count}"
+    (first_call,) = mock_logger_info.call_args_list
     assert first_call.args
-    assert second_call.args
-    logged_messages = [first_call.args[0], second_call.args[0]]
-    assert [msg["role"] for msg in logged_messages] == ["system", "user"]
-    assert logged_messages[0]["parts"][0]["content"] == "Framework system instruction"
-    assert logged_messages[1]["parts"][0]["content"] == "Test"
+    logged_message = first_call.args[0]
+    assert logged_message["role"] == "user"
+    assert logged_message["parts"][0]["content"] == "Test"
 
 
-def test_capture_messages_logs_framework_and_chat_history_system_messages_once(
+def test_capture_messages_logs_only_chat_history_when_framework_instructions_are_separate(
     span_exporter: InMemorySpanExporter,
 ):
-    """Test framework instructions and chat-history system messages each log once."""
+    """Test chat-history logging preserves original system messages without prepending framework instructions."""
     import json
 
     from opentelemetry import trace
@@ -3086,12 +3084,11 @@ def test_capture_messages_logs_framework_and_chat_history_system_messages_once(
     input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])
     assert [msg.get("role") for msg in input_messages] == ["system", "user"]
 
-    assert mock_logger_info.call_count == 3, f"Expected 3 log calls, got {mock_logger_info.call_count}"
+    assert mock_logger_info.call_count == 2, f"Expected 2 log calls, got {mock_logger_info.call_count}"
     logged_messages = [call.args[0] for call in mock_logger_info.call_args_list]
-    assert [msg["role"] for msg in logged_messages] == ["system", "system", "user"]
-    assert logged_messages[0]["parts"][0]["content"] == "Framework system instruction"
-    assert logged_messages[1]["parts"][0]["content"] == "Original system message"
-    assert logged_messages[2]["parts"][0]["content"] == "Test"
+    assert [msg["role"] for msg in logged_messages] == ["system", "user"]
+    assert logged_messages[0]["parts"][0]["content"] == "Original system message"
+    assert logged_messages[1]["parts"][0]["content"] == "Test"
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
