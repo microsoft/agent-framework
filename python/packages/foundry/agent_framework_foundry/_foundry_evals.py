@@ -75,6 +75,13 @@ _TOOL_EVALUATORS: set[str] = {
     "builtin.tool_call_success",
 }
 
+_TOOL_DEFINITION_EVALUATORS: set[str] = _TOOL_EVALUATORS | {
+    "builtin.intent_resolution",
+    "builtin.task_adherence",
+    "builtin.task_completion",
+    "builtin.task_navigation_efficiency",
+}
+
 # Evaluators that require a ground_truth / expected_output field.
 _GROUND_TRUTH_EVALUATORS: set[str] = {
     "builtin.similarity",
@@ -161,6 +168,7 @@ def _build_testing_criteria(
     model: str,
     *,
     include_data_mapping: bool = False,
+    include_tool_definitions: bool = False,
 ) -> list[dict[str, Any]]:
     """Build ``testing_criteria`` for ``evals.create()``.
 
@@ -169,6 +177,7 @@ def _build_testing_criteria(
         model: Model deployment for the LLM judge.
         include_data_mapping: Whether to include field-level data mapping
             (required for the JSONL data source, not needed for response-based).
+        include_tool_definitions: Whether JSONL items include tool definitions.
     """
     criteria: list[dict[str, Any]] = []
     for name in evaluators:
@@ -203,7 +212,7 @@ def _build_testing_criteria(
                 mapping["context"] = "{{item.context}}"
             if qualified in _GROUND_TRUTH_EVALUATORS:
                 mapping["ground_truth"] = "{{item.ground_truth}}"
-            if qualified in _TOOL_EVALUATORS:
+            if include_tool_definitions and qualified in _TOOL_DEFINITION_EVALUATORS:
                 mapping["tool_definitions"] = "{{item.tool_definitions}}"
             entry["data_mapping"] = mapping
 
@@ -713,6 +722,7 @@ class FoundryEvals:
                 evaluators,
                 self._model,
                 include_data_mapping=True,
+                include_tool_definitions=has_tools,
             ),
         )
 
