@@ -16,7 +16,7 @@ from ._foundry_evals import (
     evaluate_traces,
 )
 from ._memory_provider import FoundryMemoryProvider
-from ._to_prompt_agent import to_prompt_agent
+from ._to_prompt_agent import deploy_as_prompt_agent, to_prompt_agent
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -38,6 +38,7 @@ __all__ = [
     "RawFoundryChatClient",
     "RawFoundryEmbeddingClient",
     "__version__",
+    "deploy_as_prompt_agent",
     "evaluate_foundry_target",
     "evaluate_traces",
     "to_prompt_agent",
