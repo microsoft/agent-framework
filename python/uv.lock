@@ -143,7 +143,7 @@ requires-dist = [{ name = "agent-framework-core", extras = ["all"], editable = "
 dev = [
     { name = "azure-monitor-opentelemetry", specifier = "==1.8.7" },
     { name = "flit", specifier = "==3.12.0" },
-    { name = "mcp", extras = ["ws"], specifier = "==1.27.0" },
+    { name = "mcp", extras = ["ws"], specifier = "==1.27.1" },
     { name = "mypy", specifier = "==1.20.0" },
     { name = "opentelemetry-sdk", specifier = "==1.40.0" },
     { name = "poethepoet", specifier = "==0.42.1" },
