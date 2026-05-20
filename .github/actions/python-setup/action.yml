@@ -32,7 +32,13 @@ runs:
               if grep -q "name = \"$pkg\"" "$f"; then
                 pkg_dir=$(dirname "$f" | sed 's|python/||')
                 echo "Excluding workspace package: $pkg ($pkg_dir)"
-                sed -i.bak '/\[tool\.uv\.workspace\]/a\exclude = ["'"$pkg_dir"'"]' python/pyproject.toml
+                if awk '/^\[tool\.uv\.workspace\]/{f=1;next} /^\[/{f=0} f && /^exclude = \[/{found=1} END{exit !found}' python/pyproject.toml; then
+                  if ! awk '/^\[tool\.uv\.workspace\]/{f=1;next} /^\[/{f=0} f && /^exclude = \[/ && index($0, "\"'"$pkg_dir"'\"")' python/pyproject.toml | grep -q .; then
+                    sed -i.bak '/\[tool\.uv\.workspace\]/,/^\[/ { /^exclude = \[/ s|\]|, "'"$pkg_dir"'"]| }' python/pyproject.toml
+                  fi
+                else
+                  sed -i.bak '/\[tool\.uv\.workspace\]/a\exclude = ["'"$pkg_dir"'"]' python/pyproject.toml
+                fi
                 sed -i.bak '/'"$pkg"' = { workspace = true }/d' python/pyproject.toml
               fi
             done
