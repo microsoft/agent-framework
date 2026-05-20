@@ -994,6 +994,43 @@ def test_sanitize_pending_tool_skip_on_user_followup():
     assert "skipped" in str(tool_results[0].contents[0].result).lower()
 
 
+def test_sanitize_pending_tool_skip_before_next_assistant():
+    """A new assistant message first closes any previous pending tool calls."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    first_assistant = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="call_1", name="search", arguments="{}")],
+    )
+    second_assistant = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="call_2", name="write_file", arguments="{}")],
+    )
+    user_msg = Message(role="user", contents=[Content.from_text(text="continue")])
+
+    result = _sanitize_tool_history([first_assistant, second_assistant, user_msg])
+
+    assert [msg.role for msg in result] == ["assistant", "tool", "assistant", "tool", "user"]
+    assert result[1].contents[0].call_id == "call_1"
+    assert result[3].contents[0].call_id == "call_2"
+
+
+def test_sanitize_pending_tool_skip_at_end_of_history():
+    """History ending with an assistant tool call is closed before replay."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="call_1", name="search", arguments="{}")],
+    )
+
+    result = _sanitize_tool_history([assistant_msg])
+
+    assert [msg.role for msg in result] == ["assistant", "tool"]
+    assert result[1].contents[0].call_id == "call_1"
+    assert "skipped" in str(result[1].contents[0].result).lower()
+
+
 def test_sanitize_tool_result_clears_pending_confirm():
     """Tool result for pending confirm_changes call_id clears pending state."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
