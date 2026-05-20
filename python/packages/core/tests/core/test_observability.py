@@ -3046,7 +3046,11 @@ def test_capture_messages_logs_prepended_instructions_without_serializing_them(
     input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
-    logged_messages = [call.args[0] for call in mock_logger_info.call_args_list]
+    assert mock_logger_info.call_count == 2
+    first_call, second_call = mock_logger_info.call_args_list
+    assert first_call.args
+    assert second_call.args
+    logged_messages = [first_call.args[0], second_call.args[0]]
     assert [msg["role"] for msg in logged_messages] == ["system", "user"]
     assert logged_messages[0]["parts"][0]["content"] == "Framework system instruction"
     assert logged_messages[1]["parts"][0]["content"] == "Test"
