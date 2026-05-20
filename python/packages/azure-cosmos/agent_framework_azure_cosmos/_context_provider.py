@@ -1,0 +1,431 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""Azure Cosmos DB context provider."""
+
+from __future__ import annotations
+
+import logging
+import re
+import time
+import uuid
+from collections.abc import Awaitable, Callable, Sequence
+from enum import Enum
+from typing import TYPE_CHECKING, Any, TypedDict
+
+from agent_framework import (
+    AGENT_FRAMEWORK_USER_AGENT,
+    AgentSession,
+    ContextProvider,
+    Message,
+    SessionContext,
+    SupportsGetEmbeddings,
+)
+from agent_framework._settings import SecretString, load_settings
+from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
+from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
+
+if TYPE_CHECKING:
+    from agent_framework._agents import SupportsAgentRun
+
+
+logger = logging.getLogger(__name__)
+
+AzureCredentialTypes = TokenCredential | AsyncTokenCredential
+
+COSMOS_USER_AGENT_SUFFIX = f"{AGENT_FRAMEWORK_USER_AGENT} CosmosContextProvider"
+
+
+class CosmosContextSearchMode(str, Enum):
+    """Supported Azure Cosmos DB retrieval modes for the context provider."""
+
+    VECTOR = "vector"
+    FULL_TEXT = "full_text"
+    HYBRID = "hybrid"
+
+
+class CosmosContextSettings(TypedDict, total=False):
+    """Settings for CosmosContextProvider resolved from args and environment."""
+
+    endpoint: str | None
+    database_name: str | None
+    container_name: str | None
+    key: SecretString | None
+    top_k: int | None
+    scan_limit: int | None
+
+
+class CosmosContextProvider(ContextProvider):
+    """Azure Cosmos DB-backed context provider.
+
+    Queries a Cosmos DB knowledge container for relevant context before
+    agent model invocation, and writes request/response messages back
+    into the same container after each run.
+    """
+
+    def __init__(
+        self,
+        source_id: str = "azure_cosmos_context",
+        *,
+        endpoint: str | None = None,
+        database_name: str | None = None,
+        container_name: str | None = None,
+        credential: str | AzureCredentialTypes | None = None,
+        cosmos_client: CosmosClient | None = None,
+        container_client: ContainerProxy | None = None,
+        top_k: int | None = None,
+        scan_limit: int | None = None,
+        search_mode: CosmosContextSearchMode = CosmosContextSearchMode.VECTOR,
+        content_field_names: Sequence[str] = ("content", "text"),
+        message_field_name: str | None = "message",
+        vector_field_name: str = "embedding",
+        embedding_function: Callable[[str], Awaitable[list[float]]]
+        | SupportsGetEmbeddings[str, list[float], Any]
+        | None = None,
+        partition_key: str | None = None,
+        weights: Sequence[float | int] | None = None,
+        context_prompt: str = "Use the following context to answer the question:",
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        super().__init__(source_id)
+
+        self.top_k = top_k if top_k is not None and top_k > 0 else 5
+        self.scan_limit = scan_limit if scan_limit is not None and scan_limit > 0 else 25
+        self.search_mode = search_mode
+        self.content_field_names = tuple(content_field_names)
+        self.message_field_name = message_field_name
+        self.vector_field_name = vector_field_name
+        self.embedding_function = embedding_function
+        self.partition_key = partition_key
+        # Weights are passed through as-is to the Cosmos RRF query. Cosmos
+        # RRF weights are relative importance values (e.g. [2, 1]) with no
+        # fixed range constraint, so we intentionally skip client-side
+        # validation and let Cosmos return its own error for invalid values.
+        self.weights = tuple(weights) if weights is not None else None
+        self.context_prompt = context_prompt
+
+        self._cosmos_client: CosmosClient | None = cosmos_client
+        self._container_proxy: ContainerProxy | None = container_client
+        self._database_client: DatabaseProxy | None = None
+        self._owns_client = False
+        self._partition_key_field: str | None = None
+
+        if self._container_proxy is not None:
+            self.database_name: str = database_name or ""
+            self.container_name: str = container_name or ""
+            return
+
+        required_fields: list[str] = ["database_name", "container_name"]
+        if cosmos_client is None:
+            required_fields.append("endpoint")
+            if credential is None:
+                required_fields.append("key")
+
+        settings = load_settings(
+            CosmosContextSettings,
+            env_prefix="AZURE_COSMOS_",
+            required_fields=required_fields,
+            endpoint=endpoint,
+            database_name=database_name,
+            container_name=container_name,
+            key=credential if isinstance(credential, str) else None,
+            top_k=top_k,
+            scan_limit=scan_limit,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+
+        self.database_name = settings["database_name"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
+        self.container_name = settings["container_name"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
+        env_top_k = settings.get("top_k")
+        if env_top_k is not None and env_top_k > 0:
+            self.top_k = env_top_k
+        env_scan_limit = settings.get("scan_limit")
+        if env_scan_limit is not None and env_scan_limit > 0:
+            self.scan_limit = env_scan_limit
+
+        if self._cosmos_client is None:
+            self._cosmos_client = CosmosClient(
+                url=settings["endpoint"],  # type: ignore[arg-type]
+                credential=credential or settings["key"].get_secret_value(),  # type: ignore[arg-type,union-attr]
+                user_agent_suffix=COSMOS_USER_AGENT_SUFFIX,
+            )
+            self._owns_client = True
+
+        self._database_client = self._cosmos_client.get_database_client(self.database_name)
+
+    def _resolve_partition_key(self, context: SessionContext) -> str:
+        """Resolve the effective partition key for retrieval and writeback.
+
+        Uses the user-provided ``partition_key`` when set, otherwise falls back
+        to ``context.session_id``.  The provider always scopes queries to a
+        single partition key value for efficient, cost-effective retrieval.
+
+        Raises:
+            ValueError: If neither ``partition_key`` nor ``context.session_id`` is available.
+        """
+        effective_key = self.partition_key or context.session_id
+        if not effective_key:
+            raise ValueError(
+                "CosmosContextProvider requires a partition key for retrieval and writeback. "
+                "Set 'partition_key' on the provider or ensure the session has a 'session_id'."
+            )
+        return effective_key
+
+    async def _get_partition_key_field(self) -> str:
+        """Read the container's partition key path and return the field name.
+
+        The result is cached for the lifetime of the provider.
+        """
+        if self._partition_key_field is not None:
+            return self._partition_key_field
+
+        container = await self._get_container()
+        properties = await container.read()
+        paths: list[str] = properties.get("partitionKey", {}).get("paths", [])  # type: ignore[assignment]
+        if not paths:
+            raise RuntimeError(f"Could not determine partition key path for container '{self.container_name}'.")
+        field = paths[0].lstrip("/")
+        self._partition_key_field = field
+        return field
+
+    async def before_run(
+        self,
+        *,
+        agent: SupportsAgentRun,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Retrieve relevant context from Cosmos DB before model invocation."""
+        filtered = [
+            msg
+            for msg in context.input_messages
+            if msg and msg.text and msg.text.strip() and msg.role in {"user", "assistant"}
+        ]
+        # If filtered list is empty we return early to avoid unnecessary
+        # Cosmos DB calls and potential issues with empty input, no need for additional redundant checks
+        if not filtered:
+            return
+
+        query_text = "\n".join(msg.text.strip() for msg in filtered).strip()
+
+        query_terms = tuple(dict.fromkeys(m.casefold() for m in re.findall(r"\w+", query_text, flags=re.UNICODE)))
+
+        state["query_text"] = query_text
+
+        effective_pk = self._resolve_partition_key(context)
+        items = await self._execute_retrieval_query(query_text, query_terms, effective_pk)
+
+        result_messages: list[Message] = []
+        for item in items:
+            # Turn/Serialize Cosmos Items into Framework Messages
+            msg = self._shape_context_message(item)
+            if msg is not None:
+                result_messages.append(msg)
+            if len(result_messages) >= self.top_k:
+                break
+
+        if result_messages:
+            # Inject retrieved context into the session so the model can reference it.
+            # The first message is a prompt instruction (e.g., "Use the following context
+            # to answer the question:") followed by the retrieved knowledge documents.
+            # This is a standard RAG pattern: the instruction tells the model to treat
+            # the subsequent messages as reference material, not conversation history.
+            context.extend_messages(
+                self.source_id,
+                [Message(role="user", contents=[self.context_prompt]), *result_messages],
+            )
+
+    async def after_run(
+        self,
+        *,
+        agent: SupportsAgentRun,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Persist conversation messages to the knowledge container after each run.
+
+        Stores user and assistant messages with embeddings (when available) so
+        they are retrievable by ``before_run`` on subsequent invocations.
+
+        Uses a transactional batch (``execute_item_batch``) so that all
+        messages from a single turn are committed atomically. This prevents
+        half-written exchanges (e.g. a user message without its assistant
+        response) from poisoning RAG context on subsequent retrievals.
+
+        In a typical agent turn the writeback contains exactly two messages
+        (the user input and the agent response), well within the Cosmos
+        transactional batch limit of 100 operations.
+        """
+        messages_to_store: list[Message] = list(context.input_messages)
+        if context.response and context.response.messages:
+            messages_to_store.extend(context.response.messages)
+
+        writeback = [m for m in messages_to_store if m.role in {"user", "assistant"} and m.text and m.text.strip()]
+        if not writeback:
+            return
+
+        container = await self._get_container()
+        effective_pk = self._resolve_partition_key(context)
+        pk_field = await self._get_partition_key_field()
+
+        agent_name = getattr(agent, "name", None)
+        user_id = context.metadata.get("user_id") if context.metadata else None
+
+        operations: list[tuple[str, tuple[dict[str, Any]]]] = []
+        base_sort_key = time.time_ns()
+        for index, message in enumerate(writeback):
+            content_text = message.text.strip()
+            role_value = str(message.role.value) if hasattr(message.role, "value") else str(message.role)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType,reportAttributeAccessIssue]
+            document: dict[str, Any] = {
+                "id": str(uuid.uuid4()),
+                "session_id": context.session_id or "",
+                "sort_key": base_sort_key + index,
+                "source_id": self.source_id,
+                "role": role_value,
+                "content": content_text,
+                "message": message.to_dict(),
+            }
+            if pk_field != "session_id":
+                document[pk_field] = effective_pk
+            if agent_name:
+                document["agent_name"] = agent_name
+            if user_id:
+                document["user_id"] = user_id
+            if message.author_name:
+                document["author_name"] = message.author_name
+
+            if self.embedding_function is not None:
+                try:
+                    embedding = await self._get_query_vector(content_text)
+                    document[self.vector_field_name] = embedding
+                except Exception:
+                    logger.warning("Failed to generate embedding for writeback document; skipping vector field.")
+
+            operations.append(("upsert", (document,)))
+
+        await container.execute_item_batch(batch_operations=operations, partition_key=effective_pk)
+
+    async def close(self) -> None:
+        """Close the underlying Cosmos client when this provider owns it."""
+        if self._owns_client and self._cosmos_client is not None:
+            await self._cosmos_client.close()
+
+    async def __aenter__(self) -> CosmosContextProvider:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        try:
+            await self.close()
+        except Exception:
+            if exc_type is None:
+                raise
+
+    # --- Private ---
+
+    async def _get_container(self) -> ContainerProxy:
+        """Return the Cosmos container proxy, resolving lazily from database client."""
+        if self._container_proxy is not None:
+            return self._container_proxy
+        if self._database_client is None:
+            raise RuntimeError("Cosmos database client is not initialized.")
+        self._container_proxy = self._database_client.get_container_client(self.container_name)
+        return self._container_proxy
+
+    async def _execute_retrieval_query(
+        self, query_text: str, query_terms: tuple[str, ...], partition_key: str
+    ) -> list[dict[str, Any]]:
+        """Build and execute the Cosmos retrieval query for the configured search mode."""
+        fields = list(self.content_field_names)
+        if self.message_field_name and self.message_field_name not in fields:
+            fields.append(self.message_field_name)
+        select = ", ".join(f"c.{f}" for f in fields)
+        base = f"SELECT TOP {self.scan_limit} {select} FROM c"  # noqa: S608  # nosec B608
+
+        parameters: list[dict[str, object]] = []
+
+        if self.search_mode is CosmosContextSearchMode.FULL_TEXT:
+            fts = self._build_fulltext_score(self.content_field_names[0], query_terms, parameters)
+            query = f"{base} ORDER BY RANK {fts}"
+
+        elif self.search_mode is CosmosContextSearchMode.VECTOR:
+            query_vector = await self._get_query_vector(query_text)
+            query = f"{base} ORDER BY VectorDistance(c.{self.vector_field_name}, @query_vector)"
+            parameters.append({"name": "@query_vector", "value": query_vector})
+
+        elif self.search_mode is CosmosContextSearchMode.HYBRID:
+            query_vector = await self._get_query_vector(query_text)
+            vd = f"VectorDistance(c.{self.vector_field_name}, @query_vector)"
+            if query_terms:
+                fts = self._build_fulltext_score(self.content_field_names[0], query_terms, parameters)
+                if self.weights is not None:
+                    wl = "[" + ", ".join(f"{w:g}" for w in self.weights) + "]"
+                    query = f"{base} ORDER BY RANK RRF({fts}, {vd}, {wl})"
+                else:
+                    query = f"{base} ORDER BY RANK RRF({fts}, {vd})"
+            else:
+                query = f"{base} ORDER BY {vd}"
+            parameters.append({"name": "@query_vector", "value": query_vector})
+
+        else:
+            raise ValueError(f"Unsupported search_mode: {self.search_mode}")
+
+        container = await self._get_container()
+        query_kwargs: dict[str, Any] = {"query": query, "max_item_count": self.scan_limit}
+        if parameters:
+            query_kwargs["parameters"] = parameters
+        query_kwargs["partition_key"] = partition_key
+        return [item async for item in container.query_items(**query_kwargs)]
+
+    @staticmethod
+    def _build_fulltext_score(
+        search_field: str,
+        query_terms: tuple[str, ...],
+        parameters: list[dict[str, object]],
+    ) -> str:
+        """Build a single parameterized FullTextScore expression with all terms."""
+        for i, term in enumerate(query_terms):
+            parameters.append({"name": f"@term{i}", "value": term})
+        term_args = ", ".join(f"@term{i}" for i in range(len(query_terms)))
+        return f"FullTextScore(c.{search_field}, {term_args})"
+
+    def _shape_context_message(self, item: dict[str, Any]) -> Message | None:
+        """Convert a Cosmos item into a context Message."""
+        payload = item.get(self.message_field_name) if self.message_field_name else None
+        if isinstance(payload, dict):
+            try:
+                return Message.from_dict(payload)  # pyright: ignore[reportUnknownArgumentType]
+            except (TypeError, ValueError):
+                pass
+
+        content = next(
+            (v.strip() for f in self.content_field_names if isinstance(v := item.get(f), str) and v.strip()),
+            None,
+        )
+        if not content:
+            return None
+        return Message(role="user", contents=[content])
+
+    async def _get_query_vector(self, query_text: str) -> list[float]:
+        """Get a query embedding from the configured embedding provider."""
+        if self.embedding_function is None:
+            raise ValueError("embedding_function is required for vector and hybrid retrieval")
+
+        if isinstance(self.embedding_function, SupportsGetEmbeddings):
+            embeddings = await self.embedding_function.get_embeddings([query_text])  # type: ignore[reportUnknownVariableType]
+            if not embeddings:
+                raise ValueError("embedding_function returned no embeddings")
+            return [float(v) for v in embeddings[0].vector]  # type: ignore[reportUnknownVariableType]
+
+        return [float(v) for v in await self.embedding_function(query_text)]
+
+
+__all__ = ["CosmosContextProvider", "CosmosContextSearchMode"]

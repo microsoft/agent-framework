@@ -37,6 +37,119 @@ Container naming behavior:
 
 See `samples/02-agents/conversations/cosmos_history_provider.py` for a runnable example.
 
+## Azure Cosmos DB Context Provider
+
+The Azure Cosmos DB integration also provides `CosmosContextProvider` for context injection before model invocation. It also writes input and response messages back into the same Cosmos container after each run so the knowledge container can accumulate additional context over time.
+
+### Basic Usage Example
+
+```python
+from azure.identity.aio import DefaultAzureCredential
+from agent_framework_azure_cosmos import CosmosContextProvider, CosmosContextSearchMode
+
+provider = CosmosContextProvider(
+    endpoint="https://<account>.documents.azure.com:443/",
+    credential=DefaultAzureCredential(),
+    database_name="agent-framework",
+    container_name="knowledge",
+    embedding_function=my_embedding_function,
+    content_field_names=("content", "text"),
+)
+```
+
+Supported retrieval configuration includes:
+
+- `search_mode`: `CosmosContextSearchMode.VECTOR` (default), `.FULL_TEXT`, or `.HYBRID`
+- `weights` for hybrid RRF runs (optional, omitted by default)
+- `top_k` for controlling the number of context messages injected
+- `scan_limit` for controlling the number of Cosmos candidate items scanned
+- `partition_key` for scoping Cosmos retrieval
+
+All configuration is set on the constructor. The default search mode is `VECTOR`, which requires an `embedding_function`. For full-text mode, set `search_mode=CosmosContextSearchMode.FULL_TEXT`:
+
+```python
+provider = CosmosContextProvider(
+    endpoint="https://<account>.documents.azure.com:443/",
+    credential=DefaultAzureCredential(),
+    database_name="agent-framework",
+    container_name="knowledge",
+    search_mode=CosmosContextSearchMode.FULL_TEXT,
+)
+```
+
+For hybrid retrieval with optional weights:
+
+```python
+provider = CosmosContextProvider(
+    endpoint="https://<account>.documents.azure.com:443/",
+    credential=DefaultAzureCredential(),
+    database_name="agent-framework",
+    container_name="knowledge",
+    embedding_function=my_embedding_function,
+    search_mode=CosmosContextSearchMode.HYBRID,
+    weights=[2.0, 1.0],
+    top_k=3,
+    scan_limit=10,
+    partition_key="tenant-a",
+)
+```
+
+`CosmosContextProvider` contributes retrieval context in `before_run(...)` and persists input/response messages in `after_run(...)`.
+
+The provider builds retrieval input by joining the filtered `user` and `assistant` messages from the current run into a single query string. That joined query text is then used for full-text tokenization, vector embedding generation, or hybrid retrieval depending on the configured search mode.
+
+The provider writes the request/response messages back into the same knowledge container configured by `container_name`.
+
+The provider assumes the Cosmos account, database, container, partitioning strategy, and any required Cosmos full-text/vector/hybrid indexing policies already exist and are correctly configured by the application owner. It does not create or manage Cosmos resources, schema, or search policies for you.
+
+See `packages/azure-cosmos/samples/cosmos_context_provider.py` for a package-local context provider example.
+
+## Logging and Diagnostics
+
+To enable logging and diagnostics, configure them on the `CosmosClient` **before** passing it to a provider. The Cosmos SDK
+uses Python's standard `logging` library with the `azure.cosmos` logger:
+
+```python
+import logging
+from azure.cosmos.aio import CosmosClient
+
+# Enable detailed Cosmos diagnostics logging
+logger = logging.getLogger("azure.cosmos")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(logging.StreamHandler())
+
+client = CosmosClient(
+    url="https://<account>.documents.azure.com:443/",
+    credential="<key-or-credential>",
+    logging_enable=True,
+    enable_diagnostics_logging=True,
+)
+```
+
+You can then pass the pre-configured client directly to a provider:
+
+```python
+from agent_framework_azure_cosmos import CosmosHistoryProvider, CosmosContextProvider
+
+history = CosmosHistoryProvider(
+    cosmos_client=client,
+    database_name="agent-framework",
+    container_name="chat-history",
+)
+
+context = CosmosContextProvider(
+    cosmos_client=client,
+    database_name="agent-framework",
+    container_name="knowledge",
+    embedding_function=my_embedding_function,
+)
+```
+
+For OpenTelemetry integration, install `azure-core-tracing-opentelemetry` and `opentelemetry-sdk`, then configure
+tracing on the client. See the
+[Azure Cosmos DB Python SDK documentation](https://learn.microsoft.com/en-us/python/api/overview/azure/cosmos-readme?view=azure-python#logging)
+for the full set of logging, diagnostics filtering, and telemetry options.
+
 ## Cosmos DB Workflow Checkpoint Storage
 
 `CosmosCheckpointStorage` implements the `CheckpointStorage` protocol, enabling
@@ -84,7 +197,7 @@ workflow = WorkflowBuilder(
     checkpoint_storage=checkpoint_storage,
 ).build()
 
-# Run the workflow — checkpoints are automatically saved after each superstep
+# Run the workflow - checkpoints are automatically saved after each superstep
 result = await workflow.run(message="input data")
 
 # Resume from a checkpoint
@@ -124,3 +237,4 @@ portal with this partition key configuration.
 See `samples/03-workflows/checkpoint/cosmos_workflow_checkpointing.py` for a standalone example,
 or `samples/03-workflows/checkpoint/cosmos_workflow_checkpointing_foundry.py` for an end-to-end
 example with Azure AI Foundry agents.
+
