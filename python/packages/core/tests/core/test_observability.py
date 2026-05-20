@@ -3019,6 +3019,39 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
 
+def test_capture_messages_logs_prepended_instructions_without_serializing_them(
+    span_exporter: InMemorySpanExporter,
+):
+    """Test prepended instructions still emit log events while span input_messages stays chat-history only."""
+    import json
+
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        _capture_messages(
+            span=span,
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+            system_instructions="Framework system instruction",
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["user"]
+
+    logged_messages = [call.args[0] for call in mock_logger_info.call_args_list]
+    assert [msg["role"] for msg in logged_messages] == ["system", "user"]
+    assert logged_messages[0]["parts"][0]["content"] == "Framework system instruction"
+    assert logged_messages[1]["parts"][0]["content"] == "Test"
+
+
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
     """Test that non-ASCII characters are preserved in tool arguments span attribute."""
