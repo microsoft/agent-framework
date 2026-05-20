@@ -2158,9 +2158,8 @@ def _capture_messages(
     normalized_messages = normalize_messages(messages)
     logging_messages = prepend_instructions_to_messages(normalized_messages, system_instructions)
     span_messages = [_to_otel_message(message) for message in normalized_messages]
-    prepended_count = len(logging_messages) - len(normalized_messages)
     for index, message in enumerate(logging_messages):
-        otel_message = span_messages[index - prepended_count] if index >= prepended_count else _to_otel_message(message)
+        otel_message = _to_otel_message(message)
         # Reuse the otel message representation for logging instead of calling to_dict()
         # to avoid expensive Pydantic serialization overhead
         logger.info(
