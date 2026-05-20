@@ -319,7 +319,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 context_id=session.service_session_id if session else None,
             )
             request = SendMessageRequest(message=a2a_message)
-            if background:
+            if background and not stream:
+                # return_immediately only applies to non-streaming (message/send)
                 request.configuration.return_immediately = True
             a2a_stream = active_client.send_message(request)
 

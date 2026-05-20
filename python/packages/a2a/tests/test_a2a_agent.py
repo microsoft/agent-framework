@@ -769,6 +769,22 @@ async def test_foreground_does_not_set_return_immediately(
     assert mock_a2a_client.last_request.HasField("configuration") is False
 
 
+async def test_streaming_background_does_not_set_return_immediately(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that background=True with stream=True does not set return_immediately.
+
+    Per A2A spec, return_immediately only applies to non-streaming (message/send).
+    """
+    mock_a2a_client.add_task_response("task-sb", [{"id": "art-1", "content": "Streaming bg"}])
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Stream background", stream=True, background=True):
+        updates.append(update)
+
+    assert mock_a2a_client.last_request.HasField("configuration") is False
+
+
 async def test_non_streaming_run_uses_non_streaming_client() -> None:
     """Test that stream=False uses the non-streaming client when available."""
     streaming_client = MockA2AClient()
