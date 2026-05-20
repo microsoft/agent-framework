@@ -290,9 +290,9 @@ async def test_chat_client_observability_with_instructions(
     assert len(system_instructions) == 1
     assert system_instructions[0]["content"] == "You are a helpful assistant."
 
-    # Verify input_messages contains system message
+    # Verify input_messages excludes system instructions
     input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
-    assert any(msg.get("role") == "system" for msg in input_messages)
+    assert [msg.get("role") for msg in input_messages] == ["user"]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -2981,6 +2981,9 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
     system_instructions = json.loads(system_instructions_json)
     assert system_instructions[0]["content"] == chinese_text
 
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["user"]
+
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
@@ -3103,6 +3106,9 @@ async def test_agent_instructions_from_default_options(
     system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
     assert len(system_instructions) == 1
     assert system_instructions[0]["content"] == "Default system instructions."
+
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["user"]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
