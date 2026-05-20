@@ -3202,6 +3202,95 @@ async def test_load_tools_pagination_with_duplicates():
     assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3"]
 
 
+async def test_load_tools_concurrent_reload_does_not_duplicate_tools():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+    mock_session = AsyncMock()
+    mock_session.send_ping = AsyncMock(return_value=None)
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page = MagicMock()
+    page.tools = [
+        types.Tool(
+            name="tool_1",
+            description="First tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            _meta={"echo": "tool_1"},
+        ),
+    ]
+    page.nextCursor = None
+
+    async def mock_list_tools(params=None):
+        assert params is None
+        await asyncio.sleep(0)
+        return page
+
+    mock_session.list_tools = AsyncMock(side_effect=mock_list_tools)
+
+    await asyncio.wait_for(asyncio.gather(tool.load_tools(), tool.load_tools()), timeout=1)
+
+    assert mock_session.list_tools.call_count == 2
+    assert [f.name for f in tool._functions] == ["tool_1"]
+    assert tool._tool_call_meta_by_name == {"tool_1": {"echo": "tool_1"}}
+
+
+async def test_load_tools_concurrent_paginated_reload_preserves_meta():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+    mock_session = AsyncMock()
+    mock_session.send_ping = AsyncMock(return_value=None)
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page1 = MagicMock()
+    page1.tools = [
+        types.Tool(
+            name="tool_1",
+            description="First tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            _meta={"echo": "tool_1"},
+        )
+    ]
+    page1.nextCursor = "cursor_page2"
+
+    page2 = MagicMock()
+    page2.tools = [
+        types.Tool(
+            name="tool_2",
+            description="Second tool",
+            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            _meta={"echo": "tool_2"},
+        )
+    ]
+    page2.nextCursor = None
+
+    async def mock_list_tools(params=None):
+        await asyncio.sleep(0)
+        if params is None:
+            return page1
+        if params.cursor == "cursor_page2":
+            return page2
+        raise ValueError("Unexpected cursor value")
+
+    mock_session.list_tools = AsyncMock(side_effect=mock_list_tools)
+
+    await asyncio.wait_for(asyncio.gather(tool.load_tools(), tool.load_tools()), timeout=1)
+
+    assert mock_session.list_tools.call_count == 4
+    assert [f.name for f in tool._functions] == ["tool_1", "tool_2"]
+    assert tool._tool_call_meta_by_name == {
+        "tool_1": {"echo": "tool_1"},
+        "tool_2": {"echo": "tool_2"},
+    }
+
+
 async def test_load_prompts_pagination_with_duplicates():
     """Test that load_prompts prevents duplicates across paginated results."""
     from unittest.mock import AsyncMock, MagicMock
