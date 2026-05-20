@@ -9,10 +9,10 @@
 using System.Text.Json;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using CommunityToolkit.VectorData.InMemory;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
-using Microsoft.SemanticKernel.Connectors.InMemory;
 using OpenAI.Chat;
 using SampleApp;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;

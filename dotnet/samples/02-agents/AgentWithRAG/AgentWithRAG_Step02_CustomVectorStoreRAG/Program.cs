@@ -6,10 +6,10 @@
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using CommunityToolkit.VectorData.Qdrant;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
-using Microsoft.SemanticKernel.Connectors.Qdrant;
 using OpenAI.Chat;
 using Qdrant.Client;
 
@@ -136,6 +136,6 @@ internal sealed class DocumentationChunk
     public string SourceName { get; set; } = string.Empty;
     [VectorStoreData]
     public string Text { get; set; } = string.Empty;
-    [VectorStoreVector(Dimensions: 3072)]
+    [VectorStoreVector(dimensions: 3072)]
     public string Embedding => this.Text;
 }
