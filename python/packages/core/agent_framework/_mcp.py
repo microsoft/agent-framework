@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from opentelemetry import propagate
 
+from ._middleware import FunctionInvocationContext
 from ._tools import FunctionTool
 from ._types import (
     ChatOptions,
@@ -39,7 +40,6 @@ if TYPE_CHECKING:
     from mcp.shared.session import RequestResponder
 
     from ._clients import SupportsChatGetResponse
-    from ._middleware import FunctionInvocationContext
 
 
 logger = logging.getLogger(__name__)
