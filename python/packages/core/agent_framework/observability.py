@@ -2158,9 +2158,10 @@ def _capture_messages(
     normalized_messages = normalize_messages(messages)
     prepped = prepend_instructions_to_messages(normalized_messages, system_instructions)
     span_messages: list[dict[str, Any]] = []
+    span_message_start_index = len(prepped) - len(normalized_messages)
     for index, message in enumerate(prepped):
         otel_message = _to_otel_message(message)
-        if index >= len(prepped) - len(normalized_messages):
+        if index >= span_message_start_index:
             span_messages.append(otel_message)
         # Reuse the otel message representation for logging instead of calling to_dict()
         # to avoid expensive Pydantic serialization overhead
