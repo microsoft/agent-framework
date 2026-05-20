@@ -4670,7 +4670,7 @@ async def test_progressive_list_mcp_tools_filter_by_server():
 
     prog_tools = tool.as_progressive_tools()
     list_tool = prog_tools[0]
-    
+
     # Specifying the correct server returns the tools
     res = await list_tool.invoke(arguments={"server": "my-server"})
     assert isinstance(res, list)
@@ -4687,7 +4687,7 @@ async def test_progressive_list_mcp_tools_wrong_server_returns_empty():
 
     prog_tools = tool.as_progressive_tools()
     list_tool = prog_tools[0]
-    
+
     # Specifying a different server returns an empty list
     res = await list_tool.invoke(arguments={"server": "other-server"})
     assert isinstance(res, list)
@@ -4698,18 +4698,18 @@ async def test_progressive_list_mcp_tools_wrong_server_returns_empty():
 @pytest.mark.asyncio
 async def test_progressive_call_mcp_dispatches_allowed_tool():
     tool = MCPTool(name="my-server")
-    
+
     called_with = {}
     async def mock_func(x: int):
         called_with["x"] = x
         return "Success!"
-        
+
     func1 = FunctionTool(name="tool_a", description="First tool", func=mock_func)
     tool._functions = [func1]
 
     prog_tools = tool.as_progressive_tools()
     call_tool = prog_tools[1]
-    
+
     res = await call_tool.invoke(arguments={"server": "my-server", "tool": "tool_a", "arguments": {"x": 1}})
     assert isinstance(res, list)
     assert res[0].text == "Success!"
@@ -4719,18 +4719,18 @@ async def test_progressive_call_mcp_dispatches_allowed_tool():
 @pytest.mark.asyncio
 async def test_progressive_call_mcp_with_no_arguments():
     tool = MCPTool(name="my-server")
-    
+
     called_with = {}
     async def mock_func():
         called_with["called"] = True
         return "Success!"
-        
+
     func1 = FunctionTool(name="tool_a", description="First tool", func=mock_func)
     tool._functions = [func1]
 
     prog_tools = tool.as_progressive_tools()
     call_tool = prog_tools[1]
-    
+
     # Should default arguments to {}
     res = await call_tool.invoke(arguments={"server": "my-server", "tool": "tool_a"})
     assert isinstance(res, list)
@@ -4742,13 +4742,13 @@ async def test_progressive_call_mcp_with_no_arguments():
 async def test_progressive_call_mcp_rejects_disallowed_tool():
     tool = MCPTool(name="my-server")
     tool._functions = []  # No allowed tools
-    
+
     prog_tools = tool.as_progressive_tools()
     call_tool = prog_tools[1]
-    
+
     with pytest.raises(ToolExecutionException) as exc_info:
         await call_tool.invoke(arguments={"server": "my-server", "tool": "tool_a"})
-        
+
     assert "not found or not allowed" in str(exc_info.value)
 
 
@@ -4757,10 +4757,10 @@ async def test_progressive_call_mcp_rejects_wrong_server():
     tool = MCPTool(name="my-server")
     prog_tools = tool.as_progressive_tools()
     call_tool = prog_tools[1]
-    
+
     with pytest.raises(ToolExecutionException) as exc_info:
         await call_tool.invoke(arguments={"server": "wrong-server", "tool": "tool_a"})
-        
+
     assert "Unknown server" in str(exc_info.value)
     assert "This dispatcher is for server 'my-server'" in str(exc_info.value)
 
@@ -4777,7 +4777,7 @@ async def test_progressive_call_mcp_preserves_error_handling():
 
     prog_tools = tool.as_progressive_tools()
     call_tool = prog_tools[1]
-    
+
     with pytest.raises(ToolExecutionException) as exc_info:
         await call_tool.invoke(arguments={"server": "my-server", "tool": "tool_a"})
 
@@ -4804,7 +4804,7 @@ async def test_progressive_call_mcp_respects_approval_mode():
 
     prog_tools = tool.as_progressive_tools()
     call_tool = prog_tools[1]
-    
+
     # Assert the wrapper inherited approval_mode automatically
     assert call_tool.approval_mode == "always_require"
 
