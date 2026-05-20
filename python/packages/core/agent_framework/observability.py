@@ -2156,7 +2156,7 @@ def _capture_messages(
     from ._types import normalize_messages
 
     normalized_messages = normalize_messages(messages)
-    span_messages = []
+    otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(normalized_messages):
         # Reuse the otel message representation for logging instead of calling to_dict()
         # to avoid expensive Pydantic serialization overhead
@@ -2169,11 +2169,11 @@ def _capture_messages(
                 MessageListTimestampFilter.INDEX_KEY: index,
             },
         )
-        span_messages.append(otel_message)
+        otel_messages.append(otel_message)
     if finish_reason:
-        span_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
+        otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
     span.set_attribute(
-        OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(span_messages, ensure_ascii=False)
+        OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages, ensure_ascii=False)
     )
     if system_instructions:
         if not isinstance(system_instructions, list):
