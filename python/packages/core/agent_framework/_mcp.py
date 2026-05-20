@@ -1385,6 +1385,7 @@ class MCPTool:
             name=call_tool_name,
             description=f"Call a specific tool on the {self.name} MCP server.",
             func=_call_tool,
+            approval_mode=self.approval_mode,
         )
 
         return [list_tool, call_tool]
