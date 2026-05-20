@@ -19,6 +19,7 @@
     <Compile Remove="FoundryEvalConverterTests.cs" />
     <Compile Remove="FoundryEvalsTests.cs" />
     <Compile Remove="ClientHeadersExtensionsTests.cs" />
+    <Compile Remove="ServedModelTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
