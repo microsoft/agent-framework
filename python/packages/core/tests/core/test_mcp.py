@@ -4790,7 +4790,7 @@ async def test_progressive_call_mcp_respects_approval_mode():
     from agent_framework._mcp import MCPTool
     from agent_framework._tools import _try_execute_function_calls, normalize_function_invocation_configuration
 
-    tool = MCPTool(name="my-server")
+    tool = MCPTool(name="my-server", approval_mode="always_require")
 
     async def _mock_func():
         return "Executed!"
@@ -4804,8 +4804,9 @@ async def test_progressive_call_mcp_respects_approval_mode():
 
     prog_tools = tool.as_progressive_tools()
     call_tool = prog_tools[1]
-    # Configure approval_mode on the wrapper tool
-    call_tool.approval_mode = "always_require"
+    
+    # Assert the wrapper inherited approval_mode automatically
+    assert call_tool.approval_mode == "always_require"
 
     fcc = Content.from_function_call(
         call_id="test_call_id",
@@ -4814,6 +4815,7 @@ async def test_progressive_call_mcp_respects_approval_mode():
     )
     config = normalize_function_invocation_configuration(None)
 
+    # AND assert it actually triggers an approval request (behavioral check)
     results, _ = await _try_execute_function_calls(
         custom_args={},
         attempt_idx=0,
