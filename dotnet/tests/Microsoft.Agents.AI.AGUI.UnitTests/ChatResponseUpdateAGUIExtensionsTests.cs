@@ -276,6 +276,35 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithPlainTextToolCallResult_PreservesStringResultAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ToolCallResultEvent
+            {
+                MessageId = "msg1",
+                ToolCallId = "call_1",
+                Content = "Transferred.",
+                Role = AGUIRoles.Tool
+            }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        ChatResponseUpdate resultUpdate = Assert.Single(updates);
+        FunctionResultContent result = Assert.IsType<FunctionResultContent>(resultUpdate.Contents[0]);
+        Assert.Equal("call_1", result.CallId);
+        Assert.Equal("Transferred.", result.Result);
+    }
+
+    [Fact]
     public async Task AsChatResponseUpdatesAsync_WithOverlappingToolCalls_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
