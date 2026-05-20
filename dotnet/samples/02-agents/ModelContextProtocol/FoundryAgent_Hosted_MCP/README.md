@@ -12,5 +12,5 @@ Set the following environment variables:
 
 ```powershell
 $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Microsoft Foundry resource endpoint
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"  # Optional, defaults to gpt-4.1-mini
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"  # Optional, defaults to gpt-5.4-mini
 ```

@@ -3,7 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, ChatMiddlewareLayer, FunctionInvocationLayer
+from agent_framework import ChatMiddlewareLayer, FunctionInvocationLayer
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 
 from agent_framework_anthropic import (
@@ -61,7 +62,7 @@ def test_raw_anthropic_foundry_client_creates_sdk_client_from_settings(tmp_path)
         resource="test-resource",
         api_key="test-key",
         azure_ad_token_provider=None,
-        default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+        default_headers={"User-Agent": get_user_agent()},
     )
 
 
@@ -85,7 +86,7 @@ def test_raw_anthropic_foundry_client_creates_sdk_client_from_base_url_settings(
         base_url="https://test-resource.services.ai.azure.com/anthropic/",
         api_key="test-key",
         azure_ad_token_provider=None,
-        default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+        default_headers={"User-Agent": get_user_agent()},
     )
 
 
@@ -130,7 +131,7 @@ def test_raw_anthropic_bedrock_client_creates_sdk_client_from_arguments() -> Non
         aws_profile=None,
         aws_session_token=None,
         base_url=None,
-        default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+        default_headers={"User-Agent": get_user_agent()},
     )
 
 
@@ -152,5 +153,5 @@ def test_raw_anthropic_vertex_client_creates_sdk_client_from_arguments() -> None
         access_token=None,
         credentials=None,
         base_url=None,
-        default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+        default_headers={"User-Agent": get_user_agent()},
     )

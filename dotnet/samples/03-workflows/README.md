@@ -56,3 +56,9 @@ Once completed, please proceed to the other samples listed below.
 | [Edge Conditions](./ConditionalEdges/01_EdgeCondition) | Introduces conditional edges for dynamic routing based on executor outputs |
 | [Switch-Case Routing](./ConditionalEdges/02_SwitchCase) | Extends conditional edges with switch-case routing for multiple paths |
 | [Multi-Selection Routing](./ConditionalEdges/03_MultiSelection) | Demonstrates multi-selection routing where one executor can trigger multiple downstream executors |
+
+### Orchestration Patterns
+
+| Sample | Concepts |
+|--------|----------|
+| [Handoff Orchestration](./Orchestration/Handoff) | Introduces the Handoff Orchestration pattern |

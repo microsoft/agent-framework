@@ -263,27 +263,21 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
     return unique_messages
 
 
-def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
-    """Convert a multimodal media part into Agent Framework content."""
-    part_type = str(part.get("type", "")).lower()
-    source = part.get("source")
+def _extract_multimodal_source_fields(
+    part: dict[str, Any],
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Extract ``(url, data, binary_id, mime_type)`` from an AG-UI multimodal part.
 
-    mime_type = cast(
-        str | None,
-        part.get("mimeType")
-        or part.get("mime_type")
-        or {
-            "image": "image/*",
-            "audio": "audio/*",
-            "video": "video/*",
-            "document": "application/octet-stream",
-            "binary": "application/octet-stream",
-        }.get(part_type, "application/octet-stream"),
-    )
+    Handles both the current AG-UI spec (``source.value`` for base64 payloads) and the
+    legacy ``source.data`` field for backward compatibility. Returned values are the
+    raw extracted strings (or ``None`` when absent); callers apply their own defaults.
+    """
+    mime_type = cast(str | None, part.get("mimeType") or part.get("mime_type"))
     url = cast(str | None, part.get("url") or part.get("uri"))
     data = cast(str | None, part.get("data"))
     binary_id = cast(str | None, part.get("id"))
 
+    source = part.get("source")
     if isinstance(source, dict):
         source_dict = cast(dict[str, Any], source)
         source_type = str(source_dict.get("type", "")).lower()
@@ -294,13 +288,30 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
         if source_type in {"url", "uri"}:
             url = cast(str | None, source_dict.get("url") or source_dict.get("uri"))
         elif source_type in {"base64", "data", "binary"}:
-            data = cast(str | None, source_dict.get("data"))
+            data = cast(str | None, source_dict.get("value") or source_dict.get("data"))
         elif source_type in {"id", "file"}:
             binary_id = cast(str | None, source_dict.get("id"))
         else:
             url = cast(str | None, source_dict.get("url") or source_dict.get("uri") or url)
-            data = cast(str | None, source_dict.get("data") or data)
+            data = cast(str | None, source_dict.get("value") or source_dict.get("data") or data)
             binary_id = cast(str | None, source_dict.get("id") or binary_id)
+
+    return url, data, binary_id, mime_type
+
+
+def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
+    """Convert a multimodal media part into Agent Framework content."""
+    part_type = str(part.get("type", "")).lower()
+    url, data, binary_id, mime_type = _extract_multimodal_source_fields(part)
+
+    if not mime_type:
+        mime_type = {
+            "image": "image/*",
+            "audio": "audio/*",
+            "video": "video/*",
+            "document": "application/octet-stream",
+            "binary": "application/octet-stream",
+        }.get(part_type, "application/octet-stream")
 
     if isinstance(url, str) and url:
         return Content.from_uri(uri=url, media_type=mime_type)
@@ -389,30 +400,7 @@ def _normalize_snapshot_content(content: Any) -> Any:
         def _legacy_binary_part(part: dict[str, Any]) -> dict[str, Any]:
             """Convert draft/legacy multimodal parts to AG-UI snapshot binary shape."""
             normalized: dict[str, Any] = {"type": "binary"}
-
-            mime_type = cast(str | None, part.get("mimeType") or part.get("mime_type"))
-            url = cast(str | None, part.get("url") or part.get("uri"))
-            data = cast(str | None, part.get("data"))
-            binary_id = cast(str | None, part.get("id"))
-
-            source = part.get("source")
-            if isinstance(source, dict):
-                source_part = cast(dict[str, Any], source)
-                source_mime = source_part.get("mimeType") or source_part.get("mime_type")
-                if isinstance(source_mime, str) and source_mime:
-                    mime_type = source_mime
-
-                source_type = str(source_part.get("type", "")).lower()
-                if source_type in {"url", "uri"}:
-                    url = cast(str | None, source_part.get("url") or source_part.get("uri"))
-                elif source_type in {"base64", "data", "binary"}:
-                    data = cast(str | None, source_part.get("data"))
-                elif source_type in {"id", "file"}:
-                    binary_id = cast(str | None, source_part.get("id"))
-                else:
-                    url = cast(str | None, source_part.get("url") or source_part.get("uri") or url)
-                    data = cast(str | None, source_part.get("data") or data)
-                    binary_id = cast(str | None, source_part.get("id") or binary_id)
+            url, data, binary_id, mime_type = _extract_multimodal_source_fields(part)
 
             if isinstance(mime_type, str) and mime_type:
                 normalized["mimeType"] = mime_type

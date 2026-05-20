@@ -1659,6 +1659,7 @@ async def evaluate_workflow(
     workflow: Workflow,
     workflow_result: WorkflowRunResult | None = None,
     queries: str | Sequence[str] | None = None,
+    expected_output: str | Sequence[str] | None = None,
     evaluators: Evaluator | Callable[..., Any] | Sequence[Evaluator | Callable[..., Any]],
     eval_name: str | None = None,
     include_overall: bool = True,
@@ -1683,6 +1684,11 @@ async def evaluate_workflow(
         workflow: The workflow instance.
         workflow_result: A completed ``WorkflowRunResult``.
         queries: Test queries to run through the workflow.
+        expected_output: Ground-truth expected output(s), one per query. A
+            single string is wrapped into a one-element list. When provided,
+            must be the same length as ``queries``. Each value is stamped on
+            the corresponding ``EvalItem.expected_output`` for evaluators
+            that compare against a reference answer (e.g. similarity).
         evaluators: One or more ``Evaluator`` instances.
         eval_name: Display name for the evaluation.
         include_overall: Whether to evaluate the workflow's final output.
@@ -1720,9 +1726,19 @@ async def evaluate_workflow(
     # Normalize singular query to list
     if isinstance(queries, str):
         queries = [queries]
+    if isinstance(expected_output, str):
+        expected_output = [expected_output]
 
     if workflow_result is None and queries is None:
         raise ValueError("Provide either 'workflow_result' or 'queries'.")
+
+    if expected_output is not None and queries is None:
+        raise ValueError(
+            "Provide 'queries' when using 'expected_output';"
+            " 'expected_output' is not supported with 'workflow_result' only."
+        )
+    if expected_output is not None and queries is not None and len(expected_output) != len(queries):
+        raise ValueError(f"Got {len(queries)} queries but {len(expected_output)} expected_output values.")
 
     if num_repetitions < 1:
         raise ValueError(f"num_repetitions must be >= 1, got {num_repetitions}.")
@@ -1737,7 +1753,7 @@ async def evaluate_workflow(
     if queries is not None:
         results_list: list[WRR] = []
         for _rep in range(num_repetitions):
-            for q in queries:
+            for qi, q in enumerate(queries):
                 result = await workflow.run(q)
                 if not isinstance(result, WRR):
                     raise TypeError(f"Expected WorkflowRunResult from workflow.run(), got {type(result).__name__}.")
@@ -1746,6 +1762,8 @@ async def evaluate_workflow(
                 if include_overall:
                     overall_item = _build_overall_item(q, result)
                     if overall_item:
+                        if expected_output is not None:
+                            overall_item.expected_output = expected_output[qi]
                         overall_items.append(overall_item)
     else:
         assert workflow_result is not None  # noqa: S101  # nosec B101

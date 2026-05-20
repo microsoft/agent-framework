@@ -17,12 +17,17 @@ import logging
 import logging.handlers
 import os
 import random
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import uvicorn
 from agent_framework import (
     Agent,
     Message,
     Workflow,
+    WorkflowBuilder,
+    WorkflowContext,
+    executor,
     tool,
 )
 from agent_framework.ag_ui import AgentFrameworkWorkflow, add_agent_framework_fastapi_endpoint
@@ -101,6 +106,7 @@ def create_agents() -> tuple[Agent, Agent, Agent]:
             "4. If the issue is fully resolved, send a concise wrap-up that ends with exactly: Case complete."
         ),
         client=client,
+        require_per_service_call_history_persistence=True,
     )
 
     refund = Agent(
@@ -126,6 +132,7 @@ def create_agents() -> tuple[Agent, Agent, Agent]:
         ),
         client=client,
         tools=[lookup_order_details, submit_refund],
+        require_per_service_call_history_persistence=True,
     )
 
     order = Agent(
@@ -149,9 +156,16 @@ def create_agents() -> tuple[Agent, Agent, Agent]:
         ),
         client=client,
         tools=[lookup_order_details, submit_replacement],
+        require_per_service_call_history_persistence=True,
     )
 
     return triage, refund, order
+
+
+def is_case_complete_text(text: str) -> bool:
+    """Return True when a message ends with the explicit demo completion marker."""
+
+    return text.strip().lower().endswith("case complete.")
 
 
 def _termination_condition(conversation: list[Message]) -> bool:
@@ -160,8 +174,7 @@ def _termination_condition(conversation: list[Message]) -> bool:
     for message in reversed(conversation):
         if message.role != "assistant":
             continue
-        text = (message.text or "").strip().lower()
-        if text.endswith("case complete."):
+        if is_case_complete_text(message.text or ""):
             return True
     return False
 
@@ -215,6 +228,71 @@ def create_handoff_workflow() -> Workflow:
     return builder.with_start_agent(triage).build()
 
 
+def create_closed_case_notice_workflow() -> Workflow:
+    """Build a tiny workflow that explains why a completed case cannot continue."""
+
+    @executor(id="closed_case_notice")
+    async def closed_case_notice(message: Message | None, ctx: WorkflowContext[None, str]) -> None:
+        del message
+        await ctx.yield_output(
+            "Your case is complete, but you're trying to do something new. Please start a new thread."
+        )
+
+    return WorkflowBuilder(start_executor=closed_case_notice).build()
+
+
+class DemoHandoffWorkflow(AgentFrameworkWorkflow):
+    """Workflow wrapper that blocks new top-level input on completed demo threads."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            workflow_factory=lambda _thread_id: create_handoff_workflow(),
+            name="ag_ui_handoff_workflow_demo",
+            description="Dynamic handoff workflow demo with tool approvals and request_info resumes.",
+        )
+        self._completed_threads: set[str] = set()
+        self._closed_case_notice_runner = AgentFrameworkWorkflow(workflow=create_closed_case_notice_workflow())
+
+    async def run(self, input_data: dict[str, Any]) -> AsyncGenerator[Any]:
+        """Intercept completed threads and return a helpful notice instead of resuming them."""
+
+        thread_id = self._thread_id_from_input(input_data)
+        has_messages = isinstance(input_data.get("messages"), list) and len(input_data.get("messages", [])) > 0
+        has_resume = input_data.get("resume") is not None
+
+        if thread_id in self._completed_threads and has_messages and not has_resume:
+            async for event in self._closed_case_notice_runner.run(input_data):
+                yield event
+            return
+
+        message_text_by_id: dict[str, str] = {}
+        case_completed_this_run = False
+
+        async for event in super().run(input_data):
+            event_type = getattr(event, "type", None)
+            if event_type == "TEXT_MESSAGE_START":
+                message_id = getattr(event, "message_id", None)
+                if isinstance(message_id, str):
+                    message_text_by_id[message_id] = ""
+            elif event_type == "TEXT_MESSAGE_CONTENT":
+                message_id = getattr(event, "message_id", None)
+                delta = getattr(event, "delta", None)
+                if isinstance(message_id, str) and isinstance(delta, str):
+                    message_text_by_id[message_id] = f"{message_text_by_id.get(message_id, '')}{delta}"
+            elif event_type == "TEXT_MESSAGE_END":
+                message_id = getattr(event, "message_id", None)
+                if isinstance(message_id, str):
+                    final_text = message_text_by_id.pop(message_id, "")
+                    if is_case_complete_text(final_text):
+                        case_completed_this_run = True
+
+            yield event
+
+        if case_completed_this_run:
+            self._completed_threads.add(thread_id)
+            self.clear_thread_workflow(thread_id)
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
 
@@ -231,11 +309,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    demo_workflow = AgentFrameworkWorkflow(
-        workflow_factory=lambda _thread_id: create_handoff_workflow(),
-        name="ag_ui_handoff_workflow_demo",
-        description="Dynamic handoff workflow demo with tool approvals and request_info resumes.",
-    )
+    demo_workflow = DemoHandoffWorkflow()
 
     add_agent_framework_fastapi_endpoint(
         app=app,

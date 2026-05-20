@@ -32,20 +32,19 @@ public sealed class ChatMessageExtensionsTests
         Assert.NotNull(a2aMessage.MessageId);
         Assert.NotEmpty(a2aMessage.MessageId);
 
-        Assert.Equal(MessageRole.User, a2aMessage.Role);
+        Assert.Equal(Role.User, a2aMessage.Role);
 
         Assert.NotNull(a2aMessage.Parts);
         Assert.Equal(3, a2aMessage.Parts.Count);
 
-        var filePart = Assert.IsType<FilePart>(a2aMessage.Parts[0]);
-        Assert.NotNull(filePart.File);
-        Assert.Equal("https://example.com/report.pdf", filePart.File.Uri?.ToString());
+        Assert.Equal(PartContentCase.Url, a2aMessage.Parts[0].ContentCase);
+        Assert.Equal("https://example.com/report.pdf", a2aMessage.Parts[0].Url);
 
-        var secondTextPart = Assert.IsType<TextPart>(a2aMessage.Parts[1]);
-        Assert.Equal("please summarize the file content", secondTextPart.Text);
+        Assert.Equal(PartContentCase.Text, a2aMessage.Parts[1].ContentCase);
+        Assert.Equal("please summarize the file content", a2aMessage.Parts[1].Text);
 
-        var thirdTextPart = Assert.IsType<TextPart>(a2aMessage.Parts[2]);
-        Assert.Equal("and send it to me over email", thirdTextPart.Text);
+        Assert.Equal(PartContentCase.Text, a2aMessage.Parts[2].ContentCase);
+        Assert.Equal("and send it to me over email", a2aMessage.Parts[2].Text);
     }
 
     [Fact]
@@ -71,19 +70,18 @@ public sealed class ChatMessageExtensionsTests
         Assert.NotNull(a2aMessage.MessageId);
         Assert.NotEmpty(a2aMessage.MessageId);
 
-        Assert.Equal(MessageRole.User, a2aMessage.Role);
+        Assert.Equal(Role.User, a2aMessage.Role);
 
         Assert.NotNull(a2aMessage.Parts);
         Assert.Equal(3, a2aMessage.Parts.Count);
 
-        var filePart = Assert.IsType<FilePart>(a2aMessage.Parts[0]);
-        Assert.NotNull(filePart.File);
-        Assert.Equal("https://example.com/report.pdf", filePart.File.Uri?.ToString());
+        Assert.Equal(PartContentCase.Url, a2aMessage.Parts[0].ContentCase);
+        Assert.Equal("https://example.com/report.pdf", a2aMessage.Parts[0].Url);
 
-        var secondTextPart = Assert.IsType<TextPart>(a2aMessage.Parts[1]);
-        Assert.Equal("please summarize the file content", secondTextPart.Text);
+        Assert.Equal(PartContentCase.Text, a2aMessage.Parts[1].ContentCase);
+        Assert.Equal("please summarize the file content", a2aMessage.Parts[1].Text);
 
-        var thirdTextPart = Assert.IsType<TextPart>(a2aMessage.Parts[2]);
-        Assert.Equal("and send it to me over email", thirdTextPart.Text);
+        Assert.Equal(PartContentCase.Text, a2aMessage.Parts[2].ContentCase);
+        Assert.Equal("and send it to me over email", a2aMessage.Parts[2].Text);
     }
 }

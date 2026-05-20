@@ -75,6 +75,8 @@ class DevServer:
         cors_origins: list[str] | None = None,
         ui_enabled: bool = True,
         mode: str = "developer",
+        auth_enabled: bool = True,
+        auth_token: str | None = None,
     ) -> None:
         """Initialize the development server.
 
@@ -85,20 +87,26 @@ class DevServer:
             cors_origins: List of allowed CORS origins
             ui_enabled: Whether to enable the UI
             mode: Server mode - 'developer' (full access, verbose errors) or 'user' (restricted APIs, generic errors)
+            auth_enabled: Whether to require Bearer token auth on /v1/* endpoints. Defaults to True.
+            auth_token: Bearer token. If None and auth_enabled, falls back to the DEVUI_AUTH_TOKEN
+                environment variable. Loopback binds may use an auto-generated token logged at startup.
         """
         self.entities_dir = entities_dir
         self.port = port
         self.host = host
 
-        # Smart CORS defaults: permissive for localhost, restrictive for network-exposed deployments
+        # CORS default is same-origin only (empty allowlist) on every host. The
+        # previous wildcard-on-localhost default let any webpage the developer
+        # visited read DevUI's responses cross-origin. Callers who need a real
+        # cross-origin dev frontend pass an explicit allowlist.
         if cors_origins is None:
-            # Localhost development: allow cross-origin for dev tools (e.g., frontend dev server)
-            # Network-exposed: empty list (same-origin only, no CORS)
-            cors_origins = ["*"] if host in ("127.0.0.1", "localhost") else []
+            cors_origins = []
 
         self.cors_origins = cors_origins
         self.ui_enabled = ui_enabled
         self.mode = mode
+        self.auth_enabled = auth_enabled
+        self.auth_token = self._resolve_auth_token(host, auth_enabled, auth_token)
         self.executor: AgentFrameworkExecutor | None = None
         self.openai_executor: OpenAIExecutor | None = None
         self.deployment_manager = DeploymentManager()
@@ -109,6 +117,52 @@ class DevServer:
     def set_pending_entities(self, entities: list[Any]) -> None:
         """Set in-memory entities to register on startup."""
         self._pending_entities = entities
+
+    _AUTH_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+    _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]", "::1"})
+
+    @classmethod
+    def _is_auth_loopback_host(cls, host: str) -> bool:
+        """Return True when unauthenticated DevUI may be limited to local loopback."""
+        return host.lower() in cls._AUTH_LOOPBACK_HOSTS
+
+    def _loopback_allowed_hosts(self) -> frozenset[str] | None:
+        """Return the Host-header allowlist when bound to a loopback interface, else None.
+
+        Returning None disables Host-header enforcement (e.g. for 0.0.0.0 / public binds,
+        where the operator is intentionally exposing the service).
+        """
+        host = self.host.lower()
+        if host not in self._LOOPBACK_HOSTS:
+            return None
+        return self._LOOPBACK_HOSTS
+
+    @classmethod
+    def _resolve_auth_token(cls, host: str, auth_enabled: bool, auth_token: str | None) -> str | None:
+        """Resolve the active Bearer token. Returns None when auth is disabled."""
+        is_loopback = cls._is_auth_loopback_host(host)
+        if not auth_enabled:
+            if not is_loopback:
+                raise ValueError(
+                    "DevUI authentication cannot be disabled for non-loopback hosts. "
+                    "Bind to 127.0.0.1/localhost for no-auth local development, or enable auth and provide "
+                    "DEVUI_AUTH_TOKEN or auth_token for network-reachable binds."
+                )
+            return None
+        if auth_token:
+            return auth_token
+        env_token = os.getenv("DEVUI_AUTH_TOKEN")
+        if env_token:
+            return env_token
+        if not is_loopback:
+            raise ValueError("DEVUI_AUTH_TOKEN or auth_token is required when DevUI is bound to a non-loopback host.")
+        generated = secrets.token_urlsafe(32)
+        logger.info("=" * 70)
+        logger.info("DevUI authentication enabled with auto-generated token:")
+        logger.info(f"   {generated}")
+        logger.info("Pass it as: Authorization: Bearer <token>")
+        logger.info("=" * 70)
+        return generated
 
     def _is_dev_mode(self) -> bool:
         """Check if running in developer mode.
@@ -336,6 +390,11 @@ class DevServer:
             lifespan=lifespan,
         )
 
+        # Middleware registration order matters: Starlette wraps later-added
+        # middleware around earlier-added ones, so the LAST registered runs
+        # outermost (sees the request first). We want Host-header enforcement
+        # to run before CORS/auth, so it is registered last below.
+
         # Add CORS middleware
         # Note: allow_credentials cannot be True when allow_origins is ["*"]
         # For localhost dev with wildcard origins, credentials are disabled
@@ -350,29 +409,24 @@ class DevServer:
             allow_headers=["*"],
         )
 
-        # Add authentication middleware using decorator pattern
-        # Auth is enabled by presence of DEVUI_AUTH_TOKEN
-        auth_token = os.getenv("DEVUI_AUTH_TOKEN", "")
-        auth_required = bool(auth_token)
-
-        if auth_required:
+        # Bearer-token authentication. Enabled by default; opt out via
+        # DevServer(auth_enabled=False) for embedded/test scenarios.
+        if self.auth_enabled and self.auth_token:
+            expected_token = self.auth_token
             logger.info("Authentication middleware enabled")
 
             @app.middleware("http")
             async def auth_middleware(request: Request, call_next: Callable[[Request], Awaitable[Any]]) -> Any:
                 """Validate Bearer token authentication.
 
-                Skips authentication for health, meta, static UI endpoints, and OPTIONS requests.
+                Skips authentication for health, the UI shell, static assets, and OPTIONS preflight.
                 """
-                # Skip auth for OPTIONS (CORS preflight) requests
                 if request.method == "OPTIONS":
                     return await call_next(request)
 
-                # Skip auth for health checks, meta endpoint, and static files
-                if request.url.path in ["/health", "/meta", "/"] or request.url.path.startswith("/assets"):
+                if request.url.path in ["/health", "/"] or request.url.path.startswith("/assets"):
                     return await call_next(request)
 
-                # Check Authorization header
                 auth_header = request.headers.get("Authorization")
                 if not auth_header or not auth_header.startswith("Bearer "):
                     return JSONResponse(
@@ -388,9 +442,8 @@ class DevServer:
                         },
                     )
 
-                # Extract and validate token
                 token = auth_header.replace("Bearer ", "", 1).strip()
-                if not secrets.compare_digest(token, auth_token):
+                if not secrets.compare_digest(token, expected_token):
                     return JSONResponse(
                         status_code=401,
                         content={
@@ -402,10 +455,39 @@ class DevServer:
                         },
                     )
 
-                # Token valid, proceed
                 return await call_next(request)
 
             _ = auth_middleware
+
+        # Host-header allowlist for loopback binds: on a loopback interface, only
+        # accept requests whose Host header names a loopback address. Registered LAST
+        # so it runs outermost, rejecting non-loopback Host values before CORS/auth
+        # (and before CORS can short-circuit a preflight on a rebound request).
+        allowed_hosts = self._loopback_allowed_hosts()
+        if allowed_hosts is not None:
+            expected_hosts = allowed_hosts
+
+            @app.middleware("http")
+            async def host_header_middleware(request: Request, call_next: Callable[[Request], Awaitable[Any]]) -> Any:
+                host_header = request.headers.get("host", "")
+                hostname = host_header.split(":", 1)[0].lower()
+                if hostname and hostname not in expected_hosts:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "error": {
+                                "message": (
+                                    f"Invalid Host header '{host_header}'. DevUI is bound to a "
+                                    "loopback interface and only accepts requests addressed to it."
+                                ),
+                                "type": "invalid_host",
+                                "code": "host_not_allowed",
+                            }
+                        },
+                    )
+                return await call_next(request)
+
+            _ = host_header_middleware
 
         self._register_routes(app)
         self._mount_ui(app)
@@ -427,8 +509,6 @@ class DevServer:
         @app.get("/meta", response_model=MetaResponse)
         async def get_meta() -> MetaResponse:
             """Get server metadata and configuration."""
-            import os
-
             # Ensure executors are initialized to check capabilities
             openai_executor = await self._ensure_openai_executor()
 
@@ -442,7 +522,7 @@ class DevServer:
                     "openai_proxy": openai_executor.is_configured,
                     "deployment": True,  # Deployment feature is available
                 },
-                auth_required=bool(os.getenv("DEVUI_AUTH_TOKEN")),
+                auth_required=self.auth_enabled,
             )
 
         @app.get("/v1/entities", response_model=DiscoveryResponse)
@@ -750,7 +830,6 @@ class DevServer:
                             headers={
                                 "Cache-Control": "no-cache",
                                 "Connection": "keep-alive",
-                                "Access-Control-Allow-Origin": "*",
                             },
                         )
                     return await openai_executor.execute_sync(request)
@@ -794,7 +873,6 @@ class DevServer:
                         headers={
                             "Cache-Control": "no-cache",
                             "Connection": "keep-alive",
-                            "Access-Control-Allow-Origin": "*",
                             "X-Response-ID": response_id,  # Include ID for debugging/tracking
                         },
                     )

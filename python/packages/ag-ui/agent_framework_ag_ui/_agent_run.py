@@ -46,10 +46,14 @@ from ._orchestration._tooling import collect_server_tools, merge_tools, register
 from ._run_common import (
     FlowState,
     _build_run_finished_event,  # type: ignore
+    _close_reasoning_block,  # type: ignore
     _emit_content,  # type: ignore
     _extract_resume_payload,  # type: ignore
+    _extract_tool_result_display,  # type: ignore
     _has_only_tool_calls,  # type: ignore
     _normalize_resume_interrupts,  # type: ignore
+    _resolve_ui_payload,  # type: ignore
+    _stringify_tool_result,  # type: ignore
 )
 from ._utils import (
     convert_agui_tools_to_agent_framework,
@@ -68,19 +72,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Keys that are internal to AG-UI orchestration and should not be passed to chat clients
-AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state"}
+AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state", "forwarded_props"}
 
 
 def _build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Build metadata dict with truncated string values for Azure compatibility.
+    """Build metadata dict with string values for Azure compatibility.
 
-    Azure has a 512 character limit per metadata value.
+    Azure has a 512 character limit per metadata value.  String values that
+    already fit are kept as-is.  Non-string values are JSON-serialized.  If the
+    resulting string exceeds 512 characters the key is **dropped** (with a
+    warning) instead of truncated, because truncation can produce invalid JSON
+    that downstream consumers cannot decode.
 
     Args:
         thread_metadata: Raw metadata dict
 
     Returns:
-        Metadata with string values truncated to 512 chars
+        Metadata with safe string values (each <= 512 chars)
     """
     if not thread_metadata:
         return {}
@@ -88,7 +96,12 @@ def _build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, An
     for key, value in thread_metadata.items():
         value_str = value if isinstance(value, str) else json.dumps(value)
         if len(value_str) > 512:
-            value_str = value_str[:512]
+            logger.warning(
+                "Dropping metadata key %r: serialized value is %d chars (limit 512)",
+                key,
+                len(value_str),
+            )
+            continue
         safe_metadata[key] = value_str
     return safe_metadata
 
@@ -371,17 +384,23 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
 
 
 def _make_approval_tool_result_events(resolved_approval_results: list[Content]) -> list[ToolCallResultEvent]:
-    """Build TOOL_CALL_RESULT events for tools executed during approval resolution."""
+    """Build TOOL_CALL_RESULT events for tools executed during approval resolution.
+
+    Honors ``TOOL_RESULT_DISPLAY_KEY`` so tools returning
+    ``state_update(..., tool_result=...)`` route the display payload to the UI
+    event even when gated by HITL approval.
+    """
     events: list[ToolCallResultEvent] = []
     for resolved in resolved_approval_results:
         if resolved.call_id:
             raw = resolved.result if resolved.result is not None else ""
-            result_str = raw if isinstance(raw, str) else json.dumps(make_json_safe(raw))
+            llm_str = _stringify_tool_result(raw)
+            ui_str = _resolve_ui_payload(llm_str, _extract_tool_result_display(resolved))
             events.append(
                 ToolCallResultEvent(
                     message_id=generate_event_id(),
                     tool_call_id=resolved.call_id,
-                    content=result_str,
+                    content=ui_str,
                     role="tool",
                 )
             )
@@ -780,15 +799,19 @@ async def run_agent_stream(
     # Create session (with service session support)
     if config.use_service_session:
         supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
-        session = AgentSession(service_session_id=supplied_thread_id)
+        session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
     else:
-        session = AgentSession()
+        session = AgentSession(session_id=thread_id)
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
     base_metadata: dict[str, Any] = {
         "ag_ui_thread_id": thread_id,
         "ag_ui_run_id": run_id,
     }
+    if "forwarded_props" in input_data:
+        base_metadata["forwarded_props"] = input_data["forwarded_props"]
+    elif "forwardedProps" in input_data:
+        base_metadata["forwarded_props"] = input_data["forwardedProps"]
     if flow.current_state:
         base_metadata["current_state"] = flow.current_state
     session.metadata = _build_safe_metadata(base_metadata)  # type: ignore[attr-defined]
@@ -1057,6 +1080,10 @@ async def run_agent_stream(
                                 },
                             }
                         )
+
+    # Close any open reasoning block
+    for event in _close_reasoning_block(flow):
+        yield event
 
     # Close any open message
     if flow.message_id:

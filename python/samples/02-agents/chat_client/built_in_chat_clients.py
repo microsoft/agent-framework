@@ -75,11 +75,7 @@ def get_client(client_name: ClientName) -> SupportsChatGetResponse[Any]:
     if client_name == "azure_openai_chat_completion":
         return OpenAIChatCompletionClient(credential=AzureCliCredential())
     if client_name == "foundry_chat":
-        return FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["FOUNDRY_MODEL"],
-            credential=AzureCliCredential(),
-        )
+        return FoundryChatClient(credential=AzureCliCredential())
 
     raise ValueError(f"Unsupported client name: {client_name}")
 
@@ -92,21 +88,6 @@ async def main(client_name: ClientName = "openai_chat") -> None:
     stream = os.getenv("STREAM", "false").lower() == "true"
     print(f"Client: {client_name}")
     print(f"User: {message.text}")
-
-    if isinstance(client, FoundryChatClient):
-        async with client:
-            if stream:
-                response_stream = client.get_response([message], stream=True, options={"tools": get_weather})
-                print("Assistant: ", end="")
-                async for chunk in response_stream:
-                    if chunk.text:
-                        print(chunk.text, end="")
-                print("")
-            else:
-                print(
-                    f"Assistant: {await client.get_response([message], stream=False, options={'tools': get_weather})}"
-                )
-        return
 
     if stream:
         response_stream = client.get_response([message], stream=True, options={"tools": get_weather})

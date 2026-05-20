@@ -30,7 +30,7 @@ Converts between common units (miles↔km, pounds↔kg) using a multiplication f
 
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com/"
-export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 ### Run

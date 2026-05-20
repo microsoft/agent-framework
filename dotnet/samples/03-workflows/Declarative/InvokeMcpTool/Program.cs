@@ -31,7 +31,7 @@ namespace Demo.Workflows.Declarative.InvokeMcpTool;
 /// </list>
 /// <para>
 /// This sample uses the Microsoft Learn MCP server to search Azure documentation and the Microsoft Foundry MCP server to get AI model details.
-/// When you run the sample, provide an AI model (e.g. gpt-4.1-mini) as input,
+/// When you run the sample, provide an AI model (e.g. gpt-5.4-mini) as input,
 /// The workflow will use the MCP tools to find relevant information about the model from Microsoft Learn and foundry, then an agent will summarize the results.
 /// </para>
 /// <para>

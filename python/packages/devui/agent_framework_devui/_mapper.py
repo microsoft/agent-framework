@@ -72,6 +72,17 @@ def _stringify_name(value: Any) -> str:
     return value if isinstance(value, str) else str(value)
 
 
+def _workflow_output_metadata(event_type: Any, executor_id: Any) -> dict[str, Any] | None:
+    """Return metadata that preserves workflow yield designation on visible output."""
+    if event_type not in ("output", "intermediate", "data"):
+        return None
+    return {
+        "workflow_event_type": event_type,
+        "workflow_output_kind": "terminal" if event_type == "output" else "intermediate",
+        "executor_id": executor_id,
+    }
+
+
 def _serialize_content_recursive(value: Any) -> Any:
     """Recursively serialize Agent Framework Content objects to JSON-compatible values.
 
@@ -200,15 +211,21 @@ class MessageMapper:
         try:
             from agent_framework import AgentResponse, AgentResponseUpdate, WorkflowEvent
 
-            # Handle WorkflowEvent with type='output' or 'data' wrapping AgentResponseUpdate
-            # This must be checked BEFORE generic WorkflowEvent check
-            # Note: AgentExecutor uses type='output' for streaming updates
-            if isinstance(raw_event, WorkflowEvent) and raw_event.type in ("output", "data"):
+            # Handle WorkflowEvent with type='output', 'intermediate', or 'data' wrapping
+            # AgentResponseUpdate. This must be checked BEFORE generic WorkflowEvent check.
+            # Note: AgentExecutor uses type='output' for streaming updates from designated
+            # executors and type='intermediate' from non-designated executors. type='data'
+            # is the deprecated legacy variant retained for backward compat.
+            if isinstance(raw_event, WorkflowEvent) and raw_event.type in ("output", "intermediate", "data"):
                 event_data = getattr(cast(Any, raw_event), "data", None)
                 if isinstance(event_data, AgentResponseUpdate):
                     # Preserve executor_id in context for proper output routing
                     context["current_executor_id"] = getattr(cast(Any, raw_event), "executor_id", None)
-                    return await self._convert_agent_update(event_data, context)
+                    context["current_workflow_event_type"] = raw_event.type
+                    try:
+                        return await self._convert_agent_update(event_data, context)
+                    finally:
+                        context.pop("current_workflow_event_type", None)
 
             # Handle complete agent response (AgentResponse) - for non-streaming agent execution
             if isinstance(raw_event, AgentResponse):
@@ -633,6 +650,13 @@ class MessageMapper:
             # Check if we're in an executor context with an existing item
             executor_id = context.get("current_executor_id")
             executor_item_key = f"exec_item_{executor_id}" if executor_id else None
+            workflow_metadata = _workflow_output_metadata(context.get("current_workflow_event_type"), executor_id)
+
+            if has_text_content and workflow_metadata is not None:
+                current_metadata = context.get("current_message_workflow_metadata")
+                if current_metadata != workflow_metadata:
+                    context.pop("current_message_id", None)
+                    context["current_message_workflow_metadata"] = workflow_metadata
 
             # If we have an executor item, use it for deltas instead of creating a message
             if has_text_content and executor_item_key and executor_item_key in context:
@@ -644,6 +668,15 @@ class MessageMapper:
                 message_id = f"msg_{uuid4().hex[:8]}"
                 context["current_message_id"] = message_id
                 context["output_index"] = context.get("output_index", -1) + 1
+                message_item = ResponseOutputMessage(
+                    type="message",
+                    id=message_id,
+                    role="assistant",
+                    content=[],
+                    status="in_progress",
+                )
+                if workflow_metadata is not None:
+                    cast(Any, message_item).metadata = workflow_metadata
 
                 # Add message output item
                 events.append(
@@ -651,9 +684,7 @@ class MessageMapper:
                         type="response.output_item.added",
                         output_index=context["output_index"],
                         sequence_number=self._next_sequence(context),
-                        item=ResponseOutputMessage(
-                            type="message", id=message_id, role="assistant", content=[], status="in_progress"
-                        ),
+                        item=message_item,
                     )
                 )
 
@@ -675,17 +706,18 @@ class MessageMapper:
                 # Special handling for TextContent to use proper delta events
                 if content.type == "text" and "current_message_id" in context:
                     # Stream text content via proper delta events
-                    events.append(
-                        ResponseTextDeltaEvent(
-                            type="response.output_text.delta",
-                            output_index=context["output_index"],
-                            content_index=context.get("content_index", 0),
-                            item_id=context["current_message_id"],
-                            delta=content.text,
-                            logprobs=[],  # We don't have logprobs from Agent Framework
-                            sequence_number=self._next_sequence(context),
-                        )
+                    delta_event = ResponseTextDeltaEvent(
+                        type="response.output_text.delta",
+                        output_index=context["output_index"],
+                        content_index=context.get("content_index", 0),
+                        item_id=context["current_message_id"],
+                        delta=content.text,
+                        logprobs=[],  # We don't have logprobs from Agent Framework
+                        sequence_number=self._next_sequence(context),
                     )
+                    if workflow_metadata is not None:
+                        cast(Any, delta_event).metadata = workflow_metadata
+                    events.append(delta_event)
                 elif content.type in self.content_mappers:
                     # Use existing mappers for other content types
                     mapped_events = await self.content_mappers[content.type](content, context)
@@ -899,10 +931,14 @@ class MessageMapper:
 
                 return events
 
-            # Handle output events separately to preserve output data
-            if event_type == "output":
+            # Handle yield events (output / intermediate / data) by extracting visible
+            # text from the payload. All three render as a visible message item so the
+            # gap that previously dropped intermediate yields into generic completed-
+            # trace events is closed.
+            if event_type in ("output", "intermediate", "data"):
                 output_data = getattr(event, "data", None)
                 executor_id = getattr(event, "executor_id", "unknown")
+                workflow_metadata = _workflow_output_metadata(event_type, executor_id)
 
                 if output_data is not None:
                     # Import required types
@@ -960,6 +996,8 @@ class MessageMapper:
                         content=[text_content],
                         status="completed",
                     )
+                    if workflow_metadata is not None:
+                        cast(Any, output_message).metadata = workflow_metadata
 
                     # Emit output_item.added for each yield_output
                     logger.debug(
@@ -1056,6 +1094,7 @@ class MessageMapper:
                         output_index=context["output_index"],
                         sequence_number=self._next_sequence(context),
                         item=executor_item,
+                        created_at=float(time.time()),
                     )
                 ]
 
@@ -1088,6 +1127,7 @@ class MessageMapper:
                         output_index=context.get("output_index", 0),
                         sequence_number=self._next_sequence(context),
                         item=executor_item,
+                        created_at=float(time.time()),
                     )
                 ]
 
@@ -1121,6 +1161,7 @@ class MessageMapper:
                         output_index=context.get("output_index", 0),
                         sequence_number=self._next_sequence(context),
                         item=executor_item,
+                        created_at=float(time.time()),
                     )
                 ]
 
@@ -1744,7 +1785,7 @@ class MessageMapper:
                 # Fallback to direct access if parse_arguments doesn't exist
                 arguments = getattr(content.function_call, "arguments", {})
 
-        return {
+        result = {
             "type": "response.function_approval.requested",
             "request_id": getattr(content, "id", "unknown"),
             "function_call": {
@@ -1756,6 +1797,17 @@ class MessageMapper:
             "output_index": context["output_index"],
             "sequence_number": self._next_sequence(context),
         }
+
+        # Include policy violation details if present (from security middleware)
+        additional_props = cast(dict[str, Any] | None, getattr(content, "additional_properties", None))
+        if additional_props and isinstance(additional_props, dict) and additional_props.get("policy_violation"):
+            result["policy_violation"] = {
+                "reason": additional_props.get("reason", "Policy violation detected"),
+                "violation_type": additional_props.get("violation_type"),
+                "context_label": additional_props.get("context_label"),
+            }
+
+        return result
 
     async def _map_approval_response_content(self, content: Any, context: dict[str, Any]) -> dict[str, Any]:
         """Map FunctionApprovalResponseContent to custom event."""

@@ -32,6 +32,7 @@ from .._types import (
 from ..exceptions import AgentInvalidRequestException, AgentInvalidResponseException
 from ._checkpoint import CheckpointStorage
 from ._events import (
+    AGENT_FORWARDED_EVENT_TYPES,
     WorkflowEvent,
 )
 from ._message_utils import normalize_messages_input
@@ -104,7 +105,7 @@ class WorkflowAgent(BaseAgent):
         Note:
             Only output events (type='output') and request_info events (type='request_info') from
             the workflow are considered and converted to agent responses of the WorkflowAgent.
-            Other workflow events are ignored. Use `with_output_from` in WorkflowBuilder to control
+            Other workflow events are ignored. Use `output_from` in WorkflowBuilder to control
             which executors' outputs are surfaced as agent responses.
         """
         if id is None:
@@ -119,15 +120,11 @@ class WorkflowAgent(BaseAgent):
         if not any(is_type_compatible(list[Message], input_type) for input_type in start_executor.input_types):
             raise ValueError("Workflow's start executor cannot handle list[Message]")
 
-        resolved_context_providers = list(context_providers) if context_providers is not None else []
-        if not resolved_context_providers:
-            resolved_context_providers.append(InMemoryHistoryProvider())
-
         super().__init__(
             id=id,
             name=name,
             description=description,
-            context_providers=resolved_context_providers,
+            context_providers=context_providers,
             **kwargs,
         )
         self._workflow: Workflow = workflow
@@ -261,6 +258,15 @@ class WorkflowAgent(BaseAgent):
             An AgentResponse representing the workflow execution results.
         """
         input_messages = normalize_messages_input(messages)
+
+        if (
+            not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
+            and session is not None
+        ):
+            self.context_providers.append(InMemoryHistoryProvider())
+
         provider_session = session
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
@@ -295,7 +301,7 @@ class WorkflowAgent(BaseAgent):
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
         ):
-            if event.type == "output" or event.type == "request_info":
+            if event.type in AGENT_FORWARDED_EVENT_TYPES:
                 output_events.append(event)
 
         result = self._convert_workflow_events_to_agent_response(response_id, output_events)
@@ -332,6 +338,15 @@ class WorkflowAgent(BaseAgent):
             AgentResponseUpdate objects representing the workflow execution progress.
         """
         input_messages = normalize_messages_input(messages)
+
+        if (
+            not any(
+                provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
+            )
+            and session is not None
+        ):
+            self.context_providers.append(InMemoryHistoryProvider())
+
         provider_session = session
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
@@ -423,6 +438,13 @@ class WorkflowAgent(BaseAgent):
                     yield event
 
         elif checkpoint_id is not None:
+            # Restore the prior workflow state from the checkpoint. Shared
+            # state (e.g. accumulated conversation history maintained by the
+            # workflow's executors) survives across turns because Workflow.run
+            # no longer wipes state per call. Callers who want to deliver a
+            # new user message after restore should make a second
+            # `workflow.run(message=...)` call - they are NOT mutually
+            # exclusive on the same instance, but each must be its own call.
             if streaming:
                 async for event in self.workflow.run(
                     stream=True,
@@ -493,7 +515,11 @@ class WorkflowAgent(BaseAgent):
         response_id: str,
         output_events: list[WorkflowEvent[Any]],
     ) -> AgentResponse:
-        """Convert a list of workflow output events to an AgentResponse."""
+        """Convert a list of workflow events to an AgentResponse.
+
+        Caller-facing workflow events are forwarded as agent messages. Terminal and
+        intermediate event payloads keep their original content types.
+        """
         messages: list[Message] = []
         raw_representations: list[object] = []
         merged_usage: UsageDetails | None = None
@@ -514,13 +540,19 @@ class WorkflowAgent(BaseAgent):
                 raw_representations.append(output_event)
             else:
                 data = output_event.data
+                # Anything that isn't `output` is intermediate — this branch only sees
+                # events that already passed the lifecycle filter and weren't request_info.
+                is_intermediate = output_event.type != "output"
+
                 if isinstance(data, AgentResponseUpdate):
-                    # We cannot support AgentResponseUpdate in non-streaming mode. This is because the message
-                    # sequence cannot be guaranteed when there are streaming updates in between non-streaming
-                    # responses.
+                    # AgentResponseUpdate is a streaming-only payload. Accepting it
+                    # in non-streaming runs would make message ordering depend on
+                    # partial chunks for both terminal and intermediate events.
+                    event_label = "Intermediate" if is_intermediate else "Output"
                     raise AgentInvalidRequestException(
-                        "Output event with AgentResponseUpdate data cannot be emitted in non-streaming mode. "
-                        "Please ensure executors emit AgentResponse for non-streaming workflows."
+                        f"{event_label} event with AgentResponseUpdate data cannot be emitted "
+                        "in non-streaming mode. Please ensure executors emit AgentResponse "
+                        "for non-streaming workflows."
                     )
 
                 if isinstance(data, AgentResponse):
@@ -604,26 +636,38 @@ class WorkflowAgent(BaseAgent):
     ) -> list[AgentResponseUpdate]:
         """Convert a workflow event to a list of AgentResponseUpdate objects.
 
-        Events with type='output' and type='request_info' are processed.
-        Other workflow events are ignored as they are workflow-internal.
+        Forwarding rule:
 
-        For 'output' events, AgentExecutor yields AgentResponseUpdate for streaming updates
-        via ctx.yield_output(). This method converts those to agent response updates.
-
-        Returns:
-            A list of AgentResponseUpdate objects. Empty list if the event is not relevant.
+        - ``type='output'`` — terminal user-facing emission. Forwarded as-is.
+        - ``type='intermediate'`` (and the deprecated ``type='data'``) — forwarded
+          as-is.
+        - ``type='request_info'`` — request-info translation (unchanged).
+        - Everything else (lifecycle, diagnostics, executor bookkeeping,
+          orchestration-internal events like ``group_chat``/``handoff_sent``/
+          ``magentic_orchestrator``) is dropped.
         """
-        if event.type == "output":
-            # Convert workflow output to agent response updates.
-            # Handle different data types appropriately.
+        # TODO(evmattso): https://github.com/microsoft/agent-framework/issues/5885
+        if event.type not in AGENT_FORWARDED_EVENT_TYPES:
+            return []
+
+        if event.type != "request_info":
             data = event.data
             executor_id = event.executor_id
 
             if isinstance(data, AgentResponseUpdate):
-                # Pass through AgentResponseUpdate directly (streaming from AgentExecutor)
-                if not data.author_name:
-                    data.author_name = executor_id
-                return [data]
+                # Construct a fresh AgentResponseUpdate so we don't mutate a payload
+                # that AgentExecutor still holds a reference to in its `updates` list.
+                return [
+                    AgentResponseUpdate(
+                        contents=list(data.contents),
+                        role=data.role,
+                        author_name=data.author_name or executor_id,
+                        response_id=data.response_id,
+                        message_id=data.message_id,
+                        created_at=data.created_at,
+                        raw_representation=data.raw_representation,
+                    )
+                ]
             if isinstance(data, AgentResponse):
                 # Convert each message in AgentResponse to an AgentResponseUpdate
                 updates: list[AgentResponseUpdate] = []

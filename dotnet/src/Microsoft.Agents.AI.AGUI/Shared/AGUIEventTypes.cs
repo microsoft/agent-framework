@@ -31,4 +31,18 @@ internal static class AGUIEventTypes
     public const string StateSnapshot = "STATE_SNAPSHOT";
 
     public const string StateDelta = "STATE_DELTA";
+
+    public const string ReasoningStart = "REASONING_START";
+
+    public const string ReasoningMessageStart = "REASONING_MESSAGE_START";
+
+    public const string ReasoningMessageContent = "REASONING_MESSAGE_CONTENT";
+
+    public const string ReasoningMessageEnd = "REASONING_MESSAGE_END";
+
+    public const string ReasoningEnd = "REASONING_END";
+
+    public const string ReasoningMessageChunk = "REASONING_MESSAGE_CHUNK";
+
+    public const string ReasoningEncryptedValue = "REASONING_ENCRYPTED_VALUE";
 }

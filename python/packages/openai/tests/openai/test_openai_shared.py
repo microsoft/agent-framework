@@ -8,7 +8,11 @@ import pytest
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
-from agent_framework_openai._shared import AZURE_OPENAI_TOKEN_SCOPE, _resolve_azure_credential_to_token_provider
+from agent_framework_openai._shared import (
+    AZURE_OPENAI_TOKEN_SCOPE,
+    _ensure_async_token_provider,
+    _resolve_azure_credential_to_token_provider,
+)
 
 
 class _AsyncTokenCredentialStub(AsyncTokenCredential):
@@ -52,3 +56,23 @@ def test_resolve_azure_callable_token_provider_passthrough() -> None:
 def test_resolve_azure_invalid_credential_raises() -> None:
     with pytest.raises(ValueError, match="credential"):
         _resolve_azure_credential_to_token_provider(object())  # type: ignore[arg-type]
+
+
+async def test_ensure_async_token_provider_wraps_sync_provider() -> None:
+    def sync_provider() -> str:
+        return "sync-token"
+
+    wrapper = _ensure_async_token_provider(sync_provider)
+    result = await wrapper()
+
+    assert result == "sync-token"
+
+
+async def test_ensure_async_token_provider_wraps_async_provider() -> None:
+    async def async_provider() -> str:
+        return "async-token"
+
+    wrapper = _ensure_async_token_provider(async_provider)
+    result = await wrapper()
+
+    assert result == "async-token"

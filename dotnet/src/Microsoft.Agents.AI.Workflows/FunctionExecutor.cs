@@ -73,7 +73,14 @@ public class FunctionExecutor<TInput>(string id,
         ExecutorOptions? options = null,
         IEnumerable<Type>? sentMessageTypes = null,
         IEnumerable<Type>? outputTypes = null,
-        bool declareCrossRunShareable = false) : this(id, WrapAction(handlerSync, out var attributeSentTypes, out var attributeYieldTypes), options, attributeSentTypes.Concat(sentMessageTypes ?? []), attributeYieldTypes.Concat(outputTypes ?? []), declareCrossRunShareable)
+        bool declareCrossRunShareable = false) : this(id,
+                                                      WrapAction(handlerSync,
+                                                                 out var attributeSentTypes,
+                                                                 out var attributeYieldTypes),
+                                                      options,
+                                                      attributeSentTypes.Concat(sentMessageTypes ?? []),
+                                                      attributeYieldTypes.Concat(outputTypes ?? []),
+                                                      declareCrossRunShareable)
     {
     }
 }
@@ -96,8 +103,18 @@ public class FunctionExecutor<TInput, TOutput>(string id,
         IEnumerable<Type>? outputTypes = null,
         bool declareCrossRunShareable = false) : Executor<TInput, TOutput>(id, options, declareCrossRunShareable)
 {
-    internal static Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> WrapFunc(Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync)
+    internal static Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> WrapFunc(Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync, out IEnumerable<Type> sentTypes, out IEnumerable<Type> yieldedTypes)
     {
+        if (handlerSync.Method != null)
+        {
+            MethodInfo method = handlerSync.Method;
+            (sentTypes, yieldedTypes) = method.GetAttributeTypes();
+        }
+        else
+        {
+            sentTypes = yieldedTypes = [];
+        }
+
         return RunFuncAsync;
 
         ValueTask<TOutput> RunFuncAsync(TInput input, IWorkflowContext workflowContext, CancellationToken cancellationToken)
@@ -133,7 +150,14 @@ public class FunctionExecutor<TInput, TOutput>(string id,
         ExecutorOptions? options = null,
         IEnumerable<Type>? sentMessageTypes = null,
         IEnumerable<Type>? outputTypes = null,
-        bool declareCrossRunShareable = false) : this(id, WrapFunc(handlerSync), options, sentMessageTypes, outputTypes, declareCrossRunShareable)
+        bool declareCrossRunShareable = false) : this(id,
+                                                      WrapFunc(handlerSync,
+                                                               out var attributeSentTypes,
+                                                               out var attributeYieldTypes),
+                                                      options,
+                                                      attributeSentTypes.Concat(sentMessageTypes ?? []),
+                                                      attributeYieldTypes.Concat(outputTypes ?? []),
+                                                      declareCrossRunShareable)
     {
     }
 }

@@ -13,7 +13,7 @@ Before running this sample, ensure you have:
 
 1. A Microsoft Foundry project set up
 2. A deep research model deployment (e.g., o3-deep-research)
-3. A model deployment (e.g., gpt-4o)
+3. A model deployment (e.g., gpt-5.4-mini)
 4. A Bing Connection configured in your Microsoft Foundry project
 5. Azure CLI installed and authenticated
 
@@ -45,5 +45,5 @@ $env:AZURE_AI_BING_CONNECTION_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/pr
 # Optional, defaults to o3-deep-research
 $env:AZURE_AI_REASONING_DEPLOYMENT_NAME="o3-deep-research"
 
-# Optional, defaults to gpt-4o
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o"
+# Optional, defaults to gpt-5.4-mini
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"

@@ -329,40 +329,18 @@ public sealed partial class ChatClientAgent : AIAgent
 
         this._logger.LogAgentChatClientInvokedStreamingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
 
-        bool hasUpdates;
+        // Ensure the inner enumerator is always disposed, even if the consumer breaks out early
+        // (e.g. ToolApprovalAgent does `yield break` after emitting an approval request). Without
+        // this, downstream decorators like PerServiceCallChatHistoryPersistingChatClient would be
+        // left suspended at `yield return`, never running their finally blocks, and any in-flight
+        // FunctionResultContent / FunctionCallContent state would not be persisted before the next
+        // turn, leaving the next request to the model with dangling tool calls.
         try
         {
-            // Ensure we start the streaming request
-            hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            await this.NotifyProvidersOfFailureAtEndOfRunAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
-            throw;
-        }
-
-        while (hasUpdates)
-        {
-            var update = responseUpdatesEnumerator.Current;
-            if (update is not null)
-            {
-                update.AuthorName ??= this.Name;
-
-                responseUpdates.Add(update);
-
-                yield return new(update)
-                {
-                    AgentId = this.Id,
-                    ContinuationToken = WrapContinuationToken(update.ContinuationToken, GetInputMessages(inputMessages, continuationToken), responseUpdates)
-                };
-            }
-
+            bool hasUpdates;
             try
             {
-                // Re-ensure the run context has the resolved session before each MoveNextAsync.
-                // The base class RunStreamingAsync restores the original context (potentially with
-                // null session) after each yield, so we must re-establish it for the decorator.
-                EnsureRunContextHasSession(safeSession);
+                // Ensure we start the streaming request
                 hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -370,20 +348,55 @@ public sealed partial class ChatClientAgent : AIAgent
                 await this.NotifyProvidersOfFailureAtEndOfRunAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
                 throw;
             }
+
+            while (hasUpdates)
+            {
+                var update = responseUpdatesEnumerator.Current;
+                if (update is not null)
+                {
+                    update.AuthorName ??= this.Name;
+
+                    responseUpdates.Add(update);
+
+                    yield return new(update)
+                    {
+                        AgentId = this.Id,
+                        ContinuationToken = WrapContinuationToken(update.ContinuationToken, GetInputMessages(inputMessages, continuationToken), responseUpdates)
+                    };
+                }
+
+                try
+                {
+                    // Re-ensure the run context has the resolved session before each MoveNextAsync.
+                    // The base class RunStreamingAsync restores the original context (potentially with
+                    // null session) after each yield, so we must re-establish it for the decorator.
+                    EnsureRunContextHasSession(safeSession);
+                    hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    await this.NotifyProvidersOfFailureAtEndOfRunAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
+                    throw;
+                }
+            }
+
+            var chatResponse = responseUpdates.ToChatResponse();
+
+            var forceEndOfRunPersistence = continuationToken is not null || chatOptions?.AllowBackgroundResponses is true;
+
+            // We can derive the type of supported session from whether we have a conversation id,
+            // so let's update it and set the conversation id for the service session case.
+            this.UpdateSessionConversationIdAtEndOfRun(safeSession, chatResponse.ConversationId, cancellationToken, forceUpdate: forceEndOfRunPersistence);
+
+            // Notify providers of all new messages unless persistence is handled per-service-call by the decorator.
+            // When resuming from a continuation token or using background responses, force notification
+            // to send the combined data (per-service-call persistence is unreliable for these scenarios).
+            await this.NotifyProvidersOfNewMessagesAtEndOfRunAsync(safeSession, GetInputMessages(inputMessagesForChatClient, continuationToken), chatResponse.Messages, chatOptions, cancellationToken, forceNotify: forceEndOfRunPersistence).ConfigureAwait(false);
         }
-
-        var chatResponse = responseUpdates.ToChatResponse();
-
-        var forceEndOfRunPersistence = continuationToken is not null || chatOptions?.AllowBackgroundResponses is true;
-
-        // We can derive the type of supported session from whether we have a conversation id,
-        // so let's update it and set the conversation id for the service session case.
-        this.UpdateSessionConversationIdAtEndOfRun(safeSession, chatResponse.ConversationId, cancellationToken, forceUpdate: forceEndOfRunPersistence);
-
-        // Notify providers of all new messages unless persistence is handled per-service-call by the decorator.
-        // When resuming from a continuation token or using background responses, force notification
-        // to send the combined data (per-service-call persistence is unreliable for these scenarios).
-        await this.NotifyProvidersOfNewMessagesAtEndOfRunAsync(safeSession, GetInputMessages(inputMessagesForChatClient, continuationToken), chatResponse.Messages, chatOptions, cancellationToken, forceNotify: forceEndOfRunPersistence).ConfigureAwait(false);
+        finally
+        {
+            await responseUpdatesEnumerator.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc/>

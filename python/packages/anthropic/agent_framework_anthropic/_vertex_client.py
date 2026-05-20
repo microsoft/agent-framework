@@ -6,13 +6,13 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
 )
 from agent_framework._settings import load_settings
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import NOT_GIVEN, AsyncAnthropicVertex
 
@@ -89,7 +89,7 @@ class RawAnthropicVertexClient(RawAnthropicClient[AnthropicOptionsT], Generic[An
                 access_token=access_token,
                 credentials=credentials,
                 base_url=settings.get("anthropic_vertex_base_url"),
-                default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+                default_headers={"User-Agent": get_user_agent()},
             )
 
         super().__init__(

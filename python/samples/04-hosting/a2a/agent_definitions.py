@@ -8,15 +8,10 @@ AgentCards for the invoice, policy, and logistics agent types.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from invoice_data import query_by_invoice_id, query_by_transaction_id, query_invoices
-
-if TYPE_CHECKING:
-    from agent_framework import Agent
-    from agent_framework.foundry import FoundryChatClient
-
 
 # ---------------------------------------------------------------------------
 # Agent instructions
@@ -94,11 +89,11 @@ def get_invoice_agent_card(url: str) -> AgentCard:
     return AgentCard(
         name="InvoiceAgent",
         description="Handles requests relating to invoices.",
-        url=url,
         version="1.0.0",
         default_input_modes=["text"],
         default_output_modes=["text"],
         capabilities=_CAPABILITIES,
+        supported_interfaces=[AgentInterface(url=url, protocol_binding="JSONRPC")],
         skills=[
             AgentSkill(
                 id="id_invoice_agent",
@@ -116,11 +111,11 @@ def get_policy_agent_card(url: str) -> AgentCard:
     return AgentCard(
         name="PolicyAgent",
         description="Handles requests relating to policies and customer communications.",
-        url=url,
         version="1.0.0",
         default_input_modes=["text"],
         default_output_modes=["text"],
         capabilities=_CAPABILITIES,
+        supported_interfaces=[AgentInterface(url=url, protocol_binding="JSONRPC")],
         skills=[
             AgentSkill(
                 id="id_policy_agent",
@@ -138,11 +133,11 @@ def get_logistics_agent_card(url: str) -> AgentCard:
     return AgentCard(
         name="LogisticsAgent",
         description="Handles requests relating to logistics.",
-        url=url,
         version="1.0.0",
         default_input_modes=["text"],
         default_output_modes=["text"],
         capabilities=_CAPABILITIES,
+        supported_interfaces=[AgentInterface(url=url, protocol_binding="JSONRPC")],
         skills=[
             AgentSkill(
                 id="id_logistics_agent",

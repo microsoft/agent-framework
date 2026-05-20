@@ -18,7 +18,7 @@ Set the following environment variables:
 
 ```powershell
 $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 ## Run the sample

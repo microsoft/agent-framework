@@ -3,6 +3,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
@@ -125,6 +126,45 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
                 },
                 message: "OrderStatus workflow completed",
                 timeout: s_orchestrationTimeout);
+
+            // Test the CancelOrder workflow with x-ms-wait-for-response header
+            this._outputHelper.WriteLine("Starting CancelOrder workflow with x-ms-wait-for-response: true...");
+
+            using HttpRequestMessage waitRequest = new(HttpMethod.Post, cancelOrderUri);
+            waitRequest.Content = new StringContent("55555", Encoding.UTF8, "text/plain");
+            waitRequest.Headers.Add("x-ms-wait-for-response", "true");
+            using HttpResponseMessage waitResponse = await s_sharedHttpClient.SendAsync(waitRequest);
+
+            Assert.True(waitResponse.IsSuccessStatusCode, $"CancelOrder wait-for-response request failed with status: {waitResponse.StatusCode}");
+            string waitResponseText = await waitResponse.Content.ReadAsStringAsync();
+            this._outputHelper.WriteLine($"CancelOrder wait-for-response result: {waitResponseText}");
+
+            // The response should contain the workflow result (not just "started for CancelOrder")
+            Assert.DoesNotContain("Workflow orchestration started", waitResponseText);
+            Assert.Contains("55555", waitResponseText);
+
+            // Test the wait-for-response with Accept: application/json header
+            this._outputHelper.WriteLine("Starting CancelOrder workflow with x-ms-wait-for-response and Accept: application/json...");
+
+            using HttpRequestMessage jsonWaitRequest = new(HttpMethod.Post, cancelOrderUri);
+            jsonWaitRequest.Content = new StringContent("77777", Encoding.UTF8, "text/plain");
+            jsonWaitRequest.Headers.Add("x-ms-wait-for-response", "true");
+            jsonWaitRequest.Headers.Add("Accept", "application/json");
+
+            using CancellationTokenSource jsonWaitCts = new(s_orchestrationTimeout);
+            using HttpResponseMessage jsonWaitResponse = await s_sharedHttpClient.SendAsync(jsonWaitRequest, jsonWaitCts.Token);
+
+            Assert.True(jsonWaitResponse.IsSuccessStatusCode, $"CancelOrder JSON wait-for-response request failed with status: {jsonWaitResponse.StatusCode}");
+            string jsonWaitResponseText = await jsonWaitResponse.Content.ReadAsStringAsync();
+            this._outputHelper.WriteLine($"CancelOrder JSON wait-for-response result: {jsonWaitResponseText}");
+
+            using JsonDocument jsonDoc = JsonDocument.Parse(jsonWaitResponseText);
+            JsonElement root = jsonDoc.RootElement;
+            Assert.True(root.TryGetProperty("runId", out _), "JSON response missing 'runId' property");
+            Assert.True(root.TryGetProperty("workflowStatus", out JsonElement statusEl), "JSON response missing 'workflowStatus' property");
+            Assert.Equal("Completed", statusEl.GetString());
+            Assert.True(root.TryGetProperty("result", out JsonElement resultEl), "JSON response missing 'result' property");
+            Assert.Contains("77777", resultEl.GetString());
         });
     }
 

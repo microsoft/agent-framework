@@ -105,6 +105,7 @@ async def main() -> None:
             "When the user asks to create or generate files, hand off to code_specialist "
             "by calling handoff_to_code_specialist."
         ),
+        require_per_service_call_history_persistence=True,
     )
 
     code_interpreter_tool = client.get_code_interpreter_tool()
@@ -117,6 +118,7 @@ async def main() -> None:
             "and create files when requested. Always save files to /mnt/data/ directory."
         ),
         tools=[code_interpreter_tool],
+        require_per_service_call_history_persistence=True,
     )
 
     workflow = (

@@ -178,4 +178,23 @@ public sealed class FileSystemJsonCheckpointStoreTests
         Func<Task> createCheckpointAction = async () => await store.CreateCheckpointAsync(runId, TestData);
         await createCheckpointAction.Should().NotThrowAsync();
     }
+
+    [Fact]
+    public async Task RetrieveCheckpointAsync_ShouldReturnPersistedDataAsync()
+    {
+        // Arrange
+        using TempDirectory tempDirectory = new();
+        using FileSystemJsonCheckpointStore store = new(tempDirectory);
+
+        string sessionId = Guid.NewGuid().ToString("N");
+        JsonElement originalData = JsonSerializer.SerializeToElement(new { name = "test", value = 42 });
+
+        // Act
+        CheckpointInfo checkpoint = await store.CreateCheckpointAsync(sessionId, originalData);
+        JsonElement retrieved = await store.RetrieveCheckpointAsync(sessionId, checkpoint);
+
+        // Assert
+        retrieved.GetProperty("name").GetString().Should().Be("test");
+        retrieved.GetProperty("value").GetInt32().Should().Be(42);
+    }
 }

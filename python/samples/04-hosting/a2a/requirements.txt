@@ -1,0 +1,23 @@
+# Agent Framework packages
+# To use the deployed version, uncomment the lines below and comment out the local installation lines
+# agent-framework-a2a
+# agent-framework-foundry
+
+# Local installation (for development and testing)
+# Each package must be listed explicitly because pip doesn't resolve uv workspace sources.
+# Without explicit entries, pip would fetch transitive dependencies from PyPI instead of local source.
+-e ../../../packages/core  # Core framework - base dependency for all packages
+-e ../../../packages/foundry  # Foundry support - dependency for FoundryChatClient in a2a_server.py
+-e ../../../packages/a2a  # A2A integration - provides A2AAgent and a2a-sdk
+
+# Azure authentication
+azure-identity
+
+# A2A server runtime
+uvicorn
+
+# HTTP client used by A2A client samples
+httpx
+
+# Environment variable loading
+python-dotenv

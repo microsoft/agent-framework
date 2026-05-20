@@ -46,12 +46,14 @@ internal sealed class InvokeMcpToolExecutor(
     /// <summary>
     /// Determines if the message indicates external input is required.
     /// </summary>
-    public static bool RequiresInput(object? message) => message is ExternalInputRequest;
+    public static bool RequiresInput(object? message) =>
+        message is ExternalInputRequest || (message is PortableValue pv && pv.IsType(out ExternalInputRequest? _));
 
     /// <summary>
     /// Determines if the message indicates no external input is required.
     /// </summary>
-    public static bool RequiresNothing(object? message) => message is ActionExecutorResult;
+    public static bool RequiresNothing(object? message) =>
+        message is ActionExecutorResult || (message is PortableValue pv && pv.IsType(out ActionExecutorResult? _));
 
     /// <inheritdoc/>
     protected override bool EmitResultEvent => false;

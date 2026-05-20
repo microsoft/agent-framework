@@ -53,6 +53,7 @@ def create_agents(
             "Assign the two tasks to the appropriate specialists, one after the other."
         ),
         name="coordinator",
+        require_per_service_call_history_persistence=True,
     )
 
     research_agent = Agent(
@@ -66,6 +67,7 @@ def create_agents(
             "coordinator. Keep each individual response focused on one aspect."
         ),
         name="research_agent",
+        require_per_service_call_history_persistence=True,
     )
 
     summary_agent = Agent(
@@ -75,6 +77,7 @@ def create_agents(
             "control to the coordinator."
         ),
         name="summary_agent",
+        require_per_service_call_history_persistence=True,
     )
 
     return coordinator, research_agent, summary_agent

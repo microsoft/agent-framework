@@ -22,6 +22,7 @@ from agent_framework import (
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import SequentialBuilder
+from typing_extensions import Never
 
 
 class _EchoAgent(BaseAgent):
@@ -67,16 +68,20 @@ class _EchoAgent(BaseAgent):
         return _run()
 
 
-class _SummarizerExec(Executor):
-    """Custom executor that summarizes by appending a short assistant message."""
+class _SummarizerTerminator(Executor):
+    """Custom-executor terminator that yields a synthesized summary as the workflow's final answer."""
 
     @handler
-    async def summarize(self, agent_response: AgentExecutorResponse, ctx: WorkflowContext[list[Message]]) -> None:
+    async def summarize(
+        self,
+        agent_response: AgentExecutorResponse,
+        ctx: WorkflowContext[Never, AgentResponse],
+    ) -> None:
         conversation = agent_response.full_conversation or []
         user_texts = [m.text for m in conversation if m.role == "user"]
         agents = [m.author_name or m.role for m in conversation if m.role == "assistant"]
         summary = Message("assistant", [f"Summary of users:{len(user_texts)} agents:{len(agents)}"])
-        await ctx.send_message(list(conversation) + [summary])
+        await ctx.yield_output(AgentResponse(messages=[summary]))
 
 
 class _InvalidExecutor(Executor):
@@ -98,58 +103,91 @@ def test_sequential_builder_validation_rejects_invalid_executor() -> None:
         SequentialBuilder(participants=[_EchoAgent(id="agent1", name="A1"), _InvalidExecutor(id="invalid")]).build()
 
 
-async def test_sequential_agents_append_to_context() -> None:
+async def test_sequential_streaming_yields_only_last_agent_updates() -> None:
+    """Streaming mode surfaces only the last agent's AgentResponseUpdate chunks as outputs.
+
+    Intermediate agents do NOT emit `output` events; only the last agent (the workflow's
+    output_executor) emits chunks of the final answer.
+    """
     a1 = _EchoAgent(id="agent1", name="A1")
     a2 = _EchoAgent(id="agent2", name="A2")
 
     wf = SequentialBuilder(participants=[a1, a2]).build()
 
     completed = False
-    output: list[Message] | None = None
+    update_events: list[AgentResponseUpdate] = []
     async for ev in wf.run("hello sequential", stream=True):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif ev.type == "output":
-            output = ev.data  # type: ignore[assignment]
-        if completed and output is not None:
+            update_events.append(ev.data)  # type: ignore[arg-type]
+        if completed:
             break
 
     assert completed
-    assert output is not None
-    assert isinstance(output, list)
-    msgs: list[Message] = output
-    assert len(msgs) == 3
-    assert msgs[0].role == "user" and "hello sequential" in msgs[0].text
-    assert msgs[1].role == "assistant" and (msgs[1].author_name == "A1" or True)
-    assert msgs[2].role == "assistant" and (msgs[2].author_name == "A2" or True)
-    assert "A1 reply" in msgs[1].text
-    assert "A2 reply" in msgs[2].text
+    # Only the last agent's streaming chunks surface as `output` events.
+    assert update_events, "Expected at least one streaming update from the last agent"
+    for upd in update_events:
+        assert isinstance(upd, AgentResponseUpdate)
+    combined_text = "".join(u.text for u in update_events if hasattr(u, "text"))
+    assert "A2 reply" in combined_text
+    assert "A1 reply" not in combined_text
+
+
+async def test_sequential_non_streaming_yields_only_last_agent_response() -> None:
+    """Non-streaming mode emits a single `output` event with the last agent's AgentResponse."""
+    a1 = _EchoAgent(id="agent1", name="A1")
+    a2 = _EchoAgent(id="agent2", name="A2")
+
+    wf = SequentialBuilder(participants=[a1, a2]).build()
+
+    output_events = [ev for ev in await wf.run("hello sequential") if ev.type == "output"]
+    assert len(output_events) == 1
+    response = output_events[0].data
+    assert isinstance(response, AgentResponse)
+    assert all(m.role == "assistant" for m in response.messages)
+    combined = " ".join(m.text for m in response.messages)
+    assert "A2 reply" in combined
+    assert "A1 reply" not in combined
+
+
+async def test_sequential_as_agent_returns_only_last_agent_response() -> None:
+    """`workflow.as_agent().run(prompt)` returns ONLY the last agent's messages — not the user
+    input or earlier agents' replies. This is the core fix for the orchestration-as-agent
+    output contract."""
+    a1 = _EchoAgent(id="agent1", name="A1")
+    a2 = _EchoAgent(id="agent2", name="A2")
+
+    agent = SequentialBuilder(participants=[a1, a2]).build().as_agent()
+    response = await agent.run("hello as_agent")
+
+    assert isinstance(response, AgentResponse)
+    # Only the last agent's reply — no user prompt, no agent1 messages.
+    combined = " ".join(m.text for m in response.messages)
+    assert "A2 reply" in combined
+    assert "A1 reply" not in combined
+    assert "hello as_agent" not in combined
 
 
 async def test_sequential_with_custom_executor_summary() -> None:
+    """A custom-executor terminator yields its own AgentResponse — that becomes the workflow output.
+
+    Custom executors used as the terminator must call `ctx.yield_output(AgentResponse(...))`
+    directly (rather than `ctx.send_message(list[Message])` like an intermediate executor would),
+    because the terminator IS the workflow's output executor.
+    """
     a1 = _EchoAgent(id="agent1", name="A1")
-    summarizer = _SummarizerExec(id="summarizer")
+    summarizer = _SummarizerTerminator(id="summarizer")
 
     wf = SequentialBuilder(participants=[a1, summarizer]).build()
 
-    completed = False
-    output: list[Message] | None = None
-    async for ev in wf.run("topic X", stream=True):
-        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
-            completed = True
-        elif ev.type == "output":
-            output = ev.data
-        if completed and output is not None:
-            break
-
-    assert completed
-    assert output is not None
-    msgs: list[Message] = output
-    # Expect: [user, A1 reply, summary]
-    assert len(msgs) == 3
-    assert msgs[0].role == "user"
-    assert msgs[1].role == "assistant" and "A1 reply" in msgs[1].text
-    assert msgs[2].role == "assistant" and msgs[2].text.startswith("Summary of users:")
+    output_events = [ev for ev in await wf.run("topic X") if ev.type == "output"]
+    assert len(output_events) == 1
+    response = output_events[0].data
+    assert isinstance(response, AgentResponse)
+    assert len(response.messages) == 1
+    assert response.messages[0].role == "assistant"
+    assert response.messages[0].text.startswith("Summary of users:")
 
 
 async def test_sequential_checkpoint_resume_round_trip() -> None:
@@ -158,14 +196,14 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     initial_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf = SequentialBuilder(participants=list(initial_agents), checkpoint_storage=storage).build()
 
-    baseline_output: list[Message] | None = None
+    baseline_updates: list[AgentResponseUpdate] = []
     async for ev in wf.run("checkpoint sequential", stream=True):
         if ev.type == "output":
-            baseline_output = ev.data  # type: ignore[assignment]
+            baseline_updates.append(ev.data)  # type: ignore[arg-type]
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             break
 
-    assert baseline_output is not None
+    assert baseline_updates
 
     checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert checkpoints
@@ -175,19 +213,20 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf_resume = SequentialBuilder(participants=list(resumed_agents), checkpoint_storage=storage).build()
 
-    resumed_output: list[Message] | None = None
+    resumed_updates: list[AgentResponseUpdate] = []
     async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
         if ev.type == "output":
-            resumed_output = ev.data  # type: ignore[assignment]
+            resumed_updates.append(ev.data)  # type: ignore[arg-type]
         if ev.type == "status" and ev.state in (
             WorkflowRunState.IDLE,
             WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
         ):
             break
 
-    assert resumed_output is not None
-    assert [m.role for m in resumed_output] == [m.role for m in baseline_output]
-    assert [m.text for m in resumed_output] == [m.text for m in baseline_output]
+    assert resumed_updates
+    baseline_text = "".join(u.text for u in baseline_updates if hasattr(u, "text"))
+    resumed_text = "".join(u.text for u in resumed_updates if hasattr(u, "text"))
+    assert baseline_text == resumed_text
 
 
 async def test_sequential_checkpoint_runtime_only() -> None:
@@ -197,14 +236,14 @@ async def test_sequential_checkpoint_runtime_only() -> None:
     agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf = SequentialBuilder(participants=list(agents)).build()
 
-    baseline_output: list[Message] | None = None
+    baseline_updates: list[AgentResponseUpdate] = []
     async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
         if ev.type == "output":
-            baseline_output = ev.data  # type: ignore[assignment]
+            baseline_updates.append(ev.data)  # type: ignore[arg-type]
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             break
 
-    assert baseline_output is not None
+    assert baseline_updates
 
     checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert checkpoints
@@ -214,21 +253,22 @@ async def test_sequential_checkpoint_runtime_only() -> None:
     resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf_resume = SequentialBuilder(participants=list(resumed_agents)).build()
 
-    resumed_output: list[Message] | None = None
+    resumed_updates: list[AgentResponseUpdate] = []
     async for ev in wf_resume.run(
         checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage, stream=True
     ):
         if ev.type == "output":
-            resumed_output = ev.data  # type: ignore[assignment]
+            resumed_updates.append(ev.data)  # type: ignore[arg-type]
         if ev.type == "status" and ev.state in (
             WorkflowRunState.IDLE,
             WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
         ):
             break
 
-    assert resumed_output is not None
-    assert [m.role for m in resumed_output] == [m.role for m in baseline_output]
-    assert [m.text for m in resumed_output] == [m.text for m in baseline_output]
+    assert resumed_updates
+    baseline_text = "".join(u.text for u in baseline_updates if hasattr(u, "text"))
+    resumed_text = "".join(u.text for u in resumed_updates if hasattr(u, "text"))
+    assert baseline_text == resumed_text
 
 
 async def test_sequential_checkpoint_runtime_overrides_buildtime() -> None:
@@ -390,3 +430,47 @@ async def test_chain_only_agent_responses_three_agents() -> None:
     # a3 should see only A2's reply
     assert len(a3.last_messages) == 1
     assert a3.last_messages[0].role == "assistant" and "A2 reply" in (a3.last_messages[0].text or "")
+
+
+# ---------------------------------------------------------------------------
+# with_request_info tests
+# ---------------------------------------------------------------------------
+
+
+async def test_sequential_request_info_last_participant_emits_output() -> None:
+    """When the last participant is wrapped via with_request_info(), the workflow
+    still emits a terminal output event after approval.
+
+    This exercises the _EndWithConversation.end_with_agent_executor_response path
+    that converts the AgentApprovalExecutor's forwarded AgentExecutorResponse into
+    the workflow's final AgentResponse output.
+    """
+    from agent_framework_orchestrations._orchestration_request_info import AgentRequestInfoResponse
+
+    a1 = _EchoAgent(id="agent1", name="A1")
+    a2 = _EchoAgent(id="agent2", name="A2")
+
+    wf = SequentialBuilder(participants=[a1, a2]).with_request_info().build()
+
+    # First run: collect request_info events for both agents
+    request_events: list[Any] = []
+    async for ev in wf.run("hello with approval", stream=True):
+        if ev.type == "request_info" and isinstance(ev.data, AgentExecutorResponse):
+            request_events.append(ev)
+
+    # Approve each agent in sequence until the workflow completes
+    while request_events:
+        responses = {req.request_id: AgentRequestInfoResponse.approve() for req in request_events}
+        request_events = []
+        output_events: list[Any] = []
+        async for ev in wf.run(stream=True, responses=responses):
+            if ev.type == "request_info" and isinstance(ev.data, AgentExecutorResponse):
+                request_events.append(ev)
+            elif ev.type == "output":
+                output_events.append(ev)
+
+    # The workflow must produce a terminal output with the last agent's response.
+    assert len(output_events) == 1
+    response = output_events[0].data
+    assert isinstance(response, AgentResponse)
+    assert any("A2 reply" in m.text for m in response.messages)

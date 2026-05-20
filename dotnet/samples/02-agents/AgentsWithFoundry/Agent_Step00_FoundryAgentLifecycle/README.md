@@ -5,7 +5,7 @@ This sample demonstrates the full lifecycle of a `FoundryAgent` backed by a serv
 ## Prerequisites
 
 - A Microsoft Foundry project endpoint
-- A model deployment name (defaults to `gpt-4o-mini`)
+- A model deployment name (defaults to `gpt-5.4-mini`)
 - Azure CLI installed and authenticated
 
 ## Environment Variables
@@ -13,7 +13,7 @@ This sample demonstrates the full lifecycle of a `FoundryAgent` backed by a serv
 | Variable | Description | Required |
 | --- | --- | --- |
 | `AZURE_AI_PROJECT_ENDPOINT` | Microsoft Foundry project endpoint | Yes |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment name | No (defaults to `gpt-4o-mini`) |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment name | No (defaults to `gpt-5.4-mini`) |
 
 ## Running the sample
 

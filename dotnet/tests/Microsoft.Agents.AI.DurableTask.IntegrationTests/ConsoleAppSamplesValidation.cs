@@ -13,8 +13,6 @@ namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) : SamplesValidationBase(outputHelper)
 {
-    private const string SkipFlakyTimingTest = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971";
-
     private static readonly string s_samplesPath = Path.GetFullPath(
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableAgents", "ConsoleApps"));
 
@@ -69,7 +67,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task SingleAgentOrchestrationChainingSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
@@ -105,7 +103,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task MultiAgentConcurrencySampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
@@ -160,7 +158,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000)]
     public async Task MultiAgentConditionalSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
@@ -237,14 +235,14 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         Assert.True(foundSuccess, "Orchestration did not complete successfully.");
     }
 
-    [Fact(Skip = SkipFlakyTimingTest)]
+    [RetryFact(2, 5000)]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
 
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
         {
-            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(180));
 
             // Start the HITL orchestration following the happy path from README
             await this.WriteInputAsync(process, "The Future of Artificial Intelligence", testTimeoutCts.Token);
@@ -260,7 +258,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
             while ((line = this.ReadLogLine(logs, testTimeoutCts.Token)) != null)
             {
                 // Look for notification that content is ready. The first time we see this, we should send a rejection.
-                // The second time we see this, we should send approval.
+                // Subsequent times we see this, we should send approval (LLM may produce extra review cycles).
                 if (line.Contains("Content is ready for review", StringComparison.OrdinalIgnoreCase))
                 {
                     if (!rejectionSent)
@@ -275,19 +273,14 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                             testTimeoutCts.Token);
                         rejectionSent = true;
                     }
-                    else if (!approvalSent)
+                    else
                     {
-                        // Prompt: Approve? (y/n):
+                        // Approve any subsequent draft (LLM non-determinism may produce extra review cycles)
                         await this.WriteInputAsync(process, "y", testTimeoutCts.Token);
 
                         // Prompt: Feedback (optional):
                         await this.WriteInputAsync(process, "Looks good!", testTimeoutCts.Token);
                         approvalSent = true;
-                    }
-                    else
-                    {
-                        // This should never happen
-                        Assert.Fail("Unexpected message found.");
                     }
                 }
 
@@ -311,14 +304,14 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact(Skip = SkipFlakyTimingTest)]
+    [RetryFact(2, 5000)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
         {
             // This test takes a bit longer to run due to the multiple agent interactions and the lengthy content generation.
-            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(90));
+            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(180));
 
             // Test starting an agent that schedules a content generation orchestration
             await this.WriteInputAsync(
@@ -335,7 +328,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
             while ((line = this.ReadLogLine(logs, testTimeoutCts.Token)) != null)
             {
                 // Look for notification that content is ready. The first time we see this, we should send a rejection.
-                // The second time we see this, we should send approval.
+                // Subsequent times we see this, we should send approval (LLM may produce extra review cycles).
                 if (line.Contains("NOTIFICATION: Please review the following content for approval", StringComparison.OrdinalIgnoreCase))
                 {
                     // Wait for the notification to be fully written to the console
@@ -350,19 +343,14 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
                             testTimeoutCts.Token);
                         rejectionSent = true;
                     }
-                    else if (!approvalSent)
+                    else
                     {
-                        // Approve the content. Note that we need to send a newline character to the console first before sending the input.
+                        // Approve any subsequent draft (LLM non-determinism may produce extra review cycles)
                         await this.WriteInputAsync(
                             process,
                             "\nApprove the content",
                             testTimeoutCts.Token);
                         approvalSent = true;
-                    }
-                    else
-                    {
-                        // This should never happen
-                        Assert.Fail("Unexpected message found.");
                     }
                 }
 
@@ -396,14 +384,14 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact(Skip = SkipFlakyTimingTest)]
+    [RetryFact(2, 5000)]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_ReliableStreaming");
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
         {
             // This test takes a bit longer to run due to the multiple agent interactions and the lengthy content generation.
-            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(90));
+            using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(TimeSpan.FromSeconds(150));
 
             // Test the agent endpoint with a simple prompt
             await this.WriteInputAsync(process, "Plan a 5-day trip to Seattle. Include daily activities.", testTimeoutCts.Token);

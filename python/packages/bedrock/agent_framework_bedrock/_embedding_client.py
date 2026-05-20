@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     BaseEmbeddingClient,
     Embedding,
     EmbeddingGenerationOptions,
@@ -20,6 +19,7 @@ from agent_framework import (
     UsageDetails,
     load_settings,
 )
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import EmbeddingTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
@@ -140,7 +140,7 @@ class RawBedrockEmbeddingClient(
             self._bedrock_client = boto3_session.client(
                 "bedrock-runtime",
                 region_name=region_name or resolved_region,
-                config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
+                config=BotoConfig(user_agent_extra=get_user_agent()),
             )
 
         self.model: str = settings["embedding_model"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]

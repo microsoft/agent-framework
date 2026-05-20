@@ -297,6 +297,7 @@ body {
 }
 
 .approval-actions button,
+.case-reset,
 .starter-prompts button,
 .chat-input button {
   border: 0;
@@ -307,6 +308,7 @@ body {
 }
 
 .approval-actions button:disabled,
+.case-reset:disabled,
 .starter-prompts button:disabled,
 .chat-input button:disabled {
   opacity: 0.6;
@@ -389,6 +391,19 @@ body {
 .starter-prompts {
   display: grid;
   gap: 10px;
+}
+
+.pending-empty-state {
+  display: grid;
+  gap: 10px;
+}
+
+.case-reset {
+  width: fit-content;
+  border: 1px solid #bdcfdc;
+  background: #ecf3f8;
+  color: #345267;
+  padding: 10px 14px;
 }
 
 .starter-prompts button {

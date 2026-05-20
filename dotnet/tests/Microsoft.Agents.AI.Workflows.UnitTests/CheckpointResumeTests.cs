@@ -280,6 +280,48 @@ public class CheckpointResumeTests
     }
 
     /// <summary>
+    /// Verifies that restoring a live run clears any queued external responses from the
+    /// superseded timeline before importing checkpoint state.
+    /// </summary>
+    [Fact]
+    internal async Task Checkpoint_Restore_ClearsQueuedExternalResponsesBeforeImportAsync()
+    {
+        Workflow workflow = CreateSimpleRequestWorkflow();
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment env = ExecutionEnvironment.InProcess_Lockstep.ToWorkflowExecutionEnvironment();
+
+        await using StreamingRun run = await env.WithCheckpointing(checkpointManager)
+                                                .RunStreamingAsync(workflow, "Hello");
+
+        (ExternalRequest pendingRequest, CheckpointInfo checkpoint) = await CapturePendingRequestAndCheckpointAsync(run);
+
+        await run.SendResponseAsync(pendingRequest.CreateResponse("World"));
+        await run.RestoreCheckpointAsync(checkpoint);
+
+        List<WorkflowEvent> restoredEvents = await ReadToHaltAsync(run);
+        ExternalRequest replayedRequest = restoredEvents.OfType<RequestInfoEvent>()
+                                                        .Select(evt => evt.Request)
+                                                        .Should()
+                                                        .ContainSingle("the restored run should still be waiting for the checkpointed request")
+                                                        .Subject;
+
+        restoredEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty(
+            "a queued response from the superseded timeline should not be processed after restore");
+        RunStatus statusAfterRestore = await run.GetStatusAsync();
+        statusAfterRestore.Should().Be(RunStatus.PendingRequests,
+            "the restored run should remain pending until a post-restore response is sent");
+
+        await run.SendResponseAsync(replayedRequest.CreateResponse("Again"));
+
+        List<WorkflowEvent> completionEvents = await ReadToHaltAsync(run);
+        completionEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty(
+            "the restored request should complete cleanly once a new response is provided");
+        RunStatus finalStatus = await run.GetStatusAsync();
+        finalStatus.Should().Be(RunStatus.Idle,
+            "the workflow should finish once the replayed request receives a fresh response");
+    }
+
+    /// <summary>
     /// Verifies that a resumed parent workflow re-emits pending requests that originated in a subworkflow.
     /// </summary>
     [Theory]

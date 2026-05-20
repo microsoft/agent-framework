@@ -145,6 +145,9 @@ class OpenAIChatCompletionOptions(ChatOptions[ResponseModelT], Generic[ResponseM
     logprobs: bool
     top_logprobs: int
     prediction: Prediction
+    verbosity: Literal["low", "medium", "high"]
+    """Output verbosity for GPT-5 family models. Lower values yield shorter responses.
+    See: https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools#1-verbosity-parameter"""
 
 
 OpenAIChatCompletionOptionsT = TypeVar(
@@ -662,6 +665,12 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                         "type": "function",
                         "function": {"name": func_name},
                     }
+                elif mode in ("auto", "required") and tool_mode.get("allowed_tools") is not None:
+                    logger.warning(
+                        "allowed_tools is not supported by the Chat Completions API; "
+                        "the setting will be ignored. Use OpenAIChatClient (Responses API) instead."
+                    )
+                    run_options["tool_choice"] = mode
                 else:
                     run_options["tool_choice"] = mode
 

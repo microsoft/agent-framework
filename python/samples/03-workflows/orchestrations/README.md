@@ -81,14 +81,51 @@ from agent_framework.orchestrations import (
 
 ## Tips
 
+**Participant output selection**: Orchestration builders use participant-oriented names for Workflow Output selection.
+Use `output_from=[...]` when participant responses should be Workflow Output (`type='output'` events), and
+`intermediate_output_from=[...]` when participant responses should be Intermediate Output (`type='intermediate'`
+events). `output_from` is an allow-list for Workflow Output, not a routing rule for every other participant output.
+Unselected participant responses are hidden unless `intermediate_output_from` selects them.
+
+| Selection | Workflow Output | Intermediate Output | Hidden payloads |
+| --- | --- | --- | --- |
+| Omit both selections | Builder default Workflow Output contract | None | Builder-specific non-output participant payloads |
+| `output_from="all"` | Every output-capable participant | None | None |
+| `output_from=[writer]` | Only `writer` | None | All other participant payloads |
+| `output_from=[writer], intermediate_output_from="all_other"` | Only `writer` | Every output-capable participant not selected by `output_from` | None |
+| `intermediate_output_from="all_other"` | None, except builder-internal default output executors where applicable | Every output-capable participant | Builder-internal plumbing payloads |
+| `output_from=[], intermediate_output_from="all_other"` | None, except builder-internal default output executors where applicable | Every output-capable participant | Builder-internal plumbing payloads |
+| `output_from=[writer], intermediate_output_from=[researcher, reviewer]` | Only `writer` | `researcher` and `reviewer` | Any other participant payloads |
+
+Invalid selections fail at construction or build time:
+
+| Invalid selection | Why it fails |
+| --- | --- |
+| `output_from="all_other"` | `"all_other"` is only valid for `intermediate_output_from` |
+| `intermediate_output_from="all"` | `"all"` is only valid for `output_from` |
+| The same participant in both selections | One payload cannot be both Workflow Output and Intermediate Output |
+| Duplicate participant selections | Duplicates are treated as configuration errors |
+| Unknown participant selections | Typos and missing participants are rejected |
+| `output_from=[], intermediate_output_from=[]` | Both explicit selections are empty |
+
+By default, Sequential keeps the last participant as Workflow Output. Concurrent, GroupChat, and Magentic keep their
+synthetic aggregator/orchestrator/manager executors as Workflow Output, while participant responses stay hidden unless
+selected. Handoff keeps participants as Workflow Output by default.
+
+When an orchestration workflow is exposed via `workflow.as_agent()`, Workflow Output becomes normal text content in
+the `AgentResponse`; Intermediate Output becomes `text_reasoning` content. This preserves `.text` while making
+selected progress available for callers that inspect message contents.
+
 **Magentic checkpointing tip**: Treat `MagenticBuilder.participants` keys as stable identifiers. When resuming from a checkpoint, the rebuilt workflow must reuse the same participant names; otherwise the checkpoint cannot be applied and the run will fail fast.
 
 **Handoff workflow tip**: Handoff workflows maintain the full conversation history including any `Message.additional_properties` emitted by your agents. This ensures routing metadata remains intact across all agent transitions. For specialist-to-specialist handoffs, use `.add_handoff(source, targets)` to configure which agents can route to which others with a fluent, type-safe API.
 
+**Handoff `require_per_service_call_history_persistence`**: All agents in a handoff workflow **must** set `require_per_service_call_history_persistence=True`. `HandoffBuilder.build()` will raise a `ValueError` if any participant is missing this flag. This is required because handoff middleware short-circuits tool calls via `MiddlewareTermination`, and without per-service-call history persistence, local history would store tool results the service never received, causing mismatches on subsequent turns.
+
 **Sequential orchestration note**: Sequential orchestration uses a few small adapter nodes for plumbing:
 - `input-conversation` normalizes input to `list[Message]`
 - `to-conversation:<participant>` converts agent responses into the shared conversation
-- `complete` publishes the final output event (type='output')
+- `complete` publishes the Workflow Output event (`type='output'`)
 
 These may appear in event streams (executor_invoked/executor_completed). They're analogous to concurrent's dispatcher and aggregator and can be ignored if you only care about agent activity.
 

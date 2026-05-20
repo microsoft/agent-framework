@@ -419,6 +419,12 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                                                       .Select(id => this.EnsureExecutorAsync(id, tracer: null).AsTask())
                                                       .ToArray();
 
+        // Discard queued external deliveries from the superseded timeline so a runtime
+        // restore cannot apply stale responses after importing the checkpoint state.
+        while (this._queuedExternalDeliveries.TryDequeue(out _))
+        {
+        }
+
         this._nextStep = new StepContext();
         this._nextStep.ImportMessages(importedState.QueuedMessages);
 

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 
@@ -52,6 +53,32 @@ internal static class AGUIChatMessageExtensions
                                     toolMessage.ToolCallId,
                                     result)
                         ]);
+                    break;
+                }
+
+                case AGUIReasoningMessage reasoningMessage:
+                {
+                    var contents = new List<AIContent>();
+
+                    if (!string.IsNullOrEmpty(reasoningMessage.Content))
+                    {
+                        contents.Add(new TextReasoningContent(reasoningMessage.Content)
+                        {
+                            ProtectedData = reasoningMessage.EncryptedValue
+                        });
+                    }
+                    else if (!string.IsNullOrEmpty(reasoningMessage.EncryptedValue))
+                    {
+                        contents.Add(new TextReasoningContent("")
+                        {
+                            ProtectedData = reasoningMessage.EncryptedValue
+                        });
+                    }
+
+                    yield return new ChatMessage(role, contents)
+                    {
+                        MessageId = message.Id
+                    };
                     break;
                 }
 
@@ -125,6 +152,12 @@ internal static class AGUIChatMessageExtensions
             }
             else if (message.Role == ChatRole.Assistant)
             {
+                var reasoningMessage = MapReasoningMessage(message);
+                if (reasoningMessage != null)
+                {
+                    yield return reasoningMessage;
+                }
+
                 var assistantMessage = MapAssistantMessage(jsonSerializerOptions, message);
                 if (assistantMessage != null)
                 {
@@ -142,6 +175,32 @@ internal static class AGUIChatMessageExtensions
                 };
             }
         }
+    }
+
+    private static AGUIReasoningMessage? MapReasoningMessage(ChatMessage message)
+    {
+        var reasoning = message.Contents.OfType<TextReasoningContent>().FirstOrDefault();
+        if (reasoning is null)
+        {
+            return null;
+        }
+
+        var text = string.Join(
+            string.Empty,
+            message.Contents.OfType<TextReasoningContent>()
+                .Where(r => !string.IsNullOrEmpty(r.Text))
+                .Select(r => r.Text));
+
+        var protectedData = message.Contents.OfType<TextReasoningContent>()
+            .Select(r => r.ProtectedData)
+            .LastOrDefault(p => !string.IsNullOrEmpty(p));
+
+        return new AGUIReasoningMessage
+        {
+            Id = message.MessageId,
+            Content = text,
+            EncryptedValue = protectedData,
+        };
     }
 
     private static AGUIAssistantMessage? MapAssistantMessage(JsonSerializerOptions jsonSerializerOptions, ChatMessage message)
@@ -212,5 +271,6 @@ internal static class AGUIChatMessageExtensions
         string.Equals(role, AGUIRoles.Assistant, StringComparison.OrdinalIgnoreCase) ? ChatRole.Assistant :
         string.Equals(role, AGUIRoles.Developer, StringComparison.OrdinalIgnoreCase) ? s_developerChatRole :
         string.Equals(role, AGUIRoles.Tool, StringComparison.OrdinalIgnoreCase) ? ChatRole.Tool :
+        string.Equals(role, AGUIRoles.Reasoning, StringComparison.OrdinalIgnoreCase) ? ChatRole.Assistant :
         throw new InvalidOperationException($"Unknown chat role: {role}");
 }

@@ -4,7 +4,7 @@ This is a sample of a simple Weather Forecast Agent that is hosted on an Asp.Net
 
 This Agent Sample is intended to introduce you the basics of integrating Agent Framework with the Microsoft 365 Agents SDK in order to use Agent Framework agents in various M365 services and applications. It can also be used as the base for a custom Agent that you choose to develop.
 
-***Note:*** This sample requires JSON structured output from the model which works best from newer versions of the model such as gpt-4o-mini.
+***Note:*** This sample requires JSON structured output from the model which works best from newer versions of the model such as gpt-5.4-mini.
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@ This Agent Sample is intended to introduce you the basics of integrating Agent F
 - [devtunnel](https://learn.microsoft.com/azure/developer/dev-tunnels/get-started?tabs=windows)
 - [Microsoft 365 Agents Toolkit](https://github.com/OfficeDev/microsoft-365-agents-toolkit)
 
-- You will need an Azure OpenAI or OpenAI resource using `gpt-4o-mini`
+- You will need an Azure OpenAI or OpenAI resource using `gpt-5.4-mini`
  
 - Configure OpenAI in appsettings
 

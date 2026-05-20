@@ -75,6 +75,11 @@ _TOOL_EVALUATORS: set[str] = {
     "builtin.tool_call_success",
 }
 
+# Evaluators that require a ground_truth / expected_output field.
+_GROUND_TRUTH_EVALUATORS: set[str] = {
+    "builtin.similarity",
+}
+
 _BUILTIN_EVALUATORS: dict[str, str] = {
     # Agent behavior
     "intent_resolution": "builtin.intent_resolution",
@@ -196,6 +201,8 @@ def _build_testing_criteria(
                 }
             if qualified == "builtin.groundedness":
                 mapping["context"] = "{{item.context}}"
+            if qualified in _GROUND_TRUTH_EVALUATORS:
+                mapping["ground_truth"] = "{{item.ground_truth}}"
             if qualified in _TOOL_EVALUATORS:
                 mapping["tool_definitions"] = "{{item.tool_definitions}}"
             entry["data_mapping"] = mapping
@@ -204,7 +211,9 @@ def _build_testing_criteria(
     return criteria
 
 
-def _build_item_schema(*, has_context: bool = False, has_tools: bool = False) -> dict[str, Any]:
+def _build_item_schema(
+    *, has_context: bool = False, has_tools: bool = False, has_ground_truth: bool = False
+) -> dict[str, Any]:
     """Build the ``item_schema`` for custom JSONL eval definitions."""
     properties: dict[str, Any] = {
         "query": {"type": "string"},
@@ -214,6 +223,8 @@ def _build_item_schema(*, has_context: bool = False, has_tools: bool = False) ->
     }
     if has_context:
         properties["context"] = {"type": "string"}
+    if has_ground_truth:
+        properties["ground_truth"] = {"type": "string"}
     if has_tools:
         properties["tool_definitions"] = {"type": "array"}
     return {
@@ -681,16 +692,21 @@ class FoundryEvals:
                 ]
             if item.context:
                 d["context"] = item.context
+            if item.expected_output is not None:
+                d["ground_truth"] = item.expected_output
             dicts.append(d)
 
         has_context = any("context" in d for d in dicts)
+        has_ground_truth = any("ground_truth" in d for d in dicts)
         has_tools = any("tool_definitions" in d for d in dicts)
 
         eval_obj = await self._client.evals.create(
             name=eval_name,
             data_source_config={  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
                 "type": "custom",
-                "item_schema": _build_item_schema(has_context=has_context, has_tools=has_tools),
+                "item_schema": _build_item_schema(
+                    has_context=has_context, has_ground_truth=has_ground_truth, has_tools=has_tools
+                ),
                 "include_sample_schema": True,
             },
             testing_criteria=_build_testing_criteria(  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]

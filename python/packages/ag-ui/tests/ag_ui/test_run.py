@@ -11,6 +11,7 @@ from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
+    TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
     ToolCallArgsEvent,
@@ -29,6 +30,7 @@ from agent_framework_ag_ui._agent_run import (
 from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,
+    _close_reasoning_block,
     _emit_approval_request,
     _emit_content,
     _emit_mcp_tool_call,
@@ -61,12 +63,12 @@ class TestBuildSafeMetadata:
         result = _build_safe_metadata(metadata)
         assert result == metadata
 
-    def test_truncates_long_strings(self):
-        """Truncates strings over 512 chars."""
+    def test_drops_long_strings(self):
+        """Drops strings over 512 chars instead of truncating."""
         long_value = "x" * 1000
         metadata = {"key": long_value}
         result = _build_safe_metadata(metadata)
-        assert len(result["key"]) == 512
+        assert "key" not in result
 
     def test_serializes_non_strings(self):
         """Serializes non-string values to JSON."""
@@ -75,12 +77,12 @@ class TestBuildSafeMetadata:
         assert result["count"] == "42"
         assert result["items"] == "[1, 2, 3]"
 
-    def test_truncates_serialized_values(self):
-        """Truncates serialized values over 512 chars."""
+    def test_drops_oversized_serialized_values(self):
+        """Drops serialized values over 512 chars instead of truncating."""
         long_list = list(range(200))
         metadata = {"data": long_list}
         result = _build_safe_metadata(metadata)
-        assert len(result["data"]) == 512
+        assert "data" not in result
 
 
 class TestHasOnlyToolCalls:
@@ -1242,7 +1244,7 @@ class TestEmitTextReasoning:
         assert events[0].message_id == "reason_1"
         assert isinstance(events[1], ReasoningMessageStartEvent)
         assert events[1].message_id == "reason_1"
-        assert events[1].role == "assistant"
+        assert events[1].role == "reasoning"
         assert isinstance(events[2], ReasoningMessageContentEvent)
         assert events[2].message_id == "reason_1"
         assert events[2].delta == "The user is asking about weather, so I should call the weather tool."
@@ -1344,8 +1346,11 @@ class TestEmitContentMcpRouting:
 
         events = _emit_content(content, flow)
 
-        assert len(events) == 5
+        # Streaming pattern: Start + MessageStart + Content (no End events yet)
+        assert len(events) == 3
         assert isinstance(events[0], ReasoningStartEvent)
+        assert isinstance(events[1], ReasoningMessageStartEvent)
+        assert isinstance(events[2], ReasoningMessageContentEvent)
 
 
 class TestReasoningInSnapshot:
@@ -1501,3 +1506,280 @@ class TestReasoningInSnapshot:
         assert len(flow.reasoning_messages) == 1
         assert flow.reasoning_messages[0]["content"] == "part1 part2"
         assert flow.reasoning_messages[0]["encryptedValue"] == "encrypted-payload"
+
+    def test_reasoning_done_after_deltas_does_not_duplicate(self):
+        """A done-style content arriving after deltas does not duplicate accumulated text.
+
+        The upstream client should skip done events when deltas preceded them,
+        but if one leaks through, the accumulator must not double-append.
+        This test verifies that only the delta-produced text is stored.
+        """
+        flow = FlowState()
+        msg_id = "reason_dedup"
+
+        delta1 = Content.from_text_reasoning(id=msg_id, text="Hello ")
+        delta2 = Content.from_text_reasoning(id=msg_id, text="world")
+
+        _emit_text_reasoning(delta1, flow)
+        _emit_text_reasoning(delta2, flow)
+
+        # Accumulated text should equal the concatenation of deltas only
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["content"] == "Hello world"
+        assert flow.reasoning_messages[0]["id"] == msg_id
+
+    def test_reasoning_deltas_emit_one_content_event_each(self):
+        """Each reasoning delta emits exactly one ReasoningMessageContentEvent
+        within a single Start/End sequence (streaming pattern)."""
+        flow = FlowState()
+        msg_id = "reason_evt"
+
+        delta1 = Content.from_text_reasoning(id=msg_id, text="Think ")
+        delta2 = Content.from_text_reasoning(id=msg_id, text="hard")
+
+        events1 = _emit_text_reasoning(delta1, flow)
+        events2 = _emit_text_reasoning(delta2, flow)
+        close_events = _close_reasoning_block(flow)
+
+        all_events = events1 + events2 + close_events
+        content_events = [e for e in all_events if isinstance(e, ReasoningMessageContentEvent)]
+
+        assert len(content_events) == 2
+        assert content_events[0].delta == "Think "
+        assert content_events[1].delta == "hard"
+
+        # Streaming pattern: one Start/End sequence wrapping both content events
+        start_events = [e for e in all_events if isinstance(e, ReasoningStartEvent)]
+        end_events = [e for e in all_events if isinstance(e, ReasoningEndEvent)]
+        msg_start_events = [e for e in all_events if isinstance(e, ReasoningMessageStartEvent)]
+        msg_end_events = [e for e in all_events if isinstance(e, ReasoningMessageEndEvent)]
+        assert len(start_events) == 1
+        assert len(end_events) == 1
+        assert len(msg_start_events) == 1
+        assert len(msg_end_events) == 1
+
+    def test_reasoning_streaming_event_order(self):
+        """Streaming reasoning emits Start once, then Content per delta, then End on close."""
+        flow = FlowState()
+        msg_id = "reason_order"
+
+        d1 = Content.from_text_reasoning(id=msg_id, text="A ")
+        d2 = Content.from_text_reasoning(id=msg_id, text="B ")
+        d3 = Content.from_text_reasoning(id=msg_id, text="C")
+
+        events = []
+        events.extend(_emit_text_reasoning(d1, flow))
+        events.extend(_emit_text_reasoning(d2, flow))
+        events.extend(_emit_text_reasoning(d3, flow))
+        events.extend(_close_reasoning_block(flow))
+
+        assert isinstance(events[0], ReasoningStartEvent)
+        assert isinstance(events[1], ReasoningMessageStartEvent)
+        assert isinstance(events[2], ReasoningMessageContentEvent)
+        assert events[2].delta == "A "
+        assert isinstance(events[3], ReasoningMessageContentEvent)
+        assert events[3].delta == "B "
+        assert isinstance(events[4], ReasoningMessageContentEvent)
+        assert events[4].delta == "C"
+        assert isinstance(events[5], ReasoningMessageEndEvent)
+        assert isinstance(events[6], ReasoningEndEvent)
+        assert len(events) == 7
+
+    def test_close_reasoning_block_noop_when_not_open(self):
+        """_close_reasoning_block returns empty list when no reasoning block is open."""
+        flow = FlowState()
+        assert _close_reasoning_block(flow) == []
+
+    def test_close_reasoning_block_resets_state(self):
+        """_close_reasoning_block clears reasoning_message_id."""
+        flow = FlowState()
+        _emit_text_reasoning(Content.from_text_reasoning(id="r1", text="x"), flow)
+        assert flow.reasoning_message_id == "r1"
+
+        _close_reasoning_block(flow)
+        assert flow.reasoning_message_id is None
+
+    def test_emit_content_closes_reasoning_on_text(self):
+        """Switching from reasoning to text content auto-closes reasoning block."""
+        flow = FlowState()
+        reasoning = Content.from_text_reasoning(id="r1", text="thinking")
+        text = Content.from_text("answer")
+
+        r_events = _emit_content(reasoning, flow)
+        t_events = _emit_content(text, flow)
+
+        # reasoning events: Start + MsgStart + Content
+        assert isinstance(r_events[0], ReasoningStartEvent)
+        # text events should start with reasoning End events
+        assert isinstance(t_events[0], ReasoningMessageEndEvent)
+        assert isinstance(t_events[1], ReasoningEndEvent)
+        # then text start
+
+        assert isinstance(t_events[2], TextMessageStartEvent)
+        assert isinstance(t_events[3], TextMessageContentEvent)
+
+    def test_reasoning_distinct_ids_close_previous_block(self):
+        """Emitting reasoning with a new message_id auto-closes the previous block."""
+        flow = FlowState()
+        c1 = Content.from_text_reasoning(id="block1", text="first")
+        c2 = Content.from_text_reasoning(id="block2", text="second")
+
+        events1 = _emit_text_reasoning(c1, flow)
+        events2 = _emit_text_reasoning(c2, flow)
+        close = _close_reasoning_block(flow)
+
+        # events1: Start(block1) + MsgStart(block1) + Content(block1)
+        assert events1[0].message_id == "block1"
+        # events2: MsgEnd(block1) + End(block1) + Start(block2) + MsgStart(block2) + Content(block2)
+        assert isinstance(events2[0], ReasoningMessageEndEvent)
+        assert events2[0].message_id == "block1"
+        assert isinstance(events2[1], ReasoningEndEvent)
+        assert events2[1].message_id == "block1"
+        assert isinstance(events2[2], ReasoningStartEvent)
+        assert events2[2].message_id == "block2"
+        # close: MsgEnd(block2) + End(block2)
+        assert isinstance(close[0], ReasoningMessageEndEvent)
+        assert close[0].message_id == "block2"
+
+
+class TestReasoningEventRole:
+    """Tests that reasoning events use role='reasoning' per AG-UI spec."""
+
+    def test_reasoning_role_without_flow(self):
+        """ReasoningMessageStartEvent uses role='reasoning' in non-flow mode."""
+        content = Content.from_text_reasoning(
+            id="reason_role_1",
+            text="Thinking about the question.",
+        )
+
+        events = _emit_text_reasoning(content)
+
+        msg_starts = [e for e in events if isinstance(e, ReasoningMessageStartEvent)]
+        assert len(msg_starts) == 1
+        assert msg_starts[0].role == "reasoning"
+
+    def test_reasoning_role_with_flow(self):
+        """ReasoningMessageStartEvent uses role='reasoning' in streaming flow mode."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            id="reason_role_2",
+            text="Reasoning in streaming mode.",
+        )
+
+        events = _emit_text_reasoning(content, flow)
+
+        msg_starts = [e for e in events if isinstance(e, ReasoningMessageStartEvent)]
+        assert len(msg_starts) == 1
+        assert msg_starts[0].role == "reasoning"
+
+
+async def test_session_id_matches_thread_id():
+    """Session created by run_agent_stream uses the client thread_id as session_id."""
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub)
+
+    payload = {
+        "thread_id": "my-thread-123",
+        "run_id": "run-1",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "my-thread-123"
+
+
+async def test_session_id_matches_camel_case_thread_id():
+    """Session uses threadId (camelCase) as session_id when snake_case is absent."""
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub)
+
+    payload = {
+        "threadId": "camel-thread-456",
+        "run_id": "run-2",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "camel-thread-456"
+
+
+async def test_session_id_matches_thread_id_with_service_session():
+    """Session uses thread_id as session_id even when use_service_session is enabled."""
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-3",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "service-thread-789"
+    assert stub.last_session.service_session_id == "service-thread-789"
+
+
+async def test_session_id_generated_when_no_thread_id():
+    """Session gets a generated UUID as session_id when no thread_id is provided."""
+    import uuid
+
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub)
+
+    payload = {
+        "run_id": "run-4",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    # Should be a valid UUID (auto-generated)
+    uuid.UUID(stub.last_session.session_id)
+
+
+async def test_service_session_no_thread_id_generates_uuid():
+    """With use_service_session=True and no thread_id, session_id is a UUID and service_session_id is None."""
+    import uuid
+
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+
+    payload = {
+        "run_id": "run-5",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    # session_id should be a valid auto-generated UUID
+    uuid.UUID(stub.last_session.session_id)
+    # service_session_id should be None since no thread_id was supplied
+    assert stub.last_session.service_session_id is None

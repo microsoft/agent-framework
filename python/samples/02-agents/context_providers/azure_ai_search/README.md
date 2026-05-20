@@ -8,7 +8,7 @@ This folder contains examples demonstrating how to use the Azure AI Search conte
 
 | File | Description |
 |------|-------------|
-| [`search_context_agentic.py`](search_context_agentic.py) | **Agentic mode** (recommended for most scenarios): Uses Knowledge Bases in Azure AI Search for query planning and multi-hop reasoning. Provides more accurate results through intelligent retrieval with automatic query reformulation. Slightly slower with more token consumption for query planning. [Learn more](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/foundry-iq-boost-response-relevance-by-36-with-agentic-retrieval/4470720) |
+| [`search_context_agentic.py`](search_context_agentic.py) | **Agentic mode** (recommended for most scenarios): Uses Knowledge Bases in Azure AI Search for query planning and multi-hop reasoning. Provides more accurate results through intelligent retrieval with automatic query reformulation. Slightly slower with more token consumption for query planning. [Learn more](https://learn.microsoft.com/azure/search/agentic-retrieval-overview) |
 | [`search_context_semantic.py`](search_context_semantic.py) | **Semantic mode** (fast queries): Fast hybrid search combining vector and keyword search with semantic ranking. Returns raw search results as context. Best for scenarios where speed is critical and simple retrieval is sufficient. |
 
 ## Installation
@@ -265,4 +265,4 @@ async with Agent(
 - [RAG with Azure AI Search](https://learn.microsoft.com/azure/search/retrieval-augmented-generation-overview)
 - [Semantic Search in Azure AI Search](https://learn.microsoft.com/azure/search/semantic-search-overview)
 - [Knowledge Bases in Azure AI Search](https://learn.microsoft.com/azure/search/knowledge-store-concept-intro)
-- [Agentic Retrieval Blog Post](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/foundry-iq-boost-response-relevance-by-36-with-agentic-retrieval/4470720)
+- [Agentic Retrieval in Azure AI Search](https://learn.microsoft.com/azure/search/agentic-retrieval-overview)

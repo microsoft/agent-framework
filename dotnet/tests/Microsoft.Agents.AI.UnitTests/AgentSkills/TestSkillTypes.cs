@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -69,4 +70,53 @@ internal sealed class TestAgentSkillsSource : AgentSkillsSource
     {
         return Task.FromResult(this._skills);
     }
+}
+
+/// <summary>
+/// Custom input type accepted by skill script delegates in JSO tests.
+/// </summary>
+internal sealed class LookupRequest
+{
+    /// <summary>Gets or sets the search query.</summary>
+    public string Query { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the maximum number of results.</summary>
+    public int MaxResults { get; set; }
+}
+
+/// <summary>
+/// Custom output type returned by skill script delegates in JSO tests.
+/// </summary>
+internal sealed class LookupResponse
+{
+    /// <summary>Gets or sets the items found.</summary>
+    public IList<string> Items { get; set; } = [];
+
+    /// <summary>Gets or sets the total number of matches.</summary>
+    public int TotalCount { get; set; }
+}
+
+/// <summary>
+/// Custom output type returned by skill resource delegates in JSO tests.
+/// </summary>
+internal sealed class SkillConfig
+{
+    /// <summary>Gets or sets the theme name.</summary>
+    public string Theme { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets whether verbose mode is enabled.</summary>
+    public bool Verbose { get; set; }
+}
+
+/// <summary>
+/// Source-generated JSON serializer context for skill test types.
+/// Provides serialization support for <see cref="LookupRequest"/>, <see cref="LookupResponse"/>,
+/// and <see cref="SkillConfig"/> without requiring runtime reflection.
+/// </summary>
+[JsonSourceGenerationOptions]
+[JsonSerializable(typeof(LookupRequest))]
+[JsonSerializable(typeof(LookupResponse))]
+[JsonSerializable(typeof(SkillConfig))]
+internal sealed partial class SkillTestJsonContext : JsonSerializerContext
+{
 }

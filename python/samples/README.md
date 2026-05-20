@@ -8,7 +8,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 |--------|-------------|
 | [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → hosting |
 | [`02-agents/`](./02-agents/) | Deep-dive by concept: tools, middleware, providers, orchestrations |
-| [`03-workflows/`](./03-workflows/) | Workflow patterns: sequential, concurrent, state, declarative |
+| [`03-workflows/`](./03-workflows/) | Workflow patterns: sequential, concurrent, state, declarative, explicit output designation |
 | [`04-hosting/`](./04-hosting/) | Deployment: Azure Functions, Durable Tasks, A2A |
 | [`05-end-to-end/`](./05-end-to-end/) | Full applications, evaluation, demos |
 
@@ -20,8 +20,10 @@ Start with `01-get-started/` and work through the numbered files:
 2. **[02_add_tools.py](./01-get-started/02_add_tools.py)** — Add function tools with `@tool`
 3. **[03_multi_turn.py](./01-get-started/03_multi_turn.py)** — Multi-turn conversations with `AgentSession`
 4. **[04_memory.py](./01-get-started/04_memory.py)** — Agent memory with `ContextProvider`
-5. **[05_first_workflow.py](./01-get-started/05_first_workflow.py)** — Build a workflow with executors and edges
-6. **[06_host_your_agent.py](./01-get-started/06_host_your_agent.py)** — Host your agent via Azure Functions
+5. **[05_functional_workflow_with_agents.py](./01-get-started/05_functional_workflow_with_agents.py)** — Call agents inside a functional workflow
+6. **[06_functional_workflow_basics.py](./01-get-started/06_functional_workflow_basics.py)** — Write a workflow as a plain async function
+7. **[07_first_graph_workflow.py](./01-get-started/07_first_graph_workflow.py)** — Build a workflow with executors and edges
+8. **[08_host_your_agent.py](./01-get-started/08_host_your_agent.py)** — Host your agent via Azure Functions
 
 ## Prerequisites
 
@@ -88,7 +90,7 @@ Example values below are illustrative. For entries not backed by a single public
 column names the closest public surface, helper, or package-level initialization point that reads the
 variable.
 
-| package | class | env var | example value |
+| package | class/module | env var | example value |
 | --- | --- | --- | --- |
 | `agent-framework-anthropic` | `AnthropicClient` | `ANTHROPIC_API_KEY` | `sk-ant-api03-...` |
 | `agent-framework-anthropic` | `AnthropicClient` | `ANTHROPIC_CHAT_MODEL` | `claude-sonnet-4-5-20250929` |
@@ -115,21 +117,21 @@ variable.
 | `agent-framework-copilotstudio` | `CopilotStudioAgent` | `COPILOTSTUDIOAGENT__SCHEMANAME` | `cr123_agentname` |
 | `agent-framework-copilotstudio` | `CopilotStudioAgent` | `COPILOTSTUDIOAGENT__TENANTID` | `11111111-1111-1111-1111-111111111111` |
 | `agent-framework-copilotstudio` | `CopilotStudioAgent` | `COPILOTSTUDIOAGENT__AGENTAPPID` | `22222222-2222-2222-2222-222222222222` |
-| `agent-framework-core` | `enable_instrumentation()` | `ENABLE_INSTRUMENTATION` | `true` |
-| `agent-framework-core` | `enable_instrumentation()` | `ENABLE_SENSITIVE_DATA` | `false` |
-| `agent-framework-core` | `enable_instrumentation()` | `ENABLE_CONSOLE_EXPORTERS` | `true` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `http://localhost:4318/v1/traces` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `http://localhost:4318/v1/metrics` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `http://localhost:4318/v1/logs` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_EXPORTER_OTLP_HEADERS` | `api-key=demo` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | `api-key=trace-demo` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | `api-key=metric-demo` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_EXPORTER_OTLP_LOGS_HEADERS` | `api-key=log-demo` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_SERVICE_NAME` | `sample-agent` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_SERVICE_VERSION` | `1.0.0` |
-| `agent-framework-core` | `enable_instrumentation()` | `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=dev,service.namespace=agent-framework` |
+| `agent-framework-core` | `observability` | `ENABLE_INSTRUMENTATION` | `true` |
+| `agent-framework-core` | `observability` | `ENABLE_SENSITIVE_DATA` | `false` |
+| `agent-framework-core` | `observability` | `ENABLE_CONSOLE_EXPORTERS` | `true` |
+| `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` |
+| `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `http://localhost:4318/v1/traces` |
+| `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `http://localhost:4318/v1/metrics` |
+| `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `http://localhost:4318/v1/logs` |
+| `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
+| `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_HEADERS` | `api-key=demo` |
+| `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | `api-key=trace-demo` |
+| `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | `api-key=metric-demo` |
+| `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_LOGS_HEADERS` | `api-key=log-demo` |
+| `agent-framework-core` | `observability` | `OTEL_SERVICE_NAME` | `sample-agent` |
+| `agent-framework-core` | `observability` | `OTEL_SERVICE_VERSION` | `1.0.0` |
+| `agent-framework-core` | `observability` | `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=dev,service.namespace=agent-framework` |
 | `agent-framework-devui` | `DevUI server` | `DEVUI_AUTH_TOKEN` | `my-devui-token` |
 | `agent-framework-foundry` | `FoundryChatClient` | `FOUNDRY_PROJECT_ENDPOINT` | `https://my-project.services.ai.azure.com/api/projects/my-project` |
 | `agent-framework-foundry` | `FoundryChatClient` | `FOUNDRY_MODEL` | `gpt-4o` |

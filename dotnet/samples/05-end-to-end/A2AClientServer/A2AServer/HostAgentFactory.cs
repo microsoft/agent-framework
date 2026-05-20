@@ -8,12 +8,13 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Chat;
+using AgentCard = A2A.AgentCard;
 
 namespace A2AServer;
 
 internal static class HostAgentFactory
 {
-    internal static async Task<(AIAgent, AgentCard)> CreateFoundryHostAgentAsync(string agentType, string model, string endpoint, string agentName, IList<AITool>? tools = null)
+    internal static async Task<(AIAgent, AgentCard)> CreateFoundryHostAgentAsync(string agentType, string model, string endpoint, string agentName, string[] agentUrls, IList<AITool>? tools = null)
     {
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
@@ -25,16 +26,16 @@ internal static class HostAgentFactory
 
         AgentCard agentCard = agentType.ToUpperInvariant() switch
         {
-            "INVOICE" => GetInvoiceAgentCard(),
-            "POLICY" => GetPolicyAgentCard(),
-            "LOGISTICS" => GetLogisticsAgentCard(),
+            "INVOICE" => GetInvoiceAgentCard(agentUrls),
+            "POLICY" => GetPolicyAgentCard(agentUrls),
+            "LOGISTICS" => GetLogisticsAgentCard(agentUrls),
             _ => throw new ArgumentException($"Unsupported agent type: {agentType}"),
         };
 
         return new(agent, agentCard);
     }
 
-    internal static async Task<(AIAgent, AgentCard)> CreateChatCompletionHostAgentAsync(string agentType, string model, string apiKey, string name, string instructions, IList<AITool>? tools = null)
+    internal static async Task<(AIAgent, AgentCard)> CreateChatCompletionHostAgentAsync(string agentType, string model, string apiKey, string name, string instructions, string[] agentUrls, IList<AITool>? tools = null)
     {
         AIAgent agent = new OpenAIClient(apiKey)
              .GetChatClient(model)
@@ -42,9 +43,9 @@ internal static class HostAgentFactory
 
         AgentCard agentCard = agentType.ToUpperInvariant() switch
         {
-            "INVOICE" => GetInvoiceAgentCard(),
-            "POLICY" => GetPolicyAgentCard(),
-            "LOGISTICS" => GetLogisticsAgentCard(),
+            "INVOICE" => GetInvoiceAgentCard(agentUrls),
+            "POLICY" => GetPolicyAgentCard(agentUrls),
+            "LOGISTICS" => GetLogisticsAgentCard(agentUrls),
             _ => throw new ArgumentException($"Unsupported agent type: {agentType}"),
         };
 
@@ -52,7 +53,7 @@ internal static class HostAgentFactory
     }
 
     #region private
-    private static AgentCard GetInvoiceAgentCard()
+    private static AgentCard GetInvoiceAgentCard(string[] agentUrls)
     {
         var capabilities = new AgentCapabilities()
         {
@@ -81,10 +82,11 @@ internal static class HostAgentFactory
             DefaultOutputModes = ["text"],
             Capabilities = capabilities,
             Skills = [invoiceQuery],
+            SupportedInterfaces = CreateAgentInterfaces(agentUrls)
         };
     }
 
-    private static AgentCard GetPolicyAgentCard()
+    private static AgentCard GetPolicyAgentCard(string[] agentUrls)
     {
         var capabilities = new AgentCapabilities()
         {
@@ -113,10 +115,11 @@ internal static class HostAgentFactory
             DefaultOutputModes = ["text"],
             Capabilities = capabilities,
             Skills = [policyQuery],
+            SupportedInterfaces = CreateAgentInterfaces(agentUrls)
         };
     }
 
-    private static AgentCard GetLogisticsAgentCard()
+    private static AgentCard GetLogisticsAgentCard(string[] agentUrls)
     {
         var capabilities = new AgentCapabilities()
         {
@@ -145,7 +148,29 @@ internal static class HostAgentFactory
             DefaultOutputModes = ["text"],
             Capabilities = capabilities,
             Skills = [logisticsQuery],
+            SupportedInterfaces = CreateAgentInterfaces(agentUrls)
         };
+    }
+
+    private static List<AgentInterface> CreateAgentInterfaces(string[] agentUrls)
+    {
+        List<AgentInterface> agentInterfaces = [];
+
+        agentInterfaces.AddRange(agentUrls.Select(url => new AgentInterface
+        {
+            Url = url,
+            ProtocolBinding = ProtocolBindingNames.JsonRpc,
+            ProtocolVersion = "1.0",
+        }));
+
+        agentInterfaces.AddRange(agentUrls.Select(url => new AgentInterface
+        {
+            Url = url,
+            ProtocolBinding = ProtocolBindingNames.HttpJson,
+            ProtocolVersion = "1.0",
+        }));
+
+        return agentInterfaces;
     }
     #endregion
 }
