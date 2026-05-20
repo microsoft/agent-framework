@@ -26,6 +26,7 @@ from agent_framework import (
 )
 
 from .._loader import AgentFactory
+from .._models import _safe_mode_context  # type: ignore[reportPrivateUsage]
 from ._declarative_builder import DeclarativeWorkflowBuilder
 from ._errors import DeclarativeWorkflowError
 from ._http_handler import HttpRequestHandler
@@ -93,6 +94,7 @@ class WorkflowFactory:
         max_iterations: int | None = None,
         http_request_handler: HttpRequestHandler | None = None,
         mcp_tool_handler: MCPToolHandler | None = None,
+        safe_mode: bool = True,
     ) -> None:
         """Initialize the workflow factory.
 
@@ -119,6 +121,15 @@ class WorkflowFactory:
                 for a default backed by :class:`agent_framework.MCPStreamableHTTPTool`,
                 or supply your own implementation to enforce SSRF guards, allowlisting,
                 or auth/connection resolution.
+            safe_mode: Whether to run in safe mode, default is True.
+                When safe_mode is True, environment variables are NOT accessible from
+                PowerFx expressions in the workflow YAML (e.g. ``=Env.SOME_VAR`` will
+                fail to resolve and the original expression string is preserved).
+                When safe_mode is False, the full ``os.environ`` snapshot is exposed
+                via the ``Env`` symbol in every PowerFx evaluation. Set safe_mode to
+                False ONLY when you fully trust the YAML source. The flag is also
+                forwarded to the internally-constructed :class:`AgentFactory` so
+                inline agent definitions follow the same policy.
 
         Examples:
             .. code-block:: python
@@ -152,7 +163,8 @@ class WorkflowFactory:
                     env_file=".env",
                 )
         """
-        self._agent_factory = agent_factory or AgentFactory(env_file_path=env_file)
+        self.safe_mode = safe_mode
+        self._agent_factory = agent_factory or AgentFactory(env_file_path=env_file, safe_mode=safe_mode)
         self._agents: dict[str, SupportsAgentRun | AgentExecutor] = dict(agents) if agents else {}
         self._bindings: dict[str, Any] = dict(bindings) if bindings else {}
         self._tools: dict[str, Any] = {}  # Tool registry for InvokeFunctionTool actions
@@ -337,6 +349,15 @@ class WorkflowFactory:
         """
         # Validate the workflow definition
         self._validate_workflow_def(workflow_def)
+
+        # Set safe_mode context before evaluating any PowerFx expressions. The
+        # contextvar gates ``Env`` exposure inside ``DeclarativeWorkflowState``
+        # symbols and inside ``_try_powerfx_eval``; both check
+        # ``_safe_mode_context.get()`` at evaluation time. Because the
+        # contextvar propagates through asyncio tasks spawned from the current
+        # context, this value persists into ``workflow.run(...)`` invocations
+        # made on the same coroutine.
+        _safe_mode_context.set(self.safe_mode)
 
         # Extract workflow metadata
         # Support both "name" field and trigger.id for workflow name

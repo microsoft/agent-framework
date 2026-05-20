@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import locale
 import logging
+import os
 import sys
 import uuid
 from collections.abc import Mapping
@@ -41,6 +42,8 @@ from agent_framework import (
     WorkflowContext,
 )
 from agent_framework._workflows._state import State
+
+from .._models import _safe_mode_context  # type: ignore[reportPrivateUsage]
 
 try:
     from powerfx import Engine
@@ -714,6 +717,13 @@ class DeclarativeWorkflowState:
             # Custom namespaces
             **state_data.get("Custom", {}),
         }
+        # Expose ``Env`` ONLY when the active workflow factory has explicitly
+        # opted out of safe mode. Matches the policy enforced by
+        # ``_try_powerfx_eval`` in ``_models.py`` and the AgentFactory
+        # ``safe_mode`` flag. Treat the default as safe even when no factory
+        # is in scope (e.g. in unit tests) so opt-in is required.
+        if not _safe_mode_context.get():
+            symbols["Env"] = dict(os.environ)
         # Debug log the Local symbols to help diagnose type issues
         if local_data:
             for key, value in local_data.items():
