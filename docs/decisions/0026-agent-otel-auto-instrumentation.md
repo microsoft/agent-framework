@@ -2,7 +2,7 @@
 status: proposed
 contact: rogerbarreto
 date: 2026-05-20
-deciders: stephentoub, markwallace-microsoft, rogerbarreto, westey-m
+deciders: sergeymenshykh, rogerbarreto, westey-m, chetantoshniwal
 consulted: 
 informed: 
 ---
