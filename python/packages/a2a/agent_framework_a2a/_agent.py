@@ -14,7 +14,6 @@ from a2a.types import (
     AgentCard,
     Artifact,
     GetTaskRequest,
-    SendMessageConfiguration,
     SendMessageRequest,
     StreamResponse,
     SubscribeToTaskRequest,
@@ -319,10 +318,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 normalized_messages[-1],
                 context_id=session.service_session_id if session else None,
             )
-            request = SendMessageRequest(
-                message=a2a_message,
-                configuration=SendMessageConfiguration(return_immediately=background),
-            )
+            request = SendMessageRequest(message=a2a_message)
+            if background:
+                request.configuration.return_immediately = True
             a2a_stream = active_client.send_message(request)
 
         provider_session = session

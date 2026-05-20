@@ -761,12 +761,12 @@ async def test_background_sets_return_immediately_on_request(
 async def test_foreground_does_not_set_return_immediately(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
-    """Test that background=False (default) sets return_immediately=False on SendMessageRequest."""
+    """Test that background=False (default) does not set configuration on SendMessageRequest."""
     mock_a2a_client.add_task_response("task-fg2", [{"id": "art-1", "content": "Done"}])
 
     await a2a_agent.run("Foreground task")
 
-    assert mock_a2a_client.last_request.configuration.return_immediately is False
+    assert mock_a2a_client.last_request.HasField("configuration") is False
 
 
 async def test_non_streaming_run_uses_non_streaming_client() -> None:
@@ -784,7 +784,7 @@ async def test_non_streaming_run_uses_non_streaming_client() -> None:
     assert non_streaming_client.call_count == 1
     assert streaming_client.call_count == 0
     assert response.messages[0].text == "Non-streaming result"
-    assert non_streaming_client.last_request.configuration.return_immediately is False
+    assert non_streaming_client.last_request.HasField("configuration") is False
 
 
 async def test_streaming_run_uses_streaming_client() -> None:
