@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Projects;
@@ -16,6 +17,9 @@ namespace Foundry.IntegrationTests;
 /// </summary>
 public class ResponsesAgentServedModelTests
 {
+    // Matches a dated served-model snapshot, e.g. "gpt-5-nano-2025-08-07".
+    private static readonly Regex s_snapshotRegex = new(@"-\d{4}-\d{2}-\d{2}$", RegexOptions.Compiled);
+
     private static Uri Endpoint => new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint));
 
     private static string DeploymentName => TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName);
@@ -39,13 +43,7 @@ public class ResponsesAgentServedModelTests
             new ChatOptions { ModelId = DeploymentName });
 
         // Assert
-        Assert.NotNull(response.ModelId);
-        Assert.False(string.IsNullOrWhiteSpace(response.ModelId));
-
-        // The served model is a dated snapshot (e.g. "gpt-5-nano-2025-08-07") that differs
-        // from the deployment alias. We assert it is not equal to the alias to confirm the
-        // x-ms-served-model header was picked up by the policy and propagated to ModelId.
-        Assert.NotEqual(DeploymentName, response.ModelId);
+        AssertServedModel(response.ModelId);
     }
 
     [Fact]
@@ -63,7 +61,25 @@ public class ResponsesAgentServedModelTests
         // Assert
         ChatResponse? chatResponse = agentResponse.RawRepresentation as ChatResponse;
         Assert.NotNull(chatResponse);
-        Assert.False(string.IsNullOrWhiteSpace(chatResponse!.ModelId));
-        Assert.NotEqual(DeploymentName, chatResponse.ModelId);
+        AssertServedModel(chatResponse!.ModelId);
+    }
+
+    private static void AssertServedModel(string? modelId)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(modelId), "ChatResponse.ModelId must be populated.");
+
+        // Primary invariant: the served-model value must look like a dated snapshot
+        // (e.g. "gpt-5-nano-2025-08-07"). This is what the x-ms-served-model header carries.
+        // Only when the configured deployment name itself already matches the snapshot pattern
+        // do we fall back to permitting equality with the deployment alias.
+        bool aliasIsSnapshot = s_snapshotRegex.IsMatch(DeploymentName);
+
+        if (aliasIsSnapshot)
+        {
+            return;
+        }
+
+        Assert.Matches(s_snapshotRegex, modelId!);
+        Assert.NotEqual(DeploymentName, modelId);
     }
 }

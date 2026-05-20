@@ -36,16 +36,24 @@ internal sealed class ServedModelChatClient : DelegatingChatClient
         CancellationToken cancellationToken = default)
     {
         var box = new StrongBox<string?>(null);
+        var previous = ServedModelScope.Current;
         ServedModelScope.Current = box;
 
-        var response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
-
-        if (box.Value is { } servedModel)
+        try
         {
-            response.ModelId = servedModel;
-        }
+            var response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
 
-        return response;
+            if (box.Value is { } servedModel)
+            {
+                response.ModelId = servedModel;
+            }
+
+            return response;
+        }
+        finally
+        {
+            ServedModelScope.Current = previous;
+        }
     }
 
     /// <inheritdoc/>
@@ -55,16 +63,24 @@ internal sealed class ServedModelChatClient : DelegatingChatClient
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var box = new StrongBox<string?>(null);
+        var previous = ServedModelScope.Current;
         ServedModelScope.Current = box;
 
-        await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
+        try
         {
-            if (box.Value is { } servedModel)
+            await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
             {
-                update.ModelId = servedModel;
-            }
+                if (box.Value is { } servedModel)
+                {
+                    update.ModelId = servedModel;
+                }
 
-            yield return update;
+                yield return update;
+            }
+        }
+        finally
+        {
+            ServedModelScope.Current = previous;
         }
     }
 }
