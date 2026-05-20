@@ -2161,7 +2161,7 @@ def _capture_messages(
     prepended_count = len(logging_messages) - len(normalized_messages)
     prepended_messages = [_to_otel_message(message) for message in logging_messages[:prepended_count]]
     for index, (message, otel_message) in enumerate(
-        zip(logging_messages[:prepended_count], prepended_messages, strict=False)
+        zip(logging_messages[:prepended_count], prepended_messages, strict=True)
     ):
         # Reuse the otel message representation for logging instead of calling to_dict()
         # to avoid expensive Pydantic serialization overhead
@@ -2174,7 +2174,7 @@ def _capture_messages(
             },
         )
     for index, (message, otel_message) in enumerate(
-        zip(normalized_messages, span_messages, strict=False), start=prepended_count
+        zip(normalized_messages, span_messages, strict=True), start=prepended_count
     ):
         logger.info(
             otel_message,
