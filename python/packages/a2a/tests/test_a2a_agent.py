@@ -1177,7 +1177,13 @@ async def test_terminal_no_artifacts_after_working_with_content(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
     """Test that a terminal task with no artifacts after working-state messages does not re-emit the working content."""
-    mock_a2a_client.add_in_progress_task_response("task-t", context_id="ctx-t", text="Working on it...")
+    working_message = A2AMessage(
+        message_id="msg-working-task",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Working on it...")],
+    )
+    working_status = TaskStatus(state=TaskState.TASK_STATE_WORKING, message=working_message)
+    mock_a2a_client.responses.append(StreamResponse(task=Task(id="task-t", context_id="ctx-t", status=working_status)))
     # Terminal task with no artifacts and no history
     status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=None)
     task = Task(id="task-t", context_id="ctx-t", status=status)
@@ -1189,6 +1195,7 @@ async def test_terminal_no_artifacts_after_working_with_content(
 
     assert len(updates) == 2
     assert updates[0].contents[0].text == "Working on it..."
+    assert updates[0].message_id == "msg-working-task"
     # Terminal task with no artifacts yields an empty-contents update
     assert updates[1].contents == []
 
@@ -1247,7 +1254,7 @@ async def test_streaming_status_update_event_yields_content(
         status=TaskStatus(
             state=TaskState.TASK_STATE_WORKING,
             message=A2AMessage(
-                message_id=str(uuid4()),
+                message_id="msg-status-update",
                 role=A2ARole.ROLE_AGENT,
                 parts=[Part(text="Still working")],
             ),
@@ -1262,6 +1269,7 @@ async def test_streaming_status_update_event_yields_content(
     assert len(updates) == 1
     assert updates[0].text == "Still working"
     assert updates[0].role == "assistant"
+    assert updates[0].message_id == "msg-status-update"
     assert updates[0].raw_representation == update_event
 
 
