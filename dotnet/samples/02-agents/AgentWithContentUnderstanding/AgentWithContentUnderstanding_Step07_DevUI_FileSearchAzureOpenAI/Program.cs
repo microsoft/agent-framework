@@ -109,6 +109,7 @@ builder.AddAIAgent(agentName, (sp, key) =>
 
 builder.Services.AddOpenAIResponses();
 builder.Services.AddOpenAIConversations();
+builder.AddDevUI();
 
 var app = builder.Build();
 

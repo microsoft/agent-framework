@@ -107,8 +107,8 @@ public sealed class AttachmentDetectorTests
     // parity: python tests/cu/test_context_provider.py::TestBinaryStripping::test_unsupported_files_left_in_place
     public void SilentlySkips_UnsupportedMediaType()
     {
-        // text/plain is not in MEDIA_TYPE_ANALYZER_MAP — must skip per Python parity.
-        DataContent dc = new(System.Text.Encoding.UTF8.GetBytes("hello"), "text/plain") { Name = "notes.txt" };
+        // application/zip is not in SUPPORTED_MEDIA_TYPES — must skip per Python parity.
+        DataContent dc = new(new byte[] { 0x50, 0x4B, 0x03, 0x04 }, "application/zip") { Name = "bundle.zip" };
         ChatMessage msg = new(ChatRole.User, [dc]);
 
         Assert.Empty(AttachmentDetector.Detect([msg]));

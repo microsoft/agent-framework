@@ -121,8 +121,8 @@ public sealed class ParityGapTests
     [InlineData("audio/mpeg", true)]
     [InlineData("audio/wav", true)]
     [InlineData("video/mp4", true)]
+    [InlineData("text/plain", true)]
     [InlineData("application/zip", false)]
-    [InlineData("text/plain", false)]
     [InlineData("application/json", false)]
     public void SupportedMediaTypes_MatchesPythonAllowList(string mediaType, bool expectedSupported)
     {

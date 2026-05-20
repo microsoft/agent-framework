@@ -53,7 +53,7 @@ await using var cu = new ContentUnderstandingContextProvider(
     credential,
     options =>
     {
-        options.MaxWait = TimeSpan.FromMinutes(5); // audio + video may take a while
+        options.MaxWait = Timeout.InfiniteTimeSpan; // wait until CU analysis finishes (no background deferral)
     });
 
 AIProjectClient aiProjectClient = new(new Uri(projectEndpoint), credential);

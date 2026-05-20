@@ -114,8 +114,8 @@ public sealed class ContextProviderPhase5Tests
         FakeAnalyzer analyzer = new();
         await using ContentUnderstandingContextProvider provider = CreateProvider(analyzer);
 
-        // text/plain is not in the supported set — must pass through.
-        DataContent unsupported = new(new byte[] { 0x68, 0x69 }, "text/plain") { Name = "note.txt" };
+        // application/zip is not in SUPPORTED_MEDIA_TYPES — must pass through (Python parity: test_unsupported_files_left_in_place).
+        DataContent unsupported = new(new byte[] { 0x50, 0x4B, 0x03, 0x04 }, "application/zip") { Name = "archive.zip" };
         ChatMessage userMessage = new(ChatRole.User, [new TextContent("Read this."), unsupported]);
 
         AIContext result = await provider.InvokingAsync(

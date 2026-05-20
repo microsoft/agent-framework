@@ -25,27 +25,68 @@ internal sealed record DetectedAttachment(
 /// Extracts <see cref="DetectedAttachment"/> entries from a turn's <see cref="ChatMessage"/> stream.
 /// </summary>
 /// <remarks>
-/// Mirrors Python <c>_context_provider._extract_attachments</c>. Unsupported content silently
+/// Mirrors Python <c>_detection.detect_and_strip_files</c>. Unsupported content silently
 /// skips (must never block the agent run). Filename resolution order (per dev plan task 3.2):
 /// <see cref="DataContent.Name"/> → <see cref="AIContent.AdditionalProperties"/>["filename"] →
-/// synthesized <c>attachment-{sha256[0..6]}.{ext}</c>. Supported media types match Python's
-/// <c>MEDIA_TYPE_ANALYZER_MAP</c>: PDF, PNG, JPEG, MP3, MP4, WAV (plus common WAV aliases).
+/// synthesized <c>attachment-{sha256[0..6]}.{ext}</c>. Supported media types match the Python
+/// provider's <c>SUPPORTED_MEDIA_TYPES</c> set (documents, images, text, audio, video) per the
+/// Azure CU input file limits: https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits.
 /// </remarks>
 internal static class AttachmentDetector
 {
     private const string OctetStream = "application/octet-stream";
 
-    // Match Python's MEDIA_TYPE_ANALYZER_MAP. Comparisons are case-insensitive (StringComparer.OrdinalIgnoreCase).
+    // Match Python's SUPPORTED_MEDIA_TYPES (agent_framework_azure_contentunderstanding._detection).
+    // Comparisons are case-insensitive (StringComparer.OrdinalIgnoreCase). audio/wave and
+    // audio/x-wav are accepted as WAV aliases — Python normalizes them via MIME_ALIASES during
+    // sniffing; we accept them up front for maximum tolerance of HTTP-server-supplied types.
     private static readonly HashSet<string> SupportedMediaTypes = new(StringComparer.OrdinalIgnoreCase)
     {
+        // Documents and images
         "application/pdf",
-        "image/png",
         "image/jpeg",
-        "audio/mpeg",
+        "image/png",
+        "image/tiff",
+        "image/bmp",
+        "image/heif",
+        "image/heic",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        // Text
+        "text/plain",
+        "text/html",
+        "text/markdown",
+        "text/rtf",
+        "text/xml",
+        "application/xml",
+        "message/rfc822",
+        "application/vnd.ms-outlook",
+        // Audio
         "audio/wav",
         "audio/wave",
         "audio/x-wav",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/mp4",
+        "audio/m4a",
+        "audio/flac",
+        "audio/ogg",
+        "audio/opus",
+        "audio/webm",
+        "audio/x-ms-wma",
+        "audio/aac",
+        "audio/amr",
+        "audio/3gpp",
+        // Video
         "video/mp4",
+        "video/quicktime",
+        "video/x-msvideo",
+        "video/webm",
+        "video/x-flv",
+        "video/x-ms-wmv",
+        "video/x-ms-asf",
+        "video/x-matroska",
     };
 
     public static IEnumerable<DetectedAttachment> Detect(IEnumerable<ChatMessage> messages)
@@ -198,14 +239,51 @@ internal static class AttachmentDetector
 
     private static string ExtensionFor(string mediaType) => mediaType.ToUpperInvariant() switch
     {
+        // Documents and images
         "APPLICATION/PDF" => "pdf",
-        "IMAGE/PNG" => "png",
         "IMAGE/JPEG" => "jpg",
-        "AUDIO/MPEG" => "mp3",
+        "IMAGE/PNG" => "png",
+        "IMAGE/TIFF" => "tiff",
+        "IMAGE/BMP" => "bmp",
+        "IMAGE/HEIF" => "heif",
+        "IMAGE/HEIC" => "heic",
+        "APPLICATION/VND.OPENXMLFORMATS-OFFICEDOCUMENT.WORDPROCESSINGML.DOCUMENT" => "docx",
+        "APPLICATION/VND.OPENXMLFORMATS-OFFICEDOCUMENT.SPREADSHEETML.SHEET" => "xlsx",
+        "APPLICATION/VND.OPENXMLFORMATS-OFFICEDOCUMENT.PRESENTATIONML.PRESENTATION" => "pptx",
+        // Text
+        "TEXT/PLAIN" => "txt",
+        "TEXT/HTML" => "html",
+        "TEXT/MARKDOWN" => "md",
+        "TEXT/RTF" => "rtf",
+        "TEXT/XML" => "xml",
+        "APPLICATION/XML" => "xml",
+        "MESSAGE/RFC822" => "eml",
+        "APPLICATION/VND.MS-OUTLOOK" => "msg",
+        // Audio
         "AUDIO/WAV" => "wav",
         "AUDIO/WAVE" => "wav",
         "AUDIO/X-WAV" => "wav",
+        "AUDIO/MPEG" => "mp3",
+        "AUDIO/MP3" => "mp3",
+        "AUDIO/MP4" => "m4a",
+        "AUDIO/M4A" => "m4a",
+        "AUDIO/FLAC" => "flac",
+        "AUDIO/OGG" => "ogg",
+        "AUDIO/OPUS" => "opus",
+        "AUDIO/WEBM" => "webm",
+        "AUDIO/X-MS-WMA" => "wma",
+        "AUDIO/AAC" => "aac",
+        "AUDIO/AMR" => "amr",
+        "AUDIO/3GPP" => "3gp",
+        // Video
         "VIDEO/MP4" => "mp4",
+        "VIDEO/QUICKTIME" => "mov",
+        "VIDEO/X-MSVIDEO" => "avi",
+        "VIDEO/WEBM" => "webm",
+        "VIDEO/X-FLV" => "flv",
+        "VIDEO/X-MS-WMV" => "wmv",
+        "VIDEO/X-MS-ASF" => "asf",
+        "VIDEO/X-MATROSKA" => "mkv",
         _ => "bin",
     };
 
