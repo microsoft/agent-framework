@@ -57,6 +57,13 @@ def to_prompt_agent(agent: Agent) -> PromptAgentDefinition:
     # Match the resolution order Agent.__init__ uses when building default_options:
     # an agent-level model override in default_options wins over the bound client's model.
     model = agent.default_options.get("model") or agent.client.model
+    if not model:
+        raise ValueError(
+            "Agent has no model. Set 'model' on the FoundryChatClient (via the FOUNDRY_MODEL "
+            "environment variable or the model= argument), or pass default_options={'model': ...} "
+            "to the Agent before converting."
+        )
+
     instructions = agent.default_options.get("instructions")
     tools = _convert_tools(
         agent.default_options.get("tools", []),
