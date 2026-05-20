@@ -29,9 +29,15 @@ async def _stub_embed(_: str) -> list[float]:
 def _make_container_mock(*, pk_path: str = "/session_id") -> MagicMock:
     """Create a mock ContainerProxy that returns partition key properties."""
     container = MagicMock()
-    container.upsert_item = AsyncMock()
+    container.execute_item_batch = AsyncMock(return_value=[])
     container.read = AsyncMock(return_value={"partitionKey": {"paths": [pk_path]}})
     return container
+
+
+def _get_batch_docs(container: MagicMock) -> list[dict[str, Any]]:
+    """Extract upserted documents from the execute_item_batch mock."""
+    batch_ops = container.execute_item_batch.await_args.kwargs["batch_operations"]
+    return [op[1][0] for op in batch_ops]
 
 
 def test_provider_uses_existing_container_client() -> None:
@@ -317,9 +323,11 @@ class TestAfterRun:
             agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        assert container.upsert_item.await_count == 2
-        first = container.upsert_item.await_args_list[0].args[0]
-        second = container.upsert_item.await_args_list[1].args[0]
+        container.execute_item_batch.assert_awaited_once()
+        docs = _get_batch_docs(container)
+        assert len(docs) == 2
+        first = docs[0]
+        second = docs[1]
         assert first["session_id"] == "s1"
         assert first["content"] == "hello"
         assert second["content"] == "hi"
@@ -342,8 +350,10 @@ class TestAfterRun:
             agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        assert container.upsert_item.await_count == 2
-        roles = [call.args[0]["role"] for call in container.upsert_item.await_args_list]
+        container.execute_item_batch.assert_awaited_once()
+        docs = _get_batch_docs(container)
+        assert len(docs) == 2
+        roles = [doc["role"] for doc in docs]
         assert "system" not in roles
         assert roles == ["user", "assistant"]
 
@@ -361,7 +371,7 @@ class TestAfterRun:
             agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        doc = container.upsert_item.await_args.args[0]
+        doc = _get_batch_docs(container)[0]
         assert "embedding" in doc
         assert doc["embedding"] == [1.0, 0.0]
 
@@ -375,7 +385,7 @@ class TestAfterRun:
             agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        doc = container.upsert_item.await_args.args[0]
+        doc = _get_batch_docs(container)[0]
         assert "embedding" not in doc
 
     async def test_writeback_includes_agent_and_user_metadata(self) -> None:
@@ -394,7 +404,7 @@ class TestAfterRun:
             agent=agent, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )
 
-        doc = container.upsert_item.await_args.args[0]
+        doc = _get_batch_docs(container)[0]
         assert doc["agent_name"] == "test-agent"
         assert doc["user_id"] == "user-42"
 
@@ -409,7 +419,7 @@ class TestAfterRun:
             agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        doc = container.upsert_item.await_args.args[0]
+        doc = _get_batch_docs(container)[0]
         assert "agent_name" not in doc
         assert "user_id" not in doc
 
@@ -428,7 +438,7 @@ class TestAfterRun:
             agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        doc = container.upsert_item.await_args.args[0]
+        doc = _get_batch_docs(container)[0]
         assert doc["session_id"] == "s1"
         assert doc["tenant_id"] == "tenant-a"
 
@@ -443,7 +453,7 @@ class TestAfterRun:
             agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        doc = container.upsert_item.await_args.args[0]
+        doc = _get_batch_docs(container)[0]
         assert doc["session_id"] == "s1"
         assert doc["tenant_id"] == "s1"
 
@@ -458,7 +468,7 @@ class TestAfterRun:
             agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        doc = container.upsert_item.await_args.args[0]
+        doc = _get_batch_docs(container)[0]
         assert doc["session_id"] == "s1"
 
     async def test_writeback_continues_when_embedding_fails(self) -> None:
@@ -478,8 +488,10 @@ class TestAfterRun:
             agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        assert container.upsert_item.await_count == 1
-        doc = container.upsert_item.await_args.args[0]
+        container.execute_item_batch.assert_awaited_once()
+        docs = _get_batch_docs(container)
+        assert len(docs) == 1
+        doc = docs[0]
         assert doc["content"] == "hello"
         assert "embedding" not in doc
 
@@ -602,3 +614,24 @@ class TestFullTextQuery:
         query_kwargs = container.query_items.call_args.kwargs
         query = query_kwargs["query"]
         assert "[2, 1]" in query
+
+    async def test_hybrid_integer_weights_passed_through(self) -> None:
+        """Integer weights are passed through without float conversion."""
+        container = MagicMock()
+        container.query_items = MagicMock(return_value=_to_async_iter([{"content": "Result."}]))
+        provider = CosmosContextProvider(
+            container_client=container,
+            embedding_function=_stub_embed,
+            search_mode=CosmosContextSearchMode.HYBRID,
+            weights=[3, 1],
+        )
+        session = AgentSession(session_id="s")
+        context = SessionContext(input_messages=[Message(role="user", contents=["alpha beta gamma"])], session_id="s1")
+
+        await provider.before_run(
+            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
+
+        query_kwargs = container.query_items.call_args.kwargs
+        query = query_kwargs["query"]
+        assert "[3, 1]" in query

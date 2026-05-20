@@ -83,7 +83,7 @@ class CosmosContextProvider(ContextProvider):
         | SupportsGetEmbeddings[str, list[float], Any]
         | None = None,
         partition_key: str | None = None,
-        weights: Sequence[float] | None = None,
+        weights: Sequence[float | int] | None = None,
         context_prompt: str = "Use the following context to answer the question:",
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -98,7 +98,11 @@ class CosmosContextProvider(ContextProvider):
         self.vector_field_name = vector_field_name
         self.embedding_function = embedding_function
         self.partition_key = partition_key
-        self.weights = tuple(float(w) for w in weights) if weights is not None else None
+        # Weights are passed through as-is to the Cosmos RRF query. Cosmos
+        # RRF weights are relative importance values (e.g. [2, 1]) with no
+        # fixed range constraint, so we intentionally skip client-side
+        # validation and let Cosmos return its own error for invalid values.
+        self.weights = tuple(weights) if weights is not None else None
         self.context_prompt = context_prompt
 
         self._cosmos_client: CosmosClient | None = cosmos_client
@@ -180,6 +184,8 @@ class CosmosContextProvider(ContextProvider):
         container = await self._get_container()
         properties = await container.read()
         paths: list[str] = properties.get("partitionKey", {}).get("paths", [])  # type: ignore[assignment]
+        if not paths:
+            raise RuntimeError(f"Could not determine partition key path for container '{self.container_name}'.")
         field = paths[0].lstrip("/")
         self._partition_key_field = field
         return field
@@ -244,6 +250,15 @@ class CosmosContextProvider(ContextProvider):
 
         Stores user and assistant messages with embeddings (when available) so
         they are retrievable by ``before_run`` on subsequent invocations.
+
+        Uses a transactional batch (``execute_item_batch``) so that all
+        messages from a single turn are committed atomically. This prevents
+        half-written exchanges (e.g. a user message without its assistant
+        response) from poisoning RAG context on subsequent retrievals.
+
+        In a typical agent turn the writeback contains exactly two messages
+        (the user input and the agent response), well within the Cosmos
+        transactional batch limit of 100 operations.
         """
         messages_to_store: list[Message] = list(context.input_messages)
         if context.response and context.response.messages:
@@ -260,6 +275,7 @@ class CosmosContextProvider(ContextProvider):
         agent_name = getattr(agent, "name", None)
         user_id = context.metadata.get("user_id") if context.metadata else None
 
+        operations: list[tuple[str, tuple[dict[str, Any]]]] = []
         base_sort_key = time.time_ns()
         for index, message in enumerate(writeback):
             content_text = message.text.strip()
@@ -273,9 +289,6 @@ class CosmosContextProvider(ContextProvider):
                 "content": content_text,
                 "message": message.to_dict(),
             }
-            # Write the partition key value into the field that matches the
-            # container's partition key path. If the path is /session_id the
-            # field is already present with the real conversation session_id.
             if pk_field != "session_id":
                 document[pk_field] = effective_pk
             if agent_name:
@@ -292,7 +305,9 @@ class CosmosContextProvider(ContextProvider):
                 except Exception:
                     logger.warning("Failed to generate embedding for writeback document; skipping vector field.")
 
-            await container.upsert_item(document)
+            operations.append(("upsert", (document,)))
+
+        await container.execute_item_batch(batch_operations=operations, partition_key=effective_pk)
 
     async def close(self) -> None:
         """Close the underlying Cosmos client when this provider owns it."""

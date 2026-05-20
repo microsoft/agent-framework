@@ -104,6 +104,52 @@ The provider assumes the Cosmos account, database, container, partitioning strat
 
 See `packages/azure-cosmos/samples/cosmos_context_provider.py` for a package-local context provider example.
 
+## Logging and Diagnostics
+
+To enable logging and diagnostics, configure them on the `CosmosClient` **before** passing it to a provider. The Cosmos SDK
+uses Python's standard `logging` library with the `azure.cosmos` logger:
+
+```python
+import logging
+from azure.cosmos.aio import CosmosClient
+
+# Enable detailed Cosmos diagnostics logging
+logger = logging.getLogger("azure.cosmos")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(logging.StreamHandler())
+
+client = CosmosClient(
+    url="https://<account>.documents.azure.com:443/",
+    credential="<key-or-credential>",
+    logging_enable=True,
+    enable_diagnostics_logging=True,
+)
+```
+
+You can then pass the pre-configured client directly to a provider:
+
+```python
+from agent_framework_azure_cosmos import CosmosHistoryProvider, CosmosContextProvider
+
+history = CosmosHistoryProvider(
+    cosmos_client=client,
+    database_name="agent-framework",
+    container_name="chat-history",
+)
+
+context = CosmosContextProvider(
+    cosmos_client=client,
+    database_name="agent-framework",
+    container_name="knowledge",
+    embedding_function=my_embedding_function,
+)
+```
+
+For OpenTelemetry integration, install `azure-core-tracing-opentelemetry` and `opentelemetry-sdk`, then configure
+tracing on the client. See the
+[Azure Cosmos DB Python SDK documentation](https://learn.microsoft.com/en-us/python/api/overview/azure/cosmos-readme?view=azure-python#logging)
+for the full set of logging, diagnostics filtering, and telemetry options.
+
 ## Cosmos DB Workflow Checkpoint Storage
 
 `CosmosCheckpointStorage` implements the `CheckpointStorage` protocol, enabling
