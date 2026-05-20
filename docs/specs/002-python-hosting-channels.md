@@ -129,15 +129,16 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
 19. **Target any `SupportsAgentRun` or `Workflow`** — host an `Agent`, `A2AAgent`, or a `Workflow`; the `run_hook` is the seam for adapting the channel's default `ChannelRequest` into the target-specific input shape (free-form messages for agents, typed inputs for workflows).
 20. **Contribute WebSocket endpoints from a channel** — `ChannelContribution.routes` accepts both `Route` (HTTP) and `WebSocketRoute` (WS); the channel codec is responsible for framing and the same `run_hook` / default mapping pipeline applies. Built-in `ResponsesChannel` exposes a WebSocket transport (default `/responses/ws`, controlled by `transports=("http", "websocket")`) alongside its HTTP+SSE transport, anticipating the OpenAI Responses WebSocket transport. The host requires an ASGI server with WebSocket scope support (Uvicorn, Hypercorn, Daphne, Granian).
 21. **Mix channels of different confidentiality tiers on one host** — every `Channel` may declare an opaque `confidentiality_tier: str | None` (e.g. `"corp"`, `"public"`). The host's `LinkPolicy` decides which `(source_tier, target_tier)` pairs may share an `isolation_key` (link) and which may be `ResponseTarget` source/destination for one another (deliver). Built-in policies (`AllowAllLinks` (default), `SameConfidentialityTierOnly`, `ExplicitAllowList`, `DenyAllLinks`) and the policy contract are defined in [LinkPolicy](#linkpolicy-and-confidentiality_tier). Cross-tier link attempts are refused with a typed error; cross-tier deliveries are dropped — so two tiers can share **an agent target** on one host while remaining strictly session-isolated.
+22. **Choose an authorization profile per channel** — every channel that emits a `ChannelIdentity` composes from two orthogonal parameters, `require_link: bool` and `allowlist: IdentityAllowlist | None`, producing the three named profiles **open** (default), **forced-link** (must authenticate, any authenticated identity accepted), and **allowlist** (only listed identities — keyed on either the channel-native id pre-link or on a verified IdP claim post-link). Built-in allowlists (`NativeIdAllowlist`, `LinkedClaimAllowlist`, plus `AnyOfAllowlists` / `AllOfAllowlists` combinators) and the unified host seam (`host.authorize(...)` → `AuthorizationOutcome` of `Allowed` / `LinkRequired` / `Denied`) are defined in [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam). The host applies a `default_allowlist` to every channel whose `allowlist` is left at the sentinel `"inherit"`, so app authors can lock down a whole bot in one place. Configuration combinations that would silently deny every user (e.g. `LinkedClaimAllowlist` on a channel with `require_link=False` and no native verified claims) are rejected at host startup with a typed `ChannelConfigurationError`.
 
 ### v1 Fast Follow
-22. **Generic auth helpers** — shared middleware for common channel auth patterns (HMAC signature, bearer token).
-23. **Pluggable host state store** — interface for cross-host persistence of `ContinuationToken`s, identity-link grants, and last-seen `(isolation_key, channel)` records. Default implementation in v1 is **file-based** (`FileHostStateStore`); `InMemoryHostStateStore` is available for tests. A future `CosmosHostStateStore` / `SQLHostStateStore` would extend cross-channel chat continuity (req #9), background runs (req #14), and identity-link continuity (req #11) beyond a single host/process — but the v1 file-based default already survives host restarts on a single node. Same protocol covers session aliasing where applicable.
-24. **First-party identity linker helpers** — concrete `OAuthIdentityLinker` (with provider presets) and `OneTimeCodeIdentityLinker` (cross-channel code exchange) shipped as opt-in helpers on top of the `IdentityLinker` contract. Investigation of additional first-party linker types tracked as a follow-up.
-25. **`A2AChannel` package** (`agent-framework-hosting-a2a`) — exposes the hostable target over the Agent-to-Agent protocol so other agents can consume it as a peer. Caller-supplied-session family (alongside Responses and Invocations): A2A's per-conversation id maps to `ChannelSession.key`; the calling agent's identity (e.g. its A2A agent card / signed JWT) flows through `IdentityResolver`; structured replies fit the existing `ChannelRequest` + `ResponseTarget` envelope. No new host primitives required — only the protocol binding and package.
-26. **`MCPToolChannel` package** (`agent-framework-hosting-mcp`) — exposes the hostable target as a **Model Context Protocol tool** so MCP clients (other agents, IDE tooling) can invoke it. Same caller-supplied-session family: the MCP `tool/call` carries the conversation key into `ChannelSession.key`; the MCP client identity flows through `IdentityResolver`; the tool result is the target's response. Streaming MCP tools map onto the host's existing streaming response delivery; long-running MCP tools map onto background runs with `ContinuationToken` when the work outlasts a single tool-call round-trip.
-27. **`ActivityChannel` package** (`agent-framework-hosting-activity`) — exposes the hostable target behind **Azure Bot Service**, which fronts Teams, Web Chat, Slack-style connectors, and the rest of the Bot Framework / M365 connector ecosystem. Provides **native translations** between Activity Protocol objects (`Activity`, `ConversationReference`, adaptive cards, `Invoke` activities, …) and the host's `ChannelRequest` / `ChannelResponse` types — so the contract is **explicit** rather than implicit through a generic Invocations endpoint. Host-tracked-session family: Bot Service authenticates with a JWT carrying the AAD object id, the channel populates `ChannelIdentity` from `from.aadObjectId`, the host's per-`isolation_key` alias decides which `AgentSession` to resolve, and `host.reset_session(...)` is reachable via a Teams slash command or adaptive-card action. `ChannelPush` is implemented over Bot Service's `ConversationReference` + `continueConversationAsync` pattern. Naming this channel **Activity** rather than **Teams** keeps a `TeamsChannel` name available for the Teams-native channel below (req #28) and for any future direct-to-Teams transport.
-28. **`TeamsChannel` package** (`agent-framework-hosting-teams`) — Teams-native channel built on the MIT-licensed [`microsoft/teams.py`](https://github.com/microsoft/teams.py) SDK (`microsoft-teams-apps`, `microsoft-teams-api`, `microsoft-teams-cards`). Where `ActivityChannel` (req #27) targets the **generic** Activity Protocol surface across all Bot Service-fronted channels, `TeamsChannel` exploits **Teams-specific affordances** that the generic Activity Protocol does not surface natively:
+23. **Generic auth helpers** — shared middleware for common channel auth patterns (HMAC signature, bearer token).
+24. **Pluggable host state store** — interface for cross-host persistence of `ContinuationToken`s, identity-link grants, and last-seen `(isolation_key, channel)` records. Default implementation in v1 is **file-based** (`FileHostStateStore`); `InMemoryHostStateStore` is available for tests. A future `CosmosHostStateStore` / `SQLHostStateStore` would extend cross-channel chat continuity (req #9), background runs (req #14), and identity-link continuity (req #11) beyond a single host/process — but the v1 file-based default already survives host restarts on a single node. Same protocol covers session aliasing where applicable.
+25. **First-party identity linker helpers** — concrete `OAuthIdentityLinker` (with provider presets) and `OneTimeCodeIdentityLinker` (cross-channel code exchange) shipped as opt-in helpers on top of the `IdentityLinker` contract. Investigation of additional first-party linker types tracked as a follow-up.
+26. **`A2AChannel` package** (`agent-framework-hosting-a2a`) — exposes the hostable target over the Agent-to-Agent protocol so other agents can consume it as a peer. Caller-supplied-session family (alongside Responses and Invocations): A2A's per-conversation id maps to `ChannelSession.key`; the calling agent's identity (e.g. its A2A agent card / signed JWT) flows through `IdentityResolver`; structured replies fit the existing `ChannelRequest` + `ResponseTarget` envelope. No new host primitives required — only the protocol binding and package.
+27. **`MCPToolChannel` package** (`agent-framework-hosting-mcp`) — exposes the hostable target as a **Model Context Protocol tool** so MCP clients (other agents, IDE tooling) can invoke it. Same caller-supplied-session family: the MCP `tool/call` carries the conversation key into `ChannelSession.key`; the MCP client identity flows through `IdentityResolver`; the tool result is the target's response. Streaming MCP tools map onto the host's existing streaming response delivery; long-running MCP tools map onto background runs with `ContinuationToken` when the work outlasts a single tool-call round-trip.
+28. **`ActivityChannel` package** (`agent-framework-hosting-activity`) — exposes the hostable target behind **Azure Bot Service**, which fronts Teams, Web Chat, Slack-style connectors, and the rest of the Bot Framework / M365 connector ecosystem. Provides **native translations** between Activity Protocol objects (`Activity`, `ConversationReference`, adaptive cards, `Invoke` activities, …) and the host's `ChannelRequest` / `ChannelResponse` types — so the contract is **explicit** rather than implicit through a generic Invocations endpoint. Host-tracked-session family: Bot Service authenticates with a JWT carrying the AAD object id, the channel populates `ChannelIdentity` from `from.aadObjectId`, the host's per-`isolation_key` alias decides which `AgentSession` to resolve, and `host.reset_session(...)` is reachable via a Teams slash command or adaptive-card action. `ChannelPush` is implemented over Bot Service's `ConversationReference` + `continueConversationAsync` pattern. Naming this channel **Activity** rather than **Teams** keeps a `TeamsChannel` name available for the Teams-native channel below (req #29) and for any future direct-to-Teams transport.
+29. **`TeamsChannel` package** (`agent-framework-hosting-teams`) — Teams-native channel built on the MIT-licensed [`microsoft/teams.py`](https://github.com/microsoft/teams.py) SDK (`microsoft-teams-apps`, `microsoft-teams-api`, `microsoft-teams-cards`). Where `ActivityChannel` (req #28) targets the **generic** Activity Protocol surface across all Bot Service-fronted channels, `TeamsChannel` exploits **Teams-specific affordances** that the generic Activity Protocol does not surface natively:
     - **Adaptive Cards** via the typed `microsoft-teams-cards` builder, attached as tool side-effects through a `ContextVar`-scoped pending-cards collector consumed by the channel's result projector.
     - **Streamed assistant replies** via `ctx.stream.emit(chunk)` — the channel projects `agent.run(..., stream=True)` chunks directly.
     - **Teams "AI generated" badge**, **built-in feedback controls + custom feedback form**, **suggested-prompt chips** (`SuggestedActions` / `CardAction(IM_BACK)`), **inline citations** (`CitationAppearance` populated from a `FunctionMiddleware` that assigns stable positions to tool-result sources).
@@ -149,20 +150,20 @@ After we deliver `agent-framework-hosting` and its first channel packages, users
 
     Mounts the SDK's `App` into the host's Starlette app via a custom `HttpServerAdapter` that defers `register_route(...)` to `ChannelContribution.routes` — the SDK does **not** start its own server; the host owns the lifecycle. Host-tracked-session family (same as `ActivityChannel`): `from.aadObjectId` populates `ChannelIdentity`. The result projector reads `AgentRunResult.messages[*].contents` and routes the rich content variants to their Teams-native renderings (`TextContent` → markdown body, `DataContent`/structured output → Adaptive Card, citation entries from `additional_properties` → `add_citation`, `ErrorContent` → typed error card).
 
-    **Note on transport.** `TeamsChannel` **still rides on Azure Bot Service in v1** — the `microsoft/teams.py` SDK is a higher-level Pythonic wrapper over the same Activity Protocol pipeline that `ActivityChannel` exposes raw. The difference is **what the developer writes against**, not the underlying network path. A truly Bot-Service-free Teams transport is *not currently possible* and is tracked as a separate, speculative stretch item (req #30); when/if Microsoft ships one, the new transport would slot in under the same `TeamsChannel` package without changing this requirement.
+    **Note on transport.** `TeamsChannel` **still rides on Azure Bot Service in v1** — the `microsoft/teams.py` SDK is a higher-level Pythonic wrapper over the same Activity Protocol pipeline that `ActivityChannel` exposes raw. The difference is **what the developer writes against**, not the underlying network path. A truly Bot-Service-free Teams transport is *not currently possible* and is tracked as a separate, speculative stretch item (req #31); when/if Microsoft ships one, the new transport would slot in under the same `TeamsChannel` package without changing this requirement.
 
     **`ActivityChannel` vs `TeamsChannel` — pick by audience:**
 
     | Channel | Built on | Audience |
     |---|---|---|
-    | `ActivityChannel` (req #27) | Activity Protocol over HTTP, no Teams-specific helpers | Bot Service-fronted channels generically (Teams, Web Chat, Slack-style connectors, DirectLine, …); maximum portability across the Bot Framework / M365 connector ecosystem |
-    | `TeamsChannel` (req #28) | `microsoft/teams.py` `App` mounted via custom `HttpServerAdapter` into the host's Starlette app | Teams-first deployments that want Adaptive Cards, modal Dialogs, Message Extensions, citations, feedback, suggested-prompt chips, and SSO out-of-the-box |
+    | `ActivityChannel` (req #28) | Activity Protocol over HTTP, no Teams-specific helpers | Bot Service-fronted channels generically (Teams, Web Chat, Slack-style connectors, DirectLine, …); maximum portability across the Bot Framework / M365 connector ecosystem |
+    | `TeamsChannel` (req #29) | `microsoft/teams.py` `App` mounted via custom `HttpServerAdapter` into the host's Starlette app | Teams-first deployments that want Adaptive Cards, modal Dialogs, Message Extensions, citations, feedback, suggested-prompt chips, and SSO out-of-the-box |
 
     Deployments that only need plain Activity Protocol over Bot Service stick with `ActivityChannel`; `TeamsChannel` is the upgrade path when Teams-native richness is wanted.
 
 ### Stretch
-29. **WhatsApp channel package** — using the same `Channel` + `ChannelCommand` model, designed so it participates in cross-channel continuity (req #9) and can serve as a `ChannelPush` destination (req #13) when paired with a stable per-user `isolation_key`.
-30. **Direct-to-Teams channel package** — *speculative*. Reserved for a future transport that connects to Teams **without going through Azure Bot Service** (and therefore without the Activity Protocol pipeline that backs both `ActivityChannel` (req #27) and `TeamsChannel` (req #28)). At the time of writing **no such transport is publicly available** — the Microsoft Graph chat APIs (`/teams/{id}/channels/{id}/messages`, `/chats/{id}/messages`) and the `microsoft/teams.py` SDK both ultimately route through Bot Service for the bot-as-conversation-participant pattern. This requirement is kept on the roadmap purely to preserve the `TeamsChannel` naming line for if/when Microsoft ships a Bot-Service-free transport (a native Teams REST/RPC, a Graph subscription strong enough to drive both inbound and outbound message flow, or similar). Until then, **the canonical Teams channel is `TeamsChannel` (req #28)** and `ActivityChannel` (req #27) covers the generic Bot Service surface.
+30. **WhatsApp channel package** — using the same `Channel` + `ChannelCommand` model, designed so it participates in cross-channel continuity (req #9) and can serve as a `ChannelPush` destination (req #13) when paired with a stable per-user `isolation_key`.
+31. **Direct-to-Teams channel package** — *speculative*. Reserved for a future transport that connects to Teams **without going through Azure Bot Service** (and therefore without the Activity Protocol pipeline that backs both `ActivityChannel` (req #28) and `TeamsChannel` (req #29)). At the time of writing **no such transport is publicly available** — the Microsoft Graph chat APIs (`/teams/{id}/channels/{id}/messages`, `/chats/{id}/messages`) and the `microsoft/teams.py` SDK both ultimately route through Bot Service for the bot-as-conversation-participant pattern. This requirement is kept on the roadmap purely to preserve the `TeamsChannel` naming line for if/when Microsoft ships a Bot-Service-free transport (a native Teams REST/RPC, a Graph subscription strong enough to drive both inbound and outbound message flow, or similar). Until then, **the canonical Teams channel is `TeamsChannel` (req #29)** and `ActivityChannel` (req #28) covers the generic Bot Service surface.
 
 ## API Surface
 
@@ -305,7 +306,7 @@ Runs **after** the channel has produced its default `ChannelRequest`, **before**
 IdentityResolver = Callable[[ChannelIdentity], Awaitable[str | None] | (str | None)]
 ```
 
-The **default resolver auto-issues** an `isolation_key` the first time a `(channel, native_id)` is seen and persists the mapping in the host's identity store, so every end user automatically gets a stable per-user `isolation_key` on first contact through **any** channel — no per-channel boilerplate is required for the single-channel case. Returning `None` is reserved for advanced cases where the resolver wants to refuse unknown identities (e.g. allow-list enforcement).
+The **default resolver auto-issues** an `isolation_key` the first time a `(channel, native_id)` is seen and persists the mapping in the host's identity store, so every end user automatically gets a stable per-user `isolation_key` on first contact through **any** channel — no per-channel boilerplate is required for the single-channel case. Returning `None` is reserved for advanced cases where the resolver wants to refuse unknown identities; the dedicated host seam for accept/reject decisions is **`IdentityAllowlist`** — see [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam) below.
 
 Cross-channel continuity is then a one-shot **merge** operation: after a successful link ceremony (Scenario 6), the host atomically rewrites the second channel's auto-issued key to point at the first channel's existing `isolation_key`. Apps never have to write per-channel mapping hooks just to get continuity to work.
 
@@ -328,7 +329,169 @@ Apps that already own an identity namespace (corporate user id, tenant-scoped ac
 
 A built-in `link` (or `connect`) `ChannelCommand` is exposed automatically when an `IdentityLinker` is configured. Its `handle` invokes `linker.begin(...)` and replies with the `LinkChallenge` payload (URL, code, instructions) projected through the channel's native rendering. Channels may opt out (`expose_in_ui=False`) or override the command's name per channel.
 
-**`require_link` (per-channel)** — every channel that emits a `ChannelIdentity` accepts a `require_link: bool = False` constructor argument. When `True`, the channel calls `linker.is_linked(identity, verified_claims=…)` before producing a `ChannelRequest`; un-linked identities are short-circuited to a rendered `LinkChallenge` reply (the same payload the `link` command would emit) and the agent is **not** invoked for that turn. Combined with the linker's verified-claim auto-link, this gives an "authenticate before chatting" enforcement model where the first channel forces the OAuth ceremony and subsequent channels join the same `isolation_key` silently. See [Scenario 6](#scenario-6-linking-a-new-channel-to-an-existing-identity-via-oauth) for the end-to-end flow. Default is `False`, which preserves the opportunistic flow (auto-issued `isolation_key`, link manually later). Channels whose protocol does not authenticate the user (e.g. anonymous Responses calls) ignore the flag.
+**`require_link` (per-channel)** — every channel that emits a `ChannelIdentity` accepts a `require_link: bool = False` constructor argument. When `True`, the channel calls `linker.is_linked(identity, verified_claims=…)` before producing a `ChannelRequest`; un-linked identities are short-circuited to a rendered `LinkChallenge` reply (the same payload the `link` command would emit) and the agent is **not** invoked for that turn. Combined with the linker's verified-claim auto-link, this gives an "authenticate before chatting" enforcement model where the first channel forces the OAuth ceremony and subsequent channels join the same `isolation_key` silently. See [Scenario 6](#scenario-6-linking-a-new-channel-to-an-existing-identity-via-oauth) for the end-to-end flow. Default is `False`, which preserves the opportunistic flow (auto-issued `isolation_key`, link manually later). Channels whose protocol does not authenticate the user (e.g. anonymous Responses calls) ignore the flag. `require_link` is the **"identity must be linked"** axis; the **orthogonal "identity is on the accept list"** axis is `allowlist` — see [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam) below.
+
+#### Authorization profiles and the `IdentityAllowlist` seam
+
+`require_link` (above) and `allowlist` (below) compose into the **three named authorization profiles** the spec supports for any channel that emits a `ChannelIdentity`. The two parameters stay **orthogonal** on the channel constructor — there is no single `auth_mode` enum — but the host exposes named factories on `AuthPolicy` (`AuthPolicy.open()` / `.require_link()` / `.native_allowlist(...)` / `.linked_claim_allowlist(...)` / `.mixed(...)`) for ergonomic configuration:
+
+| Profile | Channel config | What gets gated | Typical use |
+|---|---|---|---|
+| **Open** (default) | `require_link=False`, `allowlist=None` | Nothing — every identity gets an auto-issued `isolation_key` on first contact. | Public chatbot, internal dev/demo, single-tenant deployments. |
+| **Forced link** | `require_link=True`, `allowlist=None` | Identity must complete the link ceremony at least once. Any successfully authenticated identity is then allowed. | "Sign in once with your corporate account, then chat freely" style bots that gate on tenancy via the IdP rather than per-user. |
+| **Native allowlist** | `require_link=False`, `allowlist=NativeIdAllowlist(...)` | Only listed channel-native ids (Telegram `chat_id`s, WhatsApp numbers, Slack user ids) get through. Pre-link, no IdP claim involved. | Personal bots, single-user prototypes, small fixed-membership channels. |
+| **Linked-claim allowlist** | `require_link=True`, `allowlist=LinkedClaimAllowlist(...)` | Identity must (a) complete the link ceremony **and** (b) carry an IdP claim whose value is on the list (e.g. AAD `oid in {…}` or `tid == "<tenant>"`). | Multi-channel corporate bot where any channel works but only specific people in a specific tenant are admitted. |
+| **Mixed** | `require_link=False`, `allowlist=AnyOfAllowlists(NativeIdAllowlist(...), LinkedClaimAllowlist(...))` | Either the native id is preapproved **or** the user successfully links and matches the claim allowlist. Native-id hits bypass the link ceremony; everyone else is funneled into it. | A bot that wants ops-team Telegram ids in immediately while still letting other corp users self-onboard via OAuth. |
+
+##### `IdentityAllowlist` Protocol (tri-state)
+
+Allowlists are evaluated by a host-level pipeline (`host.authorize(...)`, below) that calls them twice — once with the raw channel-native identity (`phase="pre_link"`) and, if necessary, again after the link ceremony surfaces verified IdP claims (`phase="post_link"`). To make composition (`AnyOfAllowlists`, `AllOfAllowlists`) well-defined and to keep claim-based allowlists from accidentally denying everyone when claims are not yet available, the contract is **tri-state**:
+
+```python
+class AllowlistDecision(StrEnum):
+    ALLOW = "allow"      # accept this identity unconditionally
+    DENY = "deny"        # reject this identity unconditionally
+    ABSTAIN = "abstain"  # this allowlist has no opinion at this phase
+                         # (e.g. a claim-based list during pre_link)
+
+@dataclass(frozen=True)
+class AuthorizationContext:
+    identity: ChannelIdentity
+    phase: Literal["pre_link", "post_link"]
+    isolation_key: str | None              # None at pre_link; resolved at post_link
+    verified_claims: Mapping[str, str]     # {} when no claims; populated post_link
+    claim_source: Literal["linker", "channel", "none"]
+                                           # "channel" when the channel itself emits
+                                           # verified claims (e.g. Activity Protocol
+                                           # bearer with AAD oid); "linker" when the
+                                           # IdentityLinker surfaces them; "none" otherwise.
+
+class IdentityAllowlist(Protocol):
+    requires_linked_claims: bool = False   # if True, host validation rejects
+                                           # configurations where neither `require_link`
+                                           # nor a claim-emitting channel can deliver
+                                           # the claims this allowlist needs.
+
+    async def evaluate(self, context: AuthorizationContext) -> AllowlistDecision: ...
+```
+
+`ABSTAIN` is **not** a denial — it is "this allowlist has no information yet". The host's decision pipeline (below) is what turns an all-`ABSTAIN` outcome into the appropriate next step (allow when open, escalate to a link ceremony when the configuration calls for one). Boolean allowlists were rejected as part of this design pass because two-state composition cannot distinguish "claim allowlist denies you" from "claim allowlist hasn't seen any claims yet" — a critical distinction for the **Mixed** profile.
+
+##### Built-in allowlists
+
+| Helper | Pre-link behavior | Post-link behavior | Notes |
+|---|---|---|---|
+| `AllowAll()` | `ALLOW` | `ALLOW` | Explicit "open" sentinel; useful for tests and for overriding a host-level `default_allowlist`. |
+| `NativeIdAllowlist(channel=None, native_ids=...)` | `ALLOW` if `(channel, native_id)` is on the list; `DENY` if `channel` matches but `native_id` does not; `ABSTAIN` if `channel` does not match (allows mixing per-channel native lists under one `AnyOfAllowlists`). | Same as pre-link — native-id allowlists do not depend on link state. | Constructor accepts `native_ids: Collection[str] \| Callable[[], Awaitable[Collection[str]]]` so the list can be loaded asynchronously (config file, secret store). |
+| `LinkedClaimAllowlist(claim, values)` | `ABSTAIN` (no claims available yet). | `ALLOW` if `verified_claims.get(claim)` is in `values`; `DENY` otherwise. | `requires_linked_claims = True`. Host construction-time validator rejects use with `require_link=False` on a channel that does not also emit verified claims natively — this prevents the silent-deny-everyone footgun. |
+| `AnyOfAllowlists(*allowlists)` | `ALLOW` if any child `ALLOW`s; `DENY` only if **all** children `DENY`; otherwise `ABSTAIN`. | Same rule. | Composition for the **Mixed** profile. |
+| `AllOfAllowlists(*allowlists)` | `DENY` if any child `DENY`s; `ALLOW` only if **all** children `ALLOW`; otherwise `ABSTAIN`. | Same rule. | E.g. require both tenancy (`LinkedClaimAllowlist("tid", ...)`) **and** group membership (`LinkedClaimAllowlist("groups", ...)`). |
+| `CallableAllowlist(fn)` | Calls `fn(context)` and returns its result. | Same. | Escape hatch for app-specific logic; recommended only after exhausting the structured variants. |
+
+##### Host configuration: `default_allowlist` + explicit channel inheritance
+
+Allowlists can be configured at the host level (`AgentFrameworkHost(default_allowlist=...)`) and per-channel. The channel-side default is **explicit inheritance**, not an implicit `None`:
+
+```python
+class SomeChannel:
+    def __init__(
+        self,
+        *,
+        require_link: bool = False,
+        allowlist: IdentityAllowlist | Literal["inherit"] | None = "inherit",
+    ): ...
+```
+
+- `allowlist="inherit"` (default) → the host's `default_allowlist` applies. If the host did not set one either, the channel is open.
+- `allowlist=None` → the channel is **explicitly open**, even if the host has a `default_allowlist`. Used to carve out a public endpoint inside an otherwise-locked-down host.
+- `allowlist=<IdentityAllowlist>` → that allowlist applies, overriding the host default. To **add to** the host default rather than replace it, compose explicitly: `allowlist=AllOfAllowlists(host.default_allowlist, MyExtraList())`.
+
+##### `host.authorize(...)` and `AuthorizationOutcome`
+
+Channels do not run the decision pipeline themselves — they call into a single host seam after extracting `ChannelIdentity` and any natively verified claims:
+
+```python
+@dataclass(frozen=True)
+class Allowed:
+    isolation_key: str
+
+@dataclass(frozen=True)
+class LinkRequired:
+    challenge: LinkChallenge
+
+@dataclass(frozen=True)
+class Denied:
+    reason_code: str                       # stable, machine-readable
+    user_message: str | None = None        # safe to render publicly (group-chat-safe)
+    log_details: Mapping[str, Any] = {}    # never shown to users; structured for audit
+
+AuthorizationOutcome = Allowed | LinkRequired | Denied
+
+async def host.authorize(
+    identity: ChannelIdentity,
+    *,
+    require_link: bool,
+    allowlist: IdentityAllowlist | None,
+    verified_claims: Mapping[str, str] | None = None,
+    conversation_context: ConversationContext | None = None,  # for group-chat policy
+) -> AuthorizationOutcome: ...
+```
+
+**Decision order** (the pipeline the host runs):
+
+1. Build `AuthorizationContext(phase="pre_link", verified_claims=verified_claims or {}, claim_source=…)`.
+2. `decision_pre = allowlist.evaluate(context_pre)` (defaults to `ALLOW` when `allowlist is None`).
+3. `decision_pre == DENY` → `Denied(reason_code="allowlist_denied_pre_link", ...)`.
+4. `decision_pre == ALLOW`:
+   - If `require_link=True` and the linker has no record yet → `LinkRequired(linker.begin(identity))`.
+   - Otherwise → `Allowed(resolved_or_auto_issued_isolation_key)`.
+5. `decision_pre == ABSTAIN`:
+   - If `require_link=True` **or** the allowlist declared `requires_linked_claims`: attempt `linker.is_linked(identity, verified_claims=…)`.
+     - Not linked → `LinkRequired(linker.begin(identity))`.
+     - Linked → evaluate again at `phase="post_link"` with the linker-emitted claims.
+       - `ALLOW` → `Allowed(linked_isolation_key)`.
+       - `DENY` → `Denied(reason_code="allowlist_denied_post_link", ...)`.
+       - `ABSTAIN` post-link is a misconfiguration (no allowlist had an opinion even after linking); logged and treated as `Denied(reason_code="allowlist_abstain_after_link")`.
+   - Otherwise (open profile, no claim dependency): `Allowed(auto_issued_isolation_key)`.
+
+The channel **renders** the outcome — `Allowed` proceeds to `ChannelRequest`, `LinkRequired` projects the `LinkChallenge` through the channel's native UX (same path the `link` command already uses), `Denied` projects `user_message` (when set) through a short refusal. The channel **never** sees `log_details` and is responsible for not echoing `reason_code` to end users.
+
+##### Configuration validation (fail-fast)
+
+The host runs a startup validator across `(channel.require_link, channel.allowlist)` for every channel:
+
+1. If `channel.allowlist` (after resolving `"inherit"`) contains any allowlist with `requires_linked_claims=True`, the channel **must** either have `require_link=True` or declare via a channel attribute that it natively emits verified claims (`Channel.emits_verified_claims: bool = False`). Otherwise: `raise ChannelConfigurationError("LinkedClaimAllowlist requires a source of verified claims; set require_link=True on <channel> or use a channel that emits them natively")`.
+2. If `channel.allowlist` contains a `LinkedClaimAllowlist` and the host has no `identity_linker` configured: same `ChannelConfigurationError`.
+3. If `channel.allowlist` contains a `NativeIdAllowlist(channel=<other>)` whose `<other>` is not a known channel on this host: `ChannelConfigurationError`.
+
+These errors are raised eagerly at `AgentFrameworkHost.__init__` (or `host.serve(...)` startup), not on the first inbound request — silent deny-everyone is the worst possible default and is not allowed.
+
+##### Group chats and privacy of denial
+
+Authorization runs **per message**, not per conversation: in a group chat, one allowlisted user invoking the bot does not authorize other group members for subsequent messages. The host also mirrors the `LinkChallenge` group-chat redirect pattern (see [Multi-user conversations](#multi-user-conversations-telegram-groups-teams-group-chats-and-channels)) for denials:
+
+- In a 1:1 chat, the channel may render the full `user_message` from `Denied`.
+- In a group chat, the channel renders a generic refusal in-room (e.g. "You don't have access to this bot.") and, where the channel supports it, follows up with a DM containing the longer `user_message`. The full `log_details` payload only reaches the host's structured logs / OpenTelemetry span — never the wire.
+
+Built-in `user_message` defaults are intentionally bland and tenancy-free ("You don't have access to this bot." / "Please link your account to continue.") to avoid leaking who else is in the allowlist or which tenant gates it.
+
+##### v1 shipping plan
+
+Because `host.authorize(...)` and `LinkedClaimAllowlist` are tied to the still-unimplemented `IdentityLinker` stack, the seam ships in two waves:
+
+1. **Wave 1 (with this PR / next core PR — standalone, no linker dep):**
+   - `IdentityAllowlist` Protocol + `AllowlistDecision` enum + `AuthorizationContext` dataclass.
+   - `AllowAll`, `NativeIdAllowlist`, `AnyOfAllowlists`, `AllOfAllowlists`, `CallableAllowlist` built-ins.
+   - `AuthorizationOutcome` (`Allowed` / `LinkRequired` / `Denied`) types.
+   - `Host(default_allowlist=...)` + per-channel `allowlist: ... | Literal["inherit"] | None` parameter and the construction-time config validator (rules #1–#3 above). Wave-1 validation can run rules #1 and #3 directly; rule #2 (linker presence) becomes a no-op until the linker stack lands.
+   - The decision pipeline applied to `NativeIdAllowlist` only — `LinkedClaimAllowlist` is exported but `evaluate()` raises `NotImplementedError` at runtime when used without the linker.
+
+2. **Wave 2 (with the `IdentityLinker` core PR):**
+   - `LinkedClaimAllowlist` enabled end-to-end.
+   - Full `host.authorize(...)` pipeline (steps 4–5 above) wired through the linker.
+   - `AuthPolicy` factory helpers shipped on the public surface.
+
+
 
 #### `LinkPolicy` and `confidentiality_tier`
 
@@ -448,7 +611,7 @@ V1 ships two implementations:
 - **`FileHostStateStore(directory: Path = "./.af-hosting/")`** — default; one JSON file per record under `continuations/`, `link_grants/`, plus a `last_seen.json` keyed by isolation key. Atomic writes; per-namespace TTL cleanup (continuations 24h, link grants 15min, last-seen 30d by default). Suitable for single-node hosts and dev; works in hosted-agent environments where the working directory is persisted and isolated per agent.
 - **`InMemoryHostStateStore()`** — testing / ephemeral; same protocol, no persistence.
 
-Pluggable v1-fast-follow implementations (Cosmos, SQL, Redis) plug into the same protocol — see req #23.
+Pluggable v1-fast-follow implementations (Cosmos, SQL, Redis) plug into the same protocol — see req #24.
 
 **`ChannelCommand` / `ChannelCommandContext` / `CommandHandler`** — cross-channel native command model (per PR #5393).
 
@@ -639,7 +802,7 @@ To make the picture explicit: there are exactly three distinct *storage seams* i
 | Seam | Scope | Examples |
 |---|---|---|
 | **`ContextProvider`** (per-conversation) | Per-`source_id` data the agent needs at run time. Messages (via `HistoryProvider`), AG-UI per-thread state (via `AgUiStateProvider`), or any future per-conversation extension. **The only public per-conversation seam.** | `FileHistoryProvider`, `FoundryHostedAgentHistoryProvider`, `AgUiStateProvider` |
-| **Host-level pluggable store** (per-host) | `ContinuationToken`s for background runs, identity-link grants, last-seen `(isolation_key, channel)` records. **File-based by default** in v1 (`FileHostStateStore`, atomic JSON writes under `./.af-hosting/`); `InMemoryHostStateStore` for tests; pluggable for Cosmos / SQL / Redis adapters in v1 fast follow (req #23). MAY be backed by the same physical store as `ContextProvider`, but the protocol is distinct because the data is host-execution metadata, not per-conversation context. | `FileHostStateStore` (v1 default), `InMemoryHostStateStore`, future Cosmos / SQL / Redis adapters |
+| **Host-level pluggable store** (per-host) | `ContinuationToken`s for background runs, identity-link grants, last-seen `(isolation_key, channel)` records. **File-based by default** in v1 (`FileHostStateStore`, atomic JSON writes under `./.af-hosting/`); `InMemoryHostStateStore` for tests; pluggable for Cosmos / SQL / Redis adapters in v1 fast follow (req #24). MAY be backed by the same physical store as `ContextProvider`, but the protocol is distinct because the data is host-execution metadata, not per-conversation context. | `FileHostStateStore` (v1 default), `InMemoryHostStateStore`, future Cosmos / SQL / Redis adapters |
 | **`CheckpointStorage`** (workflow runtime) | Workflow executor frames so a workflow can resume after process restart. Structurally distinct from both seams above (the data is workflow-runtime state, not session/identity state). MAY share a physical backend, but the protocol stays separate. | `FileCheckpointStorage`, future `CosmosCheckpointStorage` |
 
 Concretely, this means an app deploying onto e.g. Foundry storage can run **all three** against the same Foundry backend and still have three orthogonal protocol surfaces — one per concern — instead of one universal store everything accidentally collides in.
@@ -696,7 +859,7 @@ The packaging question for `uvicorn` (required dependency vs optional extra) is 
 - **Active channel**: The channel most recently observed for a given `isolation_key`. Tracked by the host on every successfully resolved request; consumed by `ResponseTarget.active`.
 - **`ContinuationToken`**: First-class artifact for background/asynchronous runs, returned immediately from `host.run_in_background(request)`. Carries an opaque, URL-safe `token` plus `status`, `isolation_key`, `result`/`error`, and the configured `response_target`. Persisted via `HostStateStore` (file-based by default in v1) so background runs survive host restarts. Host pushes the result to the response target when ready and serves it via channel poll routes.
 - **Background run**: A `ChannelRequest` submitted via `host.run_in_background(request)` (or any request with `background=True`). The originating call returns a `ContinuationToken` immediately; the response is delivered later via the configured `ResponseTarget` and/or polled by token.
-- **`HostStateStore`**: Single persistence seam for host-execution metadata — continuation tokens, identity-link grants, last-seen records. V1 default `FileHostStateStore` (atomic JSON writes under `./.af-hosting/`); `InMemoryHostStateStore` for tests; pluggable for Cosmos / SQL / Redis (fast follow, req #23). Distinct from `ContextProvider` (per-conversation) and `CheckpointStorage` (workflow), but a deployment MAY back all three with the same physical store.
+- **`HostStateStore`**: Single persistence seam for host-execution metadata — continuation tokens, identity-link grants, last-seen records. V1 default `FileHostStateStore` (atomic JSON writes under `./.af-hosting/`); `InMemoryHostStateStore` for tests; pluggable for Cosmos / SQL / Redis (fast follow, req #24). Distinct from `ContextProvider` (per-conversation) and `CheckpointStorage` (workflow), but a deployment MAY back all three with the same physical store.
 - **`session_mode`**: Per-request directive (`auto` | `required` | `disabled`) that controls whether the host resolves a session before invoking the target. Lets `run_hook`s express explicit policy — e.g. translating Responses `store=false` into `session_mode="disabled"` to honor the caller's "don't store" intent at the `HistoryProvider` layer (the channel does not do this automatically — see [The Responses store parameter](#the-responses-store-parameter)).
 - **`confidentiality_tier`** (channel-level): Opaque label (`"corp"`, `"public"`, `"internal"`, …) declared on a `Channel` and consumed by the host's `LinkPolicy`. Two channels with different confidentiality tiers can share an agent target on one host while remaining session-isolated.
 - **`LinkPolicy`**: Host-level decision over which channel pairs may share an `isolation_key` (link) and which channel pairs may be `ResponseTarget` source/destination for one another (deliver). Built-in variants: allow-all (default), same-tier-only, explicit allow-list, deny-all. See [LinkPolicy and confidentiality_tier](#linkpolicy-and-confidentiality_tier) for the full contract and built-ins table.
@@ -1380,8 +1543,9 @@ channel /link command
 | Session resolution | Host core | based on `ChannelSession` + `ChannelRequest.session_mode`; storage specifics deferred |
 | Channel-native identity extraction | Channel package | populates `ChannelIdentity(channel, native_id, attributes)` per request |
 | Identity resolution (`native_id` → `isolation_key`) | Host core via `IdentityResolver` | default **auto-issues and persists** a per-user `isolation_key` on first contact per `(channel, native_id)`; user-supplied resolver can return app-owned identities directly |
-| Identity store (`(channel, native_id) → isolation_key`) | Host core via `HostStateStore` | file-based by default in v1 (`FileHostStateStore`); pluggable for Cosmos / SQL / Redis in fast follow (req #23). Owns auto-issuance and atomic merge-on-link. |
+| Identity store (`(channel, native_id) → isolation_key`) | Host core via `HostStateStore` | file-based by default in v1 (`FileHostStateStore`); pluggable for Cosmos / SQL / Redis in fast follow (req #24). Owns auto-issuance and atomic merge-on-link. |
 | Identity link ceremony (OAuth / MFA / one-time code) | Host core via `IdentityLinker` | linker contributes its own routes + lifecycle; channels surface a built-in `link`/`connect` command |
+| Authorization (allowlist + link enforcement) | Host core via `host.authorize(...)` + per-channel `IdentityAllowlist` | tri-state allowlist evaluated pre- and post-link; combines with `require_link` to produce one of three named profiles (open / forced-link / allowlist); see [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam) |
 | Link & delivery policy across confidentiality tiers | Host core via `LinkPolicy` | consulted at link time (refuse incompatible link attempts) and at delivery time (drop incompatible `ResponseTarget` destinations); built-in policies cover all-allow, same-tier, explicit allow-list, deny-all |
 | Active-channel tracking | Host core | updated on every successfully resolved request; consumed by `ResponseTarget.active` |
 | Response-target resolution | Host core | translates `ResponseTarget` (originating, active, specific, list, all_linked, none) into an ordered set of `(channel, ChannelIdentity)` deliveries |
@@ -1425,7 +1589,7 @@ Identity is an **orthogonal axis** (anonymous vs. identified). The realized cell
 3. If `session_mode == "auto"` and no key is supplied, the host may create an ephemeral session.
 4. If `session_mode == "required"`, the host must resolve or create a usable session before invoking the target.
 5. **Cross-channel resolution rule:** when two channels mounted on the same `AgentFrameworkHost` produce the same `isolation_key` (and either both omit `key` or both produce equivalent keys derived from `isolation_key`), the host resolves them to the **same** `AgentSession`. This is the v1 mechanism for cross-channel chat continuity (e.g. Telegram → Teams against the same conversation history). The **canonical** path for translating a channel's native per-channel identifier (Telegram `chat_id`, Teams AAD object id, …) into the stable `isolation_key` is the host-level `IdentityResolver` (per-channel `run_hook` mapping is supported as a lower-level alternative). When the channel-native identity is not yet linked, the `IdentityLinker` runs a connect ceremony (OAuth, MFA, signed one-time code) to associate it with an existing `isolation_key`.
-6. The first spec does **not** standardize a cross-package storage API; cross-host/cross-process continuity is deferred to the pluggable session store (req #23), which also persists identity-link grants beyond the host process lifetime.
+6. The first spec does **not** standardize a cross-package storage API; cross-host/cross-process continuity is deferred to the pluggable session store (req #24), which also persists identity-link grants beyond the host process lifetime.
 7. Responses and other conversation-aware channels may still own protocol-specific conversation/item storage above this layer.
 8. **Session rotation (`reset_session`).** The host exposes `reset_session(isolation_key)` so **host-tracked** channels (see [Channel session-carriage models](#channel-session-carriage-models)) can implement "start a fresh thread" commands (e.g. Telegram `/new`). The default behavior **rotates the active session id alias** (`<isolation_key>` → `<isolation_key>#<short-uuid>`) rather than deleting on-disk history: prior history remains addressable by its original session id while subsequent runs for that `isolation_key` resolve to a brand-new `AgentSession`. Apps that want destructive reset can layer that on top by calling into their own `HistoryProvider`. **Caller-supplied** channels do not call `reset_session`; their callers branch threads by sending a fresh / no `previous_response_id` (or equivalent) on the next request.
 
@@ -1587,7 +1751,7 @@ The new core sits **below** the conceptual boundary of today's top-level Respons
 | `FoundryHostedAgentHistoryProvider` (in `agent-framework-foundry-hosting`, built on `azure.ai.agentserver.responses.store._foundry_provider.FoundryStorageProvider`) | Agent Framework Foundry | TBD | Proposed v1 deliverable so Foundry-defined (and any other) agents can use Foundry's response store as a `HistoryProvider` through the new host. Implements the standard core `HistoryProvider` Protocol — usable from any channel, no Responses-specific Protocol. Owns a runtime dep on `azure.ai.agentserver` for the storage SDK. |
 | PR #5393 Telegram sample (commands, polling/webhook patterns) | Agent Framework | PR author | Reference-only; informs `ChannelCommand` and `TelegramChannel` design |
 | Telegram Bot API SDK | External | n/a | Committed (runtime dep of `agent-framework-hosting-telegram`) |
-| `microsoft/teams.py` SDK (`microsoft-teams-apps`, `microsoft-teams-api`, `microsoft-teams-cards`) | External (MIT, Microsoft) | n/a | Proposed runtime dep of `agent-framework-hosting-teams` (req #28). The SDK already ships a "Build an agent using Microsoft Agent Framework" guide and a pluggable `HttpServerAdapter`, so the hosting package mounts the SDK's `App` into the host's Starlette app and reuses its Adaptive Cards / Streaming / Citations / Feedback / Suggested-prompts / Dialogs / Message-Extensions / SSO surface instead of re-implementing them. |
+| `microsoft/teams.py` SDK (`microsoft-teams-apps`, `microsoft-teams-api`, `microsoft-teams-cards`) | External (MIT, Microsoft) | n/a | Proposed runtime dep of `agent-framework-hosting-teams` (req #29). The SDK already ships a "Build an agent using Microsoft Agent Framework" guide and a pluggable `HttpServerAdapter`, so the hosting package mounts the SDK's `App` into the host's Starlette app and reuses its Adaptive Cards / Streaming / Citations / Feedback / Suggested-prompts / Dialogs / Message-Extensions / SSO surface instead of re-implementing them. |
 | `agent-framework-ag-ui`, `-a2a`, `-devui` | Agent Framework | various | Out of scope for first implementation; future convergence kept as a possibility |
 
 ## Open Questions
@@ -1599,7 +1763,7 @@ The new core sits **below** the conceptual boundary of today's top-level Respons
 | 8 | Should command scopes / projection metadata become first-class — e.g. private-chat-only vs group-chat-visible commands, or per-locale descriptions? | Eng / PM | Telegram's `BotCommandScope` and `language_code` would need to be representable cross-channel. |
 | 10 | Is "Channel" the GA name? "Head" was used interchangeably during design discussions. | PM | "Channel" chosen for the spec; confirm before public docs. |
 | 12 | Should `ChannelRequest.session_mode` grow additional values (e.g. `"shared"` for multi-channel session sharing) or stay closed at three? | Eng | The taxonomy needs a **dedicated design exercise** covering all known channel session-shape patterns; revisit after that exercise. |
-| 14 | Where do issued link grants live — short-lived in-memory state on the host, the same pluggable session store (#23), or a separate identity store? | Eng | Resolved as part of the **`HostStateStore`** seam (see [Host state storage](#host-state-storage)). Link grants live alongside continuation tokens and last-seen records in the v1 file-based default (`FileHostStateStore` → `link_grants/` namespace, 15min TTL). Pluggable Cosmos / SQL / Redis adapters tracked in req #23. **→ Move to Resolved Questions in next pass.** |
+| 14 | Where do issued link grants live — short-lived in-memory state on the host, the same pluggable session store (#24), or a separate identity store? | Eng | Resolved as part of the **`HostStateStore`** seam (see [Host state storage](#host-state-storage)). Link grants live alongside continuation tokens and last-seen records in the v1 file-based default (`FileHostStateStore` → `link_grants/` namespace, 15min TTL). Pluggable Cosmos / SQL / Redis adapters tracked in req #24. **→ Move to Resolved Questions in next pass.** |
 | 17 | Should `ResponseTarget.active` honor a configurable **time window** (last seen within N minutes) and what is the fallback when the window has expired before the response is ready — `originating`, `all_linked`, drop with `ContinuationToken` `status="failed"`? | PM / Eng | Likely yes with sensible default (e.g. 24h fall back to `originating`); per-request override via the run hook. |
 | 22 | For the Responses WebSocket transport, what subprotocol identifier (if any) should be advertised on the `Upgrade` and how is auth conveyed — `Authorization` header on the upgrade, a `Sec-WebSocket-Protocol` token, or a query-string-bound short-lived token? | Eng / PM | Aligning with whatever OpenAI ships for Responses WS is preferable; keep the codec swappable so the channel can track upstream changes without breaking the host contract. |
 | 27 | What is the retention contract for completed `deliveries[]` entries — keep forever for audit, GC after the message itself ages out, or cap per-message at a fixed attempt count? Should `last_error` payloads be redacted to a code/message pair to avoid logging PII from the underlying channel SDK? | Eng / Compliance | Suggest "lifetime equals message lifetime" + redacted error shape (`{code, message}` only, no provider stack frames or payload echoes) as the default; revisit when the persistent store contract lands. |
@@ -1632,6 +1796,7 @@ Original numbering preserved so external references (checkpoints, ADR cross-link
 | 29 | How do channels do per-destination post-processing (text flattening, card rendering, citation attachment) without breaking the `Channel` Protocol? | **Channels expose a `response_hook` instance attribute** (callable accepting `(result, *, context: ChannelResponseContext) -> HostedRunResult[Any] \| Awaitable[HostedRunResult[Any]]`). The host duck-types this attribute and applies it on a per-destination clone of the `HostedRunResult` envelope before push. The `Channel` Protocol stays a small `name / path / contribute` contract — adding hook support to a new channel does not require Protocol changes. |
 | 30 | Should non-originating destinations also see the user's input message, not just the agent reply? | **Opt-in via `ResponseTarget.channel(name, echo_input=True)`** (and the same kwarg on `.channels([...])` / `.identities([...])`). The host synthesises a `HostedRunResult[AgentResponse]` wrapping the user's input as a `role="user"` message and pushes it to each non-originating destination before the agent reply. Echo failures land in `DeliveryReport.echo_failed` and do not block the corresponding response push. Channels can transform or drop echoes via their `response_hook` (which receives `is_echo=True` for the echo phase). |
 | 31 | Should `HostedRunResult` be flattened (text / messages) or carry the full target output? | **Carry the full target output, generically typed.** `HostedRunResult[TResult]` exposes a single `result: TResult` field — `AgentResponse` for agent targets, `WorkflowRunResult` for workflow targets — plus an optional `session: AgentSession \| None`. Earlier drafts carried a flattened `messages: list[Message]` projection alongside `raw_response`; this lost workflow-specific affordances (`get_outputs()`, `get_final_state()`, structured per-executor payloads) and forced the host to pre-shape data only some channels needed. The generic envelope keeps the host modality-agnostic, lets channels read the canonical accessor on the underlying type (`result.messages`, `result.value`, `result.get_outputs()`, …), and gives channel authors static typing where they want it. |
+| 32 | Should authorization (per-channel allowlist) ship as a single `auth_mode` enum or as two orthogonal parameters? | **Two orthogonal parameters (`require_link: bool` + `allowlist: IdentityAllowlist \| Literal["inherit"] \| None = "inherit"`)** plus named `AuthPolicy` factories for the three common combinations. A single enum collapses `require_link` and `allowlist` into one axis and cannot express the Mixed profile (`AnyOfAllowlists(NativeIdAllowlist, LinkedClaimAllowlist)` with `require_link=False` — native ids bypass auth, everyone else is funneled into linking) without re-introducing per-value sub-parameters that would defeat the point. Composition is built on a **tri-state `AllowlistDecision` (`ALLOW` / `DENY` / `ABSTAIN`)** rather than a boolean, because boolean composition cannot distinguish "claim allowlist denies you" from "claim allowlist hasn't seen any claims yet" — a critical distinction for the Mixed profile. `LinkedClaimAllowlist` is rejected at host startup if no source of verified claims is available (config validator, fail-fast), preventing the silent-deny-everyone footgun. Group-chat denials apply the same DM-redirect pattern as `LinkChallenge` (short generic refusal in-room, fuller `user_message` in DM, structured `log_details` only in logs). Shipping in two waves: the Protocol + `NativeIdAllowlist` + config validator ship with the next core PR; full `host.authorize(...)` pipeline + `LinkedClaimAllowlist` enforcement land with the `IdentityLinker` core PR. See [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam). |
 
 ### Decisions-driven follow-ups
 
@@ -1643,3 +1808,4 @@ The following resolutions imply prose / API edits elsewhere in the spec body (no
 - **Q13** — Update the linker catalogue: Entra (in Entra package) + one-time-code (in core); remove MFA references.
 - **Q16** — Collapse `IdentityLinker` into a Channel specialisation in the spec body (architecture diagrams, contracts, examples).
 - **Q20** — ✅ Done. `ContinuationToken` type carries an opaque `token: str`; routes use `/{continuation_token}`; Invocations channel gets equivalent continuation-token support; persistence via `HostStateStore` (v1 default file-based).
+- **Q32** — Spec text added (see [Authorization profiles and the IdentityAllowlist seam](#authorization-profiles-and-the-identityallowlist-seam) and req #22). Code lands in two waves: Wave 1 (Protocol + `NativeIdAllowlist` + config validator + `AuthorizationOutcome` types) ships with the next core PR ahead of the linker; Wave 2 (full `host.authorize(...)` pipeline + `LinkedClaimAllowlist` enforcement + `AuthPolicy` factories) ships with the `IdentityLinker` core PR.
