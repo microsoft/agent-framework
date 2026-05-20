@@ -982,7 +982,7 @@ class TestMCPToolEndpoint:
         client.read_entity_state.return_value = mock_state
 
         # Create JSON string context
-        context = '{"arguments": {"query": "test query", "threadId": "test-thread"}}'
+        context = '{"arguments": {"query": "test query", "thread_id": "test-thread"}}'
 
         with patch.object(app, "_get_response_from_entity") as get_response_mock:
             get_response_mock.return_value = {"status": "success", "response": "Test response"}
@@ -1009,7 +1009,7 @@ class TestMCPToolEndpoint:
         client.read_entity_state.return_value = mock_state
 
         # Create JSON string context
-        context = json.dumps({"arguments": {"query": "test query", "threadId": "test-thread"}})
+        context = json.dumps({"arguments": {"query": "test query", "thread_id": "test-thread"}})
 
         with patch.object(app, "_get_response_from_entity") as get_response_mock:
             get_response_mock.return_value = {"status": "success", "response": "Test response"}
@@ -1089,7 +1089,7 @@ class TestMCPToolEndpoint:
 
         # Thread ID contains a different agent name (@StockAdvisor@poc123)
         # but we're invoking PlantAdvisor - it should use PlantAdvisor's entity
-        context = json.dumps({"arguments": {"query": "test query", "threadId": "@StockAdvisor@test123"}})
+        context = json.dumps({"arguments": {"query": "test query", "thread_id": "@StockAdvisor@test123"}})
 
         with patch.object(app, "_get_response_from_entity") as get_response_mock:
             get_response_mock.return_value = {"status": "success", "response": "Test response"}
@@ -1121,7 +1121,7 @@ class TestMCPToolEndpoint:
         client.read_entity_state.return_value = mock_state
 
         # Plain thread_id without @name@key format
-        context = json.dumps({"arguments": {"query": "test query", "threadId": "simple-thread-123"}})
+        context = json.dumps({"arguments": {"query": "test query", "thread_id": "simple-thread-123"}})
 
         with patch.object(app, "_get_response_from_entity") as get_response_mock:
             get_response_mock.return_value = {"status": "success", "response": "Test response"}
