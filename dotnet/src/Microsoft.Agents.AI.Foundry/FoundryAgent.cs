@@ -258,6 +258,8 @@ public sealed class FoundryAgent : DelegatingAIAgent
             chatClient = clientFactory(chatClient);
         }
 
+        chatClient = WireServedModel(chatClient);
+
         return WireClientHeaders(new ChatClientAgent(chatClient, agentOptions, loggerFactory, services));
     }
 
@@ -285,6 +287,26 @@ public sealed class FoundryAgent : DelegatingAIAgent
         }
 
         return new ClientHeadersAgent(innerAgent);
+    }
+
+    /// <summary>
+    /// Registers <see cref="ServedModelPolicy"/> on the chat client's <see cref="OpenAIRequestPolicies"/>
+    /// (if available) and wraps it with a <see cref="ServedModelChatClient"/> so that the
+    /// <c>x-ms-served-model</c> response header from Azure OpenAI overwrites
+    /// <see cref="ChatResponse.ModelId"/> with the actual model snapshot. When the header is
+    /// absent (non-Azure endpoints), the original model name is preserved unchanged.
+    /// </summary>
+    internal static IChatClient WireServedModel(IChatClient chatClient)
+    {
+        if (chatClient.GetService<OpenAIRequestPolicies>() is { } policies)
+        {
+            OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
+                policies,
+                ServedModelPolicy.Instance,
+                PipelinePosition.PerCall);
+        }
+
+        return new ServedModelChatClient(chatClient);
     }
 
     /// <summary>
@@ -347,6 +369,8 @@ public sealed class FoundryAgent : DelegatingAIAgent
         {
             chatClient = clientFactory(chatClient);
         }
+
+        chatClient = WireServedModel(chatClient);
 
         ChatClientAgentOptions agentOptions = new()
         {

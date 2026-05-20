@@ -253,6 +253,8 @@ public static partial class AzureAIProjectChatClientExtensions
             chatClient = clientFactory(chatClient);
         }
 
+        chatClient = FoundryAgent.WireServedModel(chatClient);
+
         return new ChatClientAgent(chatClient, agentOptions, services: services);
     }
 
@@ -277,6 +279,8 @@ public static partial class AzureAIProjectChatClientExtensions
         {
             chatClient = clientFactory(chatClient);
         }
+
+        chatClient = FoundryAgent.WireServedModel(chatClient);
 
         return new ChatClientAgent(chatClient, agentOptions, loggerFactory, services);
     }
@@ -305,6 +309,8 @@ public static partial class AzureAIProjectChatClientExtensions
             chatClient = clientFactory(chatClient);
         }
 
+        chatClient = FoundryAgent.WireServedModel(chatClient);
+
         return new ChatClientAgent(chatClient, agentOptions, services: services);
     }
 
@@ -322,6 +328,8 @@ public static partial class AzureAIProjectChatClientExtensions
         {
             chatClient = clientFactory(chatClient);
         }
+
+        chatClient = FoundryAgent.WireServedModel(chatClient);
 
         return new ChatClientAgent(chatClient, agentOptions, services: services);
     }
