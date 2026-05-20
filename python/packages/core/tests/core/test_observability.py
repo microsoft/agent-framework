@@ -290,9 +290,9 @@ async def test_chat_client_observability_with_instructions(
     assert len(system_instructions) == 1
     assert system_instructions[0]["content"] == "You are a helpful assistant."
 
-    # Verify input_messages contains system message
+    # Verify input_messages excludes system instructions
     input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
-    assert any(msg.get("role") == "system" for msg in input_messages)
+    assert [msg.get("role") for msg in input_messages] == ["user"]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -323,6 +323,40 @@ async def test_chat_client_streaming_observability_with_instructions(
     system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
     assert len(system_instructions) == 1
     assert system_instructions[0]["content"] == "You are a helpful assistant."
+
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["user"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_with_system_message_and_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test input chat-history system messages stay in input_messages when instructions are separate."""
+    import json
+
+    client = mock_chat_client()
+
+    messages = [
+        Message(role="system", contents=["Original system message"]),
+        Message(role="user", contents=["Test message"]),
+    ]
+    options = {"model": "Test", "instructions": "Framework system instruction"}
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options=options)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert system_instructions == [{"type": "text", "content": "Framework system instruction"}]
+
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["system", "user"]
+    assert input_messages[0]["parts"][0]["content"] == "Original system message"
+    assert input_messages[1]["parts"][0]["content"] == "Test message"
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -2981,6 +3015,81 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
     system_instructions = json.loads(system_instructions_json)
     assert system_instructions[0]["content"] == chinese_text
 
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["user"]
+
+
+def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_messages(
+    span_exporter: InMemorySpanExporter,
+):
+    """Test separate framework instructions do not appear in chat-history logs or span messages."""
+    import json
+
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        _capture_messages(
+            span=span,
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+            system_instructions="Framework system instruction",
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["user"]
+
+    assert mock_logger_info.call_count == 1, f"Expected 1 log call, got {mock_logger_info.call_count}"
+    (first_call,) = mock_logger_info.call_args_list
+    assert first_call.args
+    logged_message = first_call.args[0]
+    assert logged_message["role"] == "user"
+    assert logged_message["parts"][0]["content"] == "Test"
+
+
+def test_capture_messages_logs_only_chat_history_when_framework_instructions_are_separate(
+    span_exporter: InMemorySpanExporter,
+):
+    """Test chat-history logging preserves original system messages without prepending framework instructions."""
+    import json
+
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        _capture_messages(
+            span=span,
+            provider_name="test_provider",
+            messages=[
+                Message(role="system", contents=["Original system message"]),
+                Message(role="user", contents=["Test"]),
+            ],
+            system_instructions="Framework system instruction",
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["system", "user"]
+
+    assert mock_logger_info.call_count == 2, f"Expected 2 log calls, got {mock_logger_info.call_count}"
+    logged_messages = [call.args[0] for call in mock_logger_info.call_args_list]
+    assert [msg["role"] for msg in logged_messages] == ["system", "user"]
+    assert logged_messages[0]["parts"][0]["content"] == "Original system message"
+    assert logged_messages[1]["parts"][0]["content"] == "Test"
+
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
@@ -3103,6 +3212,40 @@ async def test_agent_instructions_from_default_options(
     system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
     assert len(system_instructions) == 1
     assert system_instructions[0]["content"] == "Default system instructions."
+
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["user"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_instructions_preserve_system_messages_in_history(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test agent spans keep chat-history system messages separate from framework instructions."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model": "TestModel", "instructions": "Default system instructions."}
+
+    messages = [
+        Message(role="system", contents=["Original system message"]),
+        Message(role="user", contents=["Test message"]),
+    ]
+    span_exporter.clear()
+    response = await agent.run(messages)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert system_instructions == [{"type": "text", "content": "Default system instructions."}]
+
+    input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])
+    assert [msg.get("role") for msg in input_messages] == ["system", "user"]
+    assert input_messages[0]["parts"][0]["content"] == "Original system message"
+    assert input_messages[1]["parts"][0]["content"] == "Test message"
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
