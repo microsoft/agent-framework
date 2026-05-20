@@ -266,8 +266,8 @@ class MCPTool:
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
         self._server_capabilities: types.ServerCapabilities | None = None
-        self._supports_tools: bool | None = None
-        self._supports_prompts: bool | None = None
+        self._supports_tools: bool = True
+        self._supports_prompts: bool = True
         self._supports_logging: bool | None = None
         self._ping_available: bool = True
         self._pending_reload_tasks: set[asyncio.Task[None]] = set()
@@ -669,8 +669,8 @@ class MCPTool:
 
     def _reset_session_state(self) -> None:
         self._server_capabilities = None
-        self._supports_tools = None
-        self._supports_prompts = None
+        self._supports_tools = True
+        self._supports_prompts = True
         self._supports_logging = None
         self._ping_available = True
 
@@ -685,12 +685,6 @@ class MCPTool:
         self._supports_tools = getattr(capabilities, "tools", None) is not None
         self._supports_prompts = getattr(capabilities, "prompts", None) is not None
         self._supports_logging = getattr(capabilities, "logging", None) is not None
-
-    def _can_load_tools(self) -> bool:
-        return self._supports_tools is not False
-
-    def _can_load_prompts(self) -> bool:
-        return self._supports_prompts is not False
 
     async def _reconnect_without_loading(self) -> None:
         if self._is_lifecycle_owner_task():
@@ -812,11 +806,11 @@ class MCPTool:
         logger.debug("Connected to MCP server: %s", self.session)
         self.is_connected = True
         if load_configured and self.load_tools_flag:
-            if self._can_load_tools():
+            if self._supports_tools:
                 await self.load_tools()
             self._tools_loaded = True
         if load_configured and self.load_prompts_flag:
-            if self._can_load_prompts():
+            if self._supports_prompts:
                 await self.load_prompts()
             self._prompts_loaded = True
 
@@ -1027,7 +1021,7 @@ class MCPTool:
         from anyio import ClosedResourceError
         from mcp import types
 
-        if not self._can_load_prompts():
+        if not self._supports_prompts:
             logger.debug("Skipping MCP prompt loading because the server did not advertise prompts support.")
             return
 
@@ -1041,7 +1035,7 @@ class MCPTool:
                 try:
                     # Ensure connection is still valid before each page request
                     await self._ensure_connected()
-                    if not self._can_load_prompts():
+                    if not self._supports_prompts:
                         logger.debug(
                             "Skipping MCP prompt loading because the server did not advertise prompts support."
                         )
@@ -1109,7 +1103,7 @@ class MCPTool:
         from anyio import ClosedResourceError
         from mcp import types
 
-        if not self._can_load_tools():
+        if not self._supports_tools:
             logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
             return
 
@@ -1124,7 +1118,7 @@ class MCPTool:
                 try:
                     # Ensure connection is still valid before each page request
                     await self._ensure_connected()
-                    if not self._can_load_tools():
+                    if not self._supports_tools:
                         logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
                         return
                     tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
