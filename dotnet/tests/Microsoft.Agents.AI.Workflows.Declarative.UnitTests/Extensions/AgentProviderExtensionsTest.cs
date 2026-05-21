@@ -35,7 +35,19 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
     public Task AutoSendFalseOnExternalConversationSuppressesResponseEventsAsync() =>
         this.RunAsync(autoSend: false, conversationId: "other-conv-id", expectResponseEvents: false);
 
-    private async Task RunAsync(bool autoSend, string conversationId, bool expectResponseEvents)
+    [Fact]
+    public Task AutoSendTrueOnExternalConversationEmitsResponseEventsAndCopiesMessagesAsync() =>
+        this.RunAsync(
+            autoSend: true,
+            conversationId: "other-conv-id",
+            expectResponseEvents: true,
+            expectCrossConversationCopy: true);
+
+    private async Task RunAsync(
+        bool autoSend,
+        string conversationId,
+        bool expectResponseEvents,
+        bool expectCrossConversationCopy = false)
     {
         // Arrange: seed the workflow conversation id so IsWorkflowConversation can recognize it.
         this.State.Set(
@@ -58,6 +70,19 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
                 It.IsAny<IDictionary<string, object?>?>(),
                 It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerableAsync(updates));
+
+        List<(string ConversationId, ChatMessage Message)> copiedMessages = [];
+        mockProvider
+            .Setup(p => p.CreateMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatMessage>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatMessage, CancellationToken>(
+                (convId, msg, _) =>
+                {
+                    copiedMessages.Add((convId, msg));
+                    return Task.FromResult(msg);
+                });
 
         string actionId = this.CreateActionId().Value;
 
@@ -89,6 +114,16 @@ public sealed class AgentProviderExtensionsTest(ITestOutputHelper output) : Work
         {
             Assert.Equal(0, updateEventCount);
             Assert.Equal(0, responseEventCount);
+        }
+
+        if (expectCrossConversationCopy)
+        {
+            Assert.NotEmpty(copiedMessages);
+            Assert.All(copiedMessages, c => Assert.Equal(WorkflowConversationId, c.ConversationId));
+        }
+        else
+        {
+            Assert.Empty(copiedMessages);
         }
     }
 

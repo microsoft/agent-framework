@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -263,13 +264,15 @@ internal sealed class InvokeFunctionToolExecutor(
     {
         string functionName = this.GetFunctionName();
         AIFunction? function = agentProvider.Functions?.FirstOrDefault(
-            f => string.Equals(f.Name, functionName, System.StringComparison.Ordinal));
+            f => string.Equals(f.Name, functionName, StringComparison.Ordinal));
 
         if (function is null)
         {
-            return new FunctionResultContent(
-                this.Id,
-                $"Function '{functionName}' is not registered with the agent provider.");
+            return new FunctionResultContent(this.Id, result: null)
+            {
+                Exception = new InvalidOperationException(
+                    $"Function '{functionName}' is not registered with the agent provider."),
+            };
         }
 
         Dictionary<string, object?>? arguments = this.GetArguments();
@@ -280,16 +283,20 @@ internal sealed class InvokeFunctionToolExecutor(
         {
             result = await function.InvokeAsync(functionArguments, cancellationToken).ConfigureAwait(false);
         }
-        catch (System.Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return new FunctionResultContent(this.Id, $"Function '{functionName}' invocation failed: {ex.Message}");
+            return new FunctionResultContent(this.Id, result: null) { Exception = ex };
         }
 
+        // Match FunctionInvokingChatClient's serialization: pass strings through as-is and
+        // JSON-serialize anything else so structured results remain consumable by downstream
+        // PropertyPath consumers such as {Local.RefundResult}. Use AIJsonUtilities so the
+        // same trim/AOT-friendly serializer chain used elsewhere in the framework is applied.
         string serialized = result switch
         {
             null => string.Empty,
             string s => s,
-            _ => result.ToString() ?? string.Empty,
+            _ => JsonSerializer.Serialize(result, AIJsonUtilities.DefaultOptions.GetTypeInfo(result.GetType())),
         };
 
         return new FunctionResultContent(this.Id, serialized);
