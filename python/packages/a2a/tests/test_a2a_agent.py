@@ -76,12 +76,13 @@ class MockA2AClient:
         state: TaskState = TaskState.TASK_STATE_WORKING,
         text: str | None = None,
         role: A2ARole = A2ARole.ROLE_AGENT,
+        message_id: str | None = None,
     ) -> None:
         """Add a mock in-progress Task response (non-terminal)."""
         message = None
         if text is not None:
             message = A2AMessage(
-                message_id=str(uuid4()),
+                message_id=message_id or str(uuid4()),
                 role=role,
                 parts=[Part(text=text)],
             )
@@ -1100,7 +1101,9 @@ async def test_streaming_single_working_update_with_message(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:
     """Test that a single working update with message content is not dropped."""
-    mock_a2a_client.add_in_progress_task_response("task-s", context_id="ctx-s", text="Thinking...")
+    mock_a2a_client.add_in_progress_task_response(
+        "task-s", context_id="ctx-s", text="Thinking...", message_id="msg-working"
+    )
     mock_a2a_client.add_task_response("task-s", [{"id": "art-s", "content": "Done"}])
 
     updates: list[AgentResponseUpdate] = []
@@ -1110,6 +1113,7 @@ async def test_streaming_single_working_update_with_message(
     assert len(updates) == 2
     assert updates[0].contents[0].text == "Thinking..."
     assert updates[0].role == "assistant"
+    assert updates[0].message_id == "msg-working"
     assert updates[1].contents[0].text == "Done"
 
 
@@ -1247,7 +1251,7 @@ async def test_streaming_status_update_event_yields_content(
         status=TaskStatus(
             state=TaskState.TASK_STATE_WORKING,
             message=A2AMessage(
-                message_id=str(uuid4()),
+                message_id="msg-status",
                 role=A2ARole.ROLE_AGENT,
                 parts=[Part(text="Still working")],
             ),
@@ -1262,6 +1266,7 @@ async def test_streaming_status_update_event_yields_content(
     assert len(updates) == 1
     assert updates[0].text == "Still working"
     assert updates[0].role == "assistant"
+    assert updates[0].message_id == "msg-status"
     assert updates[0].raw_representation == update_event
 
 
