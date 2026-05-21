@@ -946,6 +946,24 @@ async def test_prepare_options_with_tool_choice_auto(
     assert "allow_multiple_tool_calls" not in run_options
 
 
+async def test_prepare_options_consumes_additional_beta_flags(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=["Hello"])]
+    run_options = client._prepare_options(
+        messages,
+        {
+            "model": "claude-3-5-sonnet-20241022",
+            "additional_beta_flags": ["extended-cache-ttl-2025-04-11"],
+        },
+    )
+
+    assert "extended-cache-ttl-2025-04-11" in run_options["betas"]
+    assert "additional_beta_flags" not in run_options
+
+
 async def test_prepare_options_with_tool_choice_required(
     mock_anthropic_client: MagicMock,
 ) -> None:
